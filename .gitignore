@@ -1,0 +1,11 @@
+/target/
+/.codegraph/
+/.idea/
+/.vscode/
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

@@ -1,5 +1,6 @@
 /target/
 /.codegraph/
+/.superpowers/sdd/
 /.idea/
 /.vscode/
 *.log

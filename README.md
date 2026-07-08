@@ -10,6 +10,15 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
+## Current Capabilities
+
+- Compiles as an independent Rust workspace
+- Provides facade types for Agent configuration, input, events, results, and errors
+- Runs a dry-run Agent path through `yunxi-agent-cli`
+- Verifies the expected local Codex CLI source checkout shape
+
+Live model execution and full Codex non-interactive execution are intentionally documented as the next extraction stage.
+
 ## Build
 
 ```powershell
@@ -21,9 +30,12 @@ cargo test
 ```powershell
 cargo run -p yunxi-agent-cli -- "explain this project"
 cargo run -p yunxi-agent-cli -- --cwd "D:\some\repo" "fix the failing test"
+cargo run -p yunxi-agent-cli -- --json "explain this project"
 ```
 
-The first implementation starts with a dry-run facade and then connects the facade to Codex's non-interactive agent path.
+## CodeGraph
+
+If `.codegraph/` exists, use CodeGraph first when locating or understanding code in this repository.
 
 ## GitHub
 

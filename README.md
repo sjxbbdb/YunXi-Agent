@@ -15,7 +15,7 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 - Compiles as an independent Rust workspace
 - Provides facade types for Agent configuration, input, events, results, and errors
 - Runs a dry-run Agent path through `yunxi-agent-cli`
-- Verifies the expected local Codex CLI source checkout shape
+- Provides a boundary for verifying the local Codex CLI checkout shape
 
 Live model execution and full Codex non-interactive execution are intentionally documented as the next extraction stage.
 

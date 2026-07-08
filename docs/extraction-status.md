@@ -12,17 +12,18 @@ The repository currently contains:
 
 ## Verified Codex Source
 
-The expected local Codex source checkout is:
+The Codex source checkout is a user-provided local Codex CLI checkout.
+Documentation should not hardcode machine-specific checkout paths.
 
-```text
-D:\婧愮爜\codex
-```
-
-The first verification boundary checks for:
+The `CodexSource` boundary verifies the checkout shape by checking for:
 
 - `codex-rs/Cargo.toml`
 - `codex-rs/exec/src/lib.rs`
 - `codex-rs/app-server-client/Cargo.toml`
+
+The controller confirmed these three files exist in the real local checkout
+used for this extraction, but that local path is intentionally not recorded
+here.
 
 ## Not Yet Extracted
 

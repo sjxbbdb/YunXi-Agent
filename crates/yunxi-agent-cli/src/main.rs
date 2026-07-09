@@ -11,7 +11,7 @@ struct Cli {
         long,
         value_name = "BACKEND",
         value_enum,
-        default_value_t = CliBackend::DryRun
+        default_value_t = CliBackend::Yunxi
     )]
     backend: CliBackend,
 
@@ -60,6 +60,7 @@ struct Cli {
 #[value(rename_all = "kebab-case")]
 enum CliBackend {
     DryRun,
+    Yunxi,
     Codex,
 }
 
@@ -84,6 +85,7 @@ impl From<CliBackend> for BackendKind {
     fn from(value: CliBackend) -> Self {
         match value {
             CliBackend::DryRun => BackendKind::DryRun,
+            CliBackend::Yunxi => BackendKind::Yunxi,
             CliBackend::Codex => BackendKind::Codex,
         }
     }
@@ -138,6 +140,16 @@ async fn main() -> Result<()> {
     }
 
     let result = match backend {
+        BackendKind::Yunxi => {
+            let agent = Agent::new(config);
+            agent
+                .run_with_backend(
+                    &yunxi_agent_runtime::YunXiRuntimeBackend::new(),
+                    AgentInput::text(prompt),
+                )
+                .await
+                .context("yunxi agent run failed")?
+        }
         BackendKind::DryRun => {
             let agent = Agent::new(config);
             agent

@@ -33,6 +33,10 @@ fn backend_kind_serializes_as_kebab_case() {
         "\"dry-run\""
     );
     assert_eq!(
+        serde_json::to_string(&BackendKind::Yunxi).expect("json"),
+        "\"yunxi\""
+    );
+    assert_eq!(
         serde_json::to_string(&BackendKind::Codex).expect("json"),
         "\"codex\""
     );

@@ -13242,6 +13242,7 @@ dependencies = [
  "tokio",
  "yunxi-agent-codex",
  "yunxi-agent-core",
+ "yunxi-agent-runtime",
 ]
 
 [[package]]
@@ -13277,6 +13278,48 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "yunxi-agent-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "tokio",
+ "yunxi-agent-core",
+]
+
+[[package]]
+name = "yunxi-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "tokio",
+ "yunxi-agent-core",
+ "yunxi-agent-provider",
+ "yunxi-agent-storage",
+ "yunxi-agent-tools",
+]
+
+[[package]]
+name = "yunxi-agent-storage"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "tokio",
+ "yunxi-agent-core",
+]
+
+[[package]]
+name = "yunxi-agent-tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "tokio",
+ "yunxi-agent-core",
 ]
 
 [[package]]

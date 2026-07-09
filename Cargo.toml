@@ -1,6 +1,10 @@
 [workspace]
 members = [
     "crates/yunxi-agent-core",
+    "crates/yunxi-agent-provider",
+    "crates/yunxi-agent-tools",
+    "crates/yunxi-agent-storage",
+    "crates/yunxi-agent-runtime",
     "crates/yunxi-agent-codex",
     "crates/yunxi-agent-cli",
 ]

@@ -9,7 +9,7 @@ fn cli_prints_dry_run_response() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "Dry run accepted prompt: explain this project",
+            "YunXi autonomous runtime accepted prompt: explain this project",
         ));
 }
 
@@ -22,6 +22,18 @@ fn cli_accepts_explicit_dry_run_backend() {
         .success()
         .stdout(predicate::str::contains(
             "Dry run accepted prompt: explain this project",
+        ));
+}
+
+#[test]
+fn cli_accepts_explicit_yunxi_backend() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.args(["--backend", "yunxi", "explain this project"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "YunXi autonomous runtime accepted prompt: explain this project",
         ));
 }
 

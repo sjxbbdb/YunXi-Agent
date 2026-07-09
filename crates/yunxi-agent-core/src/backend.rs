@@ -10,6 +10,7 @@ pub trait AgentBackend: Send + Sync {
 #[serde(rename_all = "kebab-case")]
 pub enum BackendKind {
     DryRun,
+    Yunxi,
     Codex,
 }
 

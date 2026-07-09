@@ -5,6 +5,10 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 ## Layout
 
 - `crates/yunxi-agent-core`: reusable Agent facade and extraction boundary
+- `crates/yunxi-agent-provider`: YunXi-owned provider request/response boundary
+- `crates/yunxi-agent-tools`: YunXi-owned tool execution boundary
+- `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
+- `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: integration layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-cli`: minimal CLI over the core library
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
@@ -16,10 +20,11 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 
 - Compiles as an independent Rust workspace
 - Provides facade types for Agent configuration, input, events, results, and errors
-- Runs a dry-run Agent path through `yunxi-agent-cli`
+- Runs the default `yunxi` backend through YunXi-owned runtime/provider/tools/storage crates
+- Keeps a dry-run Agent path for deterministic smoke checks
 - Vendors the Codex Rust workspace source needed by the native backend
 - Retains a boundary for checking local Codex CLI checkout shape during future refreshes
-- Provides a source-level Codex headless backend behind the `codex-native` feature
+- Provides a temporary source-level Codex compatibility backend behind the `codex-native` feature
 
 ## Build
 
@@ -35,15 +40,25 @@ YunXi checkouts.
 
 ```powershell
 cargo run -p yunxi-agent-cli -- "explain this project"
+cargo run -p yunxi-agent-cli -- --backend yunxi "explain this project"
+cargo run -p yunxi-agent-cli -- --backend dry-run "explain this project"
 cargo run -p yunxi-agent-cli -- --cwd "D:\some\repo" "fix the failing test"
 cargo run -p yunxi-agent-cli -- --json "explain this project"
 cargo run -p yunxi-agent-cli --features codex-native -- --live "explain this project"
 ```
 
-## Live Backend Capability Matrix
+## Backend Capability Matrix
 
-The Codex live backend is a source-level integration with the Codex headless
-Agent stack. Normal tests do not require credentials.
+| Backend | Default | Owner | Purpose |
+| --- | --- | --- | --- |
+| `yunxi` | Yes | YunXi runtime crates | Autonomous runtime migration path |
+| `dry-run` | No | `yunxi-agent-core` | Deterministic smoke checks |
+| `codex` / `--live` | No | Vendored Codex runtime | Temporary compatibility backend |
+
+## Codex Compatibility Matrix
+
+The Codex backend is a source-level integration with the Codex headless Agent
+stack. Normal tests do not require credentials.
 
 | Capability | Status |
 | --- | --- |

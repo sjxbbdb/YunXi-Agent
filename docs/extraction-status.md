@@ -9,9 +9,52 @@ The repository currently contains:
 - A dry-run `Agent` runner
 - A minimal `yunxi-agent-cli`
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
+- YunXi-owned runtime boundary crates:
+  - `yunxi-agent-runtime`
+  - `yunxi-agent-provider`
+  - `yunxi-agent-tools`
+  - `yunxi-agent-storage`
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## Stage 4A Runtime Boundary
+
+Stage 4A introduces a YunXi-owned autonomous runtime boundary.
+
+Implemented in this slice:
+
+- `yunxi-agent-runtime` owns the first YunXi runtime backend implementation.
+- `yunxi-agent-provider` owns provider request/response interfaces and a
+  deterministic `StaticProvider`.
+- `yunxi-agent-tools` owns tool request/response interfaces and a placeholder
+  `NoopToolRuntime`.
+- `yunxi-agent-storage` owns session records and an in-memory session store.
+- `yunxi-agent-cli` defaults to `--backend yunxi`.
+- `--backend dry-run`, `--backend codex`, and `--live` remain available for
+  smoke checks and compatibility.
+
+The `yunxi` backend emits YunXi `AgentEvent` values directly and does not depend
+on `vendor/codex-rs`. The Codex backend remains as an explicit compatibility
+path while provider/tool/storage behavior is migrated in later slices.
+
+## Stage 4A Verification
+
+Verified on 2026-07-10:
+
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check -p yunxi-agent-runtime`: pass
+- `cargo check -p yunxi-agent-provider`: pass
+- `cargo check -p yunxi-agent-tools`: pass
+- `cargo check -p yunxi-agent-storage`: pass
+- `cargo check -p yunxi-agent-cli`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "explain this project"`:
+  pass
+- `cargo run -p yunxi-agent-cli -- --backend dry-run "explain this project"`:
+  pass
+- `git diff --check`: pass with Windows line-ending warnings only
 
 ## Vendored Codex Source
 

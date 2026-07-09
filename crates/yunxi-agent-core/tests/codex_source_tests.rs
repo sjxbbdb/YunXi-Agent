@@ -42,3 +42,29 @@ fn verify_accepts_minimum_expected_codex_layout() {
         root.join("codex-rs/app-server-client/Cargo.toml")
     );
 }
+
+#[test]
+fn verify_rejects_directory_where_manifest_file_is_expected() {
+    let temp = TempDir::new().expect("temp dir should be created");
+    let root = temp.path();
+    std::fs::create_dir_all(root.join("codex-rs/Cargo.toml")).expect("manifest impostor");
+    std::fs::create_dir_all(root.join("codex-rs/exec/src")).expect("exec dir should exist");
+    std::fs::create_dir_all(root.join("codex-rs/app-server-client"))
+        .expect("client dir should exist");
+    std::fs::write(
+        root.join("codex-rs/exec/src/lib.rs"),
+        "pub fn marker() {}\n",
+    )
+    .expect("exec lib");
+    std::fs::write(
+        root.join("codex-rs/app-server-client/Cargo.toml"),
+        "[package]\nname = \"codex-app-server-client\"\n",
+    )
+    .expect("client manifest");
+
+    let error = CodexSource::new(root)
+        .verify()
+        .expect_err("manifest directory should fail verification");
+
+    assert!(matches!(error, AgentError::MissingCodexSource { .. }));
+}

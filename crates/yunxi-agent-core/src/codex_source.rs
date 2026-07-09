@@ -21,13 +21,20 @@ impl CodexSource {
         let exec_lib = self.root.join("codex-rs/exec/src/lib.rs");
         let app_server_client_manifest = self.root.join("codex-rs/app-server-client/Cargo.toml");
 
+        for path in [self.root.as_path()] {
+            if !path.is_dir() {
+                return Err(AgentError::MissingCodexSource {
+                    path: path.display().to_string(),
+                });
+            }
+        }
+
         for path in [
-            self.root.as_path(),
             codex_rs_manifest.as_path(),
             exec_lib.as_path(),
             app_server_client_manifest.as_path(),
         ] {
-            if !path.exists() {
+            if !path.is_file() {
                 return Err(AgentError::MissingCodexSource {
                     path: path.display().to_string(),
                 });

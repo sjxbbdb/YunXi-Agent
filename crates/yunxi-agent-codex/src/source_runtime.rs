@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use yunxi_agent_core::CodexSource;
 use yunxi_agent_core::{AgentError, AgentResult};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -10,6 +11,10 @@ pub struct CodexRuntimeSource {
 impl CodexRuntimeSource {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
+    }
+
+    pub fn from_codex_source(source: &CodexSource) -> Self {
+        Self::new(source.root().join("codex-rs"))
     }
 
     pub fn root(&self) -> &Path {
@@ -45,6 +50,12 @@ impl CodexRuntimeSource {
         }
 
         Ok(status)
+    }
+}
+
+impl From<&CodexSource> for CodexRuntimeSource {
+    fn from(source: &CodexSource) -> Self {
+        Self::from_codex_source(source)
     }
 }
 

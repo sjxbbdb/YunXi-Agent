@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/yunxi-agent-core",
+    "crates/yunxi-agent-codex",
     "crates/yunxi-agent-cli",
 ]
 resolver = "2"
@@ -12,6 +13,7 @@ version = "0.1.0"
 
 [workspace.dependencies]
 anyhow = "1"
+async-trait = "0.1"
 assert_cmd = "2"
 clap = { version = "4", features = ["derive"] }
 predicates = "3"
@@ -19,4 +21,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "process", "rt-multi-thread"] }

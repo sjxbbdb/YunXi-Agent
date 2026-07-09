@@ -1,12 +1,23 @@
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
-use yunxi_agent_core::{Agent, AgentConfig, AgentInput};
+use yunxi_agent_core::{Agent, AgentConfig, AgentInput, ApprovalMode, BackendKind, SandboxMode};
 
 #[derive(Debug, Parser)]
 #[command(name = "yunxi-agent-cli")]
 #[command(about = "Run the extracted YunXi Agent core")]
 struct Cli {
+    #[arg(
+        long,
+        value_name = "BACKEND",
+        value_enum,
+        default_value_t = CliBackend::DryRun
+    )]
+    backend: CliBackend,
+
+    #[arg(long)]
+    live: bool,
+
     #[arg(long, value_name = "PATH", default_value = ".")]
     cwd: PathBuf,
 
@@ -16,11 +27,87 @@ struct Cli {
     #[arg(long, value_name = "PROVIDER")]
     provider: Option<String>,
 
+    #[arg(long = "codex-home", value_name = "PATH")]
+    codex_home: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_name = "MODE",
+        value_enum,
+        default_value_t = CliApprovalMode::OnRequest
+    )]
+    approval: CliApprovalMode,
+
+    #[arg(
+        long,
+        value_name = "MODE",
+        value_enum,
+        default_value_t = CliSandboxMode::WorkspaceWrite
+    )]
+    sandbox: CliSandboxMode,
+
     #[arg(long)]
     json: bool,
 
+    #[arg(long)]
+    jsonl: bool,
+
     #[arg(value_name = "PROMPT")]
     prompt: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum CliBackend {
+    DryRun,
+    Codex,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum CliApprovalMode {
+    Never,
+    OnRequest,
+    OnFailure,
+    Untrusted,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+enum CliSandboxMode {
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl From<CliBackend> for BackendKind {
+    fn from(value: CliBackend) -> Self {
+        match value {
+            CliBackend::DryRun => BackendKind::DryRun,
+            CliBackend::Codex => BackendKind::Codex,
+        }
+    }
+}
+
+impl From<CliApprovalMode> for ApprovalMode {
+    fn from(value: CliApprovalMode) -> Self {
+        match value {
+            CliApprovalMode::Never => ApprovalMode::Never,
+            CliApprovalMode::OnRequest => ApprovalMode::OnRequest,
+            CliApprovalMode::OnFailure => ApprovalMode::OnFailure,
+            CliApprovalMode::Untrusted => ApprovalMode::Untrusted,
+        }
+    }
+}
+
+impl From<CliSandboxMode> for SandboxMode {
+    fn from(value: CliSandboxMode) -> Self {
+        match value {
+            CliSandboxMode::ReadOnly => SandboxMode::ReadOnly,
+            CliSandboxMode::WorkspaceWrite => SandboxMode::WorkspaceWrite,
+            CliSandboxMode::DangerFullAccess => SandboxMode::DangerFullAccess,
+        }
+    }
 }
 
 #[tokio::main]
@@ -31,21 +118,43 @@ async fn main() -> Result<()> {
         bail!("a prompt is required");
     }
 
-    let mut config = AgentConfig::new(cli.cwd);
+    let backend = if cli.live {
+        BackendKind::Codex
+    } else {
+        cli.backend.into()
+    };
+
+    let mut config = AgentConfig::new(cli.cwd)
+        .with_approval_mode(cli.approval.into())
+        .with_sandbox_mode(cli.sandbox.into());
     if let Some(model) = cli.model {
         config = config.with_model(model);
     }
     if let Some(provider) = cli.provider {
         config = config.with_provider(provider);
     }
+    if let Some(codex_home) = cli.codex_home {
+        config = config.with_codex_home(codex_home);
+    }
 
-    let agent = Agent::new(config);
-    let result = agent
-        .run_dry(AgentInput::text(prompt))
-        .await
-        .context("agent run failed")?;
+    let result = match backend {
+        BackendKind::DryRun => {
+            let agent = Agent::new(config);
+            agent
+                .run_dry(AgentInput::text(prompt))
+                .await
+                .context("agent run failed")?
+        }
+        BackendKind::Codex => {
+            bail!("codex backend is not wired into the CLI yet");
+        }
+    };
 
-    if cli.json {
+    if cli.jsonl {
+        for event in result.events {
+            println!("{}", serde_json::to_string(&event)?);
+        }
+    } else if cli.json {
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else if let Some(final_response) = result.final_response {
         println!("{final_response}");

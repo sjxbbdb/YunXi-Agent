@@ -11,6 +11,9 @@ pub enum AgentError {
     #[error("codex source checkout is missing: {path}")]
     MissingCodexSource { path: String },
 
+    #[error("malformed upstream event: {message}")]
+    MalformedUpstreamEvent { message: String },
+
     #[error("agent execution failed: {message}")]
     Execution { message: String },
 }

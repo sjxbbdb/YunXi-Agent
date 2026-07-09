@@ -585,6 +585,15 @@ dependencies = [
 [[package]]
 name = "yunxi-agent-codex"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "yunxi-agent-core",
+]
 
 [[package]]
 name = "yunxi-agent-core"

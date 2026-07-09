@@ -27,8 +27,9 @@ Stage 3 imported the Codex Rust workspace source into `vendor/codex-rs` on
 native backend source is intended to be available from a fresh YunXi checkout
 without manually creating `external/codex-rs`.
 
-Per the extraction directive for this stage, full verification is intentionally
-deferred until the source extraction pass is complete.
+Stage 3 verification has now been run against the vendored source. The native
+backend no longer depends on a developer-created `external/codex-rs` link for
+Cargo path resolution.
 
 ## Local Codex Source Link
 
@@ -88,6 +89,31 @@ Verified on 2026-07-09:
 - dry-run CLI smoke: pass
 - dry-run JSONL smoke: pass
 - `git diff --check`: pass
+
+Live credential smoke was not run; it remains gated by
+`YUNXI_RUN_LIVE_CODEX_TESTS=1`.
+
+## Stage 3 Verification
+
+Verified on 2026-07-10:
+
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check -p yunxi-agent-codex --features codex-native`: pass
+- `cargo check -p yunxi-agent-cli --features codex-native`: pass
+- `cargo build -p yunxi-agent-cli --features codex-native`: pass
+- `cargo run -p yunxi-agent-cli -- --backend dry-run "explain this project"`:
+  pass
+- `cargo run -p yunxi-agent-cli -- --backend dry-run --jsonl "explain this project"`:
+  pass
+- `cargo test -p yunxi-agent-codex --features codex-native live_codex_backend_can_complete_simple_prompt_when_enabled -- --nocapture`:
+  pass and skipped without `YUNXI_RUN_LIVE_CODEX_TESTS=1`
+- `git diff --check`: pass
+
+During the first native check, the `v8` crate failed while decompressing the
+downloaded `rusty_v8` prebuilt library. The failed build-script output and
+temporary `rusty_v8` target files were removed, and the same native check passed
+on the next run. No source change was needed for that transient artifact issue.
 
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.

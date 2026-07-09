@@ -15,7 +15,7 @@ struct Cli {
     )]
     backend: CliBackend,
 
-    #[arg(long)]
+    #[arg(long, conflicts_with = "backend")]
     live: bool,
 
     #[arg(long, value_name = "PATH", default_value = ".")]

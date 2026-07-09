@@ -26,6 +26,18 @@ fn cli_accepts_explicit_dry_run_backend() {
 }
 
 #[test]
+fn cli_rejects_live_and_backend_flags_together() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.args(["--live", "--backend", "dry-run", "explain this project"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"))
+        .stderr(predicate::str::contains("--live"))
+        .stderr(predicate::str::contains("--backend"));
+}
+
+#[test]
 fn cli_rejects_live_backend_until_codex_crate_is_wired() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
 

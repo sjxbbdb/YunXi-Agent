@@ -1,3 +1,4 @@
+mod backend;
 mod codex_source;
 mod config;
 mod error;
@@ -5,6 +6,7 @@ mod event;
 mod input;
 mod runner;
 
+pub use backend::{AgentBackend, BackendKind, DryRunBackend};
 pub use codex_source::{CodexSource, CodexSourceStatus};
 pub use config::{AgentConfig, ApprovalMode, SandboxMode};
 pub use error::{AgentError, AgentResult};

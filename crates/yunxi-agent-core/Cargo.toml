@@ -5,9 +5,11 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tempfile.workspace = true

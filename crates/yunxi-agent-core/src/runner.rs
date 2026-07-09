@@ -1,5 +1,6 @@
 use crate::{
-    AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunResult, AgentRunStatus,
+    AgentBackend, AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunResult,
+    AgentRunStatus, DryRunBackend,
 };
 
 #[derive(Clone, Debug)]
@@ -17,6 +18,24 @@ impl Agent {
     }
 
     pub async fn run_dry(&self, input: AgentInput) -> AgentResult<AgentRunResult> {
+        self.run_with_backend(&DryRunBackend, input).await
+    }
+
+    pub async fn run_with_backend<B>(
+        &self,
+        backend: &B,
+        input: AgentInput,
+    ) -> AgentResult<AgentRunResult>
+    where
+        B: AgentBackend,
+    {
+        backend.run(self.config.clone(), input).await
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentBackend for DryRunBackend {
+    async fn run(&self, _config: AgentConfig, input: AgentInput) -> AgentResult<AgentRunResult> {
         let prompt = input.prompt.trim();
         if prompt.is_empty() {
             return Err(AgentError::EmptyPrompt);

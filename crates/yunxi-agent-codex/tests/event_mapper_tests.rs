@@ -41,16 +41,28 @@ fn maps_thread_turn_message_and_completion_events() {
 fn maps_command_file_patch_and_mcp_events() {
     let jsonl = r#"
 {"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"cargo test","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.updated","item":{"id":"cmd_1","type":"command_execution","command":"cargo test","aggregated_output":"ok","exit_code":null,"status":"in_progress"}}
 {"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"cargo test","aggregated_output":"ok","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"patch_1","type":"file_change","changes":[{"path":"src/lib.rs","kind":"update"}],"status":"in_progress"}}
+{"type":"item.updated","item":{"id":"patch_1","type":"file_change","changes":[{"path":"src/main.rs","kind":"add"}],"status":"in_progress"}}
 {"type":"item.completed","item":{"id":"patch_1","type":"file_change","changes":[{"path":"src/lib.rs","kind":"update"}],"status":"completed"}}
 {"type":"item.completed","item":{"id":"mcp_1","type":"mcp_tool_call","server":"fs","tool":"read_file","arguments":{},"result":null,"error":null,"status":"completed"}}
 "#;
 
     let events = map_exec_jsonl(jsonl).expect("events");
+    let patch_completed_events = events
+        .iter()
+        .filter(|event| matches!(event, AgentEvent::PatchCompleted { .. }))
+        .collect::<Vec<_>>();
 
     assert!(events.contains(&AgentEvent::CommandStarted {
         id: Some("cmd_1".to_string()),
         command: "cargo test".to_string(),
+    }));
+    assert!(events.contains(&AgentEvent::CommandUpdated {
+        id: Some("cmd_1".to_string()),
+        command: "cargo test".to_string(),
+        aggregated_output: "ok".to_string(),
     }));
     assert!(events.contains(&AgentEvent::CommandCompleted {
         id: Some("cmd_1".to_string()),
@@ -63,9 +75,21 @@ fn maps_command_file_patch_and_mcp_events() {
         path: "src/lib.rs".to_string(),
         kind: FileChangeKind::Update,
     }));
-    assert!(events.contains(&AgentEvent::PatchCompleted {
-        status: PatchStatus::Completed,
+    assert!(events.contains(&AgentEvent::FileChanged {
+        path: "src/main.rs".to_string(),
+        kind: FileChangeKind::Add,
     }));
+    assert_eq!(patch_completed_events.len(), 3);
+    assert!(
+        patch_completed_events.contains(&&AgentEvent::PatchCompleted {
+            status: PatchStatus::InProgress,
+        })
+    );
+    assert!(
+        patch_completed_events.contains(&&AgentEvent::PatchCompleted {
+            status: PatchStatus::Completed,
+        })
+    );
     assert!(events.contains(&AgentEvent::McpToolCompleted {
         id: Some("mcp_1".to_string()),
         server: "fs".to_string(),

@@ -51,14 +51,21 @@ pub fn map_exec_json_event(value: Value) -> AgentResult<Vec<AgentEvent>> {
         "error" => Ok(vec![AgentEvent::Error {
             message: required_string(&value, "message")?,
         }]),
-        "item.started" => map_item(value.get("item"), true),
-        "item.updated" => map_item(value.get("item"), false),
-        "item.completed" => map_item(value.get("item"), false),
+        "item.started" => map_item(value.get("item"), ItemPhase::Started),
+        "item.updated" => map_item(value.get("item"), ItemPhase::Updated),
+        "item.completed" => map_item(value.get("item"), ItemPhase::Completed),
         _ => Ok(Vec::new()),
     }
 }
 
-fn map_item(item: Option<&Value>, started: bool) -> AgentResult<Vec<AgentEvent>> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ItemPhase {
+    Started,
+    Updated,
+    Completed,
+}
+
+fn map_item(item: Option<&Value>, phase: ItemPhase) -> AgentResult<Vec<AgentEvent>> {
     let item = item.ok_or_else(|| AgentError::MalformedUpstreamEvent {
         message: "item event is missing item".to_string(),
     })?;
@@ -76,44 +83,35 @@ fn map_item(item: Option<&Value>, started: bool) -> AgentResult<Vec<AgentEvent>>
         "reasoning" => Ok(vec![AgentEvent::Reasoning {
             content: required_string(item, "text")?,
         }]),
-        "command_execution" if started => Ok(vec![AgentEvent::CommandStarted {
-            id,
-            command: required_string(item, "command")?,
-        }]),
-        "command_execution" => {
-            let command = required_string(item, "command")?;
-            let aggregated_output = item
-                .get("aggregated_output")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let exit_code = item
-                .get("exit_code")
-                .and_then(Value::as_i64)
-                .map(|code| code as i32);
-            let status = map_command_status(item.get("status").and_then(Value::as_str));
-
-            if started {
-                Ok(vec![AgentEvent::CommandStarted { id, command }])
-            } else if aggregated_output.is_empty()
-                && exit_code.is_none()
-                && status == CommandStatus::InProgress
-            {
-                Ok(vec![AgentEvent::CommandUpdated {
-                    id,
-                    command,
-                    aggregated_output,
-                }])
-            } else {
-                Ok(vec![AgentEvent::CommandCompleted {
-                    id,
-                    command,
-                    aggregated_output,
-                    exit_code,
-                    status,
-                }])
-            }
-        }
+        "command_execution" => match phase {
+            ItemPhase::Started => Ok(vec![AgentEvent::CommandStarted {
+                id,
+                command: required_string(item, "command")?,
+            }]),
+            ItemPhase::Updated => Ok(vec![AgentEvent::CommandUpdated {
+                id,
+                command: required_string(item, "command")?,
+                aggregated_output: item
+                    .get("aggregated_output")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            }]),
+            ItemPhase::Completed => Ok(vec![AgentEvent::CommandCompleted {
+                id,
+                command: required_string(item, "command")?,
+                aggregated_output: item
+                    .get("aggregated_output")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                exit_code: item
+                    .get("exit_code")
+                    .and_then(Value::as_i64)
+                    .map(|code| code as i32),
+                status: map_command_status(item.get("status").and_then(Value::as_str)),
+            }]),
+        },
         "file_change" => {
             let mut events = Vec::new();
             for change in item
@@ -127,22 +125,28 @@ fn map_item(item: Option<&Value>, started: bool) -> AgentResult<Vec<AgentEvent>>
                     kind: map_file_change_kind(change.get("kind").and_then(Value::as_str)),
                 });
             }
-            events.push(AgentEvent::PatchCompleted {
-                status: map_patch_status(item.get("status").and_then(Value::as_str)),
-            });
+            let status = match phase {
+                ItemPhase::Completed => {
+                    map_patch_status(item.get("status").and_then(Value::as_str))
+                }
+                ItemPhase::Started | ItemPhase::Updated => PatchStatus::InProgress,
+            };
+            events.push(AgentEvent::PatchCompleted { status });
             Ok(events)
         }
-        "mcp_tool_call" if started => Ok(vec![AgentEvent::McpToolStarted {
-            id,
-            server: required_string(item, "server")?,
-            tool: required_string(item, "tool")?,
-        }]),
-        "mcp_tool_call" => Ok(vec![AgentEvent::McpToolCompleted {
-            id,
-            server: required_string(item, "server")?,
-            tool: required_string(item, "tool")?,
-            status: map_mcp_status(item.get("status").and_then(Value::as_str)),
-        }]),
+        "mcp_tool_call" => match phase {
+            ItemPhase::Started => Ok(vec![AgentEvent::McpToolStarted {
+                id,
+                server: required_string(item, "server")?,
+                tool: required_string(item, "tool")?,
+            }]),
+            ItemPhase::Updated | ItemPhase::Completed => Ok(vec![AgentEvent::McpToolCompleted {
+                id,
+                server: required_string(item, "server")?,
+                tool: required_string(item, "tool")?,
+                status: map_mcp_status(item.get("status").and_then(Value::as_str)),
+            }]),
+        },
         "todo_list" => {
             let items = item
                 .get("items")

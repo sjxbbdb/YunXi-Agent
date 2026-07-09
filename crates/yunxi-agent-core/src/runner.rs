@@ -51,6 +51,7 @@ impl AgentBackend for DryRunBackend {
             },
             AgentEvent::Completed {
                 status: AgentRunStatus::Completed,
+                usage: None,
             },
         ];
 

@@ -25,7 +25,8 @@ async fn dry_run_returns_started_message_and_completed_events() {
                 content: "Dry run accepted prompt: explain this project".to_string()
             },
             AgentEvent::Completed {
-                status: AgentRunStatus::Completed
+                status: AgentRunStatus::Completed,
+                usage: None
             }
         ]
     );

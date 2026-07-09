@@ -3,13 +3,71 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentEvent {
-    Started { prompt: String },
-    Message { content: String },
-    CommandStarted { command: String },
-    CommandFinished { command: String, exit_code: i32 },
-    FileChanged { path: String },
-    Error { message: String },
-    Completed { status: AgentRunStatus },
+    Started {
+        prompt: String,
+    },
+    ThreadStarted {
+        thread_id: String,
+    },
+    TurnStarted,
+    Message {
+        content: String,
+    },
+    Reasoning {
+        content: String,
+    },
+    CommandStarted {
+        id: Option<String>,
+        command: String,
+    },
+    CommandUpdated {
+        id: Option<String>,
+        command: String,
+        aggregated_output: String,
+    },
+    CommandCompleted {
+        id: Option<String>,
+        command: String,
+        aggregated_output: String,
+        exit_code: Option<i32>,
+        status: CommandStatus,
+    },
+    CommandFinished {
+        command: String,
+        exit_code: i32,
+    },
+    FileChanged {
+        path: String,
+        kind: FileChangeKind,
+    },
+    PatchCompleted {
+        status: PatchStatus,
+    },
+    McpToolStarted {
+        id: Option<String>,
+        server: String,
+        tool: String,
+    },
+    McpToolCompleted {
+        id: Option<String>,
+        server: String,
+        tool: String,
+        status: McpToolStatus,
+    },
+    TodoUpdated {
+        id: Option<String>,
+        items: Vec<TodoStatus>,
+    },
+    Warning {
+        message: String,
+    },
+    Error {
+        message: String,
+    },
+    Completed {
+        status: AgentRunStatus,
+        usage: Option<TokenUsage>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -17,6 +75,53 @@ pub enum AgentEvent {
 pub enum AgentRunStatus {
     Completed,
     Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Declined,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileChangeKind {
+    Add,
+    Delete,
+    Update,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolStatus {
+    InProgress,
+    Completed,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TodoStatus {
+    pub text: String,
+    pub completed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub reasoning_output_tokens: i64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -146,7 +146,14 @@ async fn main() -> Result<()> {
                 .context("agent run failed")?
         }
         BackendKind::Codex => {
-            bail!("codex backend is not wired into the CLI yet");
+            let agent = Agent::new(config);
+            agent
+                .run_with_backend(
+                    &yunxi_agent_codex::CodexNativeBackend::new(),
+                    AgentInput::text(prompt),
+                )
+                .await
+                .context("codex agent run failed")?
         }
     };
 

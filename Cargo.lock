@@ -13240,6 +13240,7 @@ dependencies = [
  "predicates",
  "serde_json",
  "tokio",
+ "yunxi-agent-codex",
  "yunxi-agent-core",
 ]
 
@@ -13249,8 +13250,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "codex-app-server-client",
+ "codex-app-server-protocol",
  "codex-arg0",
+ "codex-config",
+ "codex-core",
  "codex-exec",
+ "codex-feedback",
+ "codex-protocol",
  "rama-error",
  "rama-utils",
  "serde",

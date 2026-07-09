@@ -38,14 +38,14 @@ fn cli_rejects_live_and_backend_flags_together() {
 }
 
 #[test]
-fn cli_rejects_live_backend_until_codex_crate_is_wired() {
+fn cli_live_backend_reports_feature_message_without_codex_native_feature() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
 
     cmd.args(["--live", "explain this project"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "codex backend is not wired into the CLI yet",
+            "codex-native feature is not enabled",
         ));
 }
 

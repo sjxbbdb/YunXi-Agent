@@ -7,8 +7,14 @@ version.workspace = true
 [features]
 default = []
 codex-native = [
+    "dep:codex-app-server-client",
+    "dep:codex-app-server-protocol",
     "dep:codex-exec",
     "dep:codex-arg0",
+    "dep:codex-config",
+    "dep:codex-core",
+    "dep:codex-feedback",
+    "dep:codex-protocol",
     "dep:rama-error",
     "dep:rama-utils",
 ]
@@ -21,8 +27,14 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
+codex-app-server-client = { path = "../../external/codex-rs/app-server-client", optional = true }
+codex-app-server-protocol = { path = "../../external/codex-rs/app-server-protocol", optional = true }
 codex-exec = { path = "../../external/codex-rs/exec", optional = true }
 codex-arg0 = { path = "../../external/codex-rs/arg0", optional = true }
+codex-config = { path = "../../external/codex-rs/config", optional = true }
+codex-core = { path = "../../external/codex-rs/core", optional = true }
+codex-feedback = { path = "../../external/codex-rs/feedback", optional = true }
+codex-protocol = { path = "../../external/codex-rs/protocol", optional = true }
 rama-error = { version = "=0.3.0-alpha.4", optional = true }
 rama-utils = { version = "=0.3.0-alpha.4", optional = true }
 

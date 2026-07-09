@@ -9,6 +9,7 @@ The repository currently contains:
 - A dry-run `Agent` runner
 - A minimal `yunxi-agent-cli`
 - A `CodexSource` verification boundary for the local Codex CLI checkout
+- A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 
 ## Verified Codex Source
 
@@ -25,19 +26,48 @@ The controller confirmed these three files exist in the real local checkout
 used for this extraction, but that local path is intentionally not recorded
 here.
 
-## Not Yet Extracted
+## Stage 2 Live Backend
 
-- Live model execution
-- Codex non-interactive execution adapter
-- Shell command safety integration
-- Patch application integration
-- Approval and sandbox mapping to upstream Codex types
-- MCP, skills, and history restoration
+The Codex native backend has a source-level new-thread runner behind the
+`codex-native` feature. Normal tests do not require live credentials.
 
-## Next Extraction Step
+Current live scope:
 
-Connect `yunxi-agent-core` to the smallest viable Codex non-interactive execution path. The likely candidates are:
+- text prompt
+- new headless thread
+- ephemeral run
+- cwd/model/provider mapping
+- approval and sandbox mapping
+- in-process Codex app-server runtime
+- JSONL event mapping into YunXi events
 
-- A direct `codex-core` thread/turn path
-- A wrapper around the existing `codex-exec` flow
-- A narrower adapter around `codex-app-server-client` if it proves cleaner
+The in-process runtime is the upstream Codex Agent stack, so shell execution,
+patches, AGENTS.md loading, MCP configuration, skills runtime, session storage,
+and rollout behavior stay inside the embedded Codex runtime rather than being
+reimplemented in YunXi core.
+
+Still expanding:
+
+- resume/history CLI flags
+- full MCP fixture coverage
+- skills fixture coverage
+- Windows helper/arg0 packaging verification for patch and sandbox helpers
+- owned extraction of selected upstream runner internals after the source-level
+  bridge is stable
+
+## Stage 2 Verification
+
+Verified on 2026-07-09:
+
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check -p yunxi-agent-codex --features codex-native`: pass
+- `cargo check -p yunxi-agent-cli --features codex-native`: pass
+- `cargo build -p yunxi-agent-cli --features codex-native`: pass
+- gated live smoke without `YUNXI_RUN_LIVE_CODEX_TESTS=1`: pass and skipped
+- dry-run CLI smoke: pass
+- dry-run JSONL smoke: pass
+- `git diff --check`: pass
+
+Live credential smoke was not run; it remains gated by
+`YUNXI_RUN_LIVE_CODEX_TESTS=1`.

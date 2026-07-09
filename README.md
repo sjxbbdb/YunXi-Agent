@@ -16,8 +16,7 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 - Provides facade types for Agent configuration, input, events, results, and errors
 - Runs a dry-run Agent path through `yunxi-agent-cli`
 - Provides a boundary for verifying the local Codex CLI checkout shape
-
-Live model execution and full Codex non-interactive execution are intentionally documented as the next extraction stage.
+- Provides a source-level Codex headless backend behind the `codex-native` feature
 
 ## Build
 
@@ -31,7 +30,25 @@ cargo test
 cargo run -p yunxi-agent-cli -- "explain this project"
 cargo run -p yunxi-agent-cli -- --cwd "D:\some\repo" "fix the failing test"
 cargo run -p yunxi-agent-cli -- --json "explain this project"
+cargo run -p yunxi-agent-cli --features codex-native -- --live "explain this project"
 ```
+
+## Live Backend Capability Matrix
+
+The Codex live backend is a source-level integration with the Codex headless
+Agent stack. Normal tests do not require credentials.
+
+| Capability | Status |
+| --- | --- |
+| Text prompt, new thread | Supported behind `codex-native` |
+| Model/provider config | Supported through Codex config mapping |
+| Shell commands | Provided by embedded Codex runtime |
+| Patches/file changes | Provided by embedded Codex runtime |
+| Approval/sandbox mapping | Supported |
+| MCP event mapping | Supported |
+| Skills runtime | Provided by embedded Codex runtime |
+| Session/rollout storage | Provided by embedded Codex runtime |
+| Resume CLI | Staged after live new-thread stabilization |
 
 ## CodeGraph
 

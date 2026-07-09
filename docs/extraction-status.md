@@ -8,13 +8,33 @@ The repository currently contains:
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
 - A minimal `yunxi-agent-cli`
-- A `CodexSource` verification boundary for the local Codex CLI checkout
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
+- A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
+- A `CodexSource` boundary retained for source-shape checks and future refresh
+  tooling
 
-## Verified Codex Source
+## Vendored Codex Source
 
-The Codex source checkout is a user-provided local Codex CLI checkout.
-Documentation should not hardcode machine-specific checkout paths.
+Stage 3 imported the Codex Rust workspace source into `vendor/codex-rs` on
+2026-07-10.
+
+- Upstream commit at import time: `f1affbac5e5164b2bae825e9b39e9868bc4e0be2`
+- Import style: mechanical full Rust workspace source snapshot
+- Excluded during import: `target`, `.git`, `node_modules`
+- Local patch record: `vendor/codex-rs/patches/README.md`
+
+`yunxi-agent-codex` path dependencies now point at `vendor/codex-rs`, so the
+native backend source is intended to be available from a fresh YunXi checkout
+without manually creating `external/codex-rs`.
+
+Per the extraction directive for this stage, full verification is intentionally
+deferred until the source extraction pass is complete.
+
+## Local Codex Source Link
+
+`external/codex-rs` may still exist in a developer workspace as a junction or
+symlink to a local Codex CLI checkout. It is no longer the source of truth for
+normal YunXi builds.
 
 The `CodexSource` boundary verifies the checkout shape by checking for:
 

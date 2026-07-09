@@ -1,0 +1,2 @@
+# Vendored upstream snapshots preserve upstream whitespace exactly.
+vendor/codex-rs/** -whitespace

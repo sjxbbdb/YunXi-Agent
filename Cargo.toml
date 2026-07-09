@@ -5,7 +5,7 @@ members = [
     "crates/yunxi-agent-cli",
 ]
 resolver = "2"
-exclude = ["external/codex-rs"]
+exclude = ["external/codex-rs", "vendor/codex-rs"]
 
 [workspace.package]
 edition = "2024"

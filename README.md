@@ -5,7 +5,9 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 ## Layout
 
 - `crates/yunxi-agent-core`: reusable Agent facade and extraction boundary
+- `crates/yunxi-agent-codex`: integration layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-cli`: minimal CLI over the core library
+- `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
@@ -15,7 +17,8 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 - Compiles as an independent Rust workspace
 - Provides facade types for Agent configuration, input, events, results, and errors
 - Runs a dry-run Agent path through `yunxi-agent-cli`
-- Provides a boundary for verifying the local Codex CLI checkout shape
+- Vendors the Codex Rust workspace source needed by the native backend
+- Retains a boundary for checking local Codex CLI checkout shape during future refreshes
 - Provides a source-level Codex headless backend behind the `codex-native` feature
 
 ## Build
@@ -23,6 +26,10 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 ```powershell
 cargo test
 ```
+
+The `codex-native` feature reads Codex Rust source from `vendor/codex-rs`.
+`external/codex-rs` is only a local refresh aid and is not required for normal
+YunXi checkouts.
 
 ## Run
 

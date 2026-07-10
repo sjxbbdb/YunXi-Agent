@@ -4,10 +4,12 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
+use std::time::{Instant, UNIX_EPOCH};
 use tokio::process::Command;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
-use yunxi_agent_exec::{OutputLimits, combine_output, truncate_output};
+use yunxi_agent_exec::{
+    ExecCommand, ExecLifecycleEvent, ExecOutput, ExecTrace, OutputLimits, truncate_output,
+};
 use yunxi_agent_mcp::{
     InMemoryMcpRuntime, McpRuntime, McpToolInvocation, load_in_memory_runtime_seed,
 };
@@ -517,6 +519,7 @@ pub struct ToolResponse {
     pub error: Option<String>,
     pub exit_code: Option<i32>,
     pub changed_files: Vec<ToolFileChange>,
+    pub lifecycle_events: Vec<ExecLifecycleEvent>,
 }
 
 impl ToolResponse {
@@ -533,6 +536,7 @@ impl ToolResponse {
             error: None,
             exit_code,
             changed_files,
+            lifecycle_events: Vec::new(),
         }
     }
 
@@ -549,6 +553,7 @@ impl ToolResponse {
             error: None,
             exit_code,
             changed_files,
+            lifecycle_events: Vec::new(),
         }
     }
 
@@ -560,7 +565,13 @@ impl ToolResponse {
             error: Some(message.into()),
             exit_code: None,
             changed_files: Vec::new(),
+            lifecycle_events: Vec::new(),
         }
+    }
+
+    pub fn with_lifecycle_events(mut self, events: Vec<ExecLifecycleEvent>) -> Self {
+        self.lifecycle_events = events;
+        self
     }
 }
 
@@ -823,6 +834,7 @@ async fn run_shell(id: Option<String>, cwd: PathBuf, command: String) -> AgentRe
     let before = WorkspaceSnapshot::capture(&cwd)?;
     let mut process = platform_shell(&command);
     process.current_dir(&cwd);
+    let started_at = Instant::now();
 
     let output = process
         .output()
@@ -831,21 +843,33 @@ async fn run_shell(id: Option<String>, cwd: PathBuf, command: String) -> AgentRe
             message: format!("shell command failed to start: {error}"),
         })?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = truncate_output(&combine_output(&stdout, &stderr), OutputLimits::default());
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exec_output = ExecOutput {
+        stdout,
+        stderr,
+        exit_code: output.status.code(),
+    };
+    let exec_command =
+        ExecCommand::observed_shell(cwd.clone(), command.clone()).with_id(id.clone());
+    let exec_trace = ExecTrace::from_completed_output(
+        &exec_command,
+        exec_output.clone(),
+        Some(started_at.elapsed()),
+        false,
+    );
+    let combined = truncate_output(&exec_output.combined(), OutputLimits::default());
 
     let changed_files = before.diff(&WorkspaceSnapshot::capture(&cwd)?);
     let exit_code = output.status.code();
     if output.status.success() {
-        Ok(ToolResponse::completed(
-            id,
-            combined,
-            exit_code,
-            changed_files,
-        ))
+        Ok(
+            ToolResponse::completed(id, combined, exit_code, changed_files)
+                .with_lifecycle_events(exec_trace.events),
+        )
     } else {
-        Ok(ToolResponse::failed(id, combined, exit_code, changed_files))
+        Ok(ToolResponse::failed(id, combined, exit_code, changed_files)
+            .with_lifecycle_events(exec_trace.events))
     }
 }
 

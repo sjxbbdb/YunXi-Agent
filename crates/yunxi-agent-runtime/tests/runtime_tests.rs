@@ -377,6 +377,48 @@ async fn yunxi_runtime_executes_provider_requested_shell_tool() {
     assert_eq!(store.list().await.expect("session list").len(), 1);
 }
 
+#[tokio::test]
+async fn yunxi_runtime_emits_approval_events_when_tool_requires_approval() {
+    let backend = YunXiRuntimeBackend::with_parts(
+        ShellCallingProvider::default(),
+        CompositeToolRuntime::default(),
+        InMemorySessionStore::default(),
+    );
+    let agent = Agent::new(
+        AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::OnRequest),
+    );
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("use a guarded tool"))
+        .await
+        .expect("runtime should complete guarded tool loop");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ApprovalRequested {
+            id: Some(id),
+            tool_name,
+            reason,
+        } if id == "shell-1" && tool_name == "shell" && reason.contains("approval")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ApprovalCompleted {
+            id: Some(id),
+            approved: false,
+            reason: Some(reason),
+        } if id == "shell-1" && reason.contains("approval")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::CommandCompleted {
+            id: Some(id),
+            status: CommandStatus::Declined,
+            ..
+        } if id == "shell-1"
+    )));
+}
+
 #[derive(Clone, Default)]
 struct ToolSearchCallingProvider;
 

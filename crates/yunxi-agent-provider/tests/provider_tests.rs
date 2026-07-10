@@ -79,6 +79,7 @@ fn openai_request_json_uses_yunxi_provider_messages() {
         tools[2]["function"]["parameters"]["required"],
         json!(["server", "tool"])
     );
+    assert_eq!(json["parallel_tool_calls"], true);
 }
 
 #[test]
@@ -123,6 +124,32 @@ fn openai_transport_request_uses_provider_boundary_and_auth() {
         Some("Bearer secret")
     );
     assert_eq!(transport.body["stream"], true);
+    assert_eq!(transport.timeout_millis, Some(120_000));
+}
+
+#[test]
+fn provider_capabilities_can_disable_tools_and_stream_usage() {
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("capabilities"),
+    );
+    let config = ProviderConfig::openai_compatible("fallback-model")
+        .with_capabilities(yunxi_agent_provider::ProviderCapabilities {
+            tools: false,
+            parallel_tool_calls: false,
+            reasoning: false,
+            stream_usage: false,
+        })
+        .with_timeout_millis(Some(5_000));
+
+    let json = build_openai_stream_request_json(&config, &request).expect("stream json");
+    let transport = build_openai_transport_request(&config, &ProviderAuth::None, &request, true)
+        .expect("transport");
+
+    assert!(json.get("tools").is_none());
+    assert!(json.get("parallel_tool_calls").is_none());
+    assert!(json.get("stream_options").is_none());
+    assert_eq!(transport.timeout_millis, Some(5_000));
 }
 
 #[tokio::test]

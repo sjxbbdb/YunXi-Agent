@@ -677,6 +677,7 @@ dependencies = [
  "tokio",
  "yunxi-agent-context",
  "yunxi-agent-core",
+ "yunxi-agent-exec",
  "yunxi-agent-protocol",
  "yunxi-agent-provider",
  "yunxi-agent-storage",

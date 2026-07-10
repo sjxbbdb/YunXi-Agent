@@ -65,6 +65,16 @@ pub enum AgentEvent {
         output: String,
         status: CommandStatus,
     },
+    ApprovalRequested {
+        id: Option<String>,
+        tool_name: String,
+        reason: String,
+    },
+    ApprovalCompleted {
+        id: Option<String>,
+        approved: bool,
+        reason: Option<String>,
+    },
     TodoUpdated {
         id: Option<String>,
         items: Vec<TodoStatus>,

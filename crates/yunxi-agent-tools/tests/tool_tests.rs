@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentConfig, ApprovalMode, SandboxMode};
+use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_mcp::{
     InMemoryMcpRuntime, McpRuntimeSnapshot, McpServerConfig, McpToolResult, McpToolSpec,
     McpTransport,
@@ -167,6 +168,14 @@ async fn shell_tool_runtime_executes_shell_command() {
             .expect("shell output")
             .contains("yunxi-shell")
     );
+    assert!(response.lifecycle_events.iter().any(|event| matches!(
+        event,
+        ExecLifecycleEvent::OutputDelta {
+            stream: ExecOutputStream::Stdout,
+            chunk,
+            ..
+        } if chunk.contains("yunxi-shell")
+    )));
 }
 
 #[tokio::test]

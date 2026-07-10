@@ -327,6 +327,9 @@ pub struct ProviderConfig {
     pub name: String,
     pub model: String,
     pub base_url: String,
+    pub timeout_millis: Option<u64>,
+    pub stream: bool,
+    pub capabilities: ProviderCapabilities,
 }
 
 impl ProviderConfig {
@@ -335,12 +338,49 @@ impl ProviderConfig {
             name: "openai-compatible".to_string(),
             model: model.into(),
             base_url: "https://api.openai.com/v1".to_string(),
+            timeout_millis: Some(120_000),
+            stream: true,
+            capabilities: ProviderCapabilities::openai_compatible(),
         }
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    pub fn with_timeout_millis(mut self, timeout_millis: Option<u64>) -> Self {
+        self.timeout_millis = timeout_millis;
+        self
+    }
+
+    pub fn with_stream(mut self, stream: bool) -> Self {
+        self.stream = stream;
+        self
+    }
+
+    pub fn with_capabilities(mut self, capabilities: ProviderCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProviderCapabilities {
+    pub tools: bool,
+    pub parallel_tool_calls: bool,
+    pub reasoning: bool,
+    pub stream_usage: bool,
+}
+
+impl ProviderCapabilities {
+    pub fn openai_compatible() -> Self {
+        Self {
+            tools: true,
+            parallel_tool_calls: true,
+            reasoning: true,
+            stream_usage: true,
+        }
     }
 }
 
@@ -568,15 +608,21 @@ pub fn build_openai_request_json(
         })
         .collect::<Vec<_>>();
 
-    Ok(json!({
+    let mut body = json!({
         "model": request
             .config
             .model
             .as_deref()
             .unwrap_or(provider_config.model.as_str()),
-        "messages": messages,
-        "tools": default_tool_registry().openai_tools_json()
-    }))
+        "messages": messages
+    });
+    if provider_config.capabilities.tools {
+        body["tools"] = Value::Array(default_tool_registry().openai_tools_json());
+    }
+    if provider_config.capabilities.parallel_tool_calls {
+        body["parallel_tool_calls"] = Value::Bool(true);
+    }
+    Ok(body)
 }
 
 pub fn build_openai_stream_request_json(
@@ -585,7 +631,9 @@ pub fn build_openai_stream_request_json(
 ) -> AgentResult<Value> {
     let mut value = build_openai_request_json(provider_config, request)?;
     value["stream"] = Value::Bool(true);
-    value["stream_options"] = json!({ "include_usage": true });
+    if provider_config.capabilities.stream_usage {
+        value["stream_options"] = json!({ "include_usage": true });
+    }
     Ok(value)
 }
 
@@ -605,6 +653,7 @@ pub fn build_openai_transport_request(
         provider_config.base_url.trim_end_matches('/')
     );
     let mut transport_request = ProviderTransportRequest::post_json(url, body).with_stream(stream);
+    transport_request.timeout_millis = provider_config.timeout_millis;
     if let Some(token) = auth.resolve()? {
         transport_request = transport_request.with_bearer_auth(token);
     }

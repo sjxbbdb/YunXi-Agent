@@ -9,6 +9,7 @@ async-trait.workspace = true
 serde_json.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
 yunxi-agent-context = { path = "../yunxi-agent-context" }
+yunxi-agent-exec = { path = "../yunxi-agent-exec" }
 yunxi-agent-protocol = { path = "../yunxi-agent-protocol" }
 yunxi-agent-provider = { path = "../yunxi-agent-provider" }
 yunxi-agent-storage = { path = "../yunxi-agent-storage" }

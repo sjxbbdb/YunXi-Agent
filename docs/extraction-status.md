@@ -210,6 +210,41 @@ rollout, resume, and CLI JSONL parity.
 The Stage 4G development report is recorded in
 `docs/reports/2026-07-10-yunxi-stage-4g-full-core-agent-parity-one-pass-development-report.md`.
 
+## Stage 4G First Construction Slice
+
+Stage 4G implementation has started with the protocol, provider, exec, approval,
+and runtime event foundation needed by the larger one-pass parity build.
+
+Implemented in this slice:
+
+- `yunxi-agent-protocol` now carries tool output deltas, response cancellation,
+  and approval requested/completed runtime events.
+- `yunxi-agent-core` exposes approval requested/completed agent events with
+  stable JSON names.
+- `yunxi-agent-exec` can build an `ExecTrace` from a completed shell execution,
+  including started, stdout/stderr delta, and completed lifecycle events.
+- `yunxi-agent-tools` attaches exec lifecycle events to `ToolResponse` for shell
+  execution.
+- `yunxi-agent-runtime` emits approval lifecycle events for approval-blocked
+  tools and maps exec lifecycle output deltas into command update events.
+- `yunxi-agent-cli` maps command output deltas and approval lifecycle events into
+  protocol JSONL runtime events.
+- `yunxi-agent-provider` extends provider config with timeout, streaming, and
+  capability metadata controlling tools, parallel tool calls, reasoning, and
+  stream usage.
+
+Stage 4G first construction verification passed on 2026-07-10:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo tree -p yunxi-agent-cli`: pass; default tree contains no
+  `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
+- `git diff --check`: pass with Windows line-ending warnings only
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

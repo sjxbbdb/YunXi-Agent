@@ -116,3 +116,31 @@ fn dynamic_tool_events_have_stable_names() {
 
     assert_eq!(names, vec!["toolCallStarted", "toolCallCompleted"]);
 }
+
+#[test]
+fn approval_events_have_stable_names() {
+    let events = vec![
+        AgentEvent::ApprovalRequested {
+            id: Some("call-1".to_string()),
+            tool_name: "shell".to_string(),
+            reason: "tool execution requires approval".to_string(),
+        },
+        AgentEvent::ApprovalCompleted {
+            id: Some("call-1".to_string()),
+            approved: false,
+            reason: Some("declined".to_string()),
+        },
+    ];
+
+    let names = events
+        .into_iter()
+        .map(|event| {
+            serde_json::to_value(event).expect("json")["type"]
+                .as_str()
+                .expect("type")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["approvalRequested", "approvalCompleted"]);
+}

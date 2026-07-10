@@ -354,7 +354,7 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
             } => output.push(RuntimeEvent::ItemDelta {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
-                delta: ResponseItemDelta::ToolCallArguments {
+                delta: ResponseItemDelta::ToolOutput {
                     call_id: id.clone(),
                     delta: aggregated_output.clone(),
                 },
@@ -442,6 +442,28 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 call_id: id.clone(),
                 output: format!("{name}: {tool_output}"),
                 success: *status == CommandStatus::Completed,
+            }),
+            AgentEvent::ApprovalRequested {
+                id,
+                tool_name,
+                reason,
+            } => output.push(RuntimeEvent::ApprovalRequested {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                call_id: id.clone(),
+                tool_name: tool_name.clone(),
+                reason: reason.clone(),
+            }),
+            AgentEvent::ApprovalCompleted {
+                id,
+                approved,
+                reason,
+            } => output.push(RuntimeEvent::ApprovalCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                call_id: id.clone(),
+                approved: *approved,
+                reason: reason.clone(),
             }),
             AgentEvent::FileChanged { path, kind } => output.push(RuntimeEvent::Item {
                 thread_id: thread_id.clone(),

@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use yunxi_agent_sandbox::ExecutionPolicy;
+use std::time::Duration;
+use yunxi_agent_sandbox::{
+    ApprovalRequirement, ExecutionPolicy, NetworkPolicy, SandboxRequirement,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExecCommand {
@@ -36,6 +39,25 @@ impl ExecCommand {
 
     pub fn canonical_command(&self) -> String {
         canonicalize_shell_command(&self.command)
+    }
+
+    pub fn observed_shell(cwd: impl Into<PathBuf>, command: impl Into<String>) -> Self {
+        let cwd = cwd.into();
+        Self::shell(
+            cwd.clone(),
+            command,
+            ExecutionPolicy {
+                approval: ApprovalRequirement::PreApproved,
+                sandbox: SandboxRequirement::DangerFullAccess,
+                network: NetworkPolicy::Inherit,
+                workspace_root: cwd,
+            },
+        )
+    }
+
+    pub fn with_id(mut self, id: Option<String>) -> Self {
+        self.id = id;
+        self
     }
 }
 
@@ -110,6 +132,51 @@ impl ExecSummary {
             aggregated_output: output.combined(),
             exit_code: output.exit_code,
             timed_out,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExecTrace {
+    pub events: Vec<ExecLifecycleEvent>,
+    pub summary: ExecSummary,
+}
+
+impl ExecTrace {
+    pub fn from_completed_output(
+        command: &ExecCommand,
+        output: ExecOutput,
+        duration: Option<Duration>,
+        timed_out: bool,
+    ) -> Self {
+        let mut events = vec![ExecLifecycleEvent::Started {
+            id: command.id.clone(),
+            command: command.canonical_command(),
+            cwd: command.cwd.clone(),
+        }];
+        if !output.stdout.is_empty() {
+            events.push(ExecLifecycleEvent::OutputDelta {
+                id: command.id.clone(),
+                stream: ExecOutputStream::Stdout,
+                chunk: output.stdout.clone(),
+            });
+        }
+        if !output.stderr.is_empty() {
+            events.push(ExecLifecycleEvent::OutputDelta {
+                id: command.id.clone(),
+                stream: ExecOutputStream::Stderr,
+                chunk: output.stderr.clone(),
+            });
+        }
+        events.push(ExecLifecycleEvent::Completed {
+            id: command.id.clone(),
+            output: output.clone(),
+            duration_millis: duration.map(|duration| duration.as_millis() as u64),
+            timed_out,
+        });
+        Self {
+            summary: ExecSummary::from_output(command, output, timed_out),
+            events,
         }
     }
 }
@@ -219,5 +286,43 @@ mod tests {
 
         assert_eq!(summary.aggregated_output, "out\nerr");
         assert_eq!(summary.exit_code, Some(0));
+    }
+
+    #[test]
+    fn exec_trace_records_started_output_and_completed_events() {
+        let command =
+            ExecCommand::observed_shell(".", "echo yunxi").with_id(Some("exec-1".to_string()));
+        let trace = ExecTrace::from_completed_output(
+            &command,
+            ExecOutput {
+                stdout: "out".to_string(),
+                stderr: "err".to_string(),
+                exit_code: Some(0),
+            },
+            Some(Duration::from_millis(12)),
+            false,
+        );
+
+        assert!(matches!(
+            trace.events.first(),
+            Some(ExecLifecycleEvent::Started { id: Some(id), .. }) if id == "exec-1"
+        ));
+        assert!(trace.events.iter().any(|event| matches!(
+            event,
+            ExecLifecycleEvent::OutputDelta {
+                stream: ExecOutputStream::Stdout,
+                chunk,
+                ..
+            } if chunk == "out"
+        )));
+        assert!(trace.events.iter().any(|event| matches!(
+            event,
+            ExecLifecycleEvent::Completed {
+                duration_millis: Some(12),
+                timed_out: false,
+                ..
+            }
+        )));
+        assert_eq!(trace.summary.aggregated_output, "out\nerr");
     }
 }

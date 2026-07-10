@@ -205,6 +205,10 @@ pub enum ResponseItemDelta {
         call_id: Option<String>,
         status: ToolCallStatus,
     },
+    ToolOutput {
+        call_id: Option<String>,
+        delta: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -287,6 +291,11 @@ pub enum StreamEvent {
         thread_id: ThreadId,
         turn_id: TurnId,
         status: ResponseStatus,
+    },
+    ResponseCancelled {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        reason: Option<String>,
     },
     ResponseFailed {
         thread_id: ThreadId,
@@ -391,6 +400,20 @@ pub enum RuntimeEvent {
         output: String,
         success: bool,
     },
+    ApprovalRequested {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        call_id: Option<String>,
+        tool_name: String,
+        reason: String,
+    },
+    ApprovalCompleted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        call_id: Option<String>,
+        approved: bool,
+        reason: Option<String>,
+    },
     TurnCompleted {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -484,5 +507,21 @@ mod tests {
             metadata.workspaces["D:/YunXi Agent"].has_changes,
             Some(true)
         );
+    }
+
+    #[test]
+    fn approval_runtime_event_round_trips_jsonl() {
+        let event = RuntimeEvent::ApprovalRequested {
+            thread_id: ThreadId("thread-approval".to_string()),
+            turn_id: TurnId("turn-approval".to_string()),
+            call_id: Some("call-approval".to_string()),
+            tool_name: "shell".to_string(),
+            reason: "tool execution requires approval".to_string(),
+        };
+
+        let line = to_jsonl_line(&event).expect("jsonl");
+        let parsed = from_jsonl_line(&line).expect("parsed event");
+
+        assert_eq!(parsed, event);
     }
 }

@@ -10,6 +10,7 @@ use yunxi_agent_core::{
     AgentBackend, AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunResult,
     AgentRunStatus, CommandStatus, FileChangeKind,
 };
+use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderToolCall, StaticProvider,
 };
@@ -18,8 +19,8 @@ use yunxi_agent_storage::{
     SessionId, SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
-    CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolRequest,
-    ToolRequestKind, ToolRouter, ToolRuntime, ToolStatus,
+    CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolPolicyDecision,
+    ToolRequest, ToolRequestKind, ToolRouter, ToolRuntime, ToolStatus,
 };
 
 const DEFAULT_MAX_TURNS: usize = 8;
@@ -224,9 +225,12 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 let tool_request = map_tool_call(&turn.config, tool_call);
                 let dispatch = self.tool_router.route(tool_request)?;
                 emit_tool_dispatch_trace(&sink, &dispatch.trace).await?;
+                emit_approval_requested_if_needed(&sink, &dispatch.trace).await?;
                 emit_tool_started(&sink, &dispatch.request).await?;
                 let tool_response = self.tools.execute(dispatch.request.clone()).await?;
+                emit_tool_lifecycle_events(&sink, &tool_response).await?;
                 emit_tool_completed(&sink, &dispatch.request, &tool_response).await?;
+                emit_approval_completed_if_needed(&sink, &dispatch.trace, &tool_response).await?;
                 emit_tool_warning(&sink, &tool_response).await?;
                 emit_file_changes(&sink, &tool_response).await?;
                 messages.push(ProviderMessage::tool(render_tool_response(&tool_response)));
@@ -418,6 +422,13 @@ pub fn protocol_stream_events_to_agent_events(
                         },
                     });
                 }
+                yunxi_agent_protocol::ResponseItemDelta::ToolOutput { call_id, delta } => {
+                    output.push(AgentEvent::CommandUpdated {
+                        id: call_id.clone(),
+                        command: "tool_output".to_string(),
+                        aggregated_output: delta.clone(),
+                    });
+                }
             },
             yunxi_agent_protocol::StreamEvent::ResponseCompleted { status, .. } => {
                 output.push(AgentEvent::Completed {
@@ -429,6 +440,17 @@ pub fn protocol_stream_events_to_agent_events(
                         | yunxi_agent_protocol::ResponseStatus::Failed
                         | yunxi_agent_protocol::ResponseStatus::Cancelled => AgentRunStatus::Failed,
                     },
+                    usage: None,
+                });
+            }
+            yunxi_agent_protocol::StreamEvent::ResponseCancelled { reason, .. } => {
+                output.push(AgentEvent::Warning {
+                    message: reason
+                        .clone()
+                        .unwrap_or_else(|| "response cancelled".to_string()),
+                });
+                output.push(AgentEvent::Completed {
+                    status: AgentRunStatus::Failed,
                     usage: None,
                 });
             }
@@ -647,6 +669,92 @@ where
         content: trace.summary(),
     })
     .await
+}
+
+async fn emit_approval_requested_if_needed<S>(
+    sink: &S,
+    trace: &ToolDispatchTrace,
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    if let ToolPolicyDecision::Declined { reason } = &trace.policy_decision {
+        if reason.contains("approval") {
+            sink.emit(AgentEvent::ApprovalRequested {
+                id: trace.request_id.clone(),
+                tool_name: trace.tool_name.to_string(),
+                reason: reason.clone(),
+            })
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn emit_approval_completed_if_needed<S>(
+    sink: &S,
+    trace: &ToolDispatchTrace,
+    response: &yunxi_agent_tools::ToolResponse,
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    if let ToolPolicyDecision::Declined { reason } = &trace.policy_decision {
+        if reason.contains("approval") {
+            sink.emit(AgentEvent::ApprovalCompleted {
+                id: response.id.clone().or_else(|| trace.request_id.clone()),
+                approved: false,
+                reason: response.error.clone().or_else(|| Some(reason.clone())),
+            })
+            .await?;
+        }
+    }
+    Ok(())
+}
+
+async fn emit_tool_lifecycle_events<S>(
+    sink: &S,
+    response: &yunxi_agent_tools::ToolResponse,
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    for event in &response.lifecycle_events {
+        match event {
+            ExecLifecycleEvent::OutputDelta { id, stream, chunk } => {
+                let stream_name = match stream {
+                    ExecOutputStream::Stdout => "stdout",
+                    ExecOutputStream::Stderr => "stderr",
+                };
+                sink.emit(AgentEvent::CommandUpdated {
+                    id: id.clone(),
+                    command: stream_name.to_string(),
+                    aggregated_output: chunk.clone(),
+                })
+                .await?;
+            }
+            ExecLifecycleEvent::StdinWritten { id, bytes } => {
+                sink.emit(AgentEvent::Reasoning {
+                    content: format!("stdin written for {:?}: {bytes} byte(s)", id),
+                })
+                .await?;
+            }
+            ExecLifecycleEvent::Cancelled { id } => {
+                sink.emit(AgentEvent::Warning {
+                    message: format!("command cancelled: {:?}", id),
+                })
+                .await?;
+            }
+            ExecLifecycleEvent::Failed { id, message } => {
+                sink.emit(AgentEvent::Error {
+                    message: format!("command failed {:?}: {message}", id),
+                })
+                .await?;
+            }
+            ExecLifecycleEvent::Started { .. } | ExecLifecycleEvent::Completed { .. } => {}
+        }
+    }
+    Ok(())
 }
 
 async fn emit_tool_started<S>(sink: &S, request: &ToolRequest) -> AgentResult<()>

@@ -80,3 +80,66 @@ fn yunxi_jsonl_prints_child_agent_fixture_events() {
     }
     assert!(saw_child);
 }
+
+#[test]
+fn stage_4k_jsonl_fixtures_emit_new_core_events() {
+    let temp = TempDir::new().expect("temp dir");
+    let prompt_expectations = [
+        (
+            "run stage 4k child provider fixture",
+            "\"type\":\"child_agent\"",
+        ),
+        ("run stage 4k sandbox fixture", "Sandbox runner: platform="),
+        ("run stage 4k mcp reuse fixture", "\"type\":\"mcp_session\""),
+        (
+            "run stage 4k child scoped stream fixture",
+            "\"type\":\"child_scoped_stream\"",
+        ),
+    ];
+
+    for (prompt, expected) in prompt_expectations {
+        let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+        let assert = cmd
+            .args([
+                "--backend",
+                "yunxi",
+                "--cwd",
+                temp.path().to_str().expect("temp path"),
+                "--jsonl",
+                prompt,
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(expected));
+
+        let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+        for line in output.lines() {
+            serde_json::from_str::<serde_json::Value>(line).expect("each line is json");
+        }
+    }
+}
+
+#[test]
+fn stage_4k_cancellation_fixture_emits_cancelled_jsonl() {
+    let temp = TempDir::new().expect("temp dir");
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    let assert = cmd
+        .args([
+            "--backend",
+            "yunxi",
+            "--cwd",
+            temp.path().to_str().expect("temp path"),
+            "--jsonl",
+            "run stage 4k cancellation fixture",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"type\":\"cancelled\""))
+        .stdout(predicate::str::contains("\"type\":\"child_scoped_stream\""));
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    for line in output.lines() {
+        serde_json::from_str::<serde_json::Value>(line).expect("each line is json");
+    }
+}

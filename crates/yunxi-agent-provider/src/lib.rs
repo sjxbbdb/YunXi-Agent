@@ -496,7 +496,24 @@ pub enum ProviderErrorKind {
     Timeout,
     InvalidResponse,
     UnsupportedModel,
+    UnsupportedSchema,
     Unknown,
+}
+
+impl ProviderErrorKind {
+    pub fn classification(self) -> &'static str {
+        match self {
+            Self::Auth => "auth_error",
+            Self::RateLimit => "rate_limit",
+            Self::Server => "server_error",
+            Self::Network => "network",
+            Self::Timeout => "timeout",
+            Self::InvalidResponse => "bad_request",
+            Self::UnsupportedModel => "unsupported_model",
+            Self::UnsupportedSchema => "unsupported_schema",
+            Self::Unknown => "unknown_provider_error",
+        }
+    }
 }
 
 pub fn classify_provider_status(status: u16) -> ProviderErrorKind {
@@ -506,6 +523,7 @@ pub fn classify_provider_status(status: u16) -> ProviderErrorKind {
         408 => ProviderErrorKind::Timeout,
         429 => ProviderErrorKind::RateLimit,
         500..=599 => ProviderErrorKind::Server,
+        400 | 422 => ProviderErrorKind::UnsupportedSchema,
         400..=499 => ProviderErrorKind::InvalidResponse,
         _ => ProviderErrorKind::Unknown,
     }
@@ -611,8 +629,11 @@ fn provider_transport_error(error: reqwest::Error) -> AgentError {
     } else {
         ProviderErrorKind::Unknown
     };
-    AgentError::Execution {
-        message: format!("provider transport {kind:?}: {error}"),
+    AgentError::Provider {
+        provider: "openai-compatible".to_string(),
+        status: None,
+        classification: kind.classification().to_string(),
+        message: format!("provider transport failed ({})", kind.classification()),
     }
 }
 
@@ -648,6 +669,8 @@ pub struct ProviderConfig {
     pub base_url: String,
     pub timeout_millis: Option<u64>,
     pub stream: bool,
+    pub profile: Option<String>,
+    pub wire_api: ProviderWireApi,
     pub capabilities: ProviderCapabilities,
 }
 
@@ -659,8 +682,24 @@ impl ProviderConfig {
             base_url: "https://api.openai.com/v1".to_string(),
             timeout_millis: Some(120_000),
             stream: true,
+            profile: None,
+            wire_api: ProviderWireApi::ChatCompletions,
             capabilities: ProviderCapabilities::openai_compatible(),
         }
+    }
+
+    pub fn deepseek() -> Self {
+        Self::openai_compatible("deepseek-v4-flash")
+            .with_name("deepseek")
+            .with_base_url("https://api.deepseek.com")
+            .with_stream(true)
+            .with_profile(Some("deepseek".to_string()))
+            .with_capabilities(ProviderCapabilities::deepseek_compatible())
+    }
+
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
     }
 
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
@@ -678,28 +717,48 @@ impl ProviderConfig {
         self
     }
 
+    pub fn with_profile(mut self, profile: Option<String>) -> Self {
+        self.profile = profile;
+        self
+    }
+
     pub fn with_capabilities(mut self, capabilities: ProviderCapabilities) -> Self {
         self.capabilities = capabilities;
         self
     }
 
     pub fn from_agent_config(config: &AgentConfig) -> Self {
+        let profile = std::env::var("YUNXI_PROVIDER_PROFILE")
+            .ok()
+            .or_else(|| config.provider.clone());
+        let mut provider_config = match profile.as_deref() {
+            Some("deepseek") => Self::deepseek(),
+            _ => Self::openai_compatible("gpt-4.1"),
+        };
         let model = config
             .model
             .clone()
             .or_else(|| std::env::var("YUNXI_AGENT_MODEL").ok())
-            .unwrap_or_else(|| "gpt-4.1".to_string());
+            .unwrap_or_else(|| provider_config.model.clone());
         let base_url = std::env::var("YUNXI_PROVIDER_BASE_URL")
             .or_else(|_| std::env::var("OPENAI_BASE_URL"))
-            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+            .unwrap_or_else(|_| provider_config.base_url.clone());
         let stream = std::env::var("YUNXI_PROVIDER_STREAM")
             .ok()
             .map(|value| !matches!(value.as_str(), "0" | "false" | "False" | "FALSE"))
-            .unwrap_or(true);
-        Self::openai_compatible(model)
-            .with_base_url(base_url)
-            .with_stream(stream)
+            .unwrap_or(provider_config.stream);
+        provider_config.model = model;
+        provider_config.base_url = base_url;
+        provider_config.stream = stream;
+        provider_config.profile = profile;
+        provider_config
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderWireApi {
+    ChatCompletions,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -746,6 +805,15 @@ impl ProviderCapabilities {
             parallel_tool_calls: true,
             reasoning: true,
             stream_usage: true,
+        }
+    }
+
+    pub fn deepseek_compatible() -> Self {
+        Self {
+            tools: true,
+            parallel_tool_calls: false,
+            reasoning: true,
+            stream_usage: false,
         }
     }
 }
@@ -843,6 +911,13 @@ impl AgentProvider for OpenAiCompatibleProvider {
         thread_id: ThreadId,
         turn_id: TurnId,
     ) -> AgentResult<ProviderStream> {
+        if !self.config.stream {
+            return Ok(ProviderStream::from_response(
+                thread_id,
+                turn_id,
+                self.complete(request).await?,
+            ));
+        }
         let _ = self.auth.resolve()?;
         let _ = self.streaming_request_json(&request)?;
         if let Some(response) = &self.fixture_response {
@@ -906,13 +981,7 @@ where
         )?;
         let response = self.send_with_retries(transport_request).await?;
         if !response.is_success() {
-            return Err(AgentError::Execution {
-                message: format!(
-                    "provider transport returned HTTP {} ({:?})",
-                    response.status,
-                    classify_provider_status(response.status)
-                ),
-            });
+            return Err(provider_http_error(&self.provider.config, response.status));
         }
         self.provider
             .parse_stream_events(thread_id, turn_id, &response.body)
@@ -950,13 +1019,7 @@ where
         )?;
         let response = self.send_with_retries(transport_request).await?;
         if !response.is_success() {
-            return Err(AgentError::Execution {
-                message: format!(
-                    "provider transport returned HTTP {} ({:?})",
-                    response.status,
-                    classify_provider_status(response.status)
-                ),
-            });
+            return Err(provider_http_error(&self.provider.config, response.status));
         }
         self.provider.parse_response_json(&response.body)
     }
@@ -967,9 +1030,43 @@ where
         thread_id: ThreadId,
         turn_id: TurnId,
     ) -> AgentResult<ProviderStream> {
+        if !self.provider.config.stream {
+            return Ok(ProviderStream::from_response(
+                thread_id,
+                turn_id,
+                self.complete(request).await?,
+            ));
+        }
         let events = self.stream_events(request, thread_id.0, turn_id.0).await?;
         Ok(ProviderStream::from_events(events))
     }
+}
+
+fn provider_http_error(config: &ProviderConfig, status: u16) -> AgentError {
+    let kind = classify_provider_status(status);
+    let classification = kind.classification();
+    AgentError::Provider {
+        provider: config
+            .profile
+            .clone()
+            .unwrap_or_else(|| config.name.clone()),
+        status: Some(status),
+        classification: classification.to_string(),
+        message: format!(
+            "provider returned HTTP {status} ({classification}); provider={}, host={}, model={}",
+            config.profile.as_deref().unwrap_or(config.name.as_str()),
+            base_url_host(&config.base_url),
+            config.model
+        ),
+    }
+}
+
+fn base_url_host(base_url: &str) -> &str {
+    let without_scheme = base_url
+        .strip_prefix("https://")
+        .or_else(|| base_url.strip_prefix("http://"))
+        .unwrap_or(base_url);
+    without_scheme.split('/').next().unwrap_or(without_scheme)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1018,6 +1115,145 @@ impl AgentProvider for StaticProvider {
                     r#"{"task":"stage 4j child runtime fixture child task"}"#.to_string(),
                 ),
             }));
+        }
+        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+            && request
+                .input
+                .prompt
+                .contains("stage 4k child provider fixture")
+        {
+            if let Some(tool_message) = request
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == ProviderRole::Tool)
+            {
+                return Ok(ProviderResponse::assistant(format!(
+                    "Stage 4K child provider fixture completed with child result: {}",
+                    tool_message.content.trim()
+                )));
+            }
+            return Ok(ProviderResponse::tool_call(ProviderToolCall::MultiAgent {
+                id: Some("stage-4k-child-provider-run".to_string()),
+                action: "spawn_run".to_string(),
+                arguments_json: Some(
+                    r#"{"task":"stage 4k child provider fixture child task"}"#.to_string(),
+                ),
+            }));
+        }
+        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+            && request
+                .input
+                .prompt
+                .contains("stage 4k child scoped stream fixture")
+        {
+            if let Some(tool_message) = request
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == ProviderRole::Tool)
+            {
+                return Ok(ProviderResponse::assistant(format!(
+                    "Stage 4K child scoped stream fixture completed with child result: {}",
+                    tool_message.content.trim()
+                )));
+            }
+            return Ok(ProviderResponse::tool_call(ProviderToolCall::MultiAgent {
+                id: Some("stage-4k-child-scoped-stream-run".to_string()),
+                action: "spawn_run".to_string(),
+                arguments_json: Some(
+                    r#"{"task":"stage 4k child scoped stream fixture child task"}"#.to_string(),
+                ),
+            }));
+        }
+        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+            && request.input.prompt.contains("stage 4k sandbox fixture")
+        {
+            if let Some(tool_message) = request
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == ProviderRole::Tool)
+            {
+                return Ok(ProviderResponse::assistant(format!(
+                    "Stage 4K sandbox fixture completed with shell result: {}",
+                    tool_message.content.trim()
+                )));
+            }
+            return Ok(ProviderResponse::tool_call(ProviderToolCall::Shell {
+                id: Some("stage-4k-sandbox-shell".to_string()),
+                command: "echo YUNXI_SANDBOX_OK".to_string(),
+            }));
+        }
+        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+            && request.input.prompt.contains("stage 4k mcp reuse fixture")
+        {
+            let tool_messages = request
+                .messages
+                .iter()
+                .filter(|message| message.role == ProviderRole::Tool)
+                .map(|message| message.content.trim().to_string())
+                .collect::<Vec<_>>();
+            if !tool_messages.is_empty() {
+                return Ok(ProviderResponse::assistant(format!(
+                    "Stage 4K MCP reuse fixture completed with {} MCP result(s): {}",
+                    tool_messages.len(),
+                    tool_messages.join(" | ")
+                )));
+            }
+            return Ok(ProviderResponse {
+                message: None,
+                tool_calls: vec![
+                    ProviderToolCall::Mcp {
+                        id: Some("stage-4k-mcp-reuse-1".to_string()),
+                        server: "local".to_string(),
+                        tool: "echo".to_string(),
+                        arguments_json: Some(r#"{"text":"first"}"#.to_string()),
+                    },
+                    ProviderToolCall::Mcp {
+                        id: Some("stage-4k-mcp-reuse-2".to_string()),
+                        server: "local".to_string(),
+                        tool: "echo".to_string(),
+                        arguments_json: Some(r#"{"text":"second"}"#.to_string()),
+                    },
+                ],
+                usage: None,
+            });
+        }
+        if self.response_prefix.starts_with("YunXi child agent")
+            && request
+                .input
+                .prompt
+                .contains("stage 4k child scoped stream fixture child task")
+        {
+            if let Some(tool_message) = request
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == ProviderRole::Tool)
+            {
+                return Ok(ProviderResponse::assistant(format!(
+                    "{} with child tool result: {}",
+                    self.response_prefix,
+                    tool_message.content.trim()
+                )));
+            }
+            return Ok(ProviderResponse::tool_call(ProviderToolCall::Shell {
+                id: Some("stage-4k-child-shell".to_string()),
+                command: "echo YUNXI_CHILD_TOOL_DELTA".to_string(),
+            }));
+        }
+        if self.response_prefix.starts_with("YunXi child agent")
+            && request
+                .input
+                .prompt
+                .contains("stage 4k child provider fixture child task")
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "{} via child provider facade: {}",
+                self.response_prefix,
+                request.input.prompt.trim()
+            )));
         }
         Ok(ProviderResponse::assistant(format!(
             "{}: {}",

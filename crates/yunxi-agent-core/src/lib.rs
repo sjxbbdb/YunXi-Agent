@@ -1,4 +1,5 @@
 mod backend;
+mod cancellation;
 mod codex_source;
 mod config;
 mod error;
@@ -7,6 +8,7 @@ mod input;
 mod runner;
 
 pub use backend::{AgentBackend, BackendKind, DryRunBackend};
+pub use cancellation::AgentCancellationToken;
 pub use codex_source::{CodexSource, CodexSourceStatus};
 pub use config::{AgentConfig, ApprovalMode, SandboxMode};
 pub use error::{AgentError, AgentResult};

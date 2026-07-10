@@ -131,6 +131,7 @@ impl AgentSessionMetadata {
                 status: match self.status {
                     Some(AgentRunStatus::Completed) => AgentStatus::Completed,
                     Some(AgentRunStatus::Failed) => AgentStatus::Failed,
+                    Some(AgentRunStatus::Cancelled) => AgentStatus::Interrupted,
                     None => AgentStatus::Running,
                 },
                 role: Some(AgentRole::General),

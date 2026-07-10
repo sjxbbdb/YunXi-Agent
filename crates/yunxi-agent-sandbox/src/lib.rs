@@ -336,6 +336,27 @@ pub struct SandboxRunnerDecision {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SandboxRunnerDiagnostic {
+    pub platform: String,
+    pub status: SandboxRunnerStatus,
+    pub backend: SandboxBackend,
+    pub command: Option<String>,
+    pub cwd: PathBuf,
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxRunnerStatus {
+    Ready,
+    RequiresEscalation,
+    Denied,
+    Timeout,
+    SpawnFailed,
+    NonZeroExit,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum EscalationResponse {
     Approved {
@@ -398,6 +419,31 @@ impl SandboxRunner {
             .escalation_request
             .clone()
             .map(EscalationOutcome::non_interactive_decline)
+    }
+
+    pub fn diagnostic(
+        &self,
+        policy: &ExecutionPolicy,
+        cwd: &Path,
+        command: Option<&str>,
+    ) -> SandboxRunnerDiagnostic {
+        let evaluation = policy.evaluate(cwd, command);
+        let plan = evaluation.execution_plan();
+        let status = if plan.escalation_required {
+            SandboxRunnerStatus::RequiresEscalation
+        } else if plan.approval_required || !plan.allowed {
+            SandboxRunnerStatus::Denied
+        } else {
+            SandboxRunnerStatus::Ready
+        };
+        SandboxRunnerDiagnostic {
+            platform: platform_name().to_string(),
+            status,
+            backend: plan.backend,
+            command: command.map(ToString::to_string),
+            cwd: cwd.to_path_buf(),
+            message: plan.denial_reason,
+        }
     }
 }
 
@@ -474,6 +520,18 @@ fn platform_sandbox_backend() -> SandboxBackend {
         SandboxBackend::LinuxLandlock
     } else {
         SandboxBackend::WorkspaceGuard
+    }
+}
+
+fn platform_name() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "unknown"
     }
 }
 

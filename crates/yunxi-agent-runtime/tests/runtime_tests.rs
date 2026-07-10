@@ -1105,6 +1105,81 @@ async fn yunxi_runtime_executes_provider_requested_mcp_tool_from_workspace_seed(
     );
 }
 
+#[tokio::test]
+async fn stage_4k_child_scoped_stream_fixture_emits_granular_child_events() {
+    let temp = TempDir::new().expect("temp dir");
+    let backend = YunXiRuntimeBackend::for_workspace(temp.path());
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(
+            &backend,
+            AgentInput::text("run stage 4k child scoped stream fixture"),
+        )
+        .await
+        .expect("stage 4k fixture");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ChildScopedStream {
+            event,
+            message: Some(message),
+            ..
+        } if event == "child_provider_delta" && message.contains("Provider turn")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ChildScopedStream {
+            event,
+            message: Some(message),
+            ..
+        } if event == "child_tool_delta" && message.contains("YUNXI_CHILD_TOOL_DELTA")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ChildScopedStream { event, .. } if event == "child_storage_state"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ChildScopedStream { event, .. } if event == "child_session_finished"
+    )));
+}
+
+#[tokio::test]
+async fn stage_4k_cancellation_fixture_records_cancelled_boundaries() {
+    let temp = TempDir::new().expect("temp dir");
+    let backend = YunXiRuntimeBackend::for_workspace(temp.path());
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(
+            &backend,
+            AgentInput::text("run stage 4k cancellation fixture"),
+        )
+        .await
+        .expect("cancellation fixture");
+
+    assert_eq!(result.status, AgentRunStatus::Cancelled);
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Cancelled { .. }))
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ChildScopedStream { event, .. } if event == "child_cancelled"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::StorageState {
+            session_id: Some(_),
+            ..
+        }
+    )));
+}
+
 #[test]
 fn protocol_stream_events_map_to_agent_events() {
     let stream = vec![

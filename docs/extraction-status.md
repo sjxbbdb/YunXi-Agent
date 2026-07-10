@@ -603,6 +603,69 @@ Stage 4K focuses on:
 Live smoke must never print or persist API keys. All smoke artifacts, `.yunxi`
 session output, and `target` build artifacts must be removed after verification.
 
+## Stage 4K Construction Slice
+
+Implemented in this construction slice before final verification:
+
+- `yunxi-agent-provider` owns the `deepseek` provider profile, DeepSeek-compatible
+  capability defaults, stream/non-stream switching through provider-neutral config,
+  and redacted provider error classification.
+- `yunxi-agent-runtime` can run live-provider child agents through an inherited
+  provider facade while preserving deterministic fixture child providers for
+  offline tests.
+- `yunxi-agent-core`, `yunxi-agent-runtime`, and `yunxi-agent-cli` now carry
+  explicit cancellation events, provider error events, and child scoped stream
+  events.
+- `yunxi-agent-sandbox` exposes platform sandbox runner diagnostics for
+  ready/denied/escalation-needed runner states.
+- `yunxi-agent-tools` caches workspace MCP session managers for long-lived reuse
+  and exposes sandbox runner/MCP lifecycle runtime events.
+- `yunxi-agent-mcp` exposes session health, cancel, shutdown, and shutdown-all
+  lifecycle hooks.
+- `scripts/provider/deepseek-live-smoke.ps1` provides the secret-safe DeepSeek
+  live smoke harness.
+
+Final unified verification was run on 2026-07-11:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- Stage 4K offline JSONL fixtures: pass
+  - child provider fixture: 30 JSONL lines, including `child_agent`,
+    `child_scoped_stream`, and `storage_state`
+  - cancellation fixture: 11 JSONL lines, including `cancelled`,
+    `mcp_session`, `child_scoped_stream`, and `storage_state`
+  - sandbox fixture: 17 JSONL lines, including sandbox runner output and tool
+    completion
+  - MCP reuse fixture: 28 JSONL lines, including repeated `mcp_session`
+    lifecycle events
+  - child scoped stream fixture: 45 JSONL lines, including granular
+    `child_scoped_stream` events
+- `cargo tree -p yunxi-agent-cli` dependency scan: pass; no default
+  `codex`, `vendor`, or `yunxi-agent-codex` dependency was found
+- secret-pattern scan across `crates`, `docs`, and `scripts`: pass; no
+  API-key-shaped secret, bearer token, or authorization bearer header pattern
+  was found
+- `git diff --check`: pass with Windows LF/CRLF warnings only
+
+DeepSeek live smoke was also attempted against
+`C:\Users\admin\Desktop\api.txt` without printing or persisting any key:
+
+- stream smoke with `deepseek-v4-flash`: blocked by provider auth, exit code
+  10, one `provider_error` JSONL event, `secret_leak_detected=False`
+- non-stream smoke with `deepseek-v4-flash`: blocked by provider auth, exit
+  code 10, one `provider_error` JSONL event, `secret_leak_detected=False`
+- direct DeepSeek balance authentication probes for all five redacted
+  `api.txt` key candidates returned HTTP 401
+
+The Stage 4K owned runtime/provider/tool construction is verified offline. The
+real DeepSeek live gate remains credential-blocked until a valid DeepSeek key is
+available; it must not be reported as live-provider passed.
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

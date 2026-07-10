@@ -2,8 +2,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentEvent, AgentInput, AgentRunResult, ApprovalMode, BackendKind,
-    CommandStatus, SandboxMode,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunResult, ApprovalMode,
+    BackendKind, CommandStatus, SandboxMode,
 };
 use yunxi_agent_protocol::{
     FunctionCallOutput, ProtocolRole, ResponseItem, ResponseItemDelta, RuntimeEvent, ThreadId,
@@ -224,10 +224,15 @@ impl From<CliSandboxMode> for SandboxMode {
 
 #[tokio::main]
 async fn main() {
+    let jsonl_requested = std::env::args().any(|arg| arg == "--jsonl");
     let code = match run_cli().await {
         Ok(()) => CliExitCode::Success,
         Err(error) => {
-            eprintln!("{error:#}");
+            if jsonl_requested {
+                print_cli_error_jsonl(&error);
+            } else {
+                eprintln!("{error:#}");
+            }
             classify_cli_error(&error)
         }
     };
@@ -277,6 +282,20 @@ async fn run_cli() -> Result<()> {
 }
 
 fn classify_cli_error(error: &anyhow::Error) -> CliExitCode {
+    if let Some(agent_error) = find_agent_error(error) {
+        return match agent_error {
+            AgentError::Provider { .. } => CliExitCode::ProviderError,
+            AgentError::EmptyPrompt | AgentError::MissingWorkingDirectory { .. } => {
+                CliExitCode::InvalidInput
+            }
+            AgentError::Execution { message }
+                if message.to_ascii_lowercase().contains("cancelled") =>
+            {
+                CliExitCode::Cancelled
+            }
+            _ => CliExitCode::InternalError,
+        };
+    }
     let message = format!("{error:#}").to_ascii_lowercase();
     if message.contains("a prompt is required")
         || message.contains("session not found")
@@ -296,6 +315,63 @@ fn classify_cli_error(error: &anyhow::Error) -> CliExitCode {
     } else {
         CliExitCode::InternalError
     }
+}
+
+fn print_cli_error_jsonl(error: &anyhow::Error) {
+    let event = if let Some(AgentError::Provider {
+        provider,
+        status,
+        classification,
+        message,
+    }) = find_agent_error(error)
+    {
+        RuntimeEvent::ProviderError {
+            thread_id: Some(ThreadId("cli-thread".to_string())),
+            turn_id: Some(TurnId("cli-turn".to_string())),
+            provider: provider.clone(),
+            status: *status,
+            classification: classification.clone(),
+            message: message.clone(),
+        }
+    } else if format!("{error:#}")
+        .to_ascii_lowercase()
+        .contains("cancelled")
+    {
+        RuntimeEvent::Cancelled {
+            thread_id: Some(ThreadId("cli-thread".to_string())),
+            turn_id: Some(TurnId("cli-turn".to_string())),
+            reason: Some(redact_secret_fragments(&format!("{error:#}"))),
+        }
+    } else {
+        RuntimeEvent::Error {
+            thread_id: Some(ThreadId("cli-thread".to_string())),
+            turn_id: Some(TurnId("cli-turn".to_string())),
+            message: redact_secret_fragments(&format!("{error:#}")),
+        }
+    };
+    if let Ok(line) = to_jsonl_line(&event) {
+        println!("{line}");
+    }
+}
+
+fn find_agent_error(error: &anyhow::Error) -> Option<&AgentError> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<AgentError>())
+}
+
+fn redact_secret_fragments(message: &str) -> String {
+    message
+        .split_whitespace()
+        .map(|part| {
+            if part.starts_with("sk-") || part.starts_with("Bearer") {
+                "[redacted]"
+            } else {
+                part
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 async fn run_agent_backend(
@@ -598,6 +674,23 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 status: status.clone(),
                 message: message.clone(),
             }),
+            AgentEvent::ChildScopedStream {
+                agent_id,
+                child_session_id,
+                parent_session_id,
+                event,
+                seq,
+                message,
+            } => output.push(RuntimeEvent::ChildScopedStream {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                agent_id: agent_id.clone(),
+                child_session_id: child_session_id.clone(),
+                parent_session_id: parent_session_id.clone(),
+                event: event.clone(),
+                seq: *seq,
+                message: message.clone(),
+            }),
             AgentEvent::ContextStatus {
                 active_context_tokens,
                 token_limit_reached,
@@ -646,6 +739,24 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     message: message.clone(),
                 });
             }
+            AgentEvent::Cancelled { reason } => output.push(RuntimeEvent::Cancelled {
+                thread_id: Some(thread_id.clone()),
+                turn_id: Some(turn_id.clone()),
+                reason: reason.clone(),
+            }),
+            AgentEvent::ProviderError {
+                provider,
+                status,
+                classification,
+                message,
+            } => output.push(RuntimeEvent::ProviderError {
+                thread_id: Some(thread_id.clone()),
+                turn_id: Some(turn_id.clone()),
+                provider: provider.clone(),
+                status: *status,
+                classification: classification.clone(),
+                message: message.clone(),
+            }),
             AgentEvent::Completed { status, .. } => {
                 output.push(RuntimeEvent::TurnCompleted {
                     thread_id: thread_id.clone(),
@@ -656,6 +767,12 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                         thread_id: Some(thread_id.clone()),
                         turn_id: Some(turn_id.clone()),
                         message: "agent run failed".to_string(),
+                    });
+                } else if *status == yunxi_agent_core::AgentRunStatus::Cancelled {
+                    output.push(RuntimeEvent::Cancelled {
+                        thread_id: Some(thread_id.clone()),
+                        turn_id: Some(turn_id.clone()),
+                        reason: Some("agent run cancelled".to_string()),
                     });
                 }
             }

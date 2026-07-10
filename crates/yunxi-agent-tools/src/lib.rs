@@ -3,13 +3,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
 use yunxi_agent_exec::{ExecCommand, ExecLifecycleEvent, ExecManager};
 use yunxi_agent_mcp::{
-    InMemoryMcpRuntime, McpRuntime, McpSessionManager, McpSessionState, McpSessionStatus,
-    McpToolInvocation, load_in_memory_runtime_seed, load_workspace_mcp_configs,
+    InMemoryMcpRuntime, McpAuthStatus, McpRuntime, McpRuntimeSnapshot, McpServerConfig,
+    McpServerSnapshot, McpSessionManager, McpSessionState, McpSessionStatus, McpToolInvocation,
+    McpToolResult, McpToolSpec, McpTransport, load_in_memory_runtime_seed,
+    load_workspace_mcp_configs,
 };
 use yunxi_agent_multi_agent::{
     AgentId, AgentMetadata, InMemoryAgentRegistry, MultiAgentCommand, MultiAgentCommandResult,
@@ -17,7 +19,7 @@ use yunxi_agent_multi_agent::{
 use yunxi_agent_patch::{PatchFileChangeKind, apply_patch_detailed};
 use yunxi_agent_sandbox::{
     ApprovalRequirement, ExecutionPolicy, NetworkPolicy, PolicyDecision, PolicyEvaluation,
-    SandboxRequirement,
+    SandboxRequirement, SandboxRunner,
 };
 use yunxi_agent_skills::{
     DynamicToolKind, DynamicToolMetadata, SkillCatalog, SkillInvocation, SkillInvocationResult,
@@ -747,6 +749,14 @@ pub enum ToolRuntimeEvent {
         escalation_required: bool,
         denial_reason: Option<String>,
     },
+    SandboxRunner {
+        platform: String,
+        status: String,
+        backend: String,
+        command: Option<String>,
+        cwd: String,
+        message: Option<String>,
+    },
     McpSession {
         server: String,
         status: String,
@@ -763,6 +773,14 @@ pub enum ToolRuntimeEvent {
         child_session_id: String,
         parent_session_id: Option<String>,
         status: String,
+        message: Option<String>,
+    },
+    ChildScopedStream {
+        agent_id: String,
+        child_session_id: String,
+        parent_session_id: Option<String>,
+        event: String,
+        seq: usize,
         message: Option<String>,
     },
     PatchDiagnostic {
@@ -874,13 +892,28 @@ impl ToolPolicy {
 fn policy_runtime_events(request: &ToolRequest) -> Vec<ToolRuntimeEvent> {
     let evaluation = request.policy.evaluation_for(request);
     let plan = evaluation.execution_plan();
-    vec![ToolRuntimeEvent::SandboxDecision {
-        allowed: plan.allowed,
-        backend: format!("{:?}", plan.backend),
-        network: format!("{:?}", plan.network),
-        escalation_required: plan.escalation_required,
-        denial_reason: plan.denial_reason,
-    }]
+    let runner_diagnostic = SandboxRunner.diagnostic(
+        &request.policy.execution_policy,
+        &request.cwd,
+        request.kind.policy_command().as_deref(),
+    );
+    vec![
+        ToolRuntimeEvent::SandboxDecision {
+            allowed: plan.allowed,
+            backend: format!("{:?}", plan.backend),
+            network: format!("{:?}", plan.network),
+            escalation_required: plan.escalation_required,
+            denial_reason: plan.denial_reason,
+        },
+        ToolRuntimeEvent::SandboxRunner {
+            platform: runner_diagnostic.platform,
+            status: format!("{:?}", runner_diagnostic.status).to_ascii_lowercase(),
+            backend: format!("{:?}", runner_diagnostic.backend),
+            command: runner_diagnostic.command,
+            cwd: runner_diagnostic.cwd.display().to_string(),
+            message: runner_diagnostic.message,
+        },
+    ]
 }
 
 fn declined_by_policy(request: &ToolRequest) -> Option<ToolResponse> {
@@ -962,6 +995,7 @@ impl ToolRuntime for ShellToolRuntime {
 pub struct CompositeToolRuntime {
     shell: ShellToolRuntime,
     mcp: Arc<dyn McpRuntime>,
+    workspace_mcp_sessions: Arc<Mutex<BTreeMap<PathBuf, McpSessionManager>>>,
     agents: InMemoryAgentRegistry,
     skill_roots: Vec<PathBuf>,
 }
@@ -981,7 +1015,8 @@ impl Default for CompositeToolRuntime {
     fn default() -> Self {
         Self {
             shell: ShellToolRuntime,
-            mcp: Arc::new(InMemoryMcpRuntime::default()),
+            mcp: Arc::new(default_fixture_mcp_runtime()),
+            workspace_mcp_sessions: Arc::default(),
             agents: InMemoryAgentRegistry::default(),
             skill_roots: default_skill_roots(),
         }
@@ -1010,6 +1045,33 @@ impl CompositeToolRuntime {
     pub fn agent_registry(&self) -> &InMemoryAgentRegistry {
         &self.agents
     }
+
+    fn workspace_session_for(&self, cwd: &Path) -> AgentResult<Option<McpSessionManager>> {
+        let key = cwd.to_path_buf();
+        if let Some(manager) = self
+            .workspace_mcp_sessions
+            .lock()
+            .map_err(|_| AgentError::Execution {
+                message: "workspace MCP session cache lock was poisoned".to_string(),
+            })?
+            .get(&key)
+            .cloned()
+        {
+            return Ok(Some(manager));
+        }
+        let configs = load_workspace_mcp_configs(cwd)?;
+        if configs.is_empty() {
+            return Ok(None);
+        }
+        let manager = McpSessionManager::from_configs(configs)?;
+        self.workspace_mcp_sessions
+            .lock()
+            .map_err(|_| AgentError::Execution {
+                message: "workspace MCP session cache lock was poisoned".to_string(),
+            })?
+            .insert(key, manager.clone());
+        Ok(Some(manager))
+    }
 }
 
 #[async_trait]
@@ -1028,6 +1090,7 @@ impl ToolRuntime for CompositeToolRuntime {
             } => {
                 run_mcp_tool(
                     Arc::clone(&self.mcp),
+                    self.workspace_session_for(&request.cwd)?,
                     request.id,
                     request.cwd,
                     server,
@@ -1213,6 +1276,7 @@ fn run_view_image(id: Option<String>, cwd: PathBuf, path: String) -> AgentResult
 
 async fn run_mcp_tool(
     runtime: Arc<dyn McpRuntime>,
+    workspace_session: Option<McpSessionManager>,
     id: Option<String>,
     cwd: PathBuf,
     server: String,
@@ -1226,7 +1290,6 @@ async fn run_mcp_tool(
     };
     let mut runtime_events = Vec::new();
     let workspace_runtime = load_workspace_mcp_runtime(&cwd)?;
-    let workspace_session = McpSessionManager::from_workspace(&cwd)?;
     let result = match workspace_runtime {
         Some(workspace_runtime) => workspace_runtime.call_tool(invocation).await,
         None => match workspace_session {
@@ -1237,17 +1300,33 @@ async fn run_mcp_tool(
                         .into_iter()
                         .map(mcp_session_runtime_event),
                 );
-                match workspace_session.initialize(&invocation.server).await {
-                    Ok(state) => runtime_events.push(mcp_session_runtime_event(state)),
-                    Err(error) => runtime_events.push(ToolRuntimeEvent::McpSession {
+                let already_initialized = workspace_session.snapshot()?.iter().any(|state| {
+                    state.server == invocation.server
+                        && matches!(state.status, McpSessionStatus::Initialized)
+                });
+                if already_initialized {
+                    runtime_events.push(ToolRuntimeEvent::McpSession {
                         server: invocation.server.clone(),
-                        status: "failed".to_string(),
-                        message: Some(error.to_string()),
-                    }),
+                        status: "reused".to_string(),
+                        message: Some("long-lived MCP session reused".to_string()),
+                    });
+                } else {
+                    match workspace_session.initialize(&invocation.server).await {
+                        Ok(state) => runtime_events.push(mcp_session_runtime_event(state)),
+                        Err(error) => runtime_events.push(ToolRuntimeEvent::McpSession {
+                            server: invocation.server.clone(),
+                            status: "failed".to_string(),
+                            message: Some(error.to_string()),
+                        }),
+                    }
                 }
                 workspace_session.call_tool(invocation).await
             }
-            None => runtime.call_tool(invocation).await,
+            None => {
+                let result = runtime.call_tool(invocation).await;
+                runtime_events.extend(mcp_lifecycle_runtime_events(runtime.events().await?));
+                result
+            }
         },
     };
     match result {
@@ -1260,6 +1339,104 @@ async fn run_mcp_tool(
                 .with_runtime_events(runtime_events),
         ),
     }
+}
+
+fn default_fixture_mcp_runtime() -> InMemoryMcpRuntime {
+    let mut snapshot = McpRuntimeSnapshot::default();
+    snapshot.servers.insert(
+        "local".to_string(),
+        McpServerSnapshot {
+            config: Some(McpServerConfig {
+                name: "local".to_string(),
+                transport: McpTransport::Stdio {
+                    command: "fixture".to_string(),
+                    args: Vec::new(),
+                },
+                enabled: true,
+            }),
+            resources: Vec::new(),
+            tools: vec![McpToolSpec {
+                server: "local".to_string(),
+                name: "echo".to_string(),
+                title: Some("Echo".to_string()),
+                description: Some("YunXi fixture MCP echo tool".to_string()),
+                input_schema: json!({"type": "object"}),
+                destructive_hint: Some(false),
+                open_world_hint: Some(false),
+                requires_approval: false,
+            }],
+            auth_status: Some(McpAuthStatus::Authenticated),
+        },
+    );
+    let runtime = InMemoryMcpRuntime::new(snapshot);
+    let _ = runtime.add_tool_result(
+        "local",
+        "echo",
+        McpToolResult {
+            content: "YUNXI_MCP_REUSE_OK".to_string(),
+        },
+    );
+    runtime
+}
+
+fn mcp_lifecycle_runtime_events(
+    events: Vec<yunxi_agent_mcp::McpLifecycleEvent>,
+) -> Vec<ToolRuntimeEvent> {
+    events
+        .into_iter()
+        .filter_map(|event| match event {
+            yunxi_agent_mcp::McpLifecycleEvent::ServerConfigured { server } => {
+                Some(ToolRuntimeEvent::McpSession {
+                    server,
+                    status: "configured".to_string(),
+                    message: None,
+                })
+            }
+            yunxi_agent_mcp::McpLifecycleEvent::SessionReused {
+                server,
+                reuse_count,
+            } => Some(ToolRuntimeEvent::McpSession {
+                server,
+                status: "reused".to_string(),
+                message: Some(format!("reuse_count={reuse_count}")),
+            }),
+            yunxi_agent_mcp::McpLifecycleEvent::ToolStarted { server, tool, .. } => {
+                Some(ToolRuntimeEvent::McpSession {
+                    server,
+                    status: "tool_started".to_string(),
+                    message: Some(tool),
+                })
+            }
+            yunxi_agent_mcp::McpLifecycleEvent::ToolCompleted {
+                server,
+                tool,
+                status,
+                ..
+            } => Some(ToolRuntimeEvent::McpSession {
+                server,
+                status: format!("{status:?}").to_ascii_lowercase(),
+                message: Some(tool),
+            }),
+            yunxi_agent_mcp::McpLifecycleEvent::ApprovalRequested {
+                server,
+                tool,
+                question,
+            } => Some(ToolRuntimeEvent::McpSession {
+                server,
+                status: "approval_requested".to_string(),
+                message: Some(format!("{tool}: {question}")),
+            }),
+            yunxi_agent_mcp::McpLifecycleEvent::ElicitationRequested { server, message } => {
+                Some(ToolRuntimeEvent::McpSession {
+                    server,
+                    status: "elicitation_requested".to_string(),
+                    message: Some(message),
+                })
+            }
+            yunxi_agent_mcp::McpLifecycleEvent::ResourcesListed { .. }
+            | yunxi_agent_mcp::McpLifecycleEvent::ResourceRead { .. } => None,
+        })
+        .collect()
 }
 
 fn mcp_session_runtime_event(state: McpSessionState) -> ToolRuntimeEvent {
@@ -1275,6 +1452,7 @@ fn mcp_session_status_name(status: McpSessionStatus) -> &'static str {
         McpSessionStatus::Configured => "configured",
         McpSessionStatus::Initialized => "initialized",
         McpSessionStatus::Failed => "failed",
+        McpSessionStatus::Cancelled => "cancelled",
         McpSessionStatus::Shutdown => "shutdown",
     }
 }

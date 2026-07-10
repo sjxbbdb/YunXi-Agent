@@ -190,6 +190,49 @@ fn provider_capabilities_can_disable_tools_and_stream_usage() {
     assert_eq!(transport.timeout_millis, Some(5_000));
 }
 
+#[test]
+fn deepseek_profile_sets_provider_neutral_defaults() {
+    let config = ProviderConfig::deepseek();
+
+    assert_eq!(config.name, "deepseek");
+    assert_eq!(config.profile.as_deref(), Some("deepseek"));
+    assert_eq!(config.model, "deepseek-v4-flash");
+    assert_eq!(config.base_url, "https://api.deepseek.com");
+    assert!(config.stream);
+    assert!(config.capabilities.tools);
+    assert!(!config.capabilities.parallel_tool_calls);
+    assert!(!config.capabilities.stream_usage);
+}
+
+#[tokio::test]
+async fn provider_http_errors_are_classified_and_redacted() {
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::deepseek(),
+        ProviderAuth::ApiKey("test-secret-value-that-must-not-leak".to_string()),
+        FixtureTransport::new(401, r#"{"error":"bad key"}"#),
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("transport"),
+    );
+
+    let error = provider.complete(request).await.expect_err("auth error");
+    let rendered = error.to_string();
+
+    assert!(matches!(
+        error,
+        yunxi_agent_core::AgentError::Provider {
+            status: Some(401),
+            ref classification,
+            ..
+        } if classification == "auth_error"
+    ));
+    assert!(rendered.contains("provider returned HTTP 401"));
+    assert!(!rendered.contains("test-secret-value"));
+    assert!(!rendered.contains("Authorization"));
+    assert!(!rendered.contains("Bearer"));
+}
+
 #[tokio::test]
 async fn fixture_transport_returns_configured_response() {
     let transport = FixtureTransport::new(200, r#"{"ok":true}"#);

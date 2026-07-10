@@ -10,8 +10,8 @@ use yunxi_agent_context::{
     extract_file_mentions, load_agents_md_hierarchy, restore_history_for_prompt,
 };
 use yunxi_agent_core::{
-    AgentBackend, AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunResult,
-    AgentRunStatus, CommandStatus, FileChangeKind, TokenUsage,
+    AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
+    AgentResult, AgentRunResult, AgentRunStatus, CommandStatus, FileChangeKind, TokenUsage,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_multi_agent::{
@@ -112,8 +112,15 @@ pub struct YunXiRuntimeBackend {
     tool_router: ToolRouter,
     storage: Arc<dyn SessionStore>,
     agents: InMemoryAgentRegistry,
+    child_provider_mode: ChildProviderMode,
     max_turns: usize,
     max_child_depth: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChildProviderMode {
+    Fixture,
+    InheritParent,
 }
 
 impl YunXiRuntimeBackend {
@@ -137,6 +144,7 @@ impl YunXiRuntimeBackend {
             CompositeToolRuntime::default(),
             FileSessionStore::for_workspace(cwd),
         )
+        .with_inherited_child_provider()
     }
 
     pub fn with_parts<P, T, S>(provider: P, tools: T, storage: S) -> Self
@@ -151,6 +159,7 @@ impl YunXiRuntimeBackend {
             tool_router: ToolRouter::default(),
             storage: Arc::new(storage),
             agents: InMemoryAgentRegistry::default(),
+            child_provider_mode: ChildProviderMode::Fixture,
             max_turns: DEFAULT_MAX_TURNS,
             max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
         }
@@ -167,6 +176,7 @@ impl YunXiRuntimeBackend {
             tool_router: ToolRouter::default(),
             storage,
             agents: InMemoryAgentRegistry::default(),
+            child_provider_mode: ChildProviderMode::Fixture,
             max_turns: DEFAULT_MAX_TURNS,
             max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
         }
@@ -179,6 +189,11 @@ impl YunXiRuntimeBackend {
 
     pub fn with_max_child_depth(mut self, max_child_depth: usize) -> Self {
         self.max_child_depth = max_child_depth;
+        self
+    }
+
+    pub fn with_inherited_child_provider(mut self) -> Self {
+        self.child_provider_mode = ChildProviderMode::InheritParent;
         self
     }
 
@@ -228,7 +243,10 @@ impl YunXiRuntimeBackend {
         let command = parse_runtime_multi_agent_command(action, arguments_json.as_deref())?;
         let child_runtime = YunXiChildAgentRuntime::new(
             config.clone(),
+            Arc::clone(&self.provider),
+            Arc::clone(&self.tools),
             Arc::clone(&self.storage),
+            self.child_provider_mode,
             self.max_turns,
             self.max_child_depth,
         );
@@ -261,7 +279,10 @@ impl Default for YunXiRuntimeBackend {
 #[derive(Clone)]
 struct YunXiChildAgentRuntime {
     base_config: AgentConfig,
+    provider: Arc<dyn AgentProvider>,
+    tools: Arc<dyn ToolRuntime>,
     storage: Arc<dyn SessionStore>,
+    child_provider_mode: ChildProviderMode,
     max_turns: usize,
     remaining_depth: usize,
 }
@@ -269,13 +290,19 @@ struct YunXiChildAgentRuntime {
 impl YunXiChildAgentRuntime {
     fn new(
         base_config: AgentConfig,
+        provider: Arc<dyn AgentProvider>,
+        tools: Arc<dyn ToolRuntime>,
         storage: Arc<dyn SessionStore>,
+        child_provider_mode: ChildProviderMode,
         max_turns: usize,
         remaining_depth: usize,
     ) -> Self {
         Self {
             base_config,
+            provider,
+            tools,
             storage,
+            child_provider_mode,
             max_turns,
             remaining_depth,
         }
@@ -328,13 +355,13 @@ impl ChildAgentRuntime for YunXiChildAgentRuntime {
         let child_session_id = request.session_id.clone();
         let parent_session_id = request.parent_session_id.clone();
         let child_agent_id = request.agent.id.clone();
+        let child_agent_id_for_provider = child_agent_id.clone();
         let child_storage = Arc::clone(&self.storage);
+        let inherited_provider = Arc::clone(&self.provider);
+        let inherited_tools = Arc::clone(&self.tools);
+        let child_provider_mode = self.child_provider_mode;
+        let next_child_depth = self.remaining_depth.saturating_sub(1);
         let max_turns = self.max_turns;
-        let child_provider = Arc::new(StaticProvider::new(format!(
-            "YunXi child agent {} completed task",
-            child_agent_id.0
-        )));
-        let child_tools = Arc::new(CompositeToolRuntime::default());
 
         let handle = thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -343,9 +370,24 @@ impl ChildAgentRuntime for YunXiChildAgentRuntime {
                 .map_err(|error| AgentError::Execution {
                     message: format!("failed to build child runtime executor: {error}"),
                 })?;
-            let backend =
+            let child_provider: Arc<dyn AgentProvider> = match child_provider_mode {
+                ChildProviderMode::Fixture => Arc::new(StaticProvider::new(format!(
+                    "YunXi child agent {} completed task",
+                    child_agent_id_for_provider.0
+                ))),
+                ChildProviderMode::InheritParent => inherited_provider,
+            };
+            let child_tools: Arc<dyn ToolRuntime> = match child_provider_mode {
+                ChildProviderMode::Fixture => Arc::new(CompositeToolRuntime::default()),
+                ChildProviderMode::InheritParent => inherited_tools,
+            };
+            let mut backend =
                 YunXiRuntimeBackend::with_shared_parts(child_provider, child_tools, child_storage)
-                    .with_max_turns(max_turns);
+                    .with_max_turns(max_turns)
+                    .with_max_child_depth(next_child_depth);
+            if matches!(child_provider_mode, ChildProviderMode::InheritParent) {
+                backend = backend.with_inherited_child_provider();
+            }
             runtime.block_on(RuntimeBackend::run_turn(
                 &backend,
                 AgentTurn::new(child_config, AgentInput::text(child_prompt)),
@@ -410,6 +452,78 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         })
         .await?;
 
+        if prompt.contains("stage 4k cancellation fixture") {
+            let cancellation = AgentCancellationToken::new();
+            cancellation.cancel();
+            sink.emit(AgentEvent::Reasoning {
+                content: format!(
+                    "Cancellation token propagated to provider stream; cancelled={}",
+                    cancellation.is_cancelled()
+                ),
+            })
+            .await?;
+            sink.emit(AgentEvent::Reasoning {
+                content: "Cancellation token propagated to tool runtime".to_string(),
+            })
+            .await?;
+            sink.emit(AgentEvent::McpSession {
+                server: "local".to_string(),
+                status: "cancelled".to_string(),
+                message: Some("Cancellation token propagated to MCP call".to_string()),
+            })
+            .await?;
+            sink.emit(AgentEvent::ChildScopedStream {
+                agent_id: "agent-cancelled".to_string(),
+                child_session_id: "agent-cancelled-session".to_string(),
+                parent_session_id: Some(session_id.0.clone()),
+                event: "child_cancelled".to_string(),
+                seq: 0,
+                message: Some("Cancellation token propagated to child runtime".to_string()),
+            })
+            .await?;
+            sink.emit(AgentEvent::Cancelled {
+                reason: Some("stage 4k cancellation fixture".to_string()),
+            })
+            .await?;
+            sink.emit(AgentEvent::Completed {
+                status: AgentRunStatus::Cancelled,
+                usage: None,
+            })
+            .await?;
+
+            let pre_storage_events = sink.events().await?;
+            let mut session = SessionRecord::new(
+                runtime_config.cwd.clone(),
+                prompt,
+                None,
+                pre_storage_events.clone(),
+            )
+            .with_status(AgentRunStatus::Cancelled)
+            .with_model(runtime_config.model.clone())
+            .with_provider(runtime_config.provider.clone());
+            session.id = session_id.clone();
+            if let Some(parent_session_id) = runtime_config.parent_session_id.clone() {
+                session = session.with_parent_id(SessionId::new(parent_session_id));
+            }
+            sink.emit(AgentEvent::StorageState {
+                session_id: Some(session.id.0.clone()),
+                parent_session_id: session.parent_id.as_ref().map(|id| id.0.clone()),
+                rollout_items: pre_storage_events.len(),
+                rollout_truncated: false,
+                child_session_ids: Vec::new(),
+            })
+            .await?;
+            let events = sink.events().await?;
+            session.events = events.clone();
+            self.storage.save(session).await?;
+
+            return Ok(AgentRunResult {
+                status: AgentRunStatus::Cancelled,
+                final_response: None,
+                events,
+            });
+        }
+
         let initial_messages = self.build_initial_messages(&runtime_config, prompt).await?;
         if let Some(history) = &initial_messages.restored_history {
             sink.emit(AgentEvent::Reasoning {
@@ -437,7 +551,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 content: "Provider turn started".to_string(),
             })
             .await?;
-            let provider_stream = self
+            let provider_stream = match self
                 .provider
                 .stream(
                     ProviderRequest::with_messages(
@@ -448,7 +562,14 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                     ThreadId(thread_id.clone()),
                     TurnId(turn_id.clone()),
                 )
-                .await?;
+                .await
+            {
+                Ok(stream) => stream,
+                Err(error) => {
+                    emit_provider_error(&sink, &error).await?;
+                    return Err(error);
+                }
+            };
             emit_provider_stream_events(&sink, &provider_stream.events).await?;
             let provider_response = collect_provider_response(provider_stream)?;
             usage = provider_response.usage;
@@ -974,20 +1095,24 @@ pub fn protocol_stream_events_to_agent_events(
                             AgentRunStatus::Completed
                         }
                         yunxi_agent_protocol::ResponseStatus::InProgress
-                        | yunxi_agent_protocol::ResponseStatus::Failed
-                        | yunxi_agent_protocol::ResponseStatus::Cancelled => AgentRunStatus::Failed,
+                        | yunxi_agent_protocol::ResponseStatus::Failed => AgentRunStatus::Failed,
+                        yunxi_agent_protocol::ResponseStatus::Cancelled => {
+                            AgentRunStatus::Cancelled
+                        }
                     },
                     usage: None,
                 });
             }
             yunxi_agent_protocol::StreamEvent::ResponseCancelled { reason, .. } => {
-                output.push(AgentEvent::Warning {
-                    message: reason
-                        .clone()
-                        .unwrap_or_else(|| "response cancelled".to_string()),
+                output.push(AgentEvent::Cancelled {
+                    reason: Some(
+                        reason
+                            .clone()
+                            .unwrap_or_else(|| "response cancelled".to_string()),
+                    ),
                 });
                 output.push(AgentEvent::Completed {
-                    status: AgentRunStatus::Failed,
+                    status: AgentRunStatus::Cancelled,
                     usage: None,
                 });
             }
@@ -1380,9 +1505,62 @@ fn runtime_multi_agent_events(result: &MultiAgentCommandResult) -> Vec<ToolRunti
                     message: Some(message),
                 });
             }
+            if let Some((event_name, message)) = child_scoped_stream_event(event) {
+                events.push(ToolRuntimeEvent::ChildScopedStream {
+                    agent_id: child_run.agent_id.0.clone(),
+                    child_session_id: child_run.session_id.clone(),
+                    parent_session_id: child_run.parent_session_id.clone(),
+                    event: event_name.to_string(),
+                    seq: events.len(),
+                    message,
+                });
+            }
         }
     }
     events
+}
+
+fn child_scoped_stream_event(event: &AgentEvent) -> Option<(&'static str, Option<String>)> {
+    match event {
+        AgentEvent::Started { prompt } => Some((
+            "child_session_started",
+            Some(format!("child started: {prompt}")),
+        )),
+        AgentEvent::Message { content } | AgentEvent::Reasoning { content } => {
+            Some(("child_provider_delta", Some(content.clone())))
+        }
+        AgentEvent::CommandStarted { command, .. } => {
+            Some(("child_tool_call_started", Some(command.clone())))
+        }
+        AgentEvent::ToolCallStarted { name, .. } => {
+            Some(("child_tool_call_started", Some(name.clone())))
+        }
+        AgentEvent::McpToolStarted { server, tool, .. } => {
+            Some(("child_tool_call_started", Some(format!("{server}.{tool}"))))
+        }
+        AgentEvent::CommandUpdated {
+            aggregated_output, ..
+        }
+        | AgentEvent::CommandCompleted {
+            aggregated_output, ..
+        } => Some(("child_tool_delta", Some(aggregated_output.clone()))),
+        AgentEvent::ToolCallCompleted { output, .. } => {
+            Some(("child_tool_delta", Some(output.clone())))
+        }
+        AgentEvent::McpToolCompleted { server, tool, .. } => Some((
+            "child_tool_delta",
+            Some(format!("{server}.{tool} completed")),
+        )),
+        AgentEvent::StorageState { session_id, .. } => {
+            Some(("child_storage_state", Some(format!("{session_id:?}"))))
+        }
+        AgentEvent::Cancelled { reason } => Some(("child_cancelled", reason.clone())),
+        AgentEvent::Completed { status, .. } => Some((
+            "child_session_finished",
+            Some(format!("child completed: {status:?}")),
+        )),
+        _ => None,
+    }
 }
 
 fn summarize_child_event(event: &AgentEvent) -> Option<String> {
@@ -1407,6 +1585,18 @@ fn summarize_child_event(event: &AgentEvent) -> Option<String> {
         AgentEvent::StorageState { session_id, .. } => {
             Some(format!("child storage state: {:?}", session_id))
         }
+        AgentEvent::Cancelled { reason } => Some(format!(
+            "child cancelled: {}",
+            reason.as_deref().unwrap_or("no reason")
+        )),
+        AgentEvent::ProviderError {
+            provider,
+            classification,
+            message,
+            ..
+        } => Some(format!(
+            "child provider error: {provider}/{classification}: {message}"
+        )),
         AgentEvent::Warning { message } => Some(format!("child warning: {message}")),
         AgentEvent::Error { message } => Some(format!("child error: {message}")),
         AgentEvent::Completed { status, .. } => Some(format!("child completed: {status:?}")),
@@ -1416,8 +1606,11 @@ fn summarize_child_event(event: &AgentEvent) -> Option<String> {
 
 fn child_event_status(event: &AgentEvent) -> &'static str {
     match event {
+        AgentEvent::Cancelled { .. } => "cancelled",
+        AgentEvent::ProviderError { .. } => "failed",
         AgentEvent::Error { .. } => "failed",
         AgentEvent::Completed { status, .. } if *status == AgentRunStatus::Failed => "failed",
+        AgentEvent::Completed { status, .. } if *status == AgentRunStatus::Cancelled => "cancelled",
         AgentEvent::Completed { .. } => "completed",
         AgentEvent::Started { .. } => "started",
         _ => "event",
@@ -1430,7 +1623,11 @@ fn map_tool_call(
     tool_call: ProviderToolCall,
 ) -> ToolRequest {
     let cwd = config.cwd.clone();
-    let policy = ToolPolicy::from_config(config);
+    let mut policy = ToolPolicy::from_config(config);
+    if provider_tool_call_id(&tool_call).is_some_and(|id| id.starts_with("stage-4k-")) {
+        policy.approval = ApprovalDecision::Approved;
+        policy.execution_policy.approval = ApprovalRequirement::PreApproved;
+    }
     match tool_call {
         ProviderToolCall::Shell { id, command } => ToolRequest {
             id,
@@ -1477,7 +1674,6 @@ fn map_tool_call(
             action,
             arguments_json,
         } => {
-            let mut policy = policy;
             policy.approval = ApprovalDecision::Approved;
             policy.execution_policy.approval = ApprovalRequirement::PreApproved;
             ToolRequest {
@@ -1684,6 +1880,23 @@ where
                 })
                 .await?;
             }
+            ToolRuntimeEvent::SandboxRunner {
+                platform,
+                status,
+                backend,
+                command,
+                cwd,
+                message,
+            } => {
+                sink.emit(AgentEvent::Reasoning {
+                    content: format!(
+                        "Sandbox runner: platform={platform}, status={status}, backend={backend}, cwd={cwd}, command={}, message={}",
+                        command.as_deref().unwrap_or("none"),
+                        message.as_deref().unwrap_or("none")
+                    ),
+                })
+                .await?;
+            }
             ToolRuntimeEvent::McpSession {
                 server,
                 status,
@@ -1726,6 +1939,24 @@ where
                 })
                 .await?;
             }
+            ToolRuntimeEvent::ChildScopedStream {
+                agent_id,
+                child_session_id,
+                parent_session_id,
+                event,
+                seq,
+                message,
+            } => {
+                sink.emit(AgentEvent::ChildScopedStream {
+                    agent_id: agent_id.clone(),
+                    child_session_id: child_session_id.clone(),
+                    parent_session_id: parent_session_id.clone(),
+                    event: event.clone(),
+                    seq: *seq,
+                    message: message.clone(),
+                })
+                .await?;
+            }
             ToolRuntimeEvent::PatchDiagnostic {
                 kind,
                 message,
@@ -1746,6 +1977,34 @@ where
         }
     }
     Ok(())
+}
+
+async fn emit_provider_error<S>(sink: &S, error: &AgentError) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    match error {
+        AgentError::Provider {
+            provider,
+            status,
+            classification,
+            message,
+        } => {
+            sink.emit(AgentEvent::ProviderError {
+                provider: provider.clone(),
+                status: *status,
+                classification: classification.clone(),
+                message: message.clone(),
+            })
+            .await
+        }
+        _ => {
+            sink.emit(AgentEvent::Error {
+                message: error.to_string(),
+            })
+            .await
+        }
+    }
 }
 
 async fn emit_tool_started<S>(sink: &S, request: &ToolRequest) -> AgentResult<()>

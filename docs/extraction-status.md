@@ -56,6 +56,12 @@ Verified on 2026-07-10:
   pass
 - `git diff --check`: pass with Windows line-ending warnings only
 
+## Next Stage
+
+Stage 4B should make the default YunXi build and default CLI runtime work after
+`vendor/codex-rs` is disabled or removed. The development report is recorded in
+`docs/reports/2026-07-10-yunxi-stage-4b-full-autonomy-development-report.md`.
+
 ## Vendored Codex Source
 
 Stage 3 imported the Codex Rust workspace source into `vendor/codex-rs` on

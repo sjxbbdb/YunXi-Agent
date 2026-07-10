@@ -18,18 +18,40 @@ impl ProviderRequest {
             messages,
         }
     }
+
+    pub fn with_messages(
+        config: AgentConfig,
+        input: AgentInput,
+        messages: Vec<ProviderMessage>,
+    ) -> Self {
+        Self {
+            config,
+            input,
+            messages,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProviderResponse {
-    pub message: ProviderMessage,
+    pub message: Option<ProviderMessage>,
+    pub tool_calls: Vec<ProviderToolCall>,
     pub usage: Option<TokenUsage>,
 }
 
 impl ProviderResponse {
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
-            message: ProviderMessage::assistant(content),
+            message: Some(ProviderMessage::assistant(content)),
+            tool_calls: Vec::new(),
+            usage: None,
+        }
+    }
+
+    pub fn tool_call(tool_call: ProviderToolCall) -> Self {
+        Self {
+            message: None,
+            tool_calls: vec![tool_call],
             usage: None,
         }
     }
@@ -62,6 +84,13 @@ impl ProviderMessage {
             content: content.into(),
         }
     }
+
+    pub fn tool(content: impl Into<String>) -> Self {
+        Self {
+            role: ProviderRole::Tool,
+            content: content.into(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -70,6 +99,31 @@ pub enum ProviderRole {
     System,
     User,
     Assistant,
+    Tool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ProviderToolCall {
+    Shell {
+        id: Option<String>,
+        command: String,
+    },
+    Patch {
+        id: Option<String>,
+        patch: String,
+    },
+    Mcp {
+        id: Option<String>,
+        server: String,
+        tool: String,
+        arguments_json: Option<String>,
+    },
+    Skill {
+        id: Option<String>,
+        name: String,
+        arguments_json: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

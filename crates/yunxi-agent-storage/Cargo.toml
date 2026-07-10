@@ -7,7 +7,9 @@ version.workspace = true
 [dependencies]
 async-trait.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio.workspace = true

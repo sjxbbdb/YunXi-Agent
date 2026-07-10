@@ -16,7 +16,10 @@ async fn static_provider_returns_yunxi_runtime_message() {
         .expect("provider response should succeed");
 
     assert_eq!(
-        response.message.content,
-        "YunXi autonomous runtime accepted prompt: explain this project"
+        response
+            .message
+            .as_ref()
+            .map(|message| message.content.as_str()),
+        Some("YunXi autonomous runtime accepted prompt: explain this project")
     );
 }

@@ -62,6 +62,44 @@ Stage 4B should make the default YunXi build and default CLI runtime work after
 `vendor/codex-rs` is disabled or removed. The development report is recorded in
 `docs/reports/2026-07-10-yunxi-stage-4b-full-autonomy-development-report.md`.
 
+## Stage 4B Full Autonomy Slice
+
+Implemented in this slice:
+
+- The default workspace member set excludes `yunxi-agent-codex`.
+- `yunxi-agent-cli` no longer depends on `yunxi-agent-codex`.
+- `--backend codex` and `--live` report clear compatibility guidance in
+  default builds.
+- `yunxi-agent-tools` owns a shell command executor.
+- `yunxi-agent-provider` can represent provider-requested tool calls.
+- `yunxi-agent-runtime` can execute provider-requested shell tools and feed
+  results back into the provider loop.
+- `yunxi-agent-storage` owns file-backed session records under
+  `.yunxi/sessions`.
+
+## Stage 4B Verification
+
+Verified on 2026-07-10:
+
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check -p yunxi-agent-core`: pass
+- `cargo check -p yunxi-agent-provider`: pass
+- `cargo check -p yunxi-agent-tools`: pass
+- `cargo check -p yunxi-agent-storage`: pass
+- `cargo check -p yunxi-agent-runtime`: pass
+- `cargo check -p yunxi-agent-cli`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- --cwd <temp> --backend yunxi --jsonl "explain this project"`:
+  pass
+- `cargo tree -p yunxi-agent-cli`: pass; default tree contains no
+  `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
+- disabled-vendor verification: pass after temporarily renaming
+  `vendor/codex-rs` to `vendor/codex-rs.disabled`
+- `cargo check --manifest-path crates\yunxi-agent-codex\Cargo.toml`: pass
+  without `codex-native`
+- `git diff --check`: pass with Windows line-ending warnings only
+
 ## Vendored Codex Source
 
 Stage 3 imported the Codex Rust workspace source into `vendor/codex-rs` on

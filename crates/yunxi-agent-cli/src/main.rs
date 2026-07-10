@@ -1,7 +1,9 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
-use yunxi_agent_core::{Agent, AgentConfig, AgentInput, ApprovalMode, BackendKind, SandboxMode};
+use yunxi_agent_core::{
+    Agent, AgentConfig, AgentInput, AgentRunResult, ApprovalMode, BackendKind, SandboxMode,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "yunxi-agent-cli")]
@@ -142,11 +144,10 @@ async fn main() -> Result<()> {
     let result = match backend {
         BackendKind::Yunxi => {
             let agent = Agent::new(config);
+            let backend =
+                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace(agent.config().cwd.clone());
             agent
-                .run_with_backend(
-                    &yunxi_agent_runtime::YunXiRuntimeBackend::new(),
-                    AgentInput::text(prompt),
-                )
+                .run_with_backend(&backend, AgentInput::text(prompt))
                 .await
                 .context("yunxi agent run failed")?
         }
@@ -157,16 +158,9 @@ async fn main() -> Result<()> {
                 .await
                 .context("agent run failed")?
         }
-        BackendKind::Codex => {
-            let agent = Agent::new(config);
-            agent
-                .run_with_backend(
-                    &yunxi_agent_codex::CodexNativeBackend::new(),
-                    AgentInput::text(prompt),
-                )
-                .await
-                .context("codex agent run failed")?
-        }
+        BackendKind::Codex => run_codex_backend(config, prompt)
+            .await
+            .context("codex agent run failed")?,
     };
 
     if cli.jsonl {
@@ -180,4 +174,11 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn run_codex_backend(config: AgentConfig, prompt: String) -> Result<AgentRunResult> {
+    let _ = (config, prompt);
+    bail!(
+        "codex compatibility backend is detached from the default CLI; use the yunxi-agent-codex compatibility crate explicitly"
+    )
 }

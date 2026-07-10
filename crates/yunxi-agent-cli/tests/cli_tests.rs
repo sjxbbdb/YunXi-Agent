@@ -1,16 +1,22 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use tempfile::TempDir;
 
 #[test]
 fn cli_prints_dry_run_response() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    let temp = TempDir::new().expect("temp dir");
 
-    cmd.arg("explain this project")
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "YunXi autonomous runtime accepted prompt: explain this project",
-        ));
+    cmd.args([
+        "--cwd",
+        temp.path().to_str().expect("temp path"),
+        "explain this project",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains(
+        "YunXi autonomous runtime accepted prompt: explain this project",
+    ));
 }
 
 #[test]
@@ -28,13 +34,20 @@ fn cli_accepts_explicit_dry_run_backend() {
 #[test]
 fn cli_accepts_explicit_yunxi_backend() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    let temp = TempDir::new().expect("temp dir");
 
-    cmd.args(["--backend", "yunxi", "explain this project"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "YunXi autonomous runtime accepted prompt: explain this project",
-        ));
+    cmd.args([
+        "--backend",
+        "yunxi",
+        "--cwd",
+        temp.path().to_str().expect("temp path"),
+        "explain this project",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains(
+        "YunXi autonomous runtime accepted prompt: explain this project",
+    ));
 }
 
 #[test]
@@ -57,7 +70,7 @@ fn cli_live_backend_reports_feature_message_without_codex_native_feature() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "codex-native feature is not enabled",
+            "codex compatibility backend is detached from the default CLI",
         ));
 }
 

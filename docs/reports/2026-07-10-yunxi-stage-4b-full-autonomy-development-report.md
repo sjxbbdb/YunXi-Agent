@@ -36,7 +36,7 @@ Verified Stage 4A state:
 - `vendor/codex-rs` remains in the repository as temporary source reference and
   compatibility input.
 
-Current limitation:
+Pre-implementation limitation:
 
 - `yunxi-agent-cli` still has a normal dependency edge to
   `yunxi-agent-codex`.
@@ -50,6 +50,17 @@ Current limitation:
 - Full independence has not yet been proven by a disabled-vendor verification
   gate.
 
+Current limitation after this slice:
+
+- Provider ownership has tool-call types, but no live OpenAI-compatible adapter
+  yet.
+- Tool ownership covers shell execution and file-change reporting; patch, MCP,
+  skills, approval prompts, and sandbox enforcement are still interface-level.
+- Storage ownership includes file-backed sessions, but CLI list/resume commands
+  are not implemented yet.
+- Codex compatibility still exists for comparison as a detached crate outside
+  the default workspace member set and CLI dependency graph.
+
 ## Stage 4B Goal
 
 Build the first genuinely self-contained YunXi runtime slice.
@@ -62,8 +73,8 @@ Stage 4B is complete only when:
   Codex compatibility crate and no vendored Codex path dependency.
 - `yunxi-agent-cli --backend yunxi` can run through YunXi-owned provider,
   runtime, tools, and storage code.
-- The Codex compatibility backend is available only behind an explicit
-  compatibility feature or separate workspace path.
+- The Codex compatibility backend is available only as a detached compatibility
+  crate.
 - Runtime events are produced directly by YunXi runtime actions.
 - Sessions are persisted by YunXi storage, not by Codex rollout or thread
   storage.
@@ -86,7 +97,7 @@ Default YunXi workspace
   yunxi-agent-runtime
   yunxi-agent-cli
 
-Explicit compatibility workspace or feature
+Explicit compatibility crate
   yunxi-agent-codex
   vendor/codex-rs
 ```
@@ -122,8 +133,7 @@ Required changes:
 
 - Make `yunxi-agent-codex` an explicit compatibility crate, not a normal CLI
   dependency.
-- Add a CLI feature such as `codex-compat` that enables the Codex backend only
-  when requested.
+- Remove the default CLI dependency on `yunxi-agent-codex`.
 - Ensure `--backend codex` and `--live` return a clear feature-gated error when
   the CLI is built without compatibility support.
 - Move `yunxi-agent-codex` out of default workspace members or otherwise ensure
@@ -257,7 +267,7 @@ Acceptance:
 
 - Default user flow never mentions Codex unless the user asks for compatibility.
 - Compatibility build still works when `vendor/codex-rs` is present and the
-  compatibility feature is explicitly enabled.
+  detached compatibility manifest is used explicitly.
 
 ## Capability Target
 
@@ -310,8 +320,7 @@ The disabled-vendor run is mandatory for claiming full Stage 4B independence.
 Compatibility verification, only when `vendor/codex-rs` is present:
 
 ```powershell
-cargo check -p yunxi-agent-cli --features codex-compat
-cargo check -p yunxi-agent-codex --features codex-native
+cargo check --manifest-path crates/yunxi-agent-codex/Cargo.toml --features codex-native
 ```
 
 ## Risk Assessment
@@ -353,12 +362,71 @@ Do not reintroduce heavy Codex-native dependencies into default builds. Stage
 - No deletion of compatibility source before disabled-vendor default flow
   passes.
 
+## Implementation Update
+
+This implementation pass starts Stage 4B with the build graph and first runtime
+behavior slice:
+
+- `yunxi-agent-cli` no longer depends on Codex compatibility code.
+- Default workspace commands target the YunXi-owned crates and CLI.
+- `yunxi-agent-tools` owns shell command execution.
+- `yunxi-agent-provider` can request tool calls.
+- `yunxi-agent-runtime` can run a provider/tool loop and persist the result.
+- `yunxi-agent-storage` writes file-backed YunXi session records.
+
+The compatibility backend remains available as a detached crate when the
+vendored source is present. It is no longer part of the default CLI dependency
+graph.
+
+## Verification Result
+
+Unified verification passed on 2026-07-10:
+
+```powershell
+cargo fmt -- --check
+cargo test
+cargo check -p yunxi-agent-core
+cargo check -p yunxi-agent-provider
+cargo check -p yunxi-agent-tools
+cargo check -p yunxi-agent-storage
+cargo check -p yunxi-agent-runtime
+cargo check -p yunxi-agent-cli
+cargo build -p yunxi-agent-cli
+cargo run -p yunxi-agent-cli -- --cwd <temp> --backend yunxi --jsonl "explain this project"
+cargo tree -p yunxi-agent-cli
+git diff --check
+```
+
+The default dependency tree contains no `yunxi-agent-codex`,
+`vendor/codex-rs`, or `codex-*` crates.
+`git diff --check` reported only Windows line-ending warnings and no whitespace
+errors.
+
+Disabled-vendor verification also passed:
+
+```powershell
+Rename-Item vendor\codex-rs vendor\codex-rs.disabled
+cargo test
+cargo check -p yunxi-agent-cli
+cargo build -p yunxi-agent-cli
+cargo tree -p yunxi-agent-cli
+Rename-Item vendor\codex-rs.disabled vendor\codex-rs
+```
+
+The detached compatibility crate manifest was checked without `codex-native`:
+
+```powershell
+cargo check --manifest-path crates\yunxi-agent-codex\Cargo.toml
+```
+
 ## Recommended Next Action
 
-Start Stage 4B with build graph detachment.
+After this Stage 4B slice passes unified verification, continue with the
+provider adapter and richer tool policy layer:
 
-The first code change should make `yunxi-agent-cli` depend on
-`yunxi-agent-codex` only behind an explicit compatibility feature. After that,
-run the disabled-vendor verification gate. This gives a hard proof that the
-normal YunXi CLI is no longer bound to upstream Codex source before expanding
-provider, tool, and storage behavior.
+- add a real OpenAI-compatible provider through `yunxi-agent-provider`
+- add approval and sandbox policy checks before shell execution
+- add constrained patch application behind `yunxi-agent-tools`
+- add CLI session list/resume commands backed by `yunxi-agent-storage`
+- keep `yunxi-agent-codex` as explicit compatibility only until those paths are
+  stable

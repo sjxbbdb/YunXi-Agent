@@ -1,12 +1,21 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use tempfile::TempDir;
 
 #[test]
 fn yunxi_jsonl_prints_one_json_event_per_line() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    let temp = TempDir::new().expect("temp dir");
 
     let assert = cmd
-        .args(["--backend", "yunxi", "--jsonl", "jsonl yunxi run"])
+        .args([
+            "--backend",
+            "yunxi",
+            "--cwd",
+            temp.path().to_str().expect("temp path"),
+            "--jsonl",
+            "jsonl yunxi run",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"type\":\"started\""))

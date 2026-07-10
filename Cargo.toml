@@ -5,11 +5,18 @@ members = [
     "crates/yunxi-agent-tools",
     "crates/yunxi-agent-storage",
     "crates/yunxi-agent-runtime",
-    "crates/yunxi-agent-codex",
+    "crates/yunxi-agent-cli",
+]
+default-members = [
+    "crates/yunxi-agent-core",
+    "crates/yunxi-agent-provider",
+    "crates/yunxi-agent-tools",
+    "crates/yunxi-agent-storage",
+    "crates/yunxi-agent-runtime",
     "crates/yunxi-agent-cli",
 ]
 resolver = "2"
-exclude = ["external/codex-rs", "vendor/codex-rs"]
+exclude = ["external/codex-rs", "vendor/codex-rs", "crates/yunxi-agent-codex"]
 
 [workspace.package]
 edition = "2024"
@@ -27,11 +34,6 @@ serde_json = "1"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "process", "rt-multi-thread"] }
-
-[patch.crates-io]
-# Required by upstream Codex crates when the codex-native feature is enabled.
-tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186" }
-tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "4fffad30fe373adbdcffab9545e9e9bf4f2fc19f" }
 
 [profile.dev]
 debug = 1

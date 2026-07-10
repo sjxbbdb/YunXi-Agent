@@ -587,6 +587,16 @@ Stage 4K focuses on:
 - provider error classification and redaction
 - non-stream and stream DeepSeek live smoke matrix
 - mapping live provider failures back to actionable parity buckets
+- real model child provider path, while preserving deterministic fixture child
+  provider tests
+- async cancellation propagation across provider stream, tools, MCP calls, child
+  runtime, and storage boundaries
+- platform sandbox runner deepening, including Windows runner diagnostics and
+  escalation-needed states
+- long-lived MCP session reuse with shutdown, health check, timeout, and cancel
+  hooks
+- finer-grained child scoped stream events for child provider, tool, storage,
+  cancellation, and finish states
 - keeping the default YunXi CLI dependency tree free of `codex`, `vendor`, and
   `yunxi-agent-codex`
 

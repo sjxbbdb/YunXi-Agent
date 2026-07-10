@@ -79,7 +79,7 @@ DeepSeek 标记和疑似 API key。后续执行 Stage 4K 时，密钥只能进�
 
 ## Stage 4K 总目标
 
-Stage 4K 要把 YunXi Agent 从“离线自主 fixture 可运行”推进到“真实 provider 可用且可诊断”。
+Stage 4K 要把 YunXi Agent 从“离线自主 fixture 可运行”推进到“真实 provider 可用且可诊断”，同时把真实模型 child provider、异步 cancellation、平台 sandbox runner、MCP 长生命周期复用和更细粒度 child scoped stream 纳入本阶段构建范围。
 
 完成后应满足：
 
@@ -88,8 +88,13 @@ Stage 4K 要把 YunXi Agent 从“离线自主 fixture 可运行”推进到“�
 3. live smoke 覆盖非流式和流式两条路径，失败时输出可诊断但不泄露密钥的错误。
 4. live provider 能复用现有 tool registry 和 runtime loop；如果 DeepSeek 对某些 tool schema
    字段不兼容，新增 provider capability 开关或 DeepSeek preset，而不是硬编码到 runtime。
-5. 所有新增能力仍能在无真实 API key 的环境下通过 fixture 测试。
-6. 默认依赖树继续不包含上游 Codex runtime。
+5. child agent 可以选择真实模型 provider 路径，不再只能依赖 static/fixture child provider。
+6. async cancellation 能从 CLI/runtime 传播到 provider stream、tool 执行、child runtime 和 MCP 调用边界。
+7. 平台 sandbox runner 从 facade 深化为可按 Windows/通用平台策略执行、记录和诊断的 runner。
+8. MCP client/session 支持长生命周期复用，避免每次 tool call 都重新建立临时连接。
+9. child scoped stream 细化到 child session、provider delta、tool delta、storage event 和取消事件级别。
+10. 所有新增能力仍能在无真实 API key 的环境下通过 fixture 测试。
+11. 默认依赖树继续不包含上游 Codex runtime。
 
 ## 构建面 1：Secret-Safe DeepSeek Smoke Harness
 
@@ -306,6 +311,90 @@ unknown
 - live failure 不再是“看一段报错”，而是能映射到具体代码层。
 - 下一轮开发报告可以基于 bucket 精准推进 Codex core parity。
 
+## 构建面 6：真实模型 Child Provider、Cancellation、Sandbox、MCP 与 Child Scoped Stream 深化
+
+目标文件：
+
+- `crates/yunxi-agent-runtime/src/lib.rs`
+- `crates/yunxi-agent-provider/src/lib.rs`
+- `crates/yunxi-agent-tools/src/lib.rs`
+- `crates/yunxi-agent-multi-agent/src/lib.rs`
+- `crates/yunxi-agent-mcp/src/lib.rs`
+- `crates/yunxi-agent-sandbox/src/lib.rs`
+- `crates/yunxi-agent-protocol/src/lib.rs`
+- `crates/yunxi-agent-cli/src/main.rs`
+- `crates/yunxi-agent-runtime/tests/runtime_tests.rs`
+- `crates/yunxi-agent-provider/tests/provider_tests.rs`
+- `crates/yunxi-agent-multi-agent/tests/multi_agent_tests.rs`
+- `crates/yunxi-agent-mcp/tests/mcp_tests.rs`
+- `crates/yunxi-agent-sandbox/tests/sandbox_tests.rs`
+- `crates/yunxi-agent-cli/tests/jsonl_tests.rs`
+
+构建内容：
+
+1. 真实模型 child provider
+
+   - `yunxi-agent-multi-agent` 保留 child provider 抽象，但新增真实 provider child path。
+   - parent runtime 创建 child agent 时必须能把 parent 的 provider profile、model、base URL、streaming
+     capability、tool capability 和 redaction policy 传入 child scope。
+   - child scope 可以覆盖 model/provider profile，但默认继承 parent provider 配置。
+   - child provider 不得直接依赖上游 Codex 类型，也不得把 DeepSeek 特例写进 multi-agent runtime。
+   - fixture provider 继续存在，用于无 API key 的 deterministic 测试。
+
+2. 异步 cancellation
+
+   - 在 runtime 层引入可传递的 cancellation handle/token。
+   - cancellation 必须覆盖 provider stream 读取、tool runtime、shell command、patch tool、MCP tool call、
+     child runtime 和 storage flush 边界。
+   - CLI interrupt 或后续 request_user_input/approval 取消结果应能转换成统一的 cancelled event。
+   - cancellation 后 JSONL 至少包含 `cancelled` 或 `interrupted` 稳定事件，且不能留下半写 session state。
+
+3. 平台 sandbox runner 深化
+
+   - `yunxi-agent-sandbox` 从当前 facade 深化为 runner trait + platform implementation。
+   - Windows 路径需要单独处理 command quoting、working directory、environment allowlist、timeout、
+     stdout/stderr capture 和退出码分类。
+   - sandbox runner 输出稳定 diagnostic record，供 tool event、JSONL 和日志引用。
+   - escalation 仍走 approval/facade，但 runner 必须能表达 `requires_escalation`、`denied`、
+     `timeout`、`spawn_failed`、`non_zero_exit`。
+
+4. MCP 长生命周期复用
+
+   - `yunxi-agent-mcp` 新增 session manager，按 server id/config 复用长生命周期 MCP client。
+   - runtime/tool registry 调用 MCP tool 时优先复用已存在 session，失败后再按策略重建。
+   - session manager 必须支持 shutdown、cancel、health check 和 per-call timeout。
+   - MCP approval elicitation 暂不要求完全复刻，但事件 shape 必须预留 approval/cancellation 字段。
+
+5. 更细粒度 child scoped stream
+
+   - `yunxi-agent-protocol` 增加 child scoped stream event shape，区分：
+
+```text
+child_session_started
+child_provider_delta
+child_tool_call_started
+child_tool_delta
+child_storage_state
+child_cancelled
+child_session_finished
+```
+
+   - parent JSONL 输出必须能把 child session id、child agent id、parent session id、event seq、
+     provider/tool/storage 阶段写清楚。
+   - child stream 事件不得只以最终摘要替代；至少 fixture 路径要能观察到 child provider delta 和
+     child tool delta。
+   - 若真实 provider 不产生 tool call，也必须输出 child provider delta 和 child final message。
+
+验收口径：
+
+- fixture child runtime 和 live provider child runtime 使用同一套 child provider facade。
+- cancellation fixture 能中止 provider stream、shell tool、MCP call 和 child runtime，并输出稳定 JSONL。
+- sandbox runner fixture 能覆盖 Windows shell success、non-zero、timeout、spawn_failed 和 escalation-needed。
+- MCP fixture 能证明同一 server id 在多次 tool call 中复用同一 session，并能在 shutdown 后清理。
+- child scoped stream fixture 至少产生 child provider delta、child tool delta、child storage state 和
+  child finished 事件。
+- 默认 `cargo tree -p yunxi-agent-cli` 仍不得命中 `codex`、`vendor`、`yunxi-agent-codex`。
+
 ## 最终统一验证门
 
 Stage 4K 构建完成后一次性运行：
@@ -317,6 +406,11 @@ cargo test
 cargo check --workspace
 cargo build -p yunxi-agent-cli
 cargo run -p yunxi-agent-cli -- parity map
+cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4k child provider fixture"
+cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4k cancellation fixture"
+cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4k sandbox fixture"
+cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4k mcp reuse fixture"
+cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4k child scoped stream fixture"
 cargo tree -p yunxi-agent-cli
 git diff --check
 .\scripts\provider\deepseek-live-smoke.ps1 -Model deepseek-v4-flash
@@ -329,6 +423,11 @@ cargo clean
 - `cargo tree -p yunxi-agent-cli` 输出不得命中 `codex`、`vendor`、`yunxi-agent-codex`。
 - `git diff --check` 不得出现空白错误。
 - live smoke 输出不得包含 `sk-`、`Bearer`、`Authorization` 或实际 key 片段。
+- child provider fixture 必须证明 child path 可使用真实 provider facade，同时保留 offline fixture。
+- cancellation fixture 必须覆盖 provider、tool、MCP、child runtime 的取消传播。
+- sandbox fixture 必须输出平台 runner diagnostic record。
+- MCP reuse fixture 必须证明同一 server id 的长生命周期 session 复用。
+- child scoped stream fixture 必须输出细粒度 child event，而不是只有最终摘要。
 - `.yunxi` 运行痕迹必须删除。
 - `target` 必须删除。
 - 桌面开发日志必须追加本轮记录。
@@ -340,6 +439,11 @@ Stage 4K 完成时必须同时满足：
 - DeepSeek live L1 smoke 通过。
 - DeepSeek live L2 smoke 通过，或有明确 streaming incompatibility 诊断和 fixture 回归。
 - DeepSeek profile/preset 不破坏 provider-neutral 架构。
+- 真实模型 child provider 路径接入完成，child runtime 不再只能依赖 static/fixture provider。
+- async cancellation 能从 parent runtime 传播到 provider/tool/MCP/child runtime，并产出稳定事件。
+- 平台 sandbox runner 深化完成，至少覆盖 Windows shell runner 的诊断和执行边界。
+- MCP 长生命周期 session manager 完成，可复用、可取消、可 shutdown。
+- child scoped stream 细化完成，可观察 child provider/tool/storage/cancel/finish 事件。
 - 无 API key 泄露到仓库、日志、JSONL、错误消息或测试快照。
 - 默认 YunXi CLI 依赖树仍完全自主。
 - 离线 fixture 测试仍完整通过。
@@ -347,14 +451,16 @@ Stage 4K 完成时必须同时满足：
 
 ## 后续仍未覆盖的 Codex CLI Agent 核心缺口
 
-Stage 4K 解决的是真实 provider 接入和诊断，不会一次性补齐所有 Codex CLI agent 核心差距。
+Stage 4K 解决的是真实 provider 接入和诊断，并把真实模型 child provider、async cancellation、
+平台 sandbox runner、MCP 长生命周期复用和 child scoped stream 深化纳入同批构建。
+它仍不会一次性补齐所有 Codex CLI agent 核心差距。
 完成 Stage 4K 后仍需继续推进：
 
-- 平台级 sandbox runner 和 escalation 执行边界
 - Guardian/request_user_input/session remember/persistent approval
-- MCP 长生命周期真实 server 复用和 approval elicitation
 - 完整 context manager、token budgeting、rollout truncation、复杂 resume
-- parent/child cancellation 和 interrupt propagation
+- sandbox escalation 的完整审批闭环、跨平台强隔离实现和更细系统策略
+- MCP approval elicitation、资源订阅、server capability negotiation 和异常恢复策略
+- cancellation 与用户交互审批、长期 session resume、复杂 child graph 的组合语义
 - apply_patch Windows helper/arg0 和更多异常诊断边界
 - skills/plugins 生命周期和权限模型
 - Codex 全量 protocol/JSONL event shape
@@ -365,7 +471,9 @@ Stage 4K 解决的是真实 provider 接入和诊断，不会一次性补齐所�
 
 ```text
 先整体构建 Stage 4K 的 DeepSeek live provider smoke harness、provider profile、
-错误分类与密钥脱敏、live smoke matrix、失败 bucket 反馈闭环；
+错误分类与密钥脱敏、live smoke matrix、失败 bucket 反馈闭环、
+真实模型 child provider、异步 cancellation、平台 sandbox runner 深化、
+MCP 长生命周期复用和更细粒度 child scoped stream；
 构建过程中不做中途频繁测试；
 全部构建完成后统一运行最终验证门；
 验证后清理 target、.yunxi 和临时 smoke 输出；

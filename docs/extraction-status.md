@@ -515,6 +515,18 @@ Stage 4I second construction verification passed on 2026-07-10:
 - `git diff --check`: pass with Windows line-ending warnings only
 - `cargo clean`: pass; removed 1.3GiB of build artifacts
 
+## Stage 4J Planned Direction
+
+The next stage is child runtime and end-to-end parity harness construction. Its
+goal is to turn the Stage 4I `spawn_run` fixture boundary into a real
+YunXi-owned child runtime turn, persist parent/child sessions in storage, merge
+child lifecycle events into the parent JSONL stream, and establish the first
+offline end-to-end parity harness for provider stream -> tool loop -> child
+runtime -> storage -> JSONL.
+
+The Stage 4J development report is recorded in
+`docs/reports/2026-07-10-yunxi-stage-4j-child-runtime-e2e-parity-development-report.md`.
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

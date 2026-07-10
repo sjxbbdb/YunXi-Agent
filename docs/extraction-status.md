@@ -652,19 +652,27 @@ Final unified verification was run on 2026-07-11:
   was found
 - `git diff --check`: pass with Windows LF/CRLF warnings only
 
-DeepSeek live smoke was also attempted against
-`C:\Users\admin\Desktop\api.txt` without printing or persisting any key:
+DeepSeek live smoke was first attempted against
+`C:\Users\admin\Desktop\api.txt` without printing or persisting any key, but the
+available key candidates were rejected by provider authentication. After the
+user added a new key, live smoke was retried on 2026-07-11:
 
-- stream smoke with `deepseek-v4-flash`: blocked by provider auth, exit code
-  10, one `provider_error` JSONL event, `secret_leak_detected=False`
-- non-stream smoke with `deepseek-v4-flash`: blocked by provider auth, exit
-  code 10, one `provider_error` JSONL event, `secret_leak_detected=False`
-- direct DeepSeek balance authentication probes for all five redacted
-  `api.txt` key candidates returned HTTP 401
+- `api.txt` contained six redacted key candidates; direct DeepSeek balance
+  probes returned HTTP 200 for candidates 1 and 2 and HTTP 401 for candidates 3
+  through 6.
+- stream smoke with `deepseek-v4-flash`: pass, exit code 0, 39 JSONL lines,
+  target response text observed, `secret_leak_detected=False`.
+- non-stream smoke with `deepseek-v4-flash`: pass, exit code 0, 9 JSONL lines,
+  target response text observed, `secret_leak_detected=False`.
+- `scripts/provider/deepseek-live-smoke.ps1 -Model deepseek-v4-flash`: pass,
+  exit code 0, 39 JSONL lines, `secret_leak_detected=False`.
+- `scripts/provider/deepseek-live-smoke.ps1 -Model deepseek-v4-flash
+  -NoStream`: pass, exit code 0, 9 JSONL lines,
+  `secret_leak_detected=False`.
 
-The Stage 4K owned runtime/provider/tool construction is verified offline. The
-real DeepSeek live gate remains credential-blocked until a valid DeepSeek key is
-available; it must not be reported as live-provider passed.
+The Stage 4K owned runtime/provider/tool construction is verified offline, and
+the DeepSeek live provider gate has now passed for both streaming and
+non-streaming requests with the updated local credential file.
 
 ## Stage 4D History Restore And Compact Entry Slice
 

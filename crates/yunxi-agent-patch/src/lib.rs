@@ -8,6 +8,8 @@ pub const APPLY_PATCH_LARK_GRAMMAR: &str = include_str!("../assets/apply_patch.l
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PatchReport {
     pub changed_files: Vec<PatchFileChange>,
+    #[serde(default)]
+    pub diagnostics: Vec<PatchDiagnostic>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -23,6 +25,103 @@ pub enum PatchFileChangeKind {
     Updated,
     Deleted,
     Moved,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PatchDiagnosticKind {
+    InvalidEnvelope,
+    InvalidJson,
+    InvalidPath,
+    MissingTarget,
+    ContextMismatch,
+    UnsupportedOperation,
+    Io,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PatchDiagnostic {
+    pub kind: PatchDiagnosticKind,
+    pub message: String,
+    pub path: Option<PathBuf>,
+    pub line: Option<usize>,
+}
+
+impl PatchDiagnostic {
+    pub fn new(kind: PatchDiagnosticKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            path: None,
+            line: None,
+        }
+    }
+
+    pub fn with_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.path = Some(path.into());
+        self
+    }
+
+    pub fn with_line(mut self, line: usize) -> Self {
+        self.line = Some(line);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PatchApplyError {
+    pub diagnostics: Vec<PatchDiagnostic>,
+}
+
+impl PatchApplyError {
+    pub fn single(diagnostic: PatchDiagnostic) -> Self {
+        Self {
+            diagnostics: vec![diagnostic],
+        }
+    }
+
+    pub fn primary_message(&self) -> String {
+        self.diagnostics
+            .first()
+            .map(|diagnostic| diagnostic.message.clone())
+            .unwrap_or_else(|| "patch failed".to_string())
+    }
+
+    pub fn with_path(mut self, path: impl Into<PathBuf>) -> Self {
+        if let Some(diagnostic) = self.diagnostics.first_mut() {
+            diagnostic.path = Some(path.into());
+        }
+        self
+    }
+
+    pub fn with_line(mut self, line: usize) -> Self {
+        if let Some(diagnostic) = self.diagnostics.first_mut() {
+            diagnostic.line = Some(line);
+        }
+        self
+    }
+}
+
+impl std::fmt::Display for PatchApplyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.primary_message())
+    }
+}
+
+impl std::error::Error for PatchApplyError {}
+
+impl From<PatchApplyError> for AgentError {
+    fn from(error: PatchApplyError) -> Self {
+        AgentError::Execution {
+            message: error.primary_message(),
+        }
+    }
+}
+
+pub type PatchApplyResult<T> = Result<T, PatchApplyError>;
+
+fn patch_error(kind: PatchDiagnosticKind, message: impl Into<String>) -> PatchApplyError {
+    PatchApplyError::single(PatchDiagnostic::new(kind, message))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -66,6 +165,10 @@ impl PatchChunk {
 }
 
 pub fn apply_patch(cwd: impl AsRef<Path>, patch: &str) -> AgentResult<PatchReport> {
+    apply_patch_detailed(cwd, patch).map_err(Into::into)
+}
+
+pub fn apply_patch_detailed(cwd: impl AsRef<Path>, patch: &str) -> PatchApplyResult<PatchReport> {
     let cwd = cwd.as_ref();
     let operations = parse_patch(patch)?;
     let mut changed_files = Vec::new();
@@ -81,15 +184,21 @@ pub fn apply_patch(cwd: impl AsRef<Path>, patch: &str) -> AgentResult<PatchRepor
                     PatchFileChangeKind::Added
                 };
                 if let Some(parent) = full_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
-                        message: format!("failed to create patch parent directory: {error}"),
+                    std::fs::create_dir_all(parent).map_err(|error| {
+                        patch_error(
+                            PatchDiagnosticKind::Io,
+                            format!("failed to create patch parent directory: {error}"),
+                        )
                     })?;
                 }
-                std::fs::write(&full_path, content).map_err(|error| AgentError::Execution {
-                    message: format!(
-                        "failed to write patch file {}: {error}",
-                        full_path.display()
-                    ),
+                std::fs::write(&full_path, content).map_err(|error| {
+                    patch_error(
+                        PatchDiagnosticKind::Io,
+                        format!(
+                            "failed to write patch file {}: {error}",
+                            full_path.display()
+                        ),
+                    )
                 })?;
                 changed_files.push(PatchFileChange {
                     path: relative,
@@ -100,18 +209,20 @@ pub fn apply_patch(cwd: impl AsRef<Path>, patch: &str) -> AgentResult<PatchRepor
                 let relative = validate_relative_path(&path)?;
                 let full_path = cwd.join(&relative);
                 if !full_path.is_file() {
-                    return Err(AgentError::Execution {
-                        message: format!(
-                            "patch delete target does not exist: {}",
-                            relative.display()
-                        ),
-                    });
+                    return Err(patch_error(
+                        PatchDiagnosticKind::MissingTarget,
+                        format!("patch delete target does not exist: {}", relative.display()),
+                    )
+                    .with_path(relative));
                 }
-                std::fs::remove_file(&full_path).map_err(|error| AgentError::Execution {
-                    message: format!(
-                        "failed to delete patch file {}: {error}",
-                        full_path.display()
-                    ),
+                std::fs::remove_file(&full_path).map_err(|error| {
+                    patch_error(
+                        PatchDiagnosticKind::Io,
+                        format!(
+                            "failed to delete patch file {}: {error}",
+                            full_path.display()
+                        ),
+                    )
                 })?;
                 changed_files.push(PatchFileChange {
                     path: relative,
@@ -146,22 +257,31 @@ pub fn apply_patch(cwd: impl AsRef<Path>, patch: &str) -> AgentResult<PatchRepor
                 };
                 let output_path = cwd.join(&output_relative);
                 if let Some(parent) = output_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
-                        message: format!("failed to create patch parent directory: {error}"),
+                    std::fs::create_dir_all(parent).map_err(|error| {
+                        patch_error(
+                            PatchDiagnosticKind::Io,
+                            format!("failed to create patch parent directory: {error}"),
+                        )
                     })?;
                 }
-                std::fs::write(&output_path, updated).map_err(|error| AgentError::Execution {
-                    message: format!(
-                        "failed to update patch file {}: {error}",
-                        output_path.display()
-                    ),
+                std::fs::write(&output_path, updated).map_err(|error| {
+                    patch_error(
+                        PatchDiagnosticKind::Io,
+                        format!(
+                            "failed to update patch file {}: {error}",
+                            output_path.display()
+                        ),
+                    )
                 })?;
                 if output_relative != relative {
-                    std::fs::remove_file(&full_path).map_err(|error| AgentError::Execution {
-                        message: format!(
-                            "failed to remove moved patch source {}: {error}",
-                            full_path.display()
-                        ),
+                    std::fs::remove_file(&full_path).map_err(|error| {
+                        patch_error(
+                            PatchDiagnosticKind::Io,
+                            format!(
+                                "failed to remove moved patch source {}: {error}",
+                                full_path.display()
+                            ),
+                        )
                     })?;
                     changed_files.push(PatchFileChange {
                         path: relative,
@@ -181,10 +301,13 @@ pub fn apply_patch(cwd: impl AsRef<Path>, patch: &str) -> AgentResult<PatchRepor
         }
     }
 
-    Ok(PatchReport { changed_files })
+    Ok(PatchReport {
+        changed_files,
+        diagnostics: Vec::new(),
+    })
 }
 
-fn parse_patch(patch: &str) -> AgentResult<Vec<ParsedPatchOperation>> {
+fn parse_patch(patch: &str) -> PatchApplyResult<Vec<ParsedPatchOperation>> {
     let trimmed = patch.trim();
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
         return parse_json_patch(trimmed);
@@ -192,17 +315,23 @@ fn parse_patch(patch: &str) -> AgentResult<Vec<ParsedPatchOperation>> {
     parse_apply_patch(trimmed)
 }
 
-fn parse_json_patch(patch: &str) -> AgentResult<Vec<ParsedPatchOperation>> {
-    let value = serde_json::from_str::<Value>(patch).map_err(|error| AgentError::Execution {
-        message: format!("failed to parse constrained patch JSON: {error}"),
+fn parse_json_patch(patch: &str) -> PatchApplyResult<Vec<ParsedPatchOperation>> {
+    let value = serde_json::from_str::<Value>(patch).map_err(|error| {
+        patch_error(
+            PatchDiagnosticKind::InvalidJson,
+            format!("failed to parse constrained patch JSON: {error}"),
+        )
     })?;
     let operations = if value.is_array() {
         serde_json::from_value::<Vec<PatchOperation>>(value)
     } else {
         serde_json::from_value::<PatchOperation>(value).map(|operation| vec![operation])
     }
-    .map_err(|error| AgentError::Execution {
-        message: format!("failed to parse constrained patch operation: {error}"),
+    .map_err(|error| {
+        patch_error(
+            PatchDiagnosticKind::InvalidJson,
+            format!("failed to parse constrained patch operation: {error}"),
+        )
     })?;
 
     Ok(operations
@@ -217,12 +346,13 @@ fn parse_json_patch(patch: &str) -> AgentResult<Vec<ParsedPatchOperation>> {
         .collect())
 }
 
-fn parse_apply_patch(patch: &str) -> AgentResult<Vec<ParsedPatchOperation>> {
+fn parse_apply_patch(patch: &str) -> PatchApplyResult<Vec<ParsedPatchOperation>> {
     let mut lines = patch.lines().peekable();
     if !matches_marker(lines.next(), "*** Begin Patch") {
-        return Err(AgentError::Execution {
-            message: "apply_patch input must start with *** Begin Patch".to_string(),
-        });
+        return Err(patch_error(
+            PatchDiagnosticKind::InvalidEnvelope,
+            "apply_patch input must start with *** Begin Patch",
+        ));
     }
 
     let mut operations = Vec::new();
@@ -230,9 +360,10 @@ fn parse_apply_patch(patch: &str) -> AgentResult<Vec<ParsedPatchOperation>> {
         let marker = line.trim();
         if marker == "*** End Patch" {
             if operations.is_empty() {
-                return Err(AgentError::Execution {
-                    message: "apply_patch input did not contain any operations".to_string(),
-                });
+                return Err(patch_error(
+                    PatchDiagnosticKind::InvalidEnvelope,
+                    "apply_patch input did not contain any operations",
+                ));
             }
             return Ok(operations);
         }
@@ -299,9 +430,11 @@ fn parse_apply_patch(patch: &str) -> AgentResult<Vec<ParsedPatchOperation>> {
                 chunks.push(current);
             }
             if chunks.is_empty() && move_to.is_none() {
-                return Err(AgentError::Execution {
-                    message: format!("patch update for {path} did not contain any hunks"),
-                });
+                return Err(patch_error(
+                    PatchDiagnosticKind::UnsupportedOperation,
+                    format!("patch update for {path} did not contain any hunks"),
+                )
+                .with_path(path));
             }
             let path = PathBuf::from(path);
             if chunks.is_empty() {
@@ -316,14 +449,16 @@ fn parse_apply_patch(patch: &str) -> AgentResult<Vec<ParsedPatchOperation>> {
             }
             continue;
         }
-        return Err(AgentError::Execution {
-            message: format!("unsupported apply_patch line: {line}"),
-        });
+        return Err(patch_error(
+            PatchDiagnosticKind::UnsupportedOperation,
+            format!("unsupported apply_patch line: {line}"),
+        ));
     }
 
-    Err(AgentError::Execution {
-        message: "apply_patch input is missing *** End Patch".to_string(),
-    })
+    Err(patch_error(
+        PatchDiagnosticKind::InvalidEnvelope,
+        "apply_patch input is missing *** End Patch",
+    ))
 }
 
 fn matches_marker(line: Option<&str>, expected: &str) -> bool {
@@ -338,9 +473,18 @@ fn is_patch_operation_marker(line: &str) -> bool {
         || line.starts_with("*** Update File: ")
 }
 
-fn read_patch_file(path: &Path) -> AgentResult<String> {
-    std::fs::read_to_string(path).map_err(|error| AgentError::Execution {
-        message: format!("failed to read patch file {}: {error}", path.display()),
+fn read_patch_file(path: &Path) -> PatchApplyResult<String> {
+    std::fs::read_to_string(path).map_err(|error| {
+        let kind = if error.kind() == std::io::ErrorKind::NotFound {
+            PatchDiagnosticKind::MissingTarget
+        } else {
+            PatchDiagnosticKind::Io
+        };
+        patch_error(
+            kind,
+            format!("failed to read patch file {}: {error}", path.display()),
+        )
+        .with_path(path)
     })
 }
 
@@ -348,7 +492,7 @@ fn apply_update_chunks(
     relative: &Path,
     mut content: String,
     chunks: &[PatchChunk],
-) -> AgentResult<String> {
+) -> PatchApplyResult<String> {
     for chunk in chunks {
         if chunk.old.is_empty() {
             if !content.ends_with('\n') && !content.is_empty() {
@@ -360,52 +504,67 @@ fn apply_update_chunks(
         if content.contains(&chunk.old) {
             content = content.replacen(&chunk.old, &chunk.new, 1);
         } else {
-            return Err(AgentError::Execution {
-                message: format!(
+            return Err(patch_error(
+                PatchDiagnosticKind::ContextMismatch,
+                format!(
                     "patch update target content was not found in {}",
                     relative.display()
                 ),
-            });
+            )
+            .with_path(relative));
         }
     }
     Ok(content)
 }
 
-fn move_file(cwd: &Path, from: &Path, to: &Path) -> AgentResult<()> {
+fn move_file(cwd: &Path, from: &Path, to: &Path) -> PatchApplyResult<()> {
     let source = cwd.join(from);
     let destination = cwd.join(to);
     if !source.is_file() {
-        return Err(AgentError::Execution {
-            message: format!("patch move source does not exist: {}", from.display()),
-        });
+        return Err(patch_error(
+            PatchDiagnosticKind::MissingTarget,
+            format!("patch move source does not exist: {}", from.display()),
+        )
+        .with_path(from));
     }
     if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
-            message: format!("failed to create patch parent directory: {error}"),
+        std::fs::create_dir_all(parent).map_err(|error| {
+            patch_error(
+                PatchDiagnosticKind::Io,
+                format!("failed to create patch parent directory: {error}"),
+            )
         })?;
     }
     if destination.is_file() {
-        std::fs::remove_file(&destination).map_err(|error| AgentError::Execution {
-            message: format!(
-                "failed to remove existing patch move target {}: {error}",
-                destination.display()
-            ),
+        std::fs::remove_file(&destination).map_err(|error| {
+            patch_error(
+                PatchDiagnosticKind::Io,
+                format!(
+                    "failed to remove existing patch move target {}: {error}",
+                    destination.display()
+                ),
+            )
         })?;
     }
-    std::fs::rename(&source, &destination).map_err(|error| AgentError::Execution {
-        message: format!(
-            "failed to move patch file {} to {}: {error}",
-            source.display(),
-            destination.display()
-        ),
+    std::fs::rename(&source, &destination).map_err(|error| {
+        patch_error(
+            PatchDiagnosticKind::Io,
+            format!(
+                "failed to move patch file {} to {}: {error}",
+                source.display(),
+                destination.display()
+            ),
+        )
     })
 }
 
-fn validate_relative_path(path: &Path) -> AgentResult<PathBuf> {
+fn validate_relative_path(path: &Path) -> PatchApplyResult<PathBuf> {
     if path.is_absolute() {
-        return Err(AgentError::Execution {
-            message: format!("patch path must be relative: {}", path.display()),
-        });
+        return Err(patch_error(
+            PatchDiagnosticKind::InvalidPath,
+            format!("patch path must be relative: {}", path.display()),
+        )
+        .with_path(path));
     }
     if path.components().any(|component| {
         matches!(
@@ -413,9 +572,11 @@ fn validate_relative_path(path: &Path) -> AgentResult<PathBuf> {
             Component::ParentDir | Component::RootDir | Component::Prefix(_)
         )
     }) {
-        return Err(AgentError::Execution {
-            message: format!("patch path cannot escape workspace: {}", path.display()),
-        });
+        return Err(patch_error(
+            PatchDiagnosticKind::InvalidPath,
+            format!("patch path cannot escape workspace: {}", path.display()),
+        )
+        .with_path(path));
     }
     Ok(path.to_path_buf())
 }
@@ -491,6 +652,22 @@ mod tests {
                 .changed_files
                 .iter()
                 .any(|change| change.kind == PatchFileChangeKind::Moved)
+        );
+    }
+
+    #[test]
+    fn detailed_patch_error_reports_invalid_path_diagnostic() {
+        let temp = TempDir::new().expect("temp dir");
+        let error = apply_patch_detailed(
+            temp.path(),
+            r#"{"op":"write","path":"../escape.txt","content":"no"}"#,
+        )
+        .expect_err("invalid path");
+
+        assert_eq!(error.diagnostics[0].kind, PatchDiagnosticKind::InvalidPath);
+        assert_eq!(
+            error.diagnostics[0].path.as_deref(),
+            Some(Path::new("../escape.txt"))
         );
     }
 }

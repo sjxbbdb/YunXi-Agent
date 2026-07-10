@@ -147,6 +147,7 @@ pub enum DynamicToolKind {
     ToolSearch,
     RequestUserInput,
     ViewImage,
+    Mcp,
     Skill,
     Plugin,
 }
@@ -196,6 +197,267 @@ pub fn default_dynamic_tools() -> Vec<DynamicToolMetadata> {
             source: Some("yunxi-agent-tools".to_string()),
         },
     ]
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PluginDiscoveryOutcome {
+    pub plugins: Vec<PluginMetadata>,
+    pub errors: Vec<SkillLoadError>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PluginDynamicToolSeed {
+    pub plugin: PluginMetadata,
+    pub skill_roots: Vec<PathBuf>,
+    pub dynamic_tools: Vec<DynamicToolMetadata>,
+}
+
+impl PluginMetadata {
+    pub fn resolved_skill_roots(&self) -> Vec<PathBuf> {
+        self.manifest
+            .skills
+            .iter()
+            .map(|path| resolve_plugin_path(&self.root, path))
+            .collect()
+    }
+
+    pub fn resolved_mcp_server_paths(&self) -> Vec<PathBuf> {
+        self.manifest
+            .mcp_servers
+            .iter()
+            .map(|path| resolve_plugin_path(&self.root, path))
+            .collect()
+    }
+
+    pub fn dynamic_tool_seed(&self) -> AgentResult<PluginDynamicToolSeed> {
+        let mut dynamic_tools = dynamic_tools_for_plugin(self)?;
+        for skill_root in self.resolved_skill_roots() {
+            let skills = discover_skills(&skill_root)?;
+            dynamic_tools.extend(dynamic_tools_for_skills_with_source(
+                &skills,
+                Some(format!("plugin:{}", self.manifest.name)),
+            ));
+        }
+        Ok(PluginDynamicToolSeed {
+            plugin: self.clone(),
+            skill_roots: self.resolved_skill_roots(),
+            dynamic_tools,
+        })
+    }
+}
+
+pub fn discover_plugins(root: impl AsRef<Path>) -> AgentResult<PluginDiscoveryOutcome> {
+    let root = root.as_ref();
+    if !root.is_dir() {
+        return Ok(PluginDiscoveryOutcome::default());
+    }
+
+    let mut outcome = PluginDiscoveryOutcome::default();
+    if let Some(plugin) = load_plugin_manifest(root)? {
+        outcome.plugins.push(plugin);
+    }
+
+    for entry in std::fs::read_dir(root).map_err(|error| AgentError::Execution {
+        message: format!(
+            "failed to read plugin directory {}: {error}",
+            root.display()
+        ),
+    })? {
+        let entry = entry.map_err(|error| AgentError::Execution {
+            message: format!("failed to read plugin directory entry: {error}"),
+        })?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        match load_plugin_manifest(&path) {
+            Ok(Some(plugin)) => outcome.plugins.push(plugin),
+            Ok(None) => {}
+            Err(error) => outcome.errors.push(SkillLoadError {
+                path,
+                message: error.to_string(),
+            }),
+        }
+    }
+
+    outcome
+        .plugins
+        .sort_by(|left, right| left.manifest.name.cmp(&right.manifest.name));
+    Ok(outcome)
+}
+
+pub fn dynamic_tools_for_skills(skills: &[SkillMetadata]) -> Vec<DynamicToolMetadata> {
+    dynamic_tools_for_skills_with_source(skills, None)
+}
+
+pub fn dynamic_tools_for_plugins(
+    plugins: &[PluginMetadata],
+) -> AgentResult<Vec<DynamicToolMetadata>> {
+    let mut tools = Vec::new();
+    for plugin in plugins {
+        tools.extend(plugin.dynamic_tool_seed()?.dynamic_tools);
+    }
+    dedupe_dynamic_tools(tools)
+}
+
+pub fn workspace_dynamic_tools(root: impl AsRef<Path>) -> AgentResult<Vec<DynamicToolMetadata>> {
+    let root = root.as_ref();
+    let mut tools = Vec::new();
+    for skill_root in default_workspace_skill_roots(root) {
+        tools.extend(dynamic_tools_for_skills(&discover_skills(skill_root)?));
+    }
+    for plugin_root in default_workspace_plugin_roots(root) {
+        let outcome = discover_plugins(plugin_root)?;
+        tools.extend(dynamic_tools_for_plugins(&outcome.plugins)?);
+    }
+    dedupe_dynamic_tools(tools)
+}
+
+fn dynamic_tools_for_plugin(plugin: &PluginMetadata) -> AgentResult<Vec<DynamicToolMetadata>> {
+    let mut tools = vec![DynamicToolMetadata {
+        name: format!("plugin__{}", sanitize_tool_name(&plugin.manifest.name)),
+        kind: DynamicToolKind::Plugin,
+        description: plugin
+            .manifest
+            .description
+            .clone()
+            .or_else(|| {
+                plugin
+                    .manifest
+                    .interface
+                    .as_ref()
+                    .and_then(|interface| interface.short_description.clone())
+            })
+            .unwrap_or_else(|| format!("YunXi plugin {}", plugin.manifest.name)),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Optional plugin-local discovery query."
+                }
+            },
+            "additionalProperties": false
+        }),
+        source: Some(format!("plugin:{}", plugin.root.display())),
+    }];
+
+    for path in plugin.resolved_mcp_server_paths() {
+        let stem = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("server");
+        tools.push(DynamicToolMetadata {
+            name: format!(
+                "mcp__{}__{}",
+                sanitize_tool_name(&plugin.manifest.name),
+                sanitize_tool_name(stem)
+            ),
+            kind: DynamicToolKind::Mcp,
+            description: format!(
+                "Discover or call MCP server metadata from plugin {}.",
+                plugin.manifest.name
+            ),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string"},
+                    "arguments_json": {"type": "string"}
+                },
+                "additionalProperties": false
+            }),
+            source: Some(path.display().to_string()),
+        });
+    }
+
+    dedupe_dynamic_tools(tools)
+}
+
+fn dynamic_tools_for_skills_with_source(
+    skills: &[SkillMetadata],
+    source_prefix: Option<String>,
+) -> Vec<DynamicToolMetadata> {
+    skills
+        .iter()
+        .map(|skill| DynamicToolMetadata {
+            name: format!("skill__{}", sanitize_tool_name(&skill.name)),
+            kind: DynamicToolKind::Skill,
+            description: skill
+                .description
+                .clone()
+                .unwrap_or_else(|| format!("Invoke YunXi skill {}", skill.name)),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Skill name override. Defaults to this dynamic tool's skill."
+                    },
+                    "arguments_json": {
+                        "type": "string",
+                        "description": "Optional serialized JSON object for skill arguments."
+                    }
+                },
+                "additionalProperties": false
+            }),
+            source: Some(match &source_prefix {
+                Some(prefix) => format!("{prefix}:skill:{}", skill.name),
+                None => format!("skill:{}", skill.path.display()),
+            }),
+        })
+        .collect()
+}
+
+fn dedupe_dynamic_tools(tools: Vec<DynamicToolMetadata>) -> AgentResult<Vec<DynamicToolMetadata>> {
+    let mut by_name = std::collections::BTreeMap::new();
+    for tool in tools {
+        by_name.entry(tool.name.clone()).or_insert(tool);
+    }
+    Ok(by_name.into_values().collect())
+}
+
+fn default_workspace_skill_roots(root: &Path) -> Vec<PathBuf> {
+    [".codex/skills", ".yunxi/skills", "skills"]
+        .into_iter()
+        .map(|path| root.join(path))
+        .collect()
+}
+
+fn default_workspace_plugin_roots(root: &Path) -> Vec<PathBuf> {
+    [".codex/plugins", ".yunxi/plugins", "plugins"]
+        .into_iter()
+        .map(|path| root.join(path))
+        .collect()
+}
+
+fn resolve_plugin_path(plugin_root: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        plugin_root.join(path)
+    }
+}
+
+fn sanitize_tool_name(name: &str) -> String {
+    let mut sanitized = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    while sanitized.contains("__") {
+        sanitized = sanitized.replace("__", "_");
+    }
+    sanitized = sanitized.trim_matches('_').to_string();
+    if sanitized.is_empty() {
+        "tool".to_string()
+    } else {
+        sanitized.chars().take(48).collect()
+    }
 }
 
 pub fn discover_skills(root: impl AsRef<Path>) -> AgentResult<Vec<SkillMetadata>> {
@@ -384,5 +646,46 @@ mod tests {
         assert!(names.contains(&"tool_search".to_string()));
         assert!(names.contains(&"request_user_input".to_string()));
         assert!(names.contains(&"view_image".to_string()));
+    }
+
+    #[test]
+    fn workspace_dynamic_tools_include_skills_and_plugin_mcp() {
+        let temp = TempDir::new().expect("temp dir");
+        let workspace_skill = temp.path().join(".yunxi/skills/writer");
+        std::fs::create_dir_all(&workspace_skill).expect("workspace skill dir");
+        std::fs::write(
+            workspace_skill.join(SKILL_FILE_NAME),
+            "---\nname: writer\ndescription: writes reports\n---\n# Writer\n",
+        )
+        .expect("workspace skill");
+
+        let plugin_root = temp.path().join(".yunxi/plugins/research");
+        let plugin_skill = plugin_root.join("skills/searcher");
+        let plugin_manifest = plugin_root.join(".codex-plugin");
+        std::fs::create_dir_all(&plugin_skill).expect("plugin skill dir");
+        std::fs::create_dir_all(&plugin_manifest).expect("plugin manifest dir");
+        std::fs::write(
+            plugin_manifest.join("plugin.json"),
+            r#"{
+                "name": "research-pack",
+                "description": "research plugin",
+                "skills": ["skills"],
+                "mcpServers": ["mcp/research.json"]
+            }"#,
+        )
+        .expect("plugin manifest");
+        std::fs::write(
+            plugin_skill.join(SKILL_FILE_NAME),
+            "---\nname: searcher\ndescription: searches notes\n---\n# Searcher\n",
+        )
+        .expect("plugin skill");
+
+        let tools = workspace_dynamic_tools(temp.path()).expect("dynamic tools");
+        let names = tools.into_iter().map(|tool| tool.name).collect::<Vec<_>>();
+
+        assert!(names.contains(&"skill__writer".to_string()));
+        assert!(names.contains(&"skill__searcher".to_string()));
+        assert!(names.contains(&"plugin__research-pack".to_string()));
+        assert!(names.contains(&"mcp__research-pack__research".to_string()));
     }
 }

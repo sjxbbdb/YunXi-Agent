@@ -1,9 +1,13 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
+use tokio::time::timeout;
 use yunxi_agent_core::{AgentError, AgentResult};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -19,6 +23,284 @@ pub struct McpServerConfig {
 pub enum McpTransport {
     Stdio { command: String, args: Vec<String> },
     Http { url: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpJsonRpcRequest {
+    pub id: String,
+    pub method: String,
+    #[serde(default)]
+    pub params: Option<Value>,
+}
+
+impl McpJsonRpcRequest {
+    pub fn initialize(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            method: "initialize".to_string(),
+            params: Some(json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "yunxi-agent",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            })),
+        }
+    }
+
+    pub fn list_tools(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            method: "tools/list".to_string(),
+            params: Some(json!({})),
+        }
+    }
+
+    pub fn call_tool(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: Option<Value>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            method: "tools/call".to_string(),
+            params: Some(json!({
+                "name": name.into(),
+                "arguments": arguments.unwrap_or_else(|| json!({}))
+            })),
+        }
+    }
+
+    fn to_wire_json(&self) -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": self.id,
+            "method": self.method,
+            "params": self.params.clone().unwrap_or_else(|| json!({}))
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpJsonRpcResponse {
+    pub id: Option<String>,
+    pub result: Option<Value>,
+    pub error: Option<Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StdioMcpClient {
+    pub command: String,
+    pub args: Vec<String>,
+    pub timeout_millis: u64,
+}
+
+impl StdioMcpClient {
+    pub fn new(command: impl Into<String>, args: Vec<String>) -> Self {
+        Self {
+            command: command.into(),
+            args,
+            timeout_millis: 10_000,
+        }
+    }
+
+    pub async fn request_once(
+        &self,
+        request: McpJsonRpcRequest,
+    ) -> AgentResult<McpJsonRpcResponse> {
+        let mut child = Command::new(&self.command)
+            .args(&self.args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|error| AgentError::Execution {
+                message: format!("failed to spawn MCP stdio server {}: {error}", self.command),
+            })?;
+        let mut stdin = child.stdin.take().ok_or_else(|| AgentError::Execution {
+            message: "MCP stdio stdin was not available".to_string(),
+        })?;
+        let payload = serde_json::to_string(&request.to_wire_json()).map_err(|error| {
+            AgentError::Execution {
+                message: format!("failed to serialize MCP JSON-RPC request: {error}"),
+            }
+        })?;
+        stdin
+            .write_all(format!("{payload}\n").as_bytes())
+            .await
+            .map_err(|error| AgentError::Execution {
+                message: format!("failed to write MCP JSON-RPC request: {error}"),
+            })?;
+        stdin
+            .shutdown()
+            .await
+            .map_err(|error| AgentError::Execution {
+                message: format!("failed to close MCP stdio stdin: {error}"),
+            })?;
+
+        let mut stdout = child.stdout.take().ok_or_else(|| AgentError::Execution {
+            message: "MCP stdio stdout was not available".to_string(),
+        })?;
+        let mut output = String::new();
+        timeout(
+            Duration::from_millis(self.timeout_millis),
+            stdout.read_to_string(&mut output),
+        )
+        .await
+        .map_err(|_| AgentError::Execution {
+            message: "MCP stdio request timed out".to_string(),
+        })?
+        .map_err(|error| AgentError::Execution {
+            message: format!("failed to read MCP stdio response: {error}"),
+        })?;
+        let _ = child.wait().await;
+        parse_json_rpc_response(&output)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpHttpRequest {
+    pub url: String,
+    pub body: Value,
+    pub timeout_millis: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpHttpResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+impl McpHttpResponse {
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+}
+
+#[async_trait]
+pub trait McpHttpTransport: Send + Sync {
+    async fn send(&self, request: McpHttpRequest) -> AgentResult<McpHttpResponse>;
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReqwestMcpHttpTransport;
+
+#[async_trait]
+impl McpHttpTransport for ReqwestMcpHttpTransport {
+    async fn send(&self, request: McpHttpRequest) -> AgentResult<McpHttpResponse> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(request.timeout_millis))
+            .build()
+            .map_err(|error| AgentError::Execution {
+                message: format!("failed to build MCP HTTP client: {error}"),
+            })?;
+        let response = client
+            .post(&request.url)
+            .json(&request.body)
+            .send()
+            .await
+            .map_err(|error| AgentError::Execution {
+                message: format!("failed to send MCP HTTP request: {error}"),
+            })?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| AgentError::Execution {
+                message: format!("failed to read MCP HTTP response: {error}"),
+            })?;
+        Ok(McpHttpResponse { status, body })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixtureMcpHttpTransport {
+    response: McpHttpResponse,
+}
+
+impl FixtureMcpHttpTransport {
+    pub fn new(status: u16, body: impl Into<String>) -> Self {
+        Self {
+            response: McpHttpResponse {
+                status,
+                body: body.into(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl McpHttpTransport for FixtureMcpHttpTransport {
+    async fn send(&self, _request: McpHttpRequest) -> AgentResult<McpHttpResponse> {
+        Ok(self.response.clone())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct HttpMcpClient<T = ReqwestMcpHttpTransport> {
+    pub url: String,
+    pub timeout_millis: u64,
+    transport: T,
+}
+
+impl HttpMcpClient<ReqwestMcpHttpTransport> {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self::with_transport(url, ReqwestMcpHttpTransport)
+    }
+}
+
+impl<T> HttpMcpClient<T>
+where
+    T: McpHttpTransport,
+{
+    pub fn with_transport(url: impl Into<String>, transport: T) -> Self {
+        Self {
+            url: url.into(),
+            timeout_millis: 10_000,
+            transport,
+        }
+    }
+
+    pub async fn request_once(
+        &self,
+        request: McpJsonRpcRequest,
+    ) -> AgentResult<McpJsonRpcResponse> {
+        let response = self
+            .transport
+            .send(McpHttpRequest {
+                url: self.url.clone(),
+                body: request.to_wire_json(),
+                timeout_millis: self.timeout_millis,
+            })
+            .await?;
+        if !response.is_success() {
+            return Err(AgentError::Execution {
+                message: format!("MCP HTTP request failed with status {}", response.status),
+            });
+        }
+        parse_json_rpc_response(&response.body)
+    }
+}
+
+pub fn parse_json_rpc_response(output: &str) -> AgentResult<McpJsonRpcResponse> {
+    let line = output
+        .lines()
+        .find(|line| line.trim_start().starts_with('{'))
+        .ok_or_else(|| AgentError::Execution {
+            message: "MCP stdio response did not contain JSON".to_string(),
+        })?;
+    let value = serde_json::from_str::<Value>(line).map_err(|error| AgentError::Execution {
+        message: format!("failed to parse MCP JSON-RPC response: {error}"),
+    })?;
+    Ok(McpJsonRpcResponse {
+        id: value
+            .get("id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        result: value.get("result").cloned(),
+        error: value.get("error").cloned(),
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -569,6 +851,37 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, McpLifecycleEvent::ToolCompleted { .. }))
         );
+    }
+
+    #[test]
+    fn json_rpc_response_parser_reads_result_line() {
+        let response = parse_json_rpc_response(
+            "log line\n{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"result\":{\"tools\":[]}}\n",
+        )
+        .expect("json rpc response");
+
+        assert_eq!(response.id.as_deref(), Some("1"));
+        assert!(response.result.expect("result").get("tools").is_some());
+        assert!(response.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn http_mcp_client_uses_transport_for_json_rpc_request() {
+        let client = HttpMcpClient::with_transport(
+            "https://mcp.example.test/rpc",
+            FixtureMcpHttpTransport::new(
+                200,
+                "{\"jsonrpc\":\"2.0\",\"id\":\"tools\",\"result\":{\"tools\":[]}}",
+            ),
+        );
+
+        let response = client
+            .request_once(McpJsonRpcRequest::list_tools("tools"))
+            .await
+            .expect("http response");
+
+        assert_eq!(response.id.as_deref(), Some("tools"));
+        assert!(response.result.expect("result").get("tools").is_some());
     }
 
     #[test]

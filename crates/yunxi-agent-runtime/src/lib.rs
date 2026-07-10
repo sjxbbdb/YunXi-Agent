@@ -1,18 +1,24 @@
 use async_trait::async_trait;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use yunxi_agent_context::{
     ContextWindowBudget, ConversationMessage, ConversationRole, RestoredHistory,
-    load_agents_md_hierarchy, restore_history_for_prompt,
+    extract_file_mentions, load_agents_md_hierarchy, restore_history_for_prompt,
 };
 use yunxi_agent_core::{
     AgentBackend, AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunResult,
-    AgentRunStatus, CommandStatus, FileChangeKind,
+    AgentRunStatus, CommandStatus, FileChangeKind, TokenUsage,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
+use yunxi_agent_protocol::{
+    ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
+    TurnId,
+};
 use yunxi_agent_provider::{
-    AgentProvider, ProviderMessage, ProviderRequest, ProviderToolCall, StaticProvider,
+    AgentProvider, ProviderBootstrap, ProviderMessage, ProviderRequest, ProviderResponse,
+    ProviderRole, ProviderStream, ProviderToolCall, StaticProvider,
 };
 use yunxi_agent_storage::{
     FileSessionStore, HistoryItemKind, HistoryLoadOptions, InMemorySessionStore, SessionHistory,
@@ -24,6 +30,8 @@ use yunxi_agent_tools::{
 };
 
 const DEFAULT_MAX_TURNS: usize = 8;
+const MAX_MENTIONED_FILE_CONTEXT_FILES: usize = 8;
+const MAX_MENTIONED_FILE_CONTEXT_BYTES: u64 = 32 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentTurn {
@@ -110,6 +118,16 @@ impl YunXiRuntimeBackend {
         )
     }
 
+    pub fn for_workspace_with_live_provider(cwd: impl AsRef<Path>, config: &AgentConfig) -> Self {
+        let provider =
+            ProviderBootstrap::from_agent_config(config).into_openai_transport_provider();
+        Self::with_parts(
+            provider,
+            CompositeToolRuntime::default(),
+            FileSessionStore::for_workspace(cwd),
+        )
+    }
+
     pub fn with_parts<P, T, S>(provider: P, tools: T, storage: S) -> Self
     where
         P: AgentProvider + 'static,
@@ -168,6 +186,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
 
         let sink = VecEventSink::default();
         let thread_id = generate_runtime_thread_id();
+        let turn_id = generate_runtime_turn_id();
         sink.emit(AgentEvent::ThreadStarted {
             thread_id: thread_id.clone(),
         })
@@ -198,14 +217,20 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 content: "Provider turn started".to_string(),
             })
             .await?;
-            let provider_response = self
+            let provider_stream = self
                 .provider
-                .complete(ProviderRequest::with_messages(
-                    turn.config.clone(),
-                    AgentInput::text(prompt),
-                    messages.clone(),
-                ))
+                .stream(
+                    ProviderRequest::with_messages(
+                        turn.config.clone(),
+                        AgentInput::text(prompt),
+                        messages.clone(),
+                    ),
+                    ThreadId(thread_id.clone()),
+                    TurnId(turn_id.clone()),
+                )
                 .await?;
+            emit_provider_stream_events(&sink, &provider_stream.events).await?;
+            let provider_response = collect_provider_response(provider_stream)?;
             usage = provider_response.usage;
             sink.emit(AgentEvent::Reasoning {
                 content: "Provider turn completed".to_string(),
@@ -315,6 +340,10 @@ impl YunXiRuntimeBackend {
             );
         }
 
+        if let Some(file_context) = load_mentioned_file_context(&config.cwd, prompt)? {
+            messages.push(ProviderMessage::system(file_context));
+        }
+
         messages.push(ProviderMessage::user(prompt));
         Ok(InitialMessages {
             messages,
@@ -348,6 +377,73 @@ impl YunXiRuntimeBackend {
     }
 }
 
+fn load_mentioned_file_context(cwd: &Path, prompt: &str) -> AgentResult<Option<String>> {
+    let mentions = extract_file_mentions(prompt);
+    if mentions.is_empty() {
+        return Ok(None);
+    }
+
+    let workspace = std::fs::canonicalize(cwd).map_err(|error| AgentError::Execution {
+        message: format!("failed to canonicalize {}: {error}", cwd.display()),
+    })?;
+    let mut fragments = Vec::new();
+    for mention in mentions.into_iter().take(MAX_MENTIONED_FILE_CONTEXT_FILES) {
+        let requested = if mention.path.is_absolute() {
+            mention.path
+        } else {
+            cwd.join(&mention.path)
+        };
+        let Ok(canonical) = std::fs::canonicalize(&requested) else {
+            continue;
+        };
+        if !canonical.starts_with(&workspace) || !canonical.is_file() {
+            continue;
+        }
+        let metadata = canonical
+            .metadata()
+            .map_err(|error| AgentError::Execution {
+                message: format!(
+                    "failed to read metadata for mentioned file {}: {error}",
+                    canonical.display()
+                ),
+            })?;
+        let content = if metadata.len() > MAX_MENTIONED_FILE_CONTEXT_BYTES {
+            let bytes = std::fs::read(&canonical).map_err(|error| AgentError::Execution {
+                message: format!(
+                    "failed to read mentioned file {}: {error}",
+                    canonical.display()
+                ),
+            })?;
+            String::from_utf8_lossy(
+                &bytes[..(MAX_MENTIONED_FILE_CONTEXT_BYTES as usize).min(bytes.len())],
+            )
+            .to_string()
+        } else {
+            std::fs::read_to_string(&canonical).map_err(|error| AgentError::Execution {
+                message: format!(
+                    "failed to read mentioned file {}: {error}",
+                    canonical.display()
+                ),
+            })?
+        };
+        let relative = canonical.strip_prefix(&workspace).unwrap_or(&canonical);
+        fragments.push(format!(
+            "### {}\n{}",
+            relative.display(),
+            content.trim_end()
+        ));
+    }
+
+    if fragments.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(format!(
+            "Mentioned workspace file context:\n\n{}",
+            fragments.join("\n\n")
+        )))
+    }
+}
+
 fn session_history_to_conversation_messages(history: &SessionHistory) -> Vec<ConversationMessage> {
     history
         .items
@@ -369,6 +465,191 @@ fn conversation_message_to_provider(message: ConversationMessage) -> ProviderMes
         ConversationRole::Assistant => ProviderMessage::assistant(message.content),
         ConversationRole::Tool => ProviderMessage::tool(message.content),
     }
+}
+
+async fn emit_provider_stream_events<S>(sink: &S, events: &[StreamEvent]) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    for event in protocol_stream_events_to_agent_events(events) {
+        match event {
+            AgentEvent::ThreadStarted { .. }
+            | AgentEvent::TurnStarted
+            | AgentEvent::CommandStarted { .. }
+            | AgentEvent::McpToolStarted { .. }
+            | AgentEvent::ToolCallStarted { .. }
+            | AgentEvent::Completed { .. } => {}
+            AgentEvent::Message { content } if content.is_empty() => {}
+            other => sink.emit(other).await?,
+        }
+    }
+    Ok(())
+}
+
+fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResponse> {
+    if let Some(response) = stream.final_response {
+        return Ok(response);
+    }
+
+    let mut message_content = String::new();
+    let mut tool_calls = Vec::new();
+    let mut usage = None;
+    let mut argument_deltas: BTreeMap<String, String> = BTreeMap::new();
+    let mut failed_message = None;
+    let mut cancelled_reason = None;
+
+    for event in stream.events {
+        match event {
+            StreamEvent::ItemStarted { item, .. } | StreamEvent::ItemCompleted { item, .. } => {
+                collect_response_item(item, &mut message_content, &mut tool_calls, &mut usage)?;
+            }
+            StreamEvent::ItemDelta { delta, .. } => match delta {
+                ResponseItemDelta::MessageContent { delta, .. } => {
+                    message_content.push_str(&delta);
+                }
+                ResponseItemDelta::ToolCallArguments {
+                    call_id: Some(call_id),
+                    delta,
+                } => {
+                    argument_deltas.entry(call_id).or_default().push_str(&delta);
+                }
+                ResponseItemDelta::ReasoningContent { .. }
+                | ResponseItemDelta::ToolCallArguments { call_id: None, .. }
+                | ResponseItemDelta::ToolCallStatus { .. }
+                | ResponseItemDelta::ToolOutput { .. } => {}
+            },
+            StreamEvent::ResponseCompleted { status, .. } => match status {
+                ResponseStatus::Completed | ResponseStatus::InProgress => {}
+                ResponseStatus::Failed => {
+                    failed_message.get_or_insert_with(|| "provider stream failed".to_string());
+                }
+                ResponseStatus::Cancelled => {
+                    cancelled_reason.get_or_insert_with(|| "provider stream cancelled".to_string());
+                }
+            },
+            StreamEvent::ResponseCancelled { reason, .. } => {
+                cancelled_reason =
+                    Some(reason.unwrap_or_else(|| "provider stream cancelled".to_string()));
+            }
+            StreamEvent::ResponseFailed { message, .. } => {
+                failed_message = Some(message);
+            }
+            StreamEvent::ResponseStarted { .. } => {}
+        }
+    }
+
+    if let Some(message) = failed_message {
+        return Err(AgentError::Execution { message });
+    }
+    if let Some(message) = cancelled_reason {
+        return Err(AgentError::Execution { message });
+    }
+
+    for (call_id, arguments) in argument_deltas {
+        if tool_calls
+            .iter()
+            .any(|call| provider_tool_call_id(call) == Some(call_id.as_str()))
+        {
+            continue;
+        }
+        if let Ok(tool_call) =
+            provider_tool_call_from_function(Some(call_id.clone()), "shell", &arguments)
+        {
+            tool_calls.push(tool_call);
+        }
+    }
+
+    let message = if message_content.is_empty() {
+        None
+    } else {
+        Some(ProviderMessage {
+            role: ProviderRole::Assistant,
+            content: message_content,
+        })
+    };
+    Ok(ProviderResponse {
+        message,
+        tool_calls,
+        usage,
+    })
+}
+
+fn collect_response_item(
+    item: ResponseItem,
+    message_content: &mut String,
+    tool_calls: &mut Vec<ProviderToolCall>,
+    usage: &mut Option<TokenUsage>,
+) -> AgentResult<()> {
+    match item {
+        ResponseItem::Message {
+            role: ProtocolRole::Assistant,
+            content,
+        } => {
+            message_content.push_str(&content);
+        }
+        ResponseItem::AgentMessage { content, .. } => {
+            if let Some(content) = first_content_text(&content) {
+                message_content.push_str(&content);
+            }
+        }
+        ResponseItem::ToolCall { call } => {
+            tool_calls.push(provider_tool_call_from_protocol(call)?);
+        }
+        ResponseItem::FunctionCall {
+            call_id,
+            name,
+            arguments,
+            ..
+        } => {
+            tool_calls.push(provider_tool_call_from_function(
+                Some(call_id),
+                &name,
+                &arguments,
+            )?);
+        }
+        ResponseItem::McpToolCall {
+            call_id,
+            server,
+            tool,
+            arguments,
+            ..
+        } => {
+            tool_calls.push(ProviderToolCall::Mcp {
+                id: Some(call_id),
+                server,
+                tool,
+                arguments_json: Some(arguments),
+            });
+        }
+        ResponseItem::ToolSearchCall { call_id, query, .. } => {
+            tool_calls.push(ProviderToolCall::ToolSearch {
+                id: Some(call_id),
+                query,
+            });
+        }
+        ResponseItem::Usage {
+            input_tokens,
+            cached_input_tokens,
+            output_tokens,
+            reasoning_output_tokens,
+        } => {
+            *usage = Some(TokenUsage {
+                input_tokens,
+                cached_input_tokens,
+                output_tokens,
+                reasoning_output_tokens,
+            });
+        }
+        ResponseItem::Message { .. }
+        | ResponseItem::Reasoning { .. }
+        | ResponseItem::ReasoningItem { .. }
+        | ResponseItem::LocalShellCall { .. }
+        | ResponseItem::FunctionCallOutput { .. }
+        | ResponseItem::WebSearchCall { .. }
+        | ResponseItem::Compaction { .. }
+        | ResponseItem::CompactionTrigger { .. } => {}
+    }
+    Ok(())
 }
 
 pub fn protocol_stream_events_to_agent_events(
@@ -583,6 +864,154 @@ fn tool_call_started_event(call: yunxi_agent_protocol::ToolCall) -> AgentEvent {
             arguments_json: Some(format!(r#"{{"path":{}}}"#, json_string(&path))),
         },
     }
+}
+
+fn provider_tool_call_from_protocol(call: ToolCall) -> AgentResult<ProviderToolCall> {
+    match call {
+        ToolCall::Shell { id, command } => Ok(ProviderToolCall::Shell { id, command }),
+        ToolCall::Patch { id, patch } => Ok(ProviderToolCall::Patch { id, patch }),
+        ToolCall::Mcp {
+            id,
+            server,
+            tool,
+            arguments_json,
+        } => Ok(ProviderToolCall::Mcp {
+            id,
+            server,
+            tool,
+            arguments_json,
+        }),
+        ToolCall::Skill {
+            id,
+            name,
+            arguments_json,
+        } => Ok(ProviderToolCall::Skill {
+            id,
+            name,
+            arguments_json,
+        }),
+        ToolCall::MultiAgent {
+            id,
+            action,
+            arguments_json,
+        } => Ok(ProviderToolCall::MultiAgent {
+            id,
+            action,
+            arguments_json,
+        }),
+        ToolCall::ToolSearch { id, query } => Ok(ProviderToolCall::ToolSearch { id, query }),
+        ToolCall::RequestUserInput { id, prompt } => {
+            Ok(ProviderToolCall::RequestUserInput { id, prompt })
+        }
+        ToolCall::ViewImage { id, path } => Ok(ProviderToolCall::ViewImage { id, path }),
+    }
+}
+
+fn provider_tool_call_from_function(
+    id: Option<String>,
+    name: &str,
+    arguments: &str,
+) -> AgentResult<ProviderToolCall> {
+    let args = serde_json::from_str::<serde_json::Value>(arguments).map_err(|error| {
+        AgentError::Execution {
+            message: format!("failed to parse streamed tool arguments for {name}: {error}"),
+        }
+    })?;
+    match name {
+        "shell" => Ok(ProviderToolCall::Shell {
+            id,
+            command: required_json_string(&args, "command")?,
+        }),
+        "patch" => Ok(ProviderToolCall::Patch {
+            id,
+            patch: args
+                .get("patch")
+                .and_then(serde_json::Value::as_str)
+                .map(ToString::to_string)
+                .unwrap_or_else(|| arguments.to_string()),
+        }),
+        "mcp" => Ok(ProviderToolCall::Mcp {
+            id,
+            server: required_json_string(&args, "server")?,
+            tool: required_json_string(&args, "tool")?,
+            arguments_json: optional_json_string(&args, "arguments_json"),
+        }),
+        "skill" => Ok(ProviderToolCall::Skill {
+            id,
+            name: required_json_string(&args, "name")?,
+            arguments_json: optional_json_string(&args, "arguments_json"),
+        }),
+        "multi_agent" => Ok(ProviderToolCall::MultiAgent {
+            id,
+            action: required_json_string(&args, "action")?,
+            arguments_json: optional_json_string(&args, "arguments_json"),
+        }),
+        "tool_search" => Ok(ProviderToolCall::ToolSearch {
+            id,
+            query: required_json_string(&args, "query")?,
+        }),
+        "request_user_input" => Ok(ProviderToolCall::RequestUserInput {
+            id,
+            prompt: required_json_string(&args, "prompt")?,
+        }),
+        "view_image" => Ok(ProviderToolCall::ViewImage {
+            id,
+            path: required_json_string(&args, "path")?,
+        }),
+        other if other.starts_with("skill__") => Ok(ProviderToolCall::Skill {
+            id,
+            name: optional_json_string(&args, "name")
+                .unwrap_or_else(|| other.trim_start_matches("skill__").to_string()),
+            arguments_json: optional_json_string(&args, "arguments_json"),
+        }),
+        other if other.starts_with("plugin__") => Ok(ProviderToolCall::ToolSearch {
+            id,
+            query: optional_json_string(&args, "query")
+                .unwrap_or_else(|| other.trim_start_matches("plugin__").replace('_', " ")),
+        }),
+        other if other.starts_with("mcp__") => Ok(ProviderToolCall::Mcp {
+            id,
+            server: optional_json_string(&args, "server")
+                .unwrap_or_else(|| other.trim_start_matches("mcp__").to_string()),
+            tool: required_json_string(&args, "tool")?,
+            arguments_json: optional_json_string(&args, "arguments_json"),
+        }),
+        other => Err(AgentError::Execution {
+            message: format!("unsupported streamed provider tool call: {other}"),
+        }),
+    }
+}
+
+fn provider_tool_call_id(call: &ProviderToolCall) -> Option<&str> {
+    match call {
+        ProviderToolCall::Shell { id, .. }
+        | ProviderToolCall::Patch { id, .. }
+        | ProviderToolCall::Mcp { id, .. }
+        | ProviderToolCall::Skill { id, .. }
+        | ProviderToolCall::MultiAgent { id, .. }
+        | ProviderToolCall::ToolSearch { id, .. }
+        | ProviderToolCall::RequestUserInput { id, .. }
+        | ProviderToolCall::ViewImage { id, .. } => id.as_deref(),
+    }
+}
+
+fn required_json_string(value: &serde_json::Value, key: &str) -> AgentResult<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| AgentError::Execution {
+            message: format!("streamed tool argument {key} is missing or not a string"),
+        })
+}
+
+fn optional_json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value.get(key).map(|argument| {
+        argument
+            .as_str()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| argument.to_string())
+    })
 }
 
 fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolRequest {
@@ -1080,6 +1509,14 @@ fn generate_runtime_thread_id() -> String {
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
     format!("yunxi-thread-{millis}")
+}
+
+fn generate_runtime_turn_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("yunxi-turn-{millis}")
 }
 
 #[async_trait]

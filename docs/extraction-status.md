@@ -340,6 +340,57 @@ and wired into the default YunXi runtime.
 The Stage 4H development report is recorded in
 `docs/reports/2026-07-10-yunxi-stage-4h-upstream-core-gap-closure-development-report.md`.
 
+## Stage 4H Gap Closure Construction Slice
+
+Stage 4H construction is in progress and intentionally has not run the final
+verification gate yet. This slice extends the YunXi-owned headless runtime
+surface without restoring any default upstream Codex runtime dependency.
+
+Constructed in this slice so far:
+
+- `yunxi-agent-provider` builds live/fixture OpenAI-compatible requests from a
+  workspace-aware tool registry and parses dynamic `skill__*`, `plugin__*`, and
+  `mcp__*` function names back into YunXi-owned tool call variants.
+- `yunxi-agent-tools` can export fixed plus workspace-discovered dynamic tools
+  as provider function schemas.
+- `yunxi-agent-skills` discovers workspace plugins, resolves plugin skill/MCP
+  roots, and emits dynamic tool metadata for skills, plugins, and plugin MCP
+  seeds.
+- `yunxi-agent-runtime` maps streamed dynamic function names into skill, MCP,
+  or tool-search calls while keeping the provider/model layer replaceable.
+- `yunxi-agent-runtime` injects mentioned workspace file context from prompts
+  such as `@src/lib.rs` into provider messages with bounded file content.
+- `yunxi-agent-patch` exposes structured patch diagnostics through
+  `PatchDiagnostic`, `PatchApplyError`, and `apply_patch_detailed`.
+- Patch execution now returns a failed `ToolResponse` with serialized
+  diagnostics for patch failures, allowing the runtime to continue through the
+  normal tool failed event path.
+- `yunxi-agent-mcp` owns an HTTP JSON-RPC client facade with a replaceable
+  transport, a reqwest-backed default transport, and fixture transport for
+  offline verification.
+- `yunxi-agent-multi-agent` owns serializable agent graph session metadata,
+  cycle-safe insertion/validation, and graph reconstruction from persisted
+  metadata.
+- `yunxi-agent-storage` owns a storage-backed session graph view and can export
+  persisted session/thread metadata into multi-agent graph metadata.
+- `yunxi-agent-cli` exposes stable YunXi exit-code classification and a
+  `sessions graph` command for persisted parent/child thread views.
+- `tool_search` now returns both workspace file matches and dynamic tool
+  metadata discovered from the active workspace.
+
+Stage 4H gap closure construction verification passed on 2026-07-10:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo tree -p yunxi-agent-cli`: pass; scan found no `codex`,
+  `vendor`, or `yunxi-agent-codex` dependency in the default CLI tree
+- `git diff --check`: pass with Windows line-ending warnings only
+- `cargo clean`: pass; removed 1.2GiB of build artifacts
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

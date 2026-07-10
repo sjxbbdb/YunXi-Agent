@@ -10,12 +10,35 @@ use yunxi_agent_protocol::{
     ToolCall, ToolCallStatus, TurnId, to_jsonl_line,
 };
 use yunxi_agent_storage::{
-    FileSessionStore, HistoryLoadOptions, RolloutRecord, SessionHistory, SessionId, SessionRecord,
-    SessionStore,
+    FileSessionStore, HistoryLoadOptions, RolloutRecord, SessionGraphView, SessionHistory,
+    SessionId, SessionRecord, SessionStore,
 };
 
 const CODEX_CORE_PARITY_MAP: &str =
     include_str!("../../../docs/extraction-index/codex-core-agent-parity-map.md");
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CliExitCode {
+    Success,
+    Failure,
+    InvalidInput,
+    ProviderError,
+    ToolError,
+    Cancelled,
+}
+
+impl CliExitCode {
+    fn code(self) -> i32 {
+        match self {
+            Self::Success => 0,
+            Self::Failure => 1,
+            Self::InvalidInput => 2,
+            Self::ProviderError => 10,
+            Self::ToolError => 20,
+            Self::Cancelled => 130,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "yunxi-agent-cli")]
@@ -40,6 +63,9 @@ struct Cli {
 
     #[arg(long, value_name = "PROVIDER")]
     provider: Option<String>,
+
+    #[arg(long)]
+    provider_live: bool,
 
     #[arg(long = "codex-home", value_name = "PATH")]
     codex_home: Option<PathBuf>,
@@ -106,6 +132,7 @@ enum SessionCommand {
         #[arg(value_name = "SESSION_ID")]
         id: String,
     },
+    Graph,
     Resume {
         #[arg(value_name = "SESSION_ID")]
         id: String,
@@ -196,7 +223,18 @@ impl From<CliSandboxMode> for SandboxMode {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
+    let code = match run_cli().await {
+        Ok(()) => CliExitCode::Success,
+        Err(error) => {
+            eprintln!("{error:#}");
+            classify_cli_error(&error)
+        }
+    };
+    std::process::exit(code.code());
+}
+
+async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
     let backend = if cli.live {
@@ -233,21 +271,51 @@ async fn main() -> Result<()> {
         bail!("a prompt is required");
     }
 
-    let result = run_agent_backend(backend, config, prompt).await?;
+    let result = run_agent_backend(backend, config, prompt, cli.provider_live).await?;
     print_run_result(result, cli.json, cli.jsonl)?;
     Ok(())
+}
+
+fn classify_cli_error(error: &anyhow::Error) -> CliExitCode {
+    let message = format!("{error:#}").to_ascii_lowercase();
+    if message.contains("a prompt is required")
+        || message.contains("session not found")
+        || message.contains("invalid")
+    {
+        CliExitCode::InvalidInput
+    } else if message.contains("cancelled") || message.contains("canceled") {
+        CliExitCode::Cancelled
+    } else if message.contains("provider") || message.contains("api key") {
+        CliExitCode::ProviderError
+    } else if message.contains("tool")
+        || message.contains("patch")
+        || message.contains("shell")
+        || message.contains("sandbox")
+    {
+        CliExitCode::ToolError
+    } else {
+        CliExitCode::Failure
+    }
 }
 
 async fn run_agent_backend(
     backend: BackendKind,
     config: AgentConfig,
     prompt: String,
+    provider_live: bool,
 ) -> Result<AgentRunResult> {
     let result = match backend {
         BackendKind::Yunxi => {
             let cwd = config.cwd.clone();
             let agent = Agent::new(config);
-            let backend = yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace(cwd);
+            let backend = if provider_live {
+                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace_with_live_provider(
+                    cwd,
+                    agent.config(),
+                )
+            } else {
+                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace(cwd)
+            };
             agent
                 .run_with_backend(&backend, AgentInput::text(prompt))
                 .await
@@ -686,6 +754,15 @@ async fn run_session_command(
                 .ok_or_else(|| anyhow::anyhow!("session not found: {id}"))?;
             print_history(&history, json)?;
         }
+        SessionCommand::Graph => {
+            let graph = SessionGraphView::from_sessions(
+                store
+                    .list()
+                    .await
+                    .context("failed to list sessions for graph")?,
+            )?;
+            print_session_graph(&graph, json)?;
+        }
         SessionCommand::Resume { id, prompt } => {
             let session_id = SessionId::new(id.clone());
             let session = store
@@ -707,7 +784,7 @@ async fn run_session_command(
                 }
             }
             let resume_prompt = build_resume_prompt(&prompt.join(" "));
-            let result = run_agent_backend(backend, resume_config, resume_prompt).await?;
+            let result = run_agent_backend(backend, resume_config, resume_prompt, false).await?;
             print_run_result(result, json, jsonl)?;
         }
         SessionCommand::Fork { id } => {
@@ -802,6 +879,36 @@ fn print_history(history: &SessionHistory, json: bool) -> Result<()> {
                 item.session_id.0,
                 item.kind,
                 preview(&item.content)
+            );
+        }
+    }
+    Ok(())
+}
+
+fn print_session_graph(graph: &SessionGraphView, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(graph)?);
+    } else {
+        println!("sessions: {}", graph.sessions.len());
+        for (id, session) in &graph.sessions {
+            let children = graph.children.get(id).map(Vec::len).unwrap_or_default();
+            println!(
+                "{}\tparent={}\tchildren={}\tarchived={}\tpinned={}\t{}",
+                id.0,
+                session
+                    .parent_id
+                    .as_ref()
+                    .map(|parent| parent.0.as_str())
+                    .unwrap_or("none"),
+                children,
+                session.archived,
+                session.pinned,
+                session
+                    .task
+                    .as_deref()
+                    .or(session.title.as_deref())
+                    .map(preview)
+                    .unwrap_or_else(|| "untitled".to_string())
             );
         }
     }

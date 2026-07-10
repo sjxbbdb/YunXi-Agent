@@ -1,16 +1,19 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use yunxi_agent_core::{AgentError, AgentEvent, AgentResult, AgentRunStatus};
+use yunxi_agent_multi_agent::{
+    AgentGraphSessionMetadata, AgentId, AgentMetadata, AgentRole, AgentStatus,
+};
 use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
 static NEXT_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct SessionId(pub String);
 
 impl SessionId {
@@ -61,6 +64,161 @@ pub struct ThreadMetadata {
     pub pinned: bool,
     pub created_at_millis: u128,
     pub updated_at_millis: u128,
+}
+
+/// Storage-owned, serializable session projection for a persisted agent graph.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentSessionMetadata {
+    pub id: SessionId,
+    #[serde(default)]
+    pub parent_id: Option<SessionId>,
+    pub task: Option<String>,
+    pub status: Option<AgentRunStatus>,
+    pub title: Option<String>,
+    pub archived: bool,
+    pub pinned: bool,
+    pub created_at_millis: u128,
+    pub updated_at_millis: u128,
+}
+
+impl From<&SessionRecord> for AgentSessionMetadata {
+    fn from(record: &SessionRecord) -> Self {
+        Self {
+            id: record.id.clone(),
+            parent_id: record.parent_id.clone(),
+            task: Some(record.prompt.clone()),
+            status: Some(record.status),
+            title: record.title.clone(),
+            archived: record.archived,
+            pinned: record.pinned,
+            created_at_millis: record.created_at_millis,
+            updated_at_millis: record.updated_at_millis,
+        }
+    }
+}
+
+impl From<&ThreadMetadata> for AgentSessionMetadata {
+    fn from(thread: &ThreadMetadata) -> Self {
+        Self {
+            id: thread.id.clone(),
+            parent_id: thread.parent_id.clone(),
+            task: None,
+            status: None,
+            title: thread.title.clone(),
+            archived: thread.archived,
+            pinned: thread.pinned,
+            created_at_millis: thread.created_at_millis,
+            updated_at_millis: thread.updated_at_millis,
+        }
+    }
+}
+
+impl AgentSessionMetadata {
+    pub fn to_agent_graph_session_metadata(&self) -> AgentGraphSessionMetadata {
+        let agent_id = AgentId(self.id.0.clone());
+        let parent_agent_id = self.parent_id.as_ref().map(|id| AgentId(id.0.clone()));
+        AgentGraphSessionMetadata {
+            session_id: self.id.0.clone(),
+            parent_session_id: self.parent_id.as_ref().map(|id| id.0.clone()),
+            agent: AgentMetadata {
+                id: agent_id,
+                parent_id: parent_agent_id,
+                task: self
+                    .task
+                    .clone()
+                    .or_else(|| self.title.clone())
+                    .unwrap_or_else(|| self.id.0.clone()),
+                status: match self.status {
+                    Some(AgentRunStatus::Completed) => AgentStatus::Completed,
+                    Some(AgentRunStatus::Failed) => AgentStatus::Failed,
+                    None => AgentStatus::Running,
+                },
+                role: Some(AgentRole::General),
+                budget_tokens: None,
+            },
+            created_at_millis: self.created_at_millis,
+            updated_at_millis: self.updated_at_millis,
+        }
+    }
+}
+
+/// A cycle-safe, storage-backed parent/child projection of session metadata.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionGraphView {
+    pub sessions: BTreeMap<SessionId, AgentSessionMetadata>,
+    pub children: BTreeMap<SessionId, Vec<SessionId>>,
+}
+
+impl SessionGraphView {
+    pub fn from_sessions(sessions: impl IntoIterator<Item = SessionRecord>) -> AgentResult<Self> {
+        Self::from_metadata(sessions.into_iter().map(|record| (&record).into()))
+    }
+
+    pub fn from_threads(threads: impl IntoIterator<Item = ThreadMetadata>) -> AgentResult<Self> {
+        Self::from_metadata(threads.into_iter().map(|thread| (&thread).into()))
+    }
+
+    pub fn from_metadata(
+        sessions: impl IntoIterator<Item = AgentSessionMetadata>,
+    ) -> AgentResult<Self> {
+        let sessions = sessions
+            .into_iter()
+            .map(|session| (session.id.clone(), session))
+            .collect();
+        let mut view = Self {
+            sessions,
+            children: BTreeMap::new(),
+        };
+        view.validate()?;
+        view.rebuild_children();
+        Ok(view)
+    }
+
+    pub fn children_of(&self, id: &SessionId) -> Vec<AgentSessionMetadata> {
+        self.children
+            .get(id)
+            .into_iter()
+            .flatten()
+            .filter_map(|child_id| self.sessions.get(child_id).cloned())
+            .collect()
+    }
+
+    pub fn agent_graph_session_metadata(&self) -> Vec<AgentGraphSessionMetadata> {
+        self.sessions
+            .values()
+            .map(AgentSessionMetadata::to_agent_graph_session_metadata)
+            .collect()
+    }
+
+    pub fn validate(&self) -> AgentResult<()> {
+        for id in self.sessions.keys() {
+            let mut ancestors = BTreeSet::new();
+            let mut current = Some(id);
+            while let Some(current_id) = current {
+                if !ancestors.insert(current_id.clone()) {
+                    return Err(AgentError::Execution {
+                        message: format!("cycle detected in session graph at {}", current_id.0),
+                    });
+                }
+                current = self
+                    .sessions
+                    .get(current_id)
+                    .and_then(|session| session.parent_id.as_ref());
+            }
+        }
+        Ok(())
+    }
+
+    fn rebuild_children(&mut self) {
+        for session in self.sessions.values() {
+            if let Some(parent_id) = &session.parent_id {
+                self.children
+                    .entry(parent_id.clone())
+                    .or_default()
+                    .push(session.id.clone());
+            }
+        }
+    }
 }
 
 impl ThreadMetadata {
@@ -408,6 +566,10 @@ impl SessionRecord {
             updated_at_millis: self.updated_at_millis,
         }
     }
+
+    pub fn agent_session_metadata(&self) -> AgentSessionMetadata {
+        self.into()
+    }
 }
 
 #[async_trait]
@@ -696,5 +858,55 @@ mod tests {
 
         assert!(rollout.truncated);
         assert_eq!(rollout.items.len(), 1);
+    }
+
+    #[test]
+    fn session_graph_view_rebuilds_parent_child_relationships() {
+        let mut root = SessionRecord::new(".", "root", None, vec![]);
+        root.id = SessionId::new("root");
+        let mut child =
+            SessionRecord::new(".", "child", None, vec![]).with_parent_id(root.id.clone());
+        child.id = SessionId::new("child");
+
+        let view = SessionGraphView::from_sessions([root.clone(), child.clone()])
+            .expect("session graph should rebuild");
+
+        assert_eq!(
+            view.children_of(&root.id),
+            vec![child.agent_session_metadata()]
+        );
+    }
+
+    #[test]
+    fn session_graph_view_rejects_cycles() {
+        let mut left = SessionRecord::new(".", "left", None, vec![]);
+        left.id = SessionId::new("left");
+        left.parent_id = Some(SessionId::new("right"));
+        let mut right = SessionRecord::new(".", "right", None, vec![]);
+        right.id = SessionId::new("right");
+        right.parent_id = Some(SessionId::new("left"));
+
+        let error = SessionGraphView::from_sessions([left, right])
+            .expect_err("cyclic session graph should be rejected");
+
+        assert!(format!("{error}").contains("cycle detected"));
+    }
+
+    #[test]
+    fn session_graph_view_exports_multi_agent_metadata() {
+        let mut root = SessionRecord::new(".", "root task", None, vec![]);
+        root.id = SessionId::new("root");
+        let mut child =
+            SessionRecord::new(".", "child task", None, vec![]).with_parent_id(root.id.clone());
+        child.id = SessionId::new("child");
+
+        let metadata = SessionGraphView::from_sessions([root, child])
+            .expect("session graph")
+            .agent_graph_session_metadata();
+
+        assert_eq!(metadata.len(), 2);
+        assert!(metadata.iter().any(|item| item.session_id == "child"
+            && item.parent_session_id.as_deref() == Some("root")
+            && item.agent.task == "child task"));
     }
 }

@@ -1,7 +1,10 @@
 use serde_json::json;
 use std::path::PathBuf;
+use tempfile::TempDir;
 use yunxi_agent_core::{AgentConfig, AgentInput};
-use yunxi_agent_protocol::{ResponseItemDelta, ResponseStatus, StreamEvent, ToolCall};
+use yunxi_agent_protocol::{
+    ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId,
+};
 use yunxi_agent_provider::{
     AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiTransportProvider,
     ProviderAuth, ProviderConfig, ProviderRequest, ProviderRetryPolicy, ProviderRole,
@@ -80,6 +83,41 @@ fn openai_request_json_uses_yunxi_provider_messages() {
         json!(["server", "tool"])
     );
     assert_eq!(json["parallel_tool_calls"], true);
+}
+
+#[test]
+fn openai_request_json_includes_workspace_dynamic_tools() {
+    let temp = TempDir::new().expect("temp dir");
+    let skill_dir = temp.path().join(".yunxi/skills/writer");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: writer\ndescription: writes reports\n---\n# Writer\n",
+    )
+    .expect("skill file");
+    let request = ProviderRequest::new(
+        AgentConfig::new(temp.path()).with_model("yunxi-model"),
+        AgentInput::text("use skill"),
+    );
+
+    let json = build_openai_request_json(
+        &ProviderConfig::openai_compatible("fallback-model"),
+        &request,
+    )
+    .expect("request json");
+    let tool_names = json["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|tool| {
+            tool.pointer("/function/name")
+                .and_then(serde_json::Value::as_str)
+                .expect("tool name")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(tool_names.contains(&"shell"));
+    assert!(tool_names.contains(&"skill__writer"));
 }
 
 #[test]
@@ -220,6 +258,60 @@ async fn transported_openai_provider_uses_transport_for_streaming() {
             delta: ResponseItemDelta::MessageContent { delta, .. },
             ..
         } if delta == "hi"
+    )));
+}
+
+#[tokio::test]
+async fn provider_default_stream_wraps_completion_response() {
+    let provider = StaticProvider::default();
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("stream fallback"),
+    );
+
+    let stream = provider
+        .stream(
+            request,
+            ThreadId("thread-fallback".to_string()),
+            TurnId("turn-fallback".to_string()),
+        )
+        .await
+        .expect("stream fallback");
+
+    assert!(stream.events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemCompleted {
+            item: ResponseItem::Message { content, .. },
+            ..
+        } if content.contains("stream fallback")
+    )));
+    assert!(stream.final_response.is_some());
+}
+
+#[test]
+fn openai_chat_stream_aggregates_tool_call_deltas() {
+    let events = parse_openai_stream_events(
+        "thread-tools",
+        "turn-tools",
+        concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"shell\",\"arguments\":\"{\\\"command\\\":\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"echo streamed\\\"}\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"finish_reason\":\"tool_calls\"}]}\n\n"
+        ),
+    )
+    .expect("stream events");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemCompleted {
+            item: ResponseItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+                ..
+            },
+            ..
+        } if call_id == "call-1" && name == "shell" && arguments.contains("echo streamed")
     )));
 }
 
@@ -498,6 +590,14 @@ fn openai_response_parses_dynamic_tool_calls() {
                       "name": "view_image",
                       "arguments": "{\"path\":\"diagram.png\"}"
                     }
+                  },
+                  {
+                    "id": "call_skill_dynamic",
+                    "type": "function",
+                    "function": {
+                      "name": "skill__writer",
+                      "arguments": "{\"arguments_json\":\"{\\\"topic\\\":\\\"report\\\"}\"}"
+                    }
                   }
                 ]
               }
@@ -521,6 +621,11 @@ fn openai_response_parses_dynamic_tool_calls() {
             ProviderToolCall::ViewImage {
                 id: Some("call_image".to_string()),
                 path: "diagram.png".to_string()
+            },
+            ProviderToolCall::Skill {
+                id: Some("call_skill_dynamic".to_string()),
+                name: "writer".to_string(),
+                arguments_json: Some(r#"{"topic":"report"}"#.to_string())
             }
         ]
     );

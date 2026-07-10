@@ -82,7 +82,7 @@ fn cli_rejects_missing_prompt() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
 
     cmd.assert()
-        .failure()
+        .code(2)
         .stderr(predicate::str::contains("a prompt is required"));
 }
 
@@ -221,6 +221,14 @@ fn cli_manages_yunxi_session_lifecycle() {
                 .as_str()
                 .is_some_and(|prompt| prompt.contains("continue the work"))
     }));
+
+    let graph = run_json_command(&["--cwd", cwd, "--json", "sessions", "graph"]);
+    assert!(graph["sessions"].get(&session_id).is_some());
+    assert!(
+        graph["children"][&session_id]
+            .as_array()
+            .is_some_and(|children| children.len() >= 2)
+    );
 }
 
 #[test]

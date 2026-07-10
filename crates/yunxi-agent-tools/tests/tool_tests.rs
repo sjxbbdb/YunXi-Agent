@@ -9,7 +9,7 @@ use yunxi_agent_mcp::{
 use yunxi_agent_tools::{
     CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime, ToolFileChangeKind, ToolName,
     ToolPolicy, ToolPolicyDecision, ToolRegistry, ToolRequest, ToolRequestKind, ToolRouteStatus,
-    ToolRouter, ToolRuntime, ToolStatus, default_tool_registry,
+    ToolRouter, ToolRuntime, ToolStatus, default_tool_registry, workspace_tool_registry,
 };
 
 #[test]
@@ -75,6 +75,33 @@ fn default_tool_registry_exports_openai_function_schema() {
         tools[0]["function"]["parameters"]["properties"]["command"]["type"],
         "string"
     );
+}
+
+#[test]
+fn workspace_tool_registry_exports_dynamic_skill_functions() {
+    let temp = TempDir::new().expect("temp dir");
+    let skill_dir = temp.path().join(".yunxi/skills/writer");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: writer\ndescription: writes reports\n---\n# Writer\n",
+    )
+    .expect("skill file");
+
+    let tools = workspace_tool_registry(temp.path())
+        .expect("workspace registry")
+        .openai_tools_json();
+    let names = tools
+        .iter()
+        .map(|tool| {
+            tool.pointer("/function/name")
+                .and_then(serde_json::Value::as_str)
+                .expect("tool function name")
+        })
+        .collect::<Vec<_>>();
+
+    assert!(names.contains(&"shell"));
+    assert!(names.contains(&"skill__writer"));
 }
 
 #[test]
@@ -361,15 +388,22 @@ async fn patch_tool_rejects_parent_directory_escape() {
     let runtime = ShellToolRuntime;
     let temp = TempDir::new().expect("temp dir");
 
-    let error = runtime
+    let response = runtime
         .execute(ToolRequest::patch(
             temp.path(),
             r#"{"op":"write","path":"../escape.txt","content":"no"}"#,
         ))
         .await
-        .expect_err("escaping patch should fail");
+        .expect("escaping patch response should be structured");
 
-    assert!(error.to_string().contains("cannot escape workspace"));
+    assert_eq!(response.status, ToolStatus::Failed);
+    assert!(
+        response
+            .output
+            .as_deref()
+            .expect("diagnostics")
+            .contains("cannot escape workspace")
+    );
 }
 
 #[tokio::test]
@@ -388,12 +422,19 @@ async fn patch_tool_rejects_absolute_paths() {
     })
     .to_string();
 
-    let error = runtime
+    let response = runtime
         .execute(ToolRequest::patch(temp.path(), patch))
         .await
-        .expect_err("absolute patch should fail");
+        .expect("absolute patch response should be structured");
 
-    assert!(error.to_string().contains("must be relative"));
+    assert_eq!(response.status, ToolStatus::Failed);
+    assert!(
+        response
+            .output
+            .as_deref()
+            .expect("diagnostics")
+            .contains("must be relative")
+    );
 }
 
 #[tokio::test]
@@ -417,6 +458,40 @@ async fn tool_search_returns_workspace_matches() {
 
     assert_eq!(response.status, ToolStatus::Completed);
     assert!(response.output.as_deref().expect("output").contains("src"));
+}
+
+#[tokio::test]
+async fn tool_search_returns_dynamic_tool_metadata() {
+    let runtime = ShellToolRuntime;
+    let temp = TempDir::new().expect("temp dir");
+    let skill_dir = temp.path().join(".yunxi/skills/writer");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: writer\ndescription: writes reports\n---\n# Writer\n",
+    )
+    .expect("skill file");
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: Some("search".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: yunxi_agent_tools::ToolRequestKind::ToolSearch {
+                query: "writer".to_string(),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("tool search");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    let output: serde_json::Value =
+        serde_json::from_str(response.output.as_deref().expect("output")).expect("json");
+    assert!(output["tools"].as_array().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|tool| tool["name"].as_str() == Some("skill__writer"))
+    }));
 }
 
 #[tokio::test]

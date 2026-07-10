@@ -318,14 +318,61 @@ impl ExecManager {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExecHandle {
+    pub id: String,
+    pub command: String,
+    pub cwd: PathBuf,
+    pub status: ExecHandleStatus,
+    pub buffered_output: String,
+}
+
+impl ExecHandle {
+    pub fn new(id: impl Into<String>, command: &ExecCommand) -> Self {
+        Self {
+            id: id.into(),
+            command: command.canonical_command(),
+            cwd: command.cwd.clone(),
+            status: ExecHandleStatus::Running,
+            buffered_output: String::new(),
+        }
+    }
+
+    pub fn mark_completed(mut self, output: impl Into<String>) -> Self {
+        self.status = ExecHandleStatus::Completed;
+        self.buffered_output = output.into();
+        self
+    }
+
+    pub fn request_cancel(mut self) -> Self {
+        self.status = ExecHandleStatus::CancelRequested;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecHandleStatus {
+    Running,
+    CancelRequested,
+    Completed,
+    Failed,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OutputLimits {
     pub max_bytes: usize,
+    pub max_lines: Option<usize>,
+    pub tail_lines: Option<usize>,
 }
 
 impl Default for OutputLimits {
     fn default() -> Self {
-        Self { max_bytes: 20_000 }
+        Self {
+            max_bytes: 20_000,
+            max_lines: Some(1_000),
+            tail_lines: Some(200),
+        }
     }
 }
 
@@ -356,10 +403,11 @@ pub fn combine_output(stdout: &str, stderr: &str) -> String {
 }
 
 pub fn truncate_output(output: &str, limits: OutputLimits) -> String {
-    if output.len() <= limits.max_bytes {
-        return output.to_string();
+    let mut limited = limit_lines(output, limits);
+    if limited.len() <= limits.max_bytes {
+        return limited;
     }
-    let mut truncated = output
+    limited = limited
         .chars()
         .scan(0usize, |count, ch| {
             let next = *count + ch.len_utf8();
@@ -371,8 +419,31 @@ pub fn truncate_output(output: &str, limits: OutputLimits) -> String {
             }
         })
         .collect::<String>();
-    truncated.push_str("\n[output truncated]");
-    truncated
+    limited.push_str("\n[output truncated]");
+    limited
+}
+
+fn limit_lines(output: &str, limits: OutputLimits) -> String {
+    let Some(max_lines) = limits.max_lines else {
+        return output.to_string();
+    };
+    let lines = output.lines().collect::<Vec<_>>();
+    if lines.len() <= max_lines {
+        return output.to_string();
+    }
+    let tail_lines = limits.tail_lines.unwrap_or(max_lines).min(max_lines);
+    let head_lines = max_lines.saturating_sub(tail_lines);
+    let mut limited = String::new();
+    for line in lines.iter().take(head_lines) {
+        limited.push_str(line);
+        limited.push('\n');
+    }
+    limited.push_str("[output truncated]\n");
+    for line in lines.iter().skip(lines.len().saturating_sub(tail_lines)) {
+        limited.push_str(line);
+        limited.push('\n');
+    }
+    limited
 }
 
 async fn read_pipe<T>(pipe: Option<T>) -> Result<String, std::io::Error>
@@ -504,6 +575,38 @@ mod tests {
             }
         )));
         assert_eq!(trace.summary.aggregated_output, "out\nerr");
+    }
+
+    #[test]
+    fn exec_handle_tracks_long_running_status_facade() {
+        let command =
+            ExecCommand::observed_shell(".", "echo yunxi").with_id(Some("exec-handle".to_string()));
+        let handle = ExecHandle::new("handle-1", &command).request_cancel();
+
+        assert_eq!(handle.id, "handle-1");
+        assert_eq!(handle.command, "echo yunxi");
+        assert_eq!(handle.status, ExecHandleStatus::CancelRequested);
+    }
+
+    #[test]
+    fn output_limits_keep_head_and_tail_lines() {
+        let output = (0..10)
+            .map(|index| format!("line-{index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let limited = truncate_output(
+            &output,
+            OutputLimits {
+                max_bytes: 1_000,
+                max_lines: Some(4),
+                tail_lines: Some(2),
+            },
+        );
+
+        assert!(limited.contains("line-0"));
+        assert!(limited.contains("[output truncated]"));
+        assert!(limited.contains("line-8"));
+        assert!(!limited.contains("line-5"));
     }
 
     #[tokio::test]

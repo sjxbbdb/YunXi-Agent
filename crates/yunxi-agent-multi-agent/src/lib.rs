@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use yunxi_agent_core::{AgentError, AgentResult};
 
@@ -25,6 +25,32 @@ pub struct AgentMetadata {
     pub role: Option<AgentRole>,
     #[serde(default)]
     pub budget_tokens: Option<i64>,
+}
+
+/// Serializable graph state kept alongside a spawned agent's session.
+///
+/// The type deliberately uses string session identifiers so a storage backend can
+/// persist it without depending on this crate's runtime-only `AgentId` wrapper.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentGraphSessionMetadata {
+    pub session_id: String,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    pub agent: AgentMetadata,
+    pub created_at_millis: u128,
+    pub updated_at_millis: u128,
+}
+
+impl AgentGraphSessionMetadata {
+    pub fn new(session_id: impl Into<String>, agent: AgentMetadata) -> Self {
+        Self {
+            session_id: session_id.into(),
+            parent_session_id: agent.parent_id.as_ref().map(|id| id.0.clone()),
+            agent,
+            created_at_millis: 0,
+            updated_at_millis: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -103,14 +129,61 @@ pub struct AgentGraph {
 }
 
 impl AgentGraph {
-    pub fn insert(&mut self, metadata: AgentMetadata) {
-        if let Some(parent_id) = metadata.parent_id.clone() {
-            self.children
-                .entry(parent_id)
-                .or_default()
-                .push(metadata.id.clone());
+    pub fn try_insert(&mut self, metadata: AgentMetadata) -> AgentResult<()> {
+        let id = metadata.id.clone();
+        let previous = self.agents.insert(id.clone(), metadata);
+        if let Err(error) = self.validate() {
+            match previous {
+                Some(previous) => {
+                    self.agents.insert(previous.id.clone(), previous);
+                }
+                None => {
+                    self.agents.remove(&id);
+                }
+            }
+            self.rebuild_children();
+            return Err(error);
         }
-        self.agents.insert(metadata.id.clone(), metadata);
+        self.rebuild_children();
+        Ok(())
+    }
+
+    pub fn from_session_metadata(
+        sessions: impl IntoIterator<Item = AgentGraphSessionMetadata>,
+    ) -> AgentResult<Self> {
+        let mut graph = Self::default();
+        for session in sessions {
+            if session.parent_session_id != session.agent.parent_id.as_ref().map(|id| id.0.clone())
+            {
+                return Err(AgentError::Execution {
+                    message: format!(
+                        "session {} has inconsistent agent parent metadata",
+                        session.session_id
+                    ),
+                });
+            }
+            graph.try_insert(session.agent)?;
+        }
+        Ok(graph)
+    }
+
+    pub fn validate(&self) -> AgentResult<()> {
+        for id in self.agents.keys() {
+            let mut ancestors = BTreeSet::new();
+            let mut current = Some(id);
+            while let Some(current_id) = current {
+                if !ancestors.insert(current_id.clone()) {
+                    return Err(AgentError::Execution {
+                        message: format!("cycle detected in agent graph at {}", current_id.0),
+                    });
+                }
+                current = self
+                    .agents
+                    .get(current_id)
+                    .and_then(|metadata| metadata.parent_id.as_ref());
+            }
+        }
+        Ok(())
     }
 
     pub fn children_of(&self, id: &AgentId) -> Vec<AgentMetadata> {
@@ -120,6 +193,18 @@ impl AgentGraph {
             .flatten()
             .filter_map(|child_id| self.agents.get(child_id).cloned())
             .collect()
+    }
+
+    fn rebuild_children(&mut self) {
+        self.children.clear();
+        for metadata in self.agents.values() {
+            if let Some(parent_id) = &metadata.parent_id {
+                self.children
+                    .entry(parent_id.clone())
+                    .or_default()
+                    .push(metadata.id.clone());
+            }
+        }
     }
 }
 
@@ -243,7 +328,7 @@ impl InMemoryAgentRegistry {
     pub fn graph(&self) -> AgentResult<AgentGraph> {
         let mut graph = AgentGraph::default();
         for metadata in self.list()? {
-            graph.insert(metadata);
+            graph.try_insert(metadata)?;
         }
         Ok(graph)
     }
@@ -314,23 +399,86 @@ mod tests {
         let mut graph = AgentGraph::default();
         let parent = AgentId("parent".to_string());
         let child = AgentId("child".to_string());
-        graph.insert(AgentMetadata {
-            id: parent.clone(),
+        graph
+            .try_insert(AgentMetadata {
+                id: parent.clone(),
+                parent_id: None,
+                task: "parent task".to_string(),
+                status: AgentStatus::Running,
+                role: Some(AgentRole::General),
+                budget_tokens: Some(1000),
+            })
+            .expect("insert parent");
+        graph
+            .try_insert(AgentMetadata {
+                id: child.clone(),
+                parent_id: Some(parent.clone()),
+                task: "child task".to_string(),
+                status: AgentStatus::Running,
+                role: Some(AgentRole::Explorer),
+                budget_tokens: Some(500),
+            })
+            .expect("insert child");
+
+        assert_eq!(graph.children_of(&parent)[0].id, child);
+    }
+
+    #[test]
+    fn graph_rejects_parent_child_cycles_without_mutating_state() {
+        let parent = AgentId("parent".to_string());
+        let child = AgentId("child".to_string());
+        let mut graph = AgentGraph::default();
+        graph
+            .try_insert(AgentMetadata {
+                id: parent.clone(),
+                parent_id: Some(child.clone()),
+                task: "parent".to_string(),
+                status: AgentStatus::Running,
+                role: None,
+                budget_tokens: None,
+            })
+            .expect("a missing parent is allowed while rebuilding persisted state");
+
+        let error = graph
+            .try_insert(AgentMetadata {
+                id: child.clone(),
+                parent_id: Some(parent),
+                task: "child".to_string(),
+                status: AgentStatus::Running,
+                role: None,
+                budget_tokens: None,
+            })
+            .expect_err("cycle should be rejected");
+
+        assert!(format!("{error}").contains("cycle detected"));
+        assert!(!graph.agents.contains_key(&child));
+    }
+
+    #[test]
+    fn graph_rebuilds_from_persisted_session_metadata() {
+        let root = AgentMetadata {
+            id: AgentId("root".to_string()),
             parent_id: None,
-            task: "parent task".to_string(),
-            status: AgentStatus::Running,
+            task: "root task".to_string(),
+            status: AgentStatus::Completed,
             role: Some(AgentRole::General),
-            budget_tokens: Some(1000),
-        });
-        graph.insert(AgentMetadata {
-            id: child.clone(),
-            parent_id: Some(parent.clone()),
+            budget_tokens: None,
+        };
+        let child = AgentMetadata {
+            id: AgentId("child".to_string()),
+            parent_id: Some(root.id.clone()),
             task: "child task".to_string(),
             status: AgentStatus::Running,
             role: Some(AgentRole::Explorer),
             budget_tokens: Some(500),
-        });
+        };
 
-        assert_eq!(graph.children_of(&parent)[0].id, child);
+        let graph = AgentGraph::from_session_metadata([
+            AgentGraphSessionMetadata::new("session-root", root.clone()),
+            AgentGraphSessionMetadata::new("session-child", child.clone()),
+        ])
+        .expect("session metadata should rebuild graph");
+
+        assert_eq!(graph.children_of(&root.id), vec![child]);
     }
 }

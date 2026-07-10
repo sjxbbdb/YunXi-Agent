@@ -302,6 +302,58 @@ pub struct PolicyEvaluation {
     pub network_decision: NetworkDecision,
 }
 
+impl PolicyEvaluation {
+    pub fn execution_plan(&self) -> SandboxExecutionPlan {
+        SandboxExecutionPlan {
+            allowed: matches!(self.decision, PolicyDecision::Allowed),
+            backend: self.sandbox_backend.backend,
+            network: self.network_decision.clone(),
+            approval_required: self.approval_request.is_some(),
+            escalation_required: self.escalation_request.is_some(),
+            denial_reason: match &self.decision {
+                PolicyDecision::Allowed => None,
+                PolicyDecision::Blocked { reason } => Some(reason.clone()),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SandboxExecutionPlan {
+    pub allowed: bool,
+    pub backend: SandboxBackend,
+    pub network: NetworkDecision,
+    pub approval_required: bool,
+    pub escalation_required: bool,
+    pub denial_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SandboxRunnerDecision {
+    pub plan: SandboxExecutionPlan,
+    pub command: Option<String>,
+    pub cwd: PathBuf,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SandboxRunner;
+
+impl SandboxRunner {
+    pub fn plan(
+        &self,
+        policy: &ExecutionPolicy,
+        cwd: &Path,
+        command: Option<&str>,
+    ) -> SandboxRunnerDecision {
+        let evaluation = policy.evaluate(cwd, command);
+        SandboxRunnerDecision {
+            plan: evaluation.execution_plan(),
+            command: command.map(ToString::to_string),
+            cwd: cwd.to_path_buf(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EscalationRequest {
     pub reason: String,
@@ -563,6 +615,27 @@ mod tests {
                 .expect("workspace escalation")
                 .required_sandbox,
             Some(SandboxRequirement::DangerFullAccess)
+        );
+    }
+
+    #[test]
+    fn sandbox_runner_exposes_execution_plan_facade() {
+        let workspace = TempDir::new().expect("workspace");
+        let policy = ExecutionPolicy {
+            approval: ApprovalRequirement::PreApproved,
+            sandbox: SandboxRequirement::ReadOnly,
+            network: NetworkPolicy::Inherit,
+            workspace_root: workspace.path().to_path_buf(),
+        };
+
+        let decision =
+            SandboxRunner.plan(&policy, workspace.path(), Some("echo denied > file.txt"));
+
+        assert!(!decision.plan.allowed);
+        assert!(decision.plan.escalation_required);
+        assert_eq!(
+            decision.plan.denial_reason.as_deref(),
+            Some("sandbox is read-only")
         );
     }
 }

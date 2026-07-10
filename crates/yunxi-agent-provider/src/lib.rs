@@ -1,13 +1,15 @@
 use async_trait::async_trait;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::time::Duration;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentInput, AgentResult, TokenUsage};
-use yunxi_agent_protocol::{ProtocolRole, response_text_delta};
 use yunxi_agent_protocol::{
-    ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall, ToolCallStatus, TurnId,
+    ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
+    ToolCallStatus, TurnId, response_text_delta,
 };
-use yunxi_agent_tools::default_tool_registry;
+use yunxi_agent_tools::workspace_tool_registry;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProviderRequest {
@@ -213,6 +215,68 @@ pub struct ProviderUsage {
 #[async_trait]
 pub trait AgentProvider: Send + Sync {
     async fn complete(&self, request: ProviderRequest) -> AgentResult<ProviderResponse>;
+
+    async fn stream(
+        &self,
+        request: ProviderRequest,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+    ) -> AgentResult<ProviderStream> {
+        let response = self.complete(request).await?;
+        Ok(ProviderStream::from_response(thread_id, turn_id, response))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProviderStream {
+    pub events: Vec<StreamEvent>,
+    pub final_response: Option<ProviderResponse>,
+}
+
+impl ProviderStream {
+    pub fn new(events: Vec<StreamEvent>, final_response: Option<ProviderResponse>) -> Self {
+        Self {
+            events,
+            final_response,
+        }
+    }
+
+    pub fn from_response(thread_id: ThreadId, turn_id: TurnId, response: ProviderResponse) -> Self {
+        let mut events = vec![StreamEvent::ResponseStarted {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            metadata: None,
+        }];
+        if let Some(message) = &response.message {
+            events.push(StreamEvent::ItemCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::Message {
+                    role: message.role.into(),
+                    content: message.content.clone(),
+                },
+            });
+        }
+        for tool_call in &response.tool_calls {
+            events.push(StreamEvent::ItemCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::ToolCall {
+                    call: tool_call.clone().into(),
+                },
+            });
+        }
+        events.push(StreamEvent::ResponseCompleted {
+            thread_id,
+            turn_id,
+            status: ResponseStatus::Completed,
+        });
+        Self::new(events, Some(response))
+    }
+
+    pub fn from_events(events: Vec<StreamEvent>) -> Self {
+        Self::new(events, None)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -263,6 +327,31 @@ impl ProviderTransportResponse {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderErrorKind {
+    Auth,
+    RateLimit,
+    Server,
+    Network,
+    Timeout,
+    InvalidResponse,
+    UnsupportedModel,
+    Unknown,
+}
+
+pub fn classify_provider_status(status: u16) -> ProviderErrorKind {
+    match status {
+        401 | 403 => ProviderErrorKind::Auth,
+        404 => ProviderErrorKind::UnsupportedModel,
+        408 => ProviderErrorKind::Timeout,
+        429 => ProviderErrorKind::RateLimit,
+        500..=599 => ProviderErrorKind::Server,
+        400..=499 => ProviderErrorKind::InvalidResponse,
+        _ => ProviderErrorKind::Unknown,
+    }
+}
+
 #[async_trait]
 pub trait ProviderTransport: Send + Sync {
     async fn send(
@@ -294,6 +383,77 @@ impl ProviderTransport for FixtureTransport {
         _request: ProviderTransportRequest,
     ) -> AgentResult<ProviderTransportResponse> {
         Ok(self.response.clone())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ReqwestProviderTransport {
+    client: reqwest::Client,
+}
+
+impl ReqwestProviderTransport {
+    pub fn new() -> Self {
+        Self {
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
+impl Default for ReqwestProviderTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ProviderTransport for ReqwestProviderTransport {
+    async fn send(
+        &self,
+        request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse> {
+        if request.method != "POST" {
+            return Err(AgentError::Execution {
+                message: format!("unsupported provider transport method {}", request.method),
+            });
+        }
+        let mut headers = HeaderMap::new();
+        for (name, value) in &request.headers {
+            let name =
+                HeaderName::from_bytes(name.as_bytes()).map_err(|error| AgentError::Execution {
+                    message: format!("invalid provider header name {name}: {error}"),
+                })?;
+            let value = HeaderValue::from_str(value).map_err(|error| AgentError::Execution {
+                message: format!("invalid provider header value for {name}: {error}"),
+            })?;
+            headers.insert(name, value);
+        }
+        let mut builder = self
+            .client
+            .post(&request.url)
+            .headers(headers)
+            .json(&request.body);
+        if let Some(timeout_millis) = request.timeout_millis {
+            builder = builder.timeout(Duration::from_millis(timeout_millis));
+        }
+        let response = builder.send().await.map_err(provider_transport_error)?;
+        let status = response.status().as_u16();
+        let body = response.text().await.map_err(provider_transport_error)?;
+        Ok(ProviderTransportResponse { status, body })
+    }
+}
+
+fn provider_transport_error(error: reqwest::Error) -> AgentError {
+    let kind = if error.is_timeout() {
+        ProviderErrorKind::Timeout
+    } else if error.is_connect() || error.is_request() {
+        ProviderErrorKind::Network
+    } else if error.is_decode() {
+        ProviderErrorKind::InvalidResponse
+    } else {
+        ProviderErrorKind::Unknown
+    };
+    AgentError::Execution {
+        message: format!("provider transport {kind:?}: {error}"),
     }
 }
 
@@ -362,6 +522,53 @@ impl ProviderConfig {
     pub fn with_capabilities(mut self, capabilities: ProviderCapabilities) -> Self {
         self.capabilities = capabilities;
         self
+    }
+
+    pub fn from_agent_config(config: &AgentConfig) -> Self {
+        let model = config
+            .model
+            .clone()
+            .or_else(|| std::env::var("YUNXI_AGENT_MODEL").ok())
+            .unwrap_or_else(|| "gpt-4.1".to_string());
+        let base_url = std::env::var("YUNXI_PROVIDER_BASE_URL")
+            .or_else(|_| std::env::var("OPENAI_BASE_URL"))
+            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+        let stream = std::env::var("YUNXI_PROVIDER_STREAM")
+            .ok()
+            .map(|value| !matches!(value.as_str(), "0" | "false" | "False" | "FALSE"))
+            .unwrap_or(true);
+        Self::openai_compatible(model)
+            .with_base_url(base_url)
+            .with_stream(stream)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProviderBootstrap {
+    pub config: ProviderConfig,
+    pub auth: ProviderAuth,
+}
+
+impl ProviderBootstrap {
+    pub fn from_agent_config(config: &AgentConfig) -> Self {
+        let provider_config = ProviderConfig::from_agent_config(config);
+        let auth = std::env::var("YUNXI_PROVIDER_API_KEY")
+            .map(ProviderAuth::ApiKey)
+            .unwrap_or_else(|_| {
+                let env_name = std::env::var("YUNXI_PROVIDER_API_KEY_ENV")
+                    .unwrap_or_else(|_| "OPENAI_API_KEY".to_string());
+                ProviderAuth::EnvVar(env_name)
+            });
+        Self {
+            config: provider_config,
+            auth,
+        }
+    }
+
+    pub fn into_openai_transport_provider(
+        self,
+    ) -> OpenAiTransportProvider<ReqwestProviderTransport> {
+        OpenAiTransportProvider::new(self.config, self.auth, ReqwestProviderTransport::default())
     }
 }
 
@@ -470,6 +677,36 @@ impl AgentProvider for OpenAiCompatibleProvider {
                 .to_string(),
         })
     }
+
+    async fn stream(
+        &self,
+        request: ProviderRequest,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+    ) -> AgentResult<ProviderStream> {
+        let _ = self.auth.resolve()?;
+        let _ = self.streaming_request_json(&request)?;
+        if let Some(response) = &self.fixture_response {
+            if response.trim_start().starts_with("data:") {
+                return Ok(ProviderStream::from_events(self.parse_stream_events(
+                    thread_id.0,
+                    turn_id.0,
+                    response,
+                )?));
+            }
+            return Ok(ProviderStream::from_response(
+                thread_id,
+                turn_id,
+                self.parse_response_json(response)?,
+            ));
+        }
+
+        Err(AgentError::Execution {
+            message:
+                "openai-compatible HTTP streaming transport is not configured in this runtime slice"
+                    .to_string(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -511,7 +748,11 @@ where
         let response = self.send_with_retries(transport_request).await?;
         if !response.is_success() {
             return Err(AgentError::Execution {
-                message: format!("provider transport returned HTTP {}", response.status),
+                message: format!(
+                    "provider transport returned HTTP {} ({:?})",
+                    response.status,
+                    classify_provider_status(response.status)
+                ),
             });
         }
         self.provider
@@ -551,10 +792,24 @@ where
         let response = self.send_with_retries(transport_request).await?;
         if !response.is_success() {
             return Err(AgentError::Execution {
-                message: format!("provider transport returned HTTP {}", response.status),
+                message: format!(
+                    "provider transport returned HTTP {} ({:?})",
+                    response.status,
+                    classify_provider_status(response.status)
+                ),
             });
         }
         self.provider.parse_response_json(&response.body)
+    }
+
+    async fn stream(
+        &self,
+        request: ProviderRequest,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+    ) -> AgentResult<ProviderStream> {
+        let events = self.stream_events(request, thread_id.0, turn_id.0).await?;
+        Ok(ProviderStream::from_events(events))
     }
 }
 
@@ -617,7 +872,8 @@ pub fn build_openai_request_json(
         "messages": messages
     });
     if provider_config.capabilities.tools {
-        body["tools"] = Value::Array(default_tool_registry().openai_tools_json());
+        body["tools"] =
+            Value::Array(workspace_tool_registry(&request.config.cwd)?.openai_tools_json());
     }
     if provider_config.capabilities.parallel_tool_calls {
         body["parallel_tool_calls"] = Value::Bool(true);
@@ -725,6 +981,7 @@ pub fn parse_openai_stream_events(
         turn_id: turn_id.clone(),
         metadata: None,
     }];
+    let mut chat_tool_calls = BTreeMap::<usize, ChatToolCallDelta>::new();
 
     for line in stream.lines() {
         let line = line.trim();
@@ -735,6 +992,7 @@ pub fn parse_openai_stream_events(
             continue;
         };
         if data == "[DONE]" {
+            flush_chat_tool_calls(&thread_id, &turn_id, &mut events, &chat_tool_calls);
             events.push(StreamEvent::ResponseCompleted {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
@@ -746,7 +1004,13 @@ pub fn parse_openai_stream_events(
         let value = serde_json::from_str::<Value>(data).map_err(|error| AgentError::Execution {
             message: format!("failed to parse provider stream event JSON: {error}"),
         })?;
-        parse_stream_value(&thread_id, &turn_id, &value, &mut events);
+        parse_stream_value(
+            &thread_id,
+            &turn_id,
+            &value,
+            &mut events,
+            &mut chat_tool_calls,
+        );
     }
 
     if !events
@@ -768,6 +1032,7 @@ fn parse_stream_value(
     turn_id: &TurnId,
     value: &Value,
     events: &mut Vec<StreamEvent>,
+    chat_tool_calls: &mut BTreeMap<usize, ChatToolCallDelta>,
 ) {
     if let Some(event_type) = value.get("type").and_then(Value::as_str) {
         parse_responses_api_stream_value(thread_id, turn_id, event_type, value, events);
@@ -803,14 +1068,29 @@ fn parse_stream_value(
         .and_then(Value::as_array)
     {
         for tool_call in tool_calls {
-            let call_id = tool_call
-                .get("id")
-                .and_then(Value::as_str)
-                .map(ToString::to_string);
+            let index = tool_call
+                .get("index")
+                .and_then(Value::as_u64)
+                .map(|value| value as usize)
+                .unwrap_or(chat_tool_calls.len());
+            let accumulator = chat_tool_calls.entry(index).or_default();
+            if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
+                accumulator.id = Some(id.to_string());
+            }
+            if let Some(name) = tool_call.pointer("/function/name").and_then(Value::as_str) {
+                accumulator.name = Some(name.to_string());
+            }
+            let call_id = accumulator.id.clone().or_else(|| {
+                tool_call
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            });
             if let Some(delta) = tool_call
                 .pointer("/function/arguments")
                 .and_then(Value::as_str)
             {
+                accumulator.arguments.push_str(delta);
                 push_delta(
                     thread_id,
                     turn_id,
@@ -828,11 +1108,60 @@ fn parse_stream_value(
         .and_then(Value::as_str)
         .is_some()
     {
+        flush_chat_tool_calls(thread_id, turn_id, events, chat_tool_calls);
         events.push(StreamEvent::ResponseCompleted {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             status: ResponseStatus::Completed,
         });
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ChatToolCallDelta {
+    id: Option<String>,
+    name: Option<String>,
+    arguments: String,
+}
+
+fn flush_chat_tool_calls(
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    events: &mut Vec<StreamEvent>,
+    chat_tool_calls: &BTreeMap<usize, ChatToolCallDelta>,
+) {
+    for accumulator in chat_tool_calls.values() {
+        if let Some(name) = &accumulator.name {
+            let call_id = accumulator
+                .id
+                .clone()
+                .unwrap_or_else(|| format!("tool-call-{}", events.len()));
+            if events.iter().any(|event| {
+                matches!(
+                    event,
+                    StreamEvent::ItemCompleted {
+                        item: ResponseItem::FunctionCall {
+                            call_id: existing,
+                            ..
+                        },
+                        ..
+                    } if existing == &call_id
+                )
+            }) {
+                continue;
+            }
+            events.push(StreamEvent::ItemCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::FunctionCall {
+                    id: call_id.clone(),
+                    call_id,
+                    name: name.clone(),
+                    arguments: accumulator.arguments.clone(),
+                    status: ToolCallStatus::Completed,
+                },
+            });
+        }
     }
 }
 
@@ -908,6 +1237,129 @@ fn parse_responses_api_stream_value(
             },
             events,
         ),
+        "response.output_item.added" | "response.output_item.done" => {
+            if let Some(item) = value.get("item") {
+                push_responses_api_item(thread_id, turn_id, item, events);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_responses_api_item(
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    item: &Value,
+    events: &mut Vec<StreamEvent>,
+) {
+    match item.get("type").and_then(Value::as_str) {
+        Some("message") => {
+            let content = item
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|content| {
+                    content
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .or_else(|| content.get("content").and_then(Value::as_str))
+                })
+                .collect::<Vec<_>>()
+                .join("");
+            if !content.is_empty() {
+                events.push(StreamEvent::ItemCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    item: ResponseItem::Message {
+                        role: ProtocolRole::Assistant,
+                        content,
+                    },
+                });
+            }
+        }
+        Some("function_call") => {
+            let call_id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .or_else(|| item.get("id").and_then(Value::as_str))
+                .unwrap_or("function-call")
+                .to_string();
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string();
+            let arguments = item
+                .get("arguments")
+                .and_then(Value::as_str)
+                .unwrap_or("{}")
+                .to_string();
+            events.push(StreamEvent::ItemCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::FunctionCall {
+                    id: call_id.clone(),
+                    call_id,
+                    name,
+                    arguments,
+                    status: ToolCallStatus::Completed,
+                },
+            });
+        }
+        Some("mcp_call") | Some("mcp_tool_call") => {
+            let call_id = item
+                .get("call_id")
+                .and_then(Value::as_str)
+                .or_else(|| item.get("id").and_then(Value::as_str))
+                .unwrap_or("mcp-call")
+                .to_string();
+            events.push(StreamEvent::ItemCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::McpToolCall {
+                    id: call_id.clone(),
+                    call_id,
+                    server: item
+                        .get("server_label")
+                        .and_then(Value::as_str)
+                        .or_else(|| item.get("server").and_then(Value::as_str))
+                        .unwrap_or("mcp")
+                        .to_string(),
+                    tool: item
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .or_else(|| item.get("tool").and_then(Value::as_str))
+                        .unwrap_or("tool")
+                        .to_string(),
+                    arguments: item
+                        .get("arguments")
+                        .map(Value::to_string)
+                        .unwrap_or_else(|| "{}".to_string()),
+                    status: ToolCallStatus::Completed,
+                },
+            });
+        }
+        Some("web_search_call") => {
+            let id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("web-search")
+                .to_string();
+            events.push(StreamEvent::ItemCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::WebSearchCall {
+                    id,
+                    query: item
+                        .get("query")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    status: ToolCallStatus::Completed,
+                },
+            });
+        }
         _ => {}
     }
 }
@@ -969,6 +1421,24 @@ fn parse_openai_tool_call(
         "view_image" => Ok(ProviderToolCall::ViewImage {
             id,
             path: required_string(&args, "path")?,
+        }),
+        other if other.starts_with("skill__") => Ok(ProviderToolCall::Skill {
+            id,
+            name: optional_json_argument(&args, "name")
+                .unwrap_or_else(|| other.trim_start_matches("skill__").to_string()),
+            arguments_json: optional_json_argument(&args, "arguments_json"),
+        }),
+        other if other.starts_with("plugin__") => Ok(ProviderToolCall::ToolSearch {
+            id,
+            query: optional_json_argument(&args, "query")
+                .unwrap_or_else(|| other.trim_start_matches("plugin__").replace('_', " ")),
+        }),
+        other if other.starts_with("mcp__") => Ok(ProviderToolCall::Mcp {
+            id,
+            server: optional_json_argument(&args, "server")
+                .unwrap_or_else(|| other.trim_start_matches("mcp__").to_string()),
+            tool: required_string(&args, "tool")?,
+            arguments_json: optional_json_argument(&args, "arguments_json"),
         }),
         other => Err(AgentError::Execution {
             message: format!("unsupported provider tool call: {other}"),

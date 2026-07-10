@@ -11,13 +11,14 @@ use yunxi_agent_mcp::{
     InMemoryMcpRuntime, McpRuntime, McpToolInvocation, load_in_memory_runtime_seed,
 };
 use yunxi_agent_multi_agent::{AgentId, InMemoryAgentRegistry, MultiAgentCommand};
-use yunxi_agent_patch::{PatchFileChangeKind, apply_patch};
+use yunxi_agent_patch::{PatchFileChangeKind, apply_patch_detailed};
 use yunxi_agent_sandbox::{
     ApprovalRequirement, ExecutionPolicy, NetworkPolicy, PolicyDecision, PolicyEvaluation,
     SandboxRequirement,
 };
 use yunxi_agent_skills::{
-    SkillCatalog, SkillInvocation, SkillInvocationResult, load_skill_injection,
+    DynamicToolKind, DynamicToolMetadata, SkillCatalog, SkillInvocation, SkillInvocationResult,
+    load_skill_injection, workspace_dynamic_tools,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -194,8 +195,41 @@ impl ToolSpec {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DynamicToolSpec {
+    pub name: String,
+    pub kind: DynamicToolKind,
+    pub description: String,
+    pub parameters: Value,
+    pub source: Option<String>,
+}
+
+impl DynamicToolSpec {
+    pub fn from_metadata(metadata: DynamicToolMetadata) -> Self {
+        Self {
+            name: metadata.name,
+            kind: metadata.kind,
+            description: metadata.description,
+            parameters: metadata.input_schema,
+            source: metadata.source,
+        }
+    }
+
+    pub fn openai_tool_json(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": self.name.clone(),
+                "description": self.description.clone(),
+                "parameters": self.parameters.clone(),
+            }
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToolRegistry {
     specs: BTreeMap<ToolName, ToolSpec>,
+    dynamic_specs: BTreeMap<String, DynamicToolSpec>,
 }
 
 impl ToolRegistry {
@@ -205,6 +239,7 @@ impl ToolRegistry {
                 .into_iter()
                 .map(|spec| (spec.name, spec))
                 .collect::<BTreeMap<_, _>>(),
+            dynamic_specs: BTreeMap::new(),
         }
     }
 
@@ -216,6 +251,28 @@ impl ToolRegistry {
         self.specs.values()
     }
 
+    pub fn dynamic_specs(&self) -> impl Iterator<Item = &DynamicToolSpec> {
+        self.dynamic_specs.values()
+    }
+
+    pub fn with_dynamic_tools(
+        mut self,
+        tools: impl IntoIterator<Item = DynamicToolMetadata>,
+    ) -> Self {
+        for tool in tools {
+            let spec = DynamicToolSpec::from_metadata(tool);
+            if self
+                .specs
+                .values()
+                .any(|fixed| fixed.name.as_str() == spec.name.as_str())
+            {
+                continue;
+            }
+            self.dynamic_specs.insert(spec.name.clone(), spec);
+        }
+        self
+    }
+
     pub fn model_visible_specs(&self) -> Vec<&ToolSpec> {
         self.specs
             .values()
@@ -224,10 +281,17 @@ impl ToolRegistry {
     }
 
     pub fn openai_tools_json(&self) -> Vec<Value> {
-        self.model_visible_specs()
+        let mut tools = self
+            .model_visible_specs()
             .into_iter()
             .map(ToolSpec::openai_tool_json)
-            .collect()
+            .collect::<Vec<_>>();
+        tools.extend(
+            self.dynamic_specs
+                .values()
+                .map(DynamicToolSpec::openai_tool_json),
+        );
+        tools
     }
 }
 
@@ -248,6 +312,10 @@ pub fn default_tool_registry() -> ToolRegistry {
         request_user_input_tool_spec(),
         view_image_tool_spec(),
     ])
+}
+
+pub fn workspace_tool_registry(cwd: impl AsRef<Path>) -> AgentResult<ToolRegistry> {
+    Ok(default_tool_registry().with_dynamic_tools(workspace_dynamic_tools(cwd)?))
 }
 
 fn shell_tool_spec() -> ToolSpec {
@@ -886,7 +954,15 @@ async fn run_shell(id: Option<String>, cwd: PathBuf, command: String) -> AgentRe
 }
 
 fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<ToolResponse> {
-    let report = apply_patch(&cwd, &patch)?;
+    let report = match apply_patch_detailed(&cwd, &patch) {
+        Ok(report) => report,
+        Err(error) => {
+            let output = serde_json::to_string(&error).map_err(|error| AgentError::Execution {
+                message: format!("failed to serialize patch diagnostics: {error}"),
+            })?;
+            return Ok(ToolResponse::failed(id, output, None, Vec::new()));
+        }
+    };
     let changed_files = report
         .changed_files
         .into_iter()
@@ -901,12 +977,14 @@ fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<Too
         })
         .collect();
 
-    Ok(ToolResponse::completed(
-        id,
-        "patch applied",
-        Some(0),
-        changed_files,
-    ))
+    let output = serde_json::to_string(&serde_json::json!({
+        "status": "applied",
+        "diagnostics": report.diagnostics
+    }))
+    .map_err(|error| AgentError::Execution {
+        message: format!("failed to serialize patch report: {error}"),
+    })?;
+    Ok(ToolResponse::completed(id, output, Some(0), changed_files))
 }
 
 fn run_tool_search(id: Option<String>, cwd: PathBuf, query: String) -> AgentResult<ToolResponse> {
@@ -915,12 +993,46 @@ fn run_tool_search(id: Option<String>, cwd: PathBuf, query: String) -> AgentResu
     if !query.is_empty() && cwd.is_dir() {
         collect_file_matches(&cwd, &cwd, &query, 50, &mut matches)?;
     }
+    let query_lower = query.to_ascii_lowercase();
+    let registry = workspace_tool_registry(&cwd)?;
+    let tool_matches = registry
+        .specs()
+        .filter(|spec| {
+            spec.name.as_str().contains(&query_lower)
+                || spec.description.to_ascii_lowercase().contains(&query_lower)
+        })
+        .map(|spec| {
+            json!({
+                "name": spec.name.as_str(),
+                "description": spec.description.clone(),
+                "kind": "builtin",
+                "source": "yunxi-agent-tools"
+            })
+        })
+        .chain(
+            registry
+                .dynamic_specs()
+                .filter(|spec| {
+                    spec.name.contains(&query_lower)
+                        || spec.description.to_ascii_lowercase().contains(&query_lower)
+                })
+                .map(|spec| {
+                    json!({
+                        "name": spec.name.clone(),
+                        "description": spec.description.clone(),
+                        "kind": spec.kind,
+                        "source": spec.source.clone()
+                    })
+                }),
+        )
+        .collect::<Vec<_>>();
     let output = serde_json::to_string(&json!({
         "query": query,
         "matches": matches
             .into_iter()
             .map(|path| path.display().to_string())
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>(),
+        "tools": tool_matches
     }))
     .map_err(|error| AgentError::Execution {
         message: format!("failed to serialize tool_search output: {error}"),

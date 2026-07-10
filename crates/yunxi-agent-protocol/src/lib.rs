@@ -441,11 +441,34 @@ pub enum RuntimeEvent {
     },
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VersionedRuntimeEvent {
+    pub protocol_version: ProtocolVersion,
+    pub event: RuntimeEvent,
+}
+
+impl VersionedRuntimeEvent {
+    pub fn new(event: RuntimeEvent) -> Self {
+        Self {
+            protocol_version: ProtocolVersion::V1,
+            event,
+        }
+    }
+}
+
 pub fn to_jsonl_line(event: &RuntimeEvent) -> Result<String, serde_json::Error> {
     serde_json::to_string(event)
 }
 
+pub fn to_versioned_jsonl_line(event: &RuntimeEvent) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&VersionedRuntimeEvent::new(event.clone()))
+}
+
 pub fn from_jsonl_line(line: &str) -> Result<RuntimeEvent, serde_json::Error> {
+    serde_json::from_str(line)
+}
+
+pub fn from_versioned_jsonl_line(line: &str) -> Result<VersionedRuntimeEvent, serde_json::Error> {
     serde_json::from_str(line)
 }
 
@@ -557,5 +580,19 @@ mod tests {
         let parsed = from_jsonl_line(&line).expect("parsed event");
 
         assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn versioned_runtime_event_round_trips_jsonl() {
+        let event = RuntimeEvent::TurnStarted {
+            thread_id: ThreadId("thread-versioned".to_string()),
+            turn_id: TurnId("turn-versioned".to_string()),
+        };
+
+        let line = to_versioned_jsonl_line(&event).expect("versioned jsonl");
+        let parsed = from_versioned_jsonl_line(&line).expect("parsed versioned event");
+
+        assert_eq!(parsed.protocol_version, ProtocolVersion::V1);
+        assert_eq!(parsed.event, event);
     }
 }

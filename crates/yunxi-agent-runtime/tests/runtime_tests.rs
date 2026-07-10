@@ -7,9 +7,10 @@ use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunStatus, ApprovalMode,
     CommandStatus, FileChangeKind, PatchStatus, SandboxMode,
 };
+use yunxi_agent_protocol::{ResponseItem, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId};
 use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
-    ProviderToolCall, StaticProvider,
+    ProviderStream, ProviderToolCall, StaticProvider,
 };
 use yunxi_agent_runtime::{YunXiRuntimeBackend, protocol_stream_events_to_agent_events};
 use yunxi_agent_storage::{InMemorySessionStore, SessionId, SessionRecord, SessionStore};
@@ -114,6 +115,34 @@ async fn yunxi_runtime_injects_agents_md_before_user_prompt() {
             .map(|message| message.role)
             .collect::<Vec<_>>(),
         vec![ProviderRole::System, ProviderRole::User]
+    );
+}
+
+#[tokio::test]
+async fn yunxi_runtime_injects_mentioned_workspace_file_context() {
+    let temp = TempDir::new().expect("temp dir");
+    std::fs::create_dir_all(temp.path().join("src")).expect("src dir");
+    std::fs::write(temp.path().join("src/lib.rs"), "pub fn marker() {}\n").expect("source file");
+    let provider = CapturingProvider::default();
+    let messages = Arc::clone(&provider.messages);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let agent = Agent::new(AgentConfig::new(temp.path()));
+
+    agent
+        .run_with_backend(&backend, AgentInput::text("inspect @src/lib.rs"))
+        .await
+        .expect("runtime should complete");
+
+    let captured = messages.lock().expect("messages lock").clone();
+    assert!(captured.iter().any(|message| {
+        message.role == ProviderRole::System
+            && message.content.contains("Mentioned workspace file context")
+            && message.content.contains("pub fn marker")
+    }));
+    assert_eq!(
+        captured.last().map(|message| message.content.as_str()),
+        Some("inspect @src/lib.rs")
     );
 }
 
@@ -328,6 +357,79 @@ impl AgentProvider for ShellCallingProvider {
 }
 
 #[derive(Clone, Default)]
+struct StreamingShellCallingProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for StreamingShellCallingProvider {
+    async fn complete(
+        &self,
+        _request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        Ok(ProviderResponse::assistant(
+            "streaming fallback should not be used",
+        ))
+    }
+
+    async fn stream(
+        &self,
+        request: ProviderRequest,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+    ) -> yunxi_agent_core::AgentResult<ProviderStream> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderStream::from_events(vec![
+                StreamEvent::ResponseStarted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    metadata: None,
+                },
+                StreamEvent::ItemCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    item: ResponseItem::Message {
+                        role: yunxi_agent_protocol::ProtocolRole::Assistant,
+                        content: format!("streamed tool said: {}", tool_message.content.trim()),
+                    },
+                },
+                StreamEvent::ResponseCompleted {
+                    thread_id,
+                    turn_id,
+                    status: ResponseStatus::Completed,
+                },
+            ]));
+        }
+
+        Ok(ProviderStream::from_events(vec![
+            StreamEvent::ResponseStarted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                metadata: None,
+            },
+            StreamEvent::ItemCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::ToolCall {
+                    call: ToolCall::Shell {
+                        id: Some("stream-shell-1".to_string()),
+                        command: "echo streamed-yunxi-tool".to_string(),
+                    },
+                },
+            },
+            StreamEvent::ResponseCompleted {
+                thread_id,
+                turn_id,
+                status: ResponseStatus::Completed,
+            },
+        ]))
+    }
+}
+
+#[derive(Clone, Default)]
 struct FailingShellProvider;
 
 #[async_trait::async_trait]
@@ -429,6 +531,41 @@ async fn yunxi_runtime_executes_provider_requested_shell_tool() {
             aggregated_output,
             ..
         } if id == "shell-1" && aggregated_output.contains("yunxi-tool")
+    )));
+    assert_eq!(store.list().await.expect("session list").len(), 1);
+}
+
+#[tokio::test]
+async fn yunxi_runtime_executes_streamed_provider_tool_call() {
+    let store = InMemorySessionStore::default();
+    let backend = YunXiRuntimeBackend::with_parts(
+        StreamingShellCallingProvider,
+        ShellToolRuntime,
+        store.clone(),
+    );
+    let agent =
+        Agent::new(AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("use a streamed tool"))
+        .await
+        .expect("yunxi runtime should complete streamed tool loop");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(
+        result
+            .final_response
+            .as_deref()
+            .expect("final response")
+            .contains("streamed-yunxi-tool")
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::CommandCompleted {
+            id: Some(id),
+            status: CommandStatus::Completed,
+            ..
+        } if id == "stream-shell-1"
     )));
     assert_eq!(store.list().await.expect("session list").len(), 1);
 }

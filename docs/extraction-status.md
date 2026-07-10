@@ -391,6 +391,27 @@ Stage 4H gap closure construction verification passed on 2026-07-10:
 - `git diff --check`: pass with Windows line-ending warnings only
 - `cargo clean`: pass; removed 1.2GiB of build artifacts
 
+## Stage 4I Planned Direction
+
+The next stage is behavior-level core parity closure. Stage 4H moved the main
+headless Agent capability surfaces into YunXi-owned crates; Stage 4I should
+turn those surfaces into deeper Codex CLI headless core behavior parity without
+restoring any upstream runtime dependency.
+
+Stage 4I focuses on the remaining deep gaps:
+
+- true incremental provider SSE consumption
+- long-lived MCP session runtime
+- platform sandbox runner and escalation boundary
+- multi-agent child runtime execution
+- full apply_patch boundary parity
+- context, compact, rollout, and state reconstruction
+- protocol, event, and CLI JSONL full shape
+- disabled-vendor parity harness
+
+The Stage 4I development report is recorded in
+`docs/reports/2026-07-10-yunxi-stage-4i-behavior-level-core-parity-closure-development-report.md`.
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

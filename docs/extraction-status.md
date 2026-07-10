@@ -199,6 +199,17 @@ Stage 4F verification passed on 2026-07-10:
   `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
 - `git diff --check`: pass with Windows line-ending warnings only
 
+## Stage 4G Planned Direction
+
+The next stage is the full core Agent parity one-pass build. Its goal is to
+turn the remaining migrated Codex CLI headless Agent sources into YunXi-owned
+runtime behavior across protocol streaming, live provider transport, exec,
+sandbox/approval, patch, context, MCP, skills/plugins, multi-agent, storage,
+rollout, resume, and CLI JSONL parity.
+
+The Stage 4G development report is recorded in
+`docs/reports/2026-07-10-yunxi-stage-4g-full-core-agent-parity-one-pass-development-report.md`.
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

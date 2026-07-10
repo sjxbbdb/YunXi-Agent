@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tempfile::TempDir;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunStatus, CommandStatus,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunStatus, ApprovalMode,
+    CommandStatus, FileChangeKind, PatchStatus,
 };
 use yunxi_agent_provider::{
     AgentProvider, ProviderRequest, ProviderResponse, ProviderRole, ProviderToolCall,
@@ -17,7 +19,8 @@ async fn yunxi_runtime_runs_without_codex_backend() {
     let store = InMemorySessionStore::default();
     let backend =
         YunXiRuntimeBackend::with_parts(StaticProvider::default(), NoopToolRuntime, store.clone());
-    let agent = Agent::new(AgentConfig::new(PathBuf::from(".")));
+    let agent =
+        Agent::new(AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::Never));
 
     let result = agent
         .run_with_backend(&backend, AgentInput::text("explain this project"))
@@ -38,10 +41,73 @@ async fn yunxi_runtime_runs_without_codex_backend() {
     assert_eq!(store.list().await.expect("session list").len(), 1);
 }
 
+#[derive(Clone, Default)]
+struct PatchCallingProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for PatchCallingProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "patch result: {}",
+                tool_message.content.trim()
+            )));
+        }
+
+        Ok(ProviderResponse::tool_call(ProviderToolCall::Patch {
+            id: Some("patch-1".to_string()),
+            patch: r#"{"op":"write","path":"runtime-patch.txt","content":"patched"}"#.to_string(),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn yunxi_runtime_executes_provider_requested_patch_tool() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let backend =
+        YunXiRuntimeBackend::with_parts(PatchCallingProvider, ShellToolRuntime, store.clone());
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("patch a file"))
+        .await
+        .expect("yunxi runtime should complete patch loop");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("runtime-patch.txt")).expect("patched file"),
+        "patched"
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::PatchCompleted {
+            status: PatchStatus::Completed
+        }
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::FileChanged {
+            path,
+            kind: FileChangeKind::Add
+        } if path == "runtime-patch.txt"
+    )));
+    assert_eq!(store.list().await.expect("session list").len(), 1);
+}
+
 #[tokio::test]
 async fn yunxi_runtime_rejects_empty_prompt() {
     let backend = YunXiRuntimeBackend::default();
-    let agent = Agent::new(AgentConfig::new(PathBuf::from(".")));
+    let agent =
+        Agent::new(AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::Never));
 
     let error = agent
         .run_with_backend(&backend, AgentInput::text("   "))
@@ -90,7 +156,8 @@ async fn yunxi_runtime_executes_provider_requested_shell_tool() {
         ShellToolRuntime,
         store.clone(),
     );
-    let agent = Agent::new(AgentConfig::new(PathBuf::from(".")));
+    let agent =
+        Agent::new(AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::Never));
 
     let result = agent
         .run_with_backend(&backend, AgentInput::text("use a tool"))

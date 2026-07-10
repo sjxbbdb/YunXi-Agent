@@ -582,6 +582,7 @@ dependencies = [
  "tokio",
  "yunxi-agent-core",
  "yunxi-agent-runtime",
+ "yunxi-agent-storage",
 ]
 
 [[package]]
@@ -602,6 +603,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde",
+ "serde_json",
  "tokio",
  "yunxi-agent-core",
 ]
@@ -611,6 +613,7 @@ name = "yunxi-agent-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "tempfile",
  "tokio",
  "yunxi-agent-core",
  "yunxi-agent-provider",
@@ -636,6 +639,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "yunxi-agent-core",

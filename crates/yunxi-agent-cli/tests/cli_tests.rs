@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::fs;
 use tempfile::TempDir;
 
 #[test]
@@ -81,4 +82,45 @@ fn cli_rejects_missing_prompt() {
     cmd.assert()
         .failure()
         .stderr(predicate::str::contains("a prompt is required"));
+}
+
+#[test]
+fn cli_lists_and_shows_yunxi_sessions() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
+
+    let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    run.args(["--cwd", cwd, "remember this session"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "YunXi autonomous runtime accepted prompt: remember this session",
+        ));
+
+    let mut list = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    list.args(["--cwd", cwd, "sessions", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("remember this session"))
+        .stdout(predicate::str::contains(cwd));
+
+    let session_dir = temp.path().join(".yunxi").join("sessions");
+    let session_file = fs::read_dir(&session_dir)
+        .expect("session dir should exist")
+        .map(|entry| entry.expect("session entry").path())
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+        .expect("session json should exist");
+    let session_id = session_file
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .expect("session id")
+        .to_string();
+
+    let mut show = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    show.args(["--cwd", cwd, "--json", "sessions", "show", &session_id])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"prompt\""))
+        .stdout(predicate::str::contains("remember this session"))
+        .stdout(predicate::str::contains("\"events\""));
 }

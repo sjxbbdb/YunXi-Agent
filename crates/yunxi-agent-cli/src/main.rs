@@ -1,9 +1,10 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentInput, AgentRunResult, ApprovalMode, BackendKind, SandboxMode,
 };
+use yunxi_agent_storage::{FileSessionStore, SessionId, SessionRecord, SessionStore};
 
 #[derive(Debug, Parser)]
 #[command(name = "yunxi-agent-cli")]
@@ -20,7 +21,7 @@ struct Cli {
     #[arg(long, conflicts_with = "backend")]
     live: bool,
 
-    #[arg(long, value_name = "PATH", default_value = ".")]
+    #[arg(long, value_name = "PATH", default_value = ".", global = true)]
     cwd: PathBuf,
 
     #[arg(long, value_name = "MODEL")]
@@ -48,14 +49,34 @@ struct Cli {
     )]
     sandbox: CliSandboxMode,
 
-    #[arg(long)]
+    #[arg(long, global = true)]
     json: bool,
 
-    #[arg(long)]
+    #[arg(long, global = true)]
     jsonl: bool,
+
+    #[command(subcommand)]
+    command: Option<CliCommand>,
 
     #[arg(value_name = "PROMPT")]
     prompt: Vec<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum CliCommand {
+    Sessions {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum SessionCommand {
+    List,
+    Show {
+        #[arg(value_name = "SESSION_ID")]
+        id: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -117,6 +138,10 @@ impl From<CliSandboxMode> for SandboxMode {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(command) = cli.command {
+        return run_command(command, cli.cwd, cli.json).await;
+    }
+
     let prompt = cli.prompt.join(" ");
     if prompt.trim().is_empty() {
         bail!("a prompt is required");
@@ -174,6 +199,79 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn run_command(command: CliCommand, cwd: PathBuf, json: bool) -> Result<()> {
+    match command {
+        CliCommand::Sessions { command } => run_session_command(command, cwd, json).await,
+    }
+}
+
+async fn run_session_command(command: SessionCommand, cwd: PathBuf, json: bool) -> Result<()> {
+    let store = FileSessionStore::for_workspace(&cwd);
+    match command {
+        SessionCommand::List => {
+            let sessions = store.list().await.context("failed to list sessions")?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&sessions)?);
+            } else {
+                for session in sessions {
+                    println!(
+                        "{}\t{:?}\t{}\t{}\t{}",
+                        session.id.0,
+                        session.status,
+                        session.cwd.display(),
+                        session.created_at_millis,
+                        preview(&session.prompt)
+                    );
+                }
+            }
+        }
+        SessionCommand::Show { id } => {
+            let session = store
+                .load(&SessionId::new(id.clone()))
+                .await
+                .context("failed to load session")?
+                .ok_or_else(|| anyhow::anyhow!("session not found: {id}"))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&session)?);
+            } else {
+                print_session(&session);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn preview(prompt: &str) -> String {
+    const MAX: usize = 80;
+    if prompt.chars().count() <= MAX {
+        return prompt.to_string();
+    }
+    let mut value = prompt
+        .chars()
+        .take(MAX.saturating_sub(3))
+        .collect::<String>();
+    value.push_str("...");
+    value
+}
+
+fn print_session(session: &SessionRecord) {
+    println!("id: {}", session.id.0);
+    println!("status: {:?}", session.status);
+    println!("cwd: {}", session.cwd.display());
+    println!("created_at_millis: {}", session.created_at_millis);
+    if let Some(model) = &session.model {
+        println!("model: {model}");
+    }
+    if let Some(provider) = &session.provider {
+        println!("provider: {provider}");
+    }
+    println!("prompt: {}", session.prompt);
+    if let Some(final_response) = &session.final_response {
+        println!("final_response: {final_response}");
+    }
+    println!("events: {}", session.events.len());
 }
 
 async fn run_codex_backend(config: AgentConfig, prompt: String) -> Result<AgentRunResult> {

@@ -12,4 +12,5 @@ yunxi-agent-storage = { path = "../yunxi-agent-storage" }
 yunxi-agent-tools = { path = "../yunxi-agent-tools" }
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio.workspace = true

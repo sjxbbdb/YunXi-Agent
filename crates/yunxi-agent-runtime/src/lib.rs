@@ -10,7 +10,8 @@ use yunxi_agent_provider::{
 };
 use yunxi_agent_storage::{FileSessionStore, InMemorySessionStore, SessionRecord, SessionStore};
 use yunxi_agent_tools::{
-    ShellToolRuntime, ToolFileChangeKind, ToolRequest, ToolRequestKind, ToolRuntime, ToolStatus,
+    ShellToolRuntime, ToolFileChangeKind, ToolPolicy, ToolRequest, ToolRequestKind, ToolRuntime,
+    ToolStatus,
 };
 
 const DEFAULT_MAX_TURNS: usize = 8;
@@ -160,6 +161,10 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         let mut usage = None;
 
         for _ in 0..self.max_turns {
+            sink.emit(AgentEvent::Reasoning {
+                content: "Provider turn started".to_string(),
+            })
+            .await?;
             let provider_response = self
                 .provider
                 .complete(ProviderRequest::with_messages(
@@ -169,6 +174,10 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 ))
                 .await?;
             usage = provider_response.usage;
+            sink.emit(AgentEvent::Reasoning {
+                content: "Provider turn completed".to_string(),
+            })
+            .await?;
 
             if provider_response.tool_calls.is_empty() {
                 final_response = provider_response.message.map(|message| message.content);
@@ -180,10 +189,11 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             }
 
             for tool_call in provider_response.tool_calls {
-                let tool_request = map_tool_call(turn.config.cwd.clone(), tool_call);
+                let tool_request = map_tool_call(&turn.config, tool_call);
                 emit_tool_started(&sink, &tool_request).await?;
                 let tool_response = self.tools.execute(tool_request.clone()).await?;
                 emit_tool_completed(&sink, &tool_request, &tool_response).await?;
+                emit_tool_warning(&sink, &tool_response).await?;
                 emit_file_changes(&sink, &tool_response).await?;
                 messages.push(ProviderMessage::tool(render_tool_response(&tool_response)));
             }
@@ -232,18 +242,21 @@ impl RuntimeBackend for YunXiRuntimeBackend {
     }
 }
 
-fn map_tool_call(cwd: impl Into<std::path::PathBuf>, tool_call: ProviderToolCall) -> ToolRequest {
-    let cwd = cwd.into();
+fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolRequest {
+    let cwd = config.cwd.clone();
+    let policy = ToolPolicy::from_config(config);
     match tool_call {
         ProviderToolCall::Shell { id, command } => ToolRequest {
             id,
             cwd,
             kind: ToolRequestKind::Shell { command },
+            policy,
         },
         ProviderToolCall::Patch { id, patch } => ToolRequest {
             id,
             cwd,
             kind: ToolRequestKind::Patch { patch },
+            policy,
         },
         ProviderToolCall::Mcp {
             id,
@@ -258,6 +271,7 @@ fn map_tool_call(cwd: impl Into<std::path::PathBuf>, tool_call: ProviderToolCall
                 tool,
                 arguments_json,
             },
+            policy,
         },
         ProviderToolCall::Skill {
             id,
@@ -270,6 +284,7 @@ fn map_tool_call(cwd: impl Into<std::path::PathBuf>, tool_call: ProviderToolCall
                 name,
                 arguments_json,
             },
+            policy,
         },
     }
 }
@@ -371,6 +386,24 @@ fn map_tool_status(status: ToolStatus) -> CommandStatus {
         ToolStatus::Failed => CommandStatus::Failed,
         ToolStatus::Declined => CommandStatus::Declined,
     }
+}
+
+async fn emit_tool_warning<S>(
+    sink: &S,
+    response: &yunxi_agent_tools::ToolResponse,
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    if matches!(response.status, ToolStatus::Declined | ToolStatus::Failed) {
+        if let Some(message) = response.error.as_ref().or(response.output.as_ref()) {
+            sink.emit(AgentEvent::Warning {
+                message: message.clone(),
+            })
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn emit_file_changes<S>(

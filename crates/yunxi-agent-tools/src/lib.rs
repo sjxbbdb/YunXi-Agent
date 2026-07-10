@@ -1,16 +1,18 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tokio::process::Command;
-use yunxi_agent_core::{AgentError, AgentResult};
+use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ToolRequest {
     pub id: Option<String>,
     pub cwd: PathBuf,
     pub kind: ToolRequestKind,
+    pub policy: ToolPolicy,
 }
 
 impl ToolRequest {
@@ -21,7 +23,24 @@ impl ToolRequest {
             kind: ToolRequestKind::Shell {
                 command: command.into(),
             },
+            policy: ToolPolicy::trusted(),
         }
+    }
+
+    pub fn patch(cwd: impl Into<PathBuf>, patch: impl Into<String>) -> Self {
+        Self {
+            id: None,
+            cwd: cwd.into(),
+            kind: ToolRequestKind::Patch {
+                patch: patch.into(),
+            },
+            policy: ToolPolicy::trusted(),
+        }
+    }
+
+    pub fn with_policy(mut self, policy: ToolPolicy) -> Self {
+        self.policy = policy;
+        self
     }
 }
 
@@ -123,6 +142,85 @@ pub enum ToolStatus {
     Declined,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolPolicy {
+    pub approval: ApprovalDecision,
+    pub sandbox: SandboxPolicy,
+    pub workspace_root: Option<PathBuf>,
+}
+
+impl ToolPolicy {
+    pub fn trusted() -> Self {
+        Self {
+            approval: ApprovalDecision::Approved,
+            sandbox: SandboxPolicy::DangerFullAccess,
+            workspace_root: None,
+        }
+    }
+
+    pub fn from_config(config: &AgentConfig) -> Self {
+        Self {
+            approval: match config.approval_mode {
+                ApprovalMode::Never => ApprovalDecision::Approved,
+                ApprovalMode::OnRequest | ApprovalMode::OnFailure | ApprovalMode::Untrusted => {
+                    ApprovalDecision::Required
+                }
+            },
+            sandbox: match config.sandbox_mode {
+                SandboxMode::ReadOnly => SandboxPolicy::ReadOnly,
+                SandboxMode::WorkspaceWrite => SandboxPolicy::WorkspaceWrite,
+                SandboxMode::DangerFullAccess => SandboxPolicy::DangerFullAccess,
+            },
+            workspace_root: Some(config.cwd.clone()),
+        }
+    }
+
+    fn denial_for(&self, request: &ToolRequest) -> Option<String> {
+        match &self.approval {
+            ApprovalDecision::Approved => {}
+            ApprovalDecision::Required => {
+                return Some("tool execution requires approval".to_string());
+            }
+            ApprovalDecision::Declined { reason } => {
+                return Some(reason.clone());
+            }
+        }
+
+        match self.sandbox {
+            SandboxPolicy::ReadOnly => Some("sandbox is read-only".to_string()),
+            SandboxPolicy::WorkspaceWrite => {
+                let root = self.workspace_root.as_ref()?;
+                if is_within_workspace(root, &request.cwd) {
+                    None
+                } else {
+                    Some(format!(
+                        "tool cwd {} is outside workspace {}",
+                        request.cwd.display(),
+                        root.display()
+                    ))
+                }
+            }
+            SandboxPolicy::DangerFullAccess => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    Approved,
+    Required,
+    Declined { reason: String },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SandboxPolicy {
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
 #[async_trait]
 pub trait ToolRuntime: Send + Sync {
     async fn execute(&self, request: ToolRequest) -> AgentResult<ToolResponse>;
@@ -147,14 +245,19 @@ pub struct ShellToolRuntime;
 #[async_trait]
 impl ToolRuntime for ShellToolRuntime {
     async fn execute(&self, request: ToolRequest) -> AgentResult<ToolResponse> {
+        if let Some(reason) = request.policy.denial_for(&request) {
+            return Ok(ToolResponse::declined(request.id, reason));
+        }
+
         match request.kind {
             ToolRequestKind::Shell { command } => run_shell(request.id, request.cwd, command).await,
-            ToolRequestKind::Patch { .. }
-            | ToolRequestKind::Mcp { .. }
-            | ToolRequestKind::Skill { .. } => Ok(ToolResponse::declined(
-                request.id,
-                "YunXi only owns shell execution in this runtime slice",
-            )),
+            ToolRequestKind::Patch { patch } => run_patch(request.id, request.cwd, patch),
+            ToolRequestKind::Mcp { .. } | ToolRequestKind::Skill { .. } => {
+                Ok(ToolResponse::declined(
+                    request.id,
+                    "YunXi only owns shell and constrained patch execution in this runtime slice",
+                ))
+            }
         }
     }
 }
@@ -201,6 +304,114 @@ fn platform_shell(command: &str) -> Command {
     let mut process = Command::new("cmd");
     process.args(["/C", command]);
     process
+}
+
+fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<ToolResponse> {
+    let operations = parse_patch_operations(&patch)?;
+    let mut changed_files = Vec::new();
+
+    for operation in operations {
+        match operation {
+            PatchOperation::Write { path, content } => {
+                let relative = validate_relative_path(&path)?;
+                let full_path = cwd.join(&relative);
+                let kind = if full_path.is_file() {
+                    ToolFileChangeKind::Updated
+                } else {
+                    ToolFileChangeKind::Added
+                };
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
+                        message: format!("failed to create patch parent directory: {error}"),
+                    })?;
+                }
+                std::fs::write(&full_path, content).map_err(|error| AgentError::Execution {
+                    message: format!(
+                        "failed to write patch file {}: {error}",
+                        full_path.display()
+                    ),
+                })?;
+                changed_files.push(ToolFileChange {
+                    path: relative,
+                    kind,
+                });
+            }
+            PatchOperation::Delete { path } => {
+                let relative = validate_relative_path(&path)?;
+                let full_path = cwd.join(&relative);
+                if full_path.is_file() {
+                    std::fs::remove_file(&full_path).map_err(|error| AgentError::Execution {
+                        message: format!(
+                            "failed to delete patch file {}: {error}",
+                            full_path.display()
+                        ),
+                    })?;
+                    changed_files.push(ToolFileChange {
+                        path: relative,
+                        kind: ToolFileChangeKind::Deleted,
+                    });
+                } else {
+                    return Ok(ToolResponse::failed(
+                        id,
+                        format!("patch delete target does not exist: {}", relative.display()),
+                        None,
+                        Vec::new(),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(ToolResponse::completed(
+        id,
+        "patch applied",
+        Some(0),
+        changed_files,
+    ))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum PatchOperation {
+    Write { path: PathBuf, content: String },
+    Delete { path: PathBuf },
+}
+
+fn parse_patch_operations(patch: &str) -> AgentResult<Vec<PatchOperation>> {
+    let value = serde_json::from_str::<Value>(patch).map_err(|error| AgentError::Execution {
+        message: format!("failed to parse constrained patch JSON: {error}"),
+    })?;
+    if value.is_array() {
+        return serde_json::from_value::<Vec<PatchOperation>>(value).map_err(|error| {
+            AgentError::Execution {
+                message: format!("failed to parse constrained patch operations: {error}"),
+            }
+        });
+    }
+    serde_json::from_value::<PatchOperation>(value)
+        .map(|operation| vec![operation])
+        .map_err(|error| AgentError::Execution {
+            message: format!("failed to parse constrained patch operation: {error}"),
+        })
+}
+
+fn validate_relative_path(path: &Path) -> AgentResult<PathBuf> {
+    if path.is_absolute() {
+        return Err(AgentError::Execution {
+            message: format!("patch path must be relative: {}", path.display()),
+        });
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err(AgentError::Execution {
+            message: format!("patch path cannot escape workspace: {}", path.display()),
+        });
+    }
+    Ok(path.to_path_buf())
 }
 
 #[cfg(not(windows))]
@@ -308,4 +519,16 @@ impl FileState {
 
 fn should_skip_entry(name: &str) -> bool {
     matches!(name, ".git" | ".yunxi" | "target" | "vendor")
+}
+
+fn is_within_workspace(root: &Path, cwd: &Path) -> bool {
+    let root = match std::fs::canonicalize(root) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    let cwd = match std::fs::canonicalize(cwd) {
+        Ok(path) => path,
+        Err(_) => return false,
+    };
+    cwd.starts_with(root)
 }

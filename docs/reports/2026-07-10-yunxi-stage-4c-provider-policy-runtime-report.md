@@ -216,6 +216,52 @@ Acceptance:
 | Runtime loop | Provider/tool loop | Provider/tool/policy/patch loop |
 | Codex compatibility | Detached crate | Still detached |
 
+## Implementation Update
+
+Stage 4C has been implemented as a build-first slice and is now ready for the
+unified verification gate.
+
+Implemented:
+
+- OpenAI-compatible provider config, request JSON builder, response parser,
+  environment-backed auth resolution, and fixture-backed completion.
+- Provider fixture tests for assistant text, usage, shell tool calls, and
+  fixture completion.
+- YunXi-owned `ToolPolicy`, `ApprovalDecision`, and `SandboxPolicy` mapped from
+  `AgentConfig`.
+- Tool runtime policy enforcement before shell, patch, MCP, and skill handling.
+- Constrained patch execution for write and delete operations using Rust
+  filesystem APIs.
+- Runtime mapping of provider-requested shell, patch, MCP, and skill calls into
+  policy-carrying tool requests.
+- Runtime events for provider turns, tool starts/completions, warnings, patch
+  status, command status, MCP status, and file changes.
+- CLI `sessions list` and `sessions show` commands with plain text and JSON
+  output.
+
+Verification status:
+
+- Unified post-build verification passed on 2026-07-10.
+- Disabled-vendor independence verification passed on 2026-07-10 after
+  temporarily renaming `vendor/codex-rs` to `vendor/codex-rs.disabled`.
+- Default `cargo tree -p yunxi-agent-cli` contains no `yunxi-agent-codex`,
+  `vendor/codex-rs`, or `codex-*` crates.
+
+Commands verified:
+
+- `cargo fmt -- --check`
+- `cargo test`
+- `cargo check -p yunxi-agent-core`
+- `cargo check -p yunxi-agent-provider`
+- `cargo check -p yunxi-agent-tools`
+- `cargo check -p yunxi-agent-storage`
+- `cargo check -p yunxi-agent-runtime`
+- `cargo check -p yunxi-agent-cli`
+- `cargo build -p yunxi-agent-cli`
+- `cargo run -p yunxi-agent-cli -- --cwd <temp> --backend yunxi --jsonl "explain this project"`
+- `cargo tree -p yunxi-agent-cli`
+- `git diff --check`
+
 ## Verification Gate
 
 Stage 4C should follow the same rule as the previous stage: build first, then

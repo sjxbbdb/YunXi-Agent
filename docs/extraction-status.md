@@ -64,6 +64,46 @@ constrained patch support, and session CLI commands. The development report is
 recorded in
 `docs/reports/2026-07-10-yunxi-stage-4c-provider-policy-runtime-report.md`.
 
+## Stage 4C Provider, Policy, Patch, And Session Slice
+
+Implemented in this slice:
+
+- `yunxi-agent-provider` owns OpenAI-compatible provider configuration,
+  request serialization, response parsing, auth source resolution, and
+  fixture-backed completion.
+- `yunxi-agent-tools` owns explicit approval and sandbox policy mapping from
+  `AgentConfig` before tool execution.
+- `yunxi-agent-tools` owns constrained patch operations for write and delete,
+  with rejection of absolute paths and parent-directory traversal.
+- `yunxi-agent-runtime` maps provider-requested shell, patch, MCP, and skill
+  calls into policy-carrying YunXi tool requests.
+- `yunxi-agent-runtime` emits provider turn reasoning, tool completion,
+  warning, patch, command, MCP, and file-change events through YunXi event
+  types.
+- `yunxi-agent-cli` can list and inspect file-backed sessions through
+  `sessions list` and `sessions show`.
+
+## Stage 4C Verification
+
+Verified on 2026-07-10:
+
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check -p yunxi-agent-core`: pass
+- `cargo check -p yunxi-agent-provider`: pass
+- `cargo check -p yunxi-agent-tools`: pass
+- `cargo check -p yunxi-agent-storage`: pass
+- `cargo check -p yunxi-agent-runtime`: pass
+- `cargo check -p yunxi-agent-cli`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- --cwd <temp> --backend yunxi --jsonl "explain this project"`:
+  pass
+- `cargo tree -p yunxi-agent-cli`: pass; default tree contains no
+  `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
+- disabled-vendor verification: pass after temporarily renaming
+  `vendor/codex-rs` to `vendor/codex-rs.disabled`
+- `git diff --check`: pass with Windows line-ending warnings only
+
 ## Stage 4B Full Autonomy Slice
 
 Implemented in this slice:

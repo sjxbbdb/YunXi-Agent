@@ -528,6 +528,7 @@ fn agent_status_from_run_status(status: AgentRunStatus) -> AgentStatus {
     match status {
         AgentRunStatus::Completed => AgentStatus::Completed,
         AgentRunStatus::Failed => AgentStatus::Failed,
+        AgentRunStatus::Cancelled => AgentStatus::Interrupted,
     }
 }
 

@@ -16,4 +16,12 @@ pub enum AgentError {
 
     #[error("agent execution failed: {message}")]
     Execution { message: String },
+
+    #[error("{message}")]
+    Provider {
+        provider: String,
+        status: Option<u16>,
+        classification: String,
+        message: String,
+    },
 }

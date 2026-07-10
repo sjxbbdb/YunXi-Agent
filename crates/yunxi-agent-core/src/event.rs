@@ -105,6 +105,14 @@ pub enum AgentEvent {
         status: String,
         message: Option<String>,
     },
+    ChildScopedStream {
+        agent_id: String,
+        child_session_id: String,
+        parent_session_id: Option<String>,
+        event: String,
+        seq: usize,
+        message: Option<String>,
+    },
     ContextStatus {
         active_context_tokens: i64,
         token_limit_reached: bool,
@@ -126,6 +134,15 @@ pub enum AgentEvent {
     Warning {
         message: String,
     },
+    Cancelled {
+        reason: Option<String>,
+    },
+    ProviderError {
+        provider: String,
+        status: Option<u16>,
+        classification: String,
+        message: String,
+    },
     Error {
         message: String,
     },
@@ -140,6 +157,7 @@ pub enum AgentEvent {
 pub enum AgentRunStatus {
     Completed,
     Failed,
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -149,6 +167,7 @@ pub enum CommandStatus {
     Completed,
     Failed,
     Declined,
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -295,6 +295,7 @@ pub enum McpSessionStatus {
     Configured,
     Initialized,
     Failed,
+    Cancelled,
     Shutdown,
 }
 
@@ -399,6 +400,35 @@ impl McpSessionManager {
             })?;
         session.status = McpSessionStatus::Shutdown;
         Ok(session.clone())
+    }
+
+    pub async fn shutdown_all(&self) -> AgentResult<Vec<McpSessionState>> {
+        let servers = self.lock_sessions()?.keys().cloned().collect::<Vec<_>>();
+        let mut states = Vec::new();
+        for server in servers {
+            states.push(self.shutdown(&server).await?);
+        }
+        Ok(states)
+    }
+
+    pub fn health_check(&self, server: &str) -> AgentResult<McpSessionState> {
+        self.session(server)
+    }
+
+    pub fn cancel(&self, server: &str, reason: impl Into<String>) -> AgentResult<McpSessionState> {
+        let mut sessions = self.lock_sessions()?;
+        let session = sessions
+            .get_mut(server)
+            .ok_or_else(|| AgentError::Execution {
+                message: format!("MCP server is not configured: {server}"),
+            })?;
+        session.status = McpSessionStatus::Cancelled;
+        session.last_error = Some(format!("cancelled: {}", reason.into()));
+        Ok(session.clone())
+    }
+
+    pub fn session_count(&self) -> AgentResult<usize> {
+        Ok(self.lock_sessions()?.len())
     }
 
     pub fn snapshot(&self) -> AgentResult<Vec<McpSessionState>> {
@@ -738,6 +768,10 @@ pub enum McpLifecycleEvent {
     ServerConfigured {
         server: String,
     },
+    SessionReused {
+        server: String,
+        reuse_count: usize,
+    },
     ResourcesListed {
         server: String,
         count: usize,
@@ -977,6 +1011,7 @@ pub struct InMemoryMcpRuntime {
     snapshot: Arc<Mutex<McpRuntimeSnapshot>>,
     resource_content: Arc<Mutex<BTreeMap<(String, String), String>>>,
     tool_results: Arc<Mutex<BTreeMap<(String, String), McpToolResult>>>,
+    tool_call_counts: Arc<Mutex<BTreeMap<String, usize>>>,
     events: Arc<Mutex<Vec<McpLifecycleEvent>>>,
 }
 
@@ -986,6 +1021,7 @@ impl InMemoryMcpRuntime {
             snapshot: Arc::new(Mutex::new(snapshot)),
             resource_content: Arc::default(),
             tool_results: Arc::default(),
+            tool_call_counts: Arc::default(),
             events: Arc::default(),
         }
     }
@@ -1051,6 +1087,16 @@ impl InMemoryMcpRuntime {
         })
     }
 
+    fn lock_tool_call_counts(
+        &self,
+    ) -> AgentResult<std::sync::MutexGuard<'_, BTreeMap<String, usize>>> {
+        self.tool_call_counts
+            .lock()
+            .map_err(|_| AgentError::Execution {
+                message: "MCP tool call count lock was poisoned".to_string(),
+            })
+    }
+
     fn lock_events(&self) -> AgentResult<std::sync::MutexGuard<'_, Vec<McpLifecycleEvent>>> {
         self.events.lock().map_err(|_| AgentError::Execution {
             message: "MCP event lock was poisoned".to_string(),
@@ -1092,6 +1138,19 @@ impl McpRuntime for InMemoryMcpRuntime {
 
     async fn call_tool(&self, invocation: McpToolInvocation) -> AgentResult<McpToolResult> {
         let snapshot = self.snapshot_for_server(&invocation.server)?;
+        let reuse_count = {
+            let mut counts = self.lock_tool_call_counts()?;
+            let count = counts.entry(invocation.server.clone()).or_default();
+            let previous = *count;
+            *count += 1;
+            previous
+        };
+        if reuse_count > 0 {
+            self.emit(McpLifecycleEvent::SessionReused {
+                server: invocation.server.clone(),
+                reuse_count,
+            })?;
+        }
         let Some(spec) = snapshot
             .tools
             .iter()

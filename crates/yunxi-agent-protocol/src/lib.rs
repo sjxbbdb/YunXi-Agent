@@ -458,6 +458,16 @@ pub enum RuntimeEvent {
         status: String,
         message: Option<String>,
     },
+    ChildScopedStream {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        agent_id: String,
+        child_session_id: String,
+        parent_session_id: Option<String>,
+        event: String,
+        seq: usize,
+        message: Option<String>,
+    },
     ContextStatus {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -485,6 +495,19 @@ pub enum RuntimeEvent {
     TurnCompleted {
         thread_id: ThreadId,
         turn_id: TurnId,
+    },
+    Cancelled {
+        thread_id: Option<ThreadId>,
+        turn_id: Option<TurnId>,
+        reason: Option<String>,
+    },
+    ProviderError {
+        thread_id: Option<ThreadId>,
+        turn_id: Option<TurnId>,
+        provider: String,
+        status: Option<u16>,
+        classification: String,
+        message: String,
     },
     Error {
         thread_id: Option<ThreadId>,

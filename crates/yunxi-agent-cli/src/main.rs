@@ -583,6 +583,21 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 status: status.clone(),
                 message: message.clone(),
             }),
+            AgentEvent::ChildAgentEvent {
+                agent_id,
+                child_session_id,
+                parent_session_id,
+                status,
+                message,
+            } => output.push(RuntimeEvent::ChildAgent {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                agent_id: agent_id.clone(),
+                child_session_id: child_session_id.clone(),
+                parent_session_id: parent_session_id.clone(),
+                status: status.clone(),
+                message: message.clone(),
+            }),
             AgentEvent::ContextStatus {
                 active_context_tokens,
                 token_limit_reached,
@@ -601,6 +616,7 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 parent_session_id,
                 rollout_items,
                 rollout_truncated,
+                child_session_ids,
             } => output.push(RuntimeEvent::StorageState {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
@@ -608,6 +624,7 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 parent_session_id: parent_session_id.clone(),
                 rollout_items: *rollout_items,
                 rollout_truncated: *rollout_truncated,
+                child_session_ids: child_session_ids.clone(),
             }),
             AgentEvent::FileChanged { path, kind } => output.push(RuntimeEvent::FileChanged {
                 thread_id: thread_id.clone(),

@@ -758,6 +758,13 @@ pub enum ToolRuntimeEvent {
         status: String,
         message: Option<String>,
     },
+    ChildAgent {
+        agent_id: String,
+        child_session_id: String,
+        parent_session_id: Option<String>,
+        status: String,
+        message: Option<String>,
+    },
     PatchDiagnostic {
         kind: String,
         message: String,
@@ -1330,8 +1337,13 @@ fn run_multi_agent(
             let output = serde_json::to_string(&result).map_err(|error| AgentError::Execution {
                 message: format!("failed to serialize multi-agent result: {error}"),
             })?;
-            Ok(ToolResponse::completed(id, output, Some(0), Vec::new())
-                .with_runtime_events(runtime_events))
+            let response = if matches!(result.status, yunxi_agent_multi_agent::AgentStatus::Failed)
+            {
+                ToolResponse::failed(id, output, None, Vec::new())
+            } else {
+                ToolResponse::completed(id, output, Some(0), Vec::new())
+            };
+            Ok(response.with_runtime_events(runtime_events))
         }
         Err(error) => Ok(ToolResponse::failed(
             id,
@@ -1387,6 +1399,13 @@ fn multi_agent_runtime_events(result: &MultiAgentCommandResult) -> Vec<ToolRunti
         events.push(ToolRuntimeEvent::MultiAgent {
             agent_id: child_run.agent_id.0.clone(),
             parent_agent_id: None,
+            status: format!("{:?}", child_run.status).to_ascii_lowercase(),
+            message: child_run.final_response.clone(),
+        });
+        events.push(ToolRuntimeEvent::ChildAgent {
+            agent_id: child_run.agent_id.0.clone(),
+            child_session_id: child_run.session_id.clone(),
+            parent_session_id: child_run.parent_session_id.clone(),
             status: format!("{:?}", child_run.status).to_ascii_lowercase(),
             message: child_run.final_response.clone(),
         });

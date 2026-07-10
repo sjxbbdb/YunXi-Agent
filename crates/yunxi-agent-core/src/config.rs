@@ -12,6 +12,8 @@ pub struct AgentConfig {
     #[serde(default)]
     pub parent_session_id: Option<String>,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub session_title: Option<String>,
     #[serde(default)]
     pub context_window_tokens: Option<i64>,
@@ -29,6 +31,7 @@ impl AgentConfig {
             approval_mode: ApprovalMode::OnRequest,
             sandbox_mode: SandboxMode::WorkspaceWrite,
             parent_session_id: None,
+            session_id: None,
             session_title: None,
             context_window_tokens: None,
             auto_compact_threshold_tokens: None,
@@ -62,6 +65,11 @@ impl AgentConfig {
 
     pub fn with_parent_session_id(mut self, parent_session_id: impl Into<String>) -> Self {
         self.parent_session_id = Some(parent_session_id.into());
+        self
+    }
+
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
         self
     }
 

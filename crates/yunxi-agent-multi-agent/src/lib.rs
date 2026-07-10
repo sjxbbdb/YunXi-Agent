@@ -91,6 +91,7 @@ impl ChildAgentRunRequest {
 pub struct ChildAgentRunResult {
     pub agent_id: AgentId,
     pub session_id: String,
+    pub parent_session_id: Option<String>,
     pub status: AgentRunStatus,
     pub final_response: Option<String>,
     pub events: Vec<AgentEvent>,
@@ -112,6 +113,7 @@ impl ChildAgentRuntime for FixtureChildAgentRuntime {
         Ok(ChildAgentRunResult {
             agent_id: request.agent.id.clone(),
             session_id: request.session_id,
+            parent_session_id: request.parent_session_id,
             status: AgentRunStatus::Completed,
             final_response: Some(final_response.clone()),
             events: vec![
@@ -380,7 +382,25 @@ impl InMemoryAgentRegistry {
                     parent_id.map(|parent| parent.0),
                     task,
                 );
-                let child_run = child_runtime.run_child(run_request)?;
+                let child_run = match child_runtime.run_child(run_request.clone()) {
+                    Ok(child_run) => child_run,
+                    Err(error) => ChildAgentRunResult {
+                        agent_id: metadata.id.clone(),
+                        session_id: run_request.session_id.clone(),
+                        parent_session_id: run_request.parent_session_id.clone(),
+                        status: AgentRunStatus::Failed,
+                        final_response: None,
+                        events: vec![
+                            AgentEvent::Error {
+                                message: error.to_string(),
+                            },
+                            AgentEvent::Completed {
+                                status: AgentRunStatus::Failed,
+                                usage: None,
+                            },
+                        ],
+                    },
+                };
                 let status = agent_status_from_run_status(child_run.status);
                 self.set_status(&id, status)?;
                 self.lock_events()?

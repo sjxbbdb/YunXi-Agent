@@ -98,6 +98,13 @@ pub enum AgentEvent {
         status: String,
         message: Option<String>,
     },
+    ChildAgentEvent {
+        agent_id: String,
+        child_session_id: String,
+        parent_session_id: Option<String>,
+        status: String,
+        message: Option<String>,
+    },
     ContextStatus {
         active_context_tokens: i64,
         token_limit_reached: bool,
@@ -109,6 +116,8 @@ pub enum AgentEvent {
         parent_session_id: Option<String>,
         rollout_items: usize,
         rollout_truncated: bool,
+        #[serde(default)]
+        child_session_ids: Vec<String>,
     },
     TodoUpdated {
         id: Option<String>,

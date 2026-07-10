@@ -527,6 +527,49 @@ runtime -> storage -> JSONL.
 The Stage 4J development report is recorded in
 `docs/reports/2026-07-10-yunxi-stage-4j-child-runtime-e2e-parity-development-report.md`.
 
+## Stage 4J Child Runtime And End-To-End Parity Harness Slice
+
+Implemented in this slice:
+
+- `yunxi-agent-runtime` now owns a real `YunXiChildAgentRuntime` adapter for
+  `multi_agent spawn_run`, executes a child YunXi runtime turn, and writes the
+  child session through YunXi-owned storage.
+- `yunxi-agent-runtime` assigns the parent session id at turn start and injects
+  it into multi-agent requests so child sessions can persist `parent_id`
+  metadata before the parent session is saved.
+- `yunxi-agent-core` and `yunxi-agent-protocol` expose `ChildAgentEvent` /
+  `child_agent` JSONL events carrying `agent_id`, `child_session_id`,
+  `parent_session_id`, `status`, and `message`.
+- `yunxi-agent-storage` `RuntimeStateSnapshot` and `storage_state` events now
+  track child session ids and child session count.
+- `yunxi-agent-provider` includes an offline Stage 4J fixture prompt that emits
+  a parent `multi_agent spawn_run` tool call and then completes from the child
+  tool result.
+- `yunxi-agent-runtime` has a depth guard for child runtime execution and
+  returns structured child failure events instead of panicking or breaking the
+  parent provider loop.
+- `yunxi-agent-cli` maps child events to one-JSON-object-per-line JSONL output,
+  and the CLI JSONL fixture verifies the emitted `child_agent` event shape.
+
+Stage 4J construction verification passed on 2026-07-10:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4j child runtime fixture"`:
+  pass, including parent `multi_agent`, scoped `child_agent`, and final
+  `storage_state` JSONL events with `child_session_ids`
+- JSONL parse check for the Stage 4J fixture: pass; 23 JSONL lines parsed and 8
+  `child_agent` events observed
+- `cargo tree -p yunxi-agent-cli`: pass; dependency keyword scan found no
+  `codex`, `vendor`, or `yunxi-agent-codex` dependency in the default CLI tree
+- `git diff --check`: pass with Windows line-ending warnings only
+- `cargo clean`: pass; removed 1.4GiB of build artifacts
+- Local `.yunxi` smoke session artifacts from the Stage 4J fixture were removed
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

@@ -303,6 +303,10 @@ impl RuntimeRolloutRecord {
 pub struct RuntimeStateSnapshot {
     pub session_id: SessionId,
     pub parent_session_id: Option<SessionId>,
+    #[serde(default)]
+    pub child_session_ids: Vec<SessionId>,
+    #[serde(default)]
+    pub child_session_count: usize,
     pub status: AgentRunStatus,
     pub rollout_items: usize,
     pub rollout_truncated: bool,
@@ -316,9 +320,12 @@ impl RuntimeStateSnapshot {
         session: &SessionRecord,
         rollout: Option<&RuntimeRolloutRecord>,
     ) -> Self {
+        let child_session_ids = child_session_ids_from_events(&session.events);
         Self {
             session_id: session.id.clone(),
             parent_session_id: session.parent_id.clone(),
+            child_session_count: child_session_ids.len(),
+            child_session_ids,
             status: session.status,
             rollout_items: rollout
                 .map(|rollout| rollout.items.len())
@@ -329,6 +336,19 @@ impl RuntimeStateSnapshot {
             updated_at_millis: session.updated_at_millis,
         }
     }
+}
+
+fn child_session_ids_from_events(events: &[AgentEvent]) -> Vec<SessionId> {
+    let mut ids = BTreeSet::new();
+    for event in events {
+        if let AgentEvent::ChildAgentEvent {
+            child_session_id, ..
+        } = event
+        {
+            ids.insert(SessionId::new(child_session_id.clone()));
+        }
+    }
+    ids.into_iter().collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

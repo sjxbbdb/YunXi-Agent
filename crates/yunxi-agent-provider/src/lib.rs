@@ -994,6 +994,31 @@ impl Default for StaticProvider {
 #[async_trait]
 impl AgentProvider for StaticProvider {
     async fn complete(&self, request: ProviderRequest) -> AgentResult<ProviderResponse> {
+        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+            && request
+                .input
+                .prompt
+                .contains("stage 4j child runtime fixture")
+        {
+            if let Some(tool_message) = request
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == ProviderRole::Tool)
+            {
+                return Ok(ProviderResponse::assistant(format!(
+                    "Stage 4J child runtime fixture completed with child result: {}",
+                    tool_message.content.trim()
+                )));
+            }
+            return Ok(ProviderResponse::tool_call(ProviderToolCall::MultiAgent {
+                id: Some("stage-4j-child-run".to_string()),
+                action: "spawn_run".to_string(),
+                arguments_json: Some(
+                    r#"{"task":"stage 4j child runtime fixture child task"}"#.to_string(),
+                ),
+            }));
+        }
         Ok(ProviderResponse::assistant(format!(
             "{}: {}",
             self.response_prefix,

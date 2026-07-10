@@ -1,8 +1,16 @@
 # Codex Core Agent Parity Map
 
-This index is the Stage 4D build map. It keeps the migration target concrete:
+This index is the Stage 4E build map. It keeps the migration target concrete:
 copy Codex CLI core Agent behavior into YunXi-owned crates without adding
 `codex-*` or `vendor/codex-rs` dependencies to the default runtime.
+
+## Stage 4E Migration Staging
+
+The Codex CLI core Agent source references for the 12 parity layers are staged
+under `extracted/codex-core-agent-sources`. That directory is migration input
+only; compiled YunXi crates must keep using YunXi-owned modules and must not
+depend on `vendor/codex-rs`, `codex-*`, or `yunxi-agent-codex` in the default
+runtime path.
 
 ## Rules
 

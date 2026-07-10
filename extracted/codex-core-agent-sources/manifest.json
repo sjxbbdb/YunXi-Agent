@@ -1,0 +1,811 @@
+﻿{
+    "generated_at_utc":  "2026-07-10T03:16:57.6795596Z",
+    "vendor_root":  "vendor/codex-rs",
+    "output_root":  "extracted/codex-core-agent-sources",
+    "rule":  "Copied source is migration input only; default YunXi crates must not depend on vendor/codex-rs or codex-* crates.",
+    "entries":  [
+                    {
+                        "domain":  "runtime-thread-turn",
+                        "target":  "yunxi-agent-runtime",
+                        "source":  "core/src/codex_thread.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-runtime/runtime-thread-turn/core/src/codex_thread.rs",
+                        "files":  1,
+                        "bytes":  24781
+                    },
+                    {
+                        "domain":  "runtime-thread-turn",
+                        "target":  "yunxi-agent-runtime",
+                        "source":  "core/src/thread_manager.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-runtime/runtime-thread-turn/core/src/thread_manager.rs",
+                        "files":  1,
+                        "bytes":  75039
+                    },
+                    {
+                        "domain":  "runtime-thread-turn",
+                        "target":  "yunxi-agent-runtime",
+                        "source":  "core/src/session",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-runtime/runtime-thread-turn/core/src/session",
+                        "files":  27,
+                        "bytes":  1053270
+                    },
+                    {
+                        "domain":  "runtime-thread-turn",
+                        "target":  "yunxi-agent-runtime",
+                        "source":  "core/src/client_common.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-runtime/runtime-thread-turn/core/src/client_common.rs",
+                        "files":  1,
+                        "bytes":  4157
+                    },
+                    {
+                        "domain":  "runtime-thread-turn",
+                        "target":  "yunxi-agent-runtime",
+                        "source":  "core/src/client.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-runtime/runtime-thread-turn/core/src/client.rs",
+                        "files":  1,
+                        "bytes":  99146
+                    },
+                    {
+                        "domain":  "runtime-thread-turn",
+                        "target":  "yunxi-agent-runtime",
+                        "source":  "core/src/responses_retry.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-runtime/runtime-thread-turn/core/src/responses_retry.rs",
+                        "files":  1,
+                        "bytes":  3413
+                    },
+                    {
+                        "domain":  "runtime-thread-turn",
+                        "target":  "yunxi-agent-runtime",
+                        "source":  "core/src/event_mapping.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-runtime/runtime-thread-turn/core/src/event_mapping.rs",
+                        "files":  1,
+                        "bytes":  8485
+                    },
+                    {
+                        "domain":  "runtime-thread-turn",
+                        "target":  "yunxi-agent-runtime",
+                        "source":  "core/src/turn_metadata.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-runtime/runtime-thread-turn/core/src/turn_metadata.rs",
+                        "files":  1,
+                        "bytes":  12428
+                    },
+                    {
+                        "domain":  "protocol-event-mapping",
+                        "target":  "yunxi-agent-protocol",
+                        "source":  "core/src/client_common.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-protocol/protocol-event-mapping/core/src/client_common.rs",
+                        "files":  1,
+                        "bytes":  4157
+                    },
+                    {
+                        "domain":  "protocol-event-mapping",
+                        "target":  "yunxi-agent-protocol",
+                        "source":  "core/src/event_mapping.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-protocol/protocol-event-mapping/core/src/event_mapping.rs",
+                        "files":  1,
+                        "bytes":  8485
+                    },
+                    {
+                        "domain":  "protocol-event-mapping",
+                        "target":  "yunxi-agent-protocol",
+                        "source":  "core/src/turn_metadata.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-protocol/protocol-event-mapping/core/src/turn_metadata.rs",
+                        "files":  1,
+                        "bytes":  12428
+                    },
+                    {
+                        "domain":  "protocol-event-mapping",
+                        "target":  "yunxi-agent-protocol",
+                        "source":  "protocol",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-protocol/protocol-event-mapping/protocol",
+                        "files":  38,
+                        "bytes":  771640
+                    },
+                    {
+                        "domain":  "protocol-event-mapping",
+                        "target":  "yunxi-agent-protocol",
+                        "source":  "rollout-trace",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-protocol/protocol-event-mapping/rollout-trace",
+                        "files":  37,
+                        "bytes":  494730
+                    },
+                    {
+                        "domain":  "provider-transport-streaming",
+                        "target":  "yunxi-agent-provider",
+                        "source":  "core/src/client.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-provider/provider-transport-streaming/core/src/client.rs",
+                        "files":  1,
+                        "bytes":  99146
+                    },
+                    {
+                        "domain":  "provider-transport-streaming",
+                        "target":  "yunxi-agent-provider",
+                        "source":  "core/src/client_common.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-provider/provider-transport-streaming/core/src/client_common.rs",
+                        "files":  1,
+                        "bytes":  4157
+                    },
+                    {
+                        "domain":  "provider-transport-streaming",
+                        "target":  "yunxi-agent-provider",
+                        "source":  "core/src/responses_retry.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-provider/provider-transport-streaming/core/src/responses_retry.rs",
+                        "files":  1,
+                        "bytes":  3413
+                    },
+                    {
+                        "domain":  "provider-transport-streaming",
+                        "target":  "yunxi-agent-provider",
+                        "source":  "codex-client",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-provider/provider-transport-streaming/codex-client",
+                        "files":  7,
+                        "bytes":  5647
+                    },
+                    {
+                        "domain":  "provider-transport-streaming",
+                        "target":  "yunxi-agent-provider",
+                        "source":  "model-provider",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-provider/provider-transport-streaming/model-provider",
+                        "files":  13,
+                        "bytes":  100622
+                    },
+                    {
+                        "domain":  "provider-transport-streaming",
+                        "target":  "yunxi-agent-provider",
+                        "source":  "model-provider-info",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-provider/provider-transport-streaming/model-provider-info",
+                        "files":  4,
+                        "bytes":  38866
+                    },
+                    {
+                        "domain":  "provider-transport-streaming",
+                        "target":  "yunxi-agent-provider",
+                        "source":  "http-client",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-provider/provider-transport-streaming/http-client",
+                        "files":  21,
+                        "bytes":  161238
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/agents_md.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/agents_md.rs",
+                        "files":  1,
+                        "bytes":  16611
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/agents_md_manager.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/agents_md_manager.rs",
+                        "files":  1,
+                        "bytes":  1835
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/prompt_debug.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/prompt_debug.rs",
+                        "files":  1,
+                        "bytes":  3873
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/context",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/context",
+                        "files":  45,
+                        "bytes":  131560
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/context_manager",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/context_manager",
+                        "files":  5,
+                        "bytes":  137775
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "context-fragments",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/context-fragments",
+                        "files":  5,
+                        "bytes":  7488
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "prompts",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/prompts",
+                        "files":  33,
+                        "bytes":  87763
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "file-search",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/file-search",
+                        "files":  6,
+                        "bytes":  45577
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/compact.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/compact.rs",
+                        "files":  1,
+                        "bytes":  26753
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/compact_remote.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/compact_remote.rs",
+                        "files":  1,
+                        "bytes":  18204
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/compact_remote_v2.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/compact_remote_v2.rs",
+                        "files":  1,
+                        "bytes":  30661
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/compact_token_budget.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/compact_token_budget.rs",
+                        "files":  1,
+                        "bytes":  4025
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/session/token_budget.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/session/token_budget.rs",
+                        "files":  1,
+                        "bytes":  1204
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "core/src/session/context_window.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/core/src/session/context_window.rs",
+                        "files":  1,
+                        "bytes":  3981
+                    },
+                    {
+                        "domain":  "prompt-context-agents-compact",
+                        "target":  "yunxi-agent-context",
+                        "source":  "message-history",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-context/prompt-context-agents-compact/message-history",
+                        "files":  4,
+                        "bytes":  22554
+                    },
+                    {
+                        "domain":  "tools-router-dispatch",
+                        "target":  "yunxi-agent-tools",
+                        "source":  "core/src/tools",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-tools/tools-router-dispatch/core/src/tools",
+                        "files":  115,
+                        "bytes":  1408180
+                    },
+                    {
+                        "domain":  "tools-router-dispatch",
+                        "target":  "yunxi-agent-tools",
+                        "source":  "core/src/function_tool.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-tools/tools-router-dispatch/core/src/function_tool.rs",
+                        "files":  1,
+                        "bytes":  41
+                    },
+                    {
+                        "domain":  "tools-router-dispatch",
+                        "target":  "yunxi-agent-tools",
+                        "source":  "tools",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-tools/tools-router-dispatch/tools",
+                        "files":  41,
+                        "bytes":  265883
+                    },
+                    {
+                        "domain":  "tools-router-dispatch",
+                        "target":  "yunxi-agent-tools",
+                        "source":  "core/src/mcp_tool_call.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-tools/tools-router-dispatch/core/src/mcp_tool_call.rs",
+                        "files":  1,
+                        "bytes":  79158
+                    },
+                    {
+                        "domain":  "tools-router-dispatch",
+                        "target":  "yunxi-agent-tools",
+                        "source":  "core/src/mcp_tool_exposure.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-tools/tools-router-dispatch/core/src/mcp_tool_exposure.rs",
+                        "files":  1,
+                        "bytes":  3191
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "core/src/exec.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/core/src/exec.rs",
+                        "files":  1,
+                        "bytes":  42649
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "core/src/unified_exec",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/core/src/unified_exec",
+                        "files":  12,
+                        "bytes":  158843
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "core/src/shell.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/core/src/shell.rs",
+                        "files":  1,
+                        "bytes":  3424
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "core/src/shell_snapshot.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/core/src/shell_snapshot.rs",
+                        "files":  1,
+                        "bytes":  18284
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "core/src/command_canonicalization.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/core/src/command_canonicalization.rs",
+                        "files":  1,
+                        "bytes":  1556
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "exec",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/exec",
+                        "files":  32,
+                        "bytes":  333343
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "exec-server",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/exec-server",
+                        "files":  95,
+                        "bytes":  1119420
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "exec-server-protocol",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/exec-server-protocol",
+                        "files":  6,
+                        "bytes":  29743
+                    },
+                    {
+                        "domain":  "exec-shell",
+                        "target":  "yunxi-agent-exec",
+                        "source":  "shell-command",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-exec/exec-shell/shell-command",
+                        "files":  14,
+                        "bytes":  228968
+                    },
+                    {
+                        "domain":  "sandbox-approval",
+                        "target":  "yunxi-agent-sandbox",
+                        "source":  "core/src/exec_policy.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-sandbox/sandbox-approval/core/src/exec_policy.rs",
+                        "files":  1,
+                        "bytes":  38082
+                    },
+                    {
+                        "domain":  "sandbox-approval",
+                        "target":  "yunxi-agent-sandbox",
+                        "source":  "execpolicy",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-sandbox/sandbox-approval/execpolicy",
+                        "files":  15,
+                        "bytes":  94155
+                    },
+                    {
+                        "domain":  "sandbox-approval",
+                        "target":  "yunxi-agent-sandbox",
+                        "source":  "execpolicy-legacy",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-sandbox/sandbox-approval/execpolicy-legacy",
+                        "files":  30,
+                        "bytes":  91996
+                    },
+                    {
+                        "domain":  "sandbox-approval",
+                        "target":  "yunxi-agent-sandbox",
+                        "source":  "sandboxing",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-sandbox/sandbox-approval/sandboxing",
+                        "files":  18,
+                        "bytes":  239374
+                    },
+                    {
+                        "domain":  "sandbox-approval",
+                        "target":  "yunxi-agent-sandbox",
+                        "source":  "linux-sandbox",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-sandbox/sandbox-approval/linux-sandbox",
+                        "files":  19,
+                        "bytes":  298195
+                    },
+                    {
+                        "domain":  "sandbox-approval",
+                        "target":  "yunxi-agent-sandbox",
+                        "source":  "windows-sandbox-rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-sandbox/sandbox-approval/windows-sandbox-rs",
+                        "files":  61,
+                        "bytes":  683529
+                    },
+                    {
+                        "domain":  "sandbox-approval",
+                        "target":  "yunxi-agent-sandbox",
+                        "source":  "shell-escalation",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-sandbox/sandbox-approval/shell-escalation",
+                        "files":  14,
+                        "bytes":  84974
+                    },
+                    {
+                        "domain":  "sandbox-approval",
+                        "target":  "yunxi-agent-sandbox",
+                        "source":  "process-hardening",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-sandbox/sandbox-approval/process-hardening",
+                        "files":  4,
+                        "bytes":  6933
+                    },
+                    {
+                        "domain":  "patch",
+                        "target":  "yunxi-agent-patch",
+                        "source":  "core/src/apply_patch.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-patch/patch/core/src/apply_patch.rs",
+                        "files":  1,
+                        "bytes":  4327
+                    },
+                    {
+                        "domain":  "patch",
+                        "target":  "yunxi-agent-patch",
+                        "source":  "core/src/tools/handlers/apply_patch.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-patch/patch/core/src/tools/handlers/apply_patch.rs",
+                        "files":  1,
+                        "bytes":  25868
+                    },
+                    {
+                        "domain":  "patch",
+                        "target":  "yunxi-agent-patch",
+                        "source":  "core/src/tools/handlers/apply_patch.lark",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-patch/patch/core/src/tools/handlers/apply_patch.lark",
+                        "files":  1,
+                        "bytes":  597
+                    },
+                    {
+                        "domain":  "patch",
+                        "target":  "yunxi-agent-patch",
+                        "source":  "core/src/tools/runtimes/apply_patch.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-patch/patch/core/src/tools/runtimes/apply_patch.rs",
+                        "files":  1,
+                        "bytes":  10115
+                    },
+                    {
+                        "domain":  "patch",
+                        "target":  "yunxi-agent-patch",
+                        "source":  "apply-patch",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-patch/patch/apply-patch",
+                        "files":  91,
+                        "bytes":  181280
+                    },
+                    {
+                        "domain":  "patch",
+                        "target":  "yunxi-agent-patch",
+                        "source":  "git-utils/src/apply.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-patch/patch/git-utils/src/apply.rs",
+                        "files":  1,
+                        "bytes":  31554
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "codex-mcp",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/codex-mcp",
+                        "files":  22,
+                        "bytes":  346774
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "rmcp-client",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/rmcp-client",
+                        "files":  35,
+                        "bytes":  412013
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "core/src/mcp.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/core/src/mcp.rs",
+                        "files":  1,
+                        "bytes":  9803
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "core/src/mcp_tool_call.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/core/src/mcp_tool_call.rs",
+                        "files":  1,
+                        "bytes":  79158
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "core/src/mcp_tool_approval_templates.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/core/src/mcp_tool_approval_templates.rs",
+                        "files":  1,
+                        "bytes":  12744
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "core/src/mcp_openai_file.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/core/src/mcp_openai_file.rs",
+                        "files":  1,
+                        "bytes":  21181
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "core/src/session/mcp.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/core/src/session/mcp.rs",
+                        "files":  1,
+                        "bytes":  32480
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "core/src/session/mcp_runtime.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/core/src/session/mcp_runtime.rs",
+                        "files":  1,
+                        "bytes":  3960
+                    },
+                    {
+                        "domain":  "mcp",
+                        "target":  "yunxi-agent-mcp",
+                        "source":  "mcp-server",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-mcp/mcp/mcp-server",
+                        "files":  19,
+                        "bytes":  134113
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "core/src/skills.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/core/src/skills.rs",
+                        "files":  1,
+                        "bytes":  3831
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "core-skills",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/core-skills",
+                        "files":  23,
+                        "bytes":  330579
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "skills",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/skills",
+                        "files":  53,
+                        "bytes":  390497
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "plugin",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/plugin",
+                        "files":  8,
+                        "bytes":  30106
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "core-plugins",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/core-plugins",
+                        "files":  48,
+                        "bytes":  1087104
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "core/src/plugins",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/core/src/plugins",
+                        "files":  9,
+                        "bytes":  35412
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "core/src/tools/handlers/dynamic.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/core/src/tools/handlers/dynamic.rs",
+                        "files":  1,
+                        "bytes":  8163
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "core/src/tools/handlers/tool_search.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/core/src/tools/handlers/tool_search.rs",
+                        "files":  1,
+                        "bytes":  13015
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "core/src/tools/handlers/view_image.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/core/src/tools/handlers/view_image.rs",
+                        "files":  1,
+                        "bytes":  14566
+                    },
+                    {
+                        "domain":  "skills-plugins-dynamic-tools",
+                        "target":  "yunxi-agent-skills",
+                        "source":  "core/src/tools/handlers/request_user_input.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-skills/skills-plugins-dynamic-tools/core/src/tools/handlers/request_user_input.rs",
+                        "files":  1,
+                        "bytes":  3704
+                    },
+                    {
+                        "domain":  "storage-rollout-resume",
+                        "target":  "yunxi-agent-storage",
+                        "source":  "core/src/rollout.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-storage/storage-rollout-resume/core/src/rollout.rs",
+                        "files":  1,
+                        "bytes":  1928
+                    },
+                    {
+                        "domain":  "storage-rollout-resume",
+                        "target":  "yunxi-agent-storage",
+                        "source":  "core/src/rollout_budget.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-storage/storage-rollout-resume/core/src/rollout_budget.rs",
+                        "files":  1,
+                        "bytes":  3736
+                    },
+                    {
+                        "domain":  "storage-rollout-resume",
+                        "target":  "yunxi-agent-storage",
+                        "source":  "core/src/thread_rollout_truncation.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-storage/storage-rollout-resume/core/src/thread_rollout_truncation.rs",
+                        "files":  1,
+                        "bytes":  10093
+                    },
+                    {
+                        "domain":  "storage-rollout-resume",
+                        "target":  "yunxi-agent-storage",
+                        "source":  "thread-store",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-storage/storage-rollout-resume/thread-store",
+                        "files":  23,
+                        "bytes":  358235
+                    },
+                    {
+                        "domain":  "storage-rollout-resume",
+                        "target":  "yunxi-agent-storage",
+                        "source":  "state",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-storage/storage-rollout-resume/state",
+                        "files":  77,
+                        "bytes":  673077
+                    },
+                    {
+                        "domain":  "storage-rollout-resume",
+                        "target":  "yunxi-agent-storage",
+                        "source":  "core/src/state_db_bridge.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-storage/storage-rollout-resume/core/src/state_db_bridge.rs",
+                        "files":  1,
+                        "bytes":  248
+                    },
+                    {
+                        "domain":  "storage-rollout-resume",
+                        "target":  "yunxi-agent-storage",
+                        "source":  "external-agent-sessions",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-storage/storage-rollout-resume/external-agent-sessions",
+                        "files":  8,
+                        "bytes":  63118
+                    },
+                    {
+                        "domain":  "storage-rollout-resume",
+                        "target":  "yunxi-agent-storage",
+                        "source":  "rollout",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-storage/storage-rollout-resume/rollout",
+                        "files":  21,
+                        "bytes":  409506
+                    },
+                    {
+                        "domain":  "multi-agent",
+                        "target":  "yunxi-agent-multi-agent",
+                        "source":  "core/src/agent",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-multi-agent/multi-agent/core/src/agent",
+                        "files":  18,
+                        "bytes":  270167
+                    },
+                    {
+                        "domain":  "multi-agent",
+                        "target":  "yunxi-agent-multi-agent",
+                        "source":  "core/src/agent_communication.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-multi-agent/multi-agent/core/src/agent_communication.rs",
+                        "files":  1,
+                        "bytes":  2250
+                    },
+                    {
+                        "domain":  "multi-agent",
+                        "target":  "yunxi-agent-multi-agent",
+                        "source":  "core/src/tools/handlers/multi_agents",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-multi-agent/multi-agent/core/src/tools/handlers/multi_agents",
+                        "files":  5,
+                        "bytes":  39265
+                    },
+                    {
+                        "domain":  "multi-agent",
+                        "target":  "yunxi-agent-multi-agent",
+                        "source":  "core/src/tools/handlers/multi_agents_v2",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-multi-agent/multi-agent/core/src/tools/handlers/multi_agents_v2",
+                        "files":  7,
+                        "bytes":  28313
+                    },
+                    {
+                        "domain":  "multi-agent",
+                        "target":  "yunxi-agent-multi-agent",
+                        "source":  "agent-graph-store",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-multi-agent/multi-agent/agent-graph-store",
+                        "files":  7,
+                        "bytes":  17883
+                    },
+                    {
+                        "domain":  "cli-headless-core",
+                        "target":  "yunxi-agent-cli",
+                        "source":  "cli/src",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-cli/cli-headless-core/cli/src",
+                        "files":  31,
+                        "bytes":  701406
+                    },
+                    {
+                        "domain":  "cli-headless-core",
+                        "target":  "yunxi-agent-cli",
+                        "source":  "core/src/config",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-cli/cli-headless-core/core/src/config",
+                        "files":  20,
+                        "bytes":  905378
+                    },
+                    {
+                        "domain":  "cli-headless-core",
+                        "target":  "yunxi-agent-cli",
+                        "source":  "core/src/config_lock.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-cli/cli-headless-core/core/src/config_lock.rs",
+                        "files":  1,
+                        "bytes":  5960
+                    },
+                    {
+                        "domain":  "cli-headless-core",
+                        "target":  "yunxi-agent-cli",
+                        "source":  "config",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-cli/cli-headless-core/config",
+                        "files":  61,
+                        "bytes":  695564
+                    },
+                    {
+                        "domain":  "cli-headless-core",
+                        "target":  "yunxi-agent-cli",
+                        "source":  "login/src/auth/default_client.rs",
+                        "destination":  "extracted/codex-core-agent-sources/yunxi-agent-cli/cli-headless-core/login/src/auth/default_client.rs",
+                        "files":  1,
+                        "bytes":  13255
+                    }
+                ],
+    "missing":  [
+
+                ]
+}

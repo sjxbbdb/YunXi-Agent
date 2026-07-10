@@ -1,11 +1,13 @@
 use serde_json::json;
 use std::path::PathBuf;
 use yunxi_agent_core::{AgentConfig, AgentInput};
-use yunxi_agent_protocol::ToolCall;
+use yunxi_agent_protocol::{ResponseItemDelta, ResponseStatus, StreamEvent, ToolCall};
 use yunxi_agent_provider::{
-    AgentProvider, OpenAiCompatibleProvider, ProviderAuth, ProviderConfig, ProviderRequest,
-    ProviderRole, ProviderToolCall, StaticProvider, build_openai_request_json,
-    parse_openai_response_json,
+    AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiTransportProvider,
+    ProviderAuth, ProviderConfig, ProviderRequest, ProviderRetryPolicy, ProviderRole,
+    ProviderToolCall, ProviderTransport, StaticProvider, build_openai_request_json,
+    build_openai_stream_request_json, build_openai_transport_request, parse_openai_response_json,
+    parse_openai_stream_events,
 };
 
 #[tokio::test]
@@ -56,7 +58,19 @@ fn openai_request_json_uses_yunxi_provider_messages() {
                 .expect("tool name")
         })
         .collect::<Vec<_>>();
-    assert_eq!(tool_names, vec!["shell", "patch", "mcp", "skill"]);
+    assert_eq!(
+        tool_names,
+        vec![
+            "shell",
+            "patch",
+            "mcp",
+            "skill",
+            "multi_agent",
+            "tool_search",
+            "request_user_input",
+            "view_image"
+        ]
+    );
     assert_eq!(
         tools[0]["function"]["parameters"]["required"],
         json!(["command"])
@@ -65,6 +79,131 @@ fn openai_request_json_uses_yunxi_provider_messages() {
         tools[2]["function"]["parameters"]["required"],
         json!(["server", "tool"])
     );
+}
+
+#[test]
+fn openai_stream_request_json_enables_stream_usage() {
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")).with_model("yunxi-model"),
+        AgentInput::text("stream this"),
+    );
+
+    let json = build_openai_stream_request_json(
+        &ProviderConfig::openai_compatible("fallback-model"),
+        &request,
+    )
+    .expect("request json");
+
+    assert_eq!(json["stream"], true);
+    assert_eq!(json["stream_options"]["include_usage"], true);
+    assert_eq!(json["tools"][0]["function"]["name"], "shell");
+}
+
+#[test]
+fn openai_transport_request_uses_provider_boundary_and_auth() {
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")).with_model("yunxi-model"),
+        AgentInput::text("transport"),
+    );
+
+    let transport = build_openai_transport_request(
+        &ProviderConfig::openai_compatible("fallback-model")
+            .with_base_url("https://example.test/v1"),
+        &ProviderAuth::ApiKey("secret".to_string()),
+        &request,
+        true,
+    )
+    .expect("transport request");
+
+    assert_eq!(transport.method, "POST");
+    assert_eq!(transport.url, "https://example.test/v1/chat/completions");
+    assert!(transport.stream);
+    assert_eq!(
+        transport.headers.get("authorization").map(String::as_str),
+        Some("Bearer secret")
+    );
+    assert_eq!(transport.body["stream"], true);
+}
+
+#[tokio::test]
+async fn fixture_transport_returns_configured_response() {
+    let transport = FixtureTransport::new(200, r#"{"ok":true}"#);
+    let response = transport
+        .send(yunxi_agent_provider::ProviderTransportRequest::post_json(
+            "https://example.test",
+            json!({"hello":"yunxi"}),
+        ))
+        .await
+        .expect("fixture transport");
+
+    assert!(response.is_success());
+    assert_eq!(response.body, r#"{"ok":true}"#);
+}
+
+#[tokio::test]
+async fn transported_openai_provider_uses_transport_for_completion() {
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model"),
+        ProviderAuth::None,
+        FixtureTransport::new(
+            200,
+            r#"{
+              "choices": [
+                { "message": { "role": "assistant", "content": "transport answer" } }
+              ]
+            }"#,
+        ),
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("transport"),
+    );
+
+    let response = provider.complete(request).await.expect("completion");
+
+    assert_eq!(
+        response.message.map(|message| message.content),
+        Some("transport answer".to_string())
+    );
+}
+
+#[tokio::test]
+async fn transported_openai_provider_uses_transport_for_streaming() {
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model"),
+        ProviderAuth::None,
+        FixtureTransport::new(
+            200,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n",
+        ),
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("stream"),
+    );
+
+    let events = provider
+        .stream_events(request, "thread-1", "turn-1")
+        .await
+        .expect("stream");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::MessageContent { delta, .. },
+            ..
+        } if delta == "hi"
+    )));
+}
+
+#[test]
+fn retry_policy_retries_transient_statuses_until_attempt_budget_is_exhausted() {
+    let policy = ProviderRetryPolicy::new(3);
+
+    assert!(policy.should_retry_status(429, 0));
+    assert!(policy.should_retry_status(503, 1));
+    assert!(!policy.should_retry_status(503, 2));
+    assert!(!policy.should_retry_status(400, 0));
 }
 
 #[test]
@@ -97,6 +236,66 @@ fn openai_response_json_parses_assistant_text_and_usage() {
     assert_eq!(usage.cached_input_tokens, 3);
     assert_eq!(usage.output_tokens, 11);
     assert_eq!(usage.reasoning_output_tokens, 5);
+}
+
+#[test]
+fn openai_chat_stream_fixture_maps_to_yunxi_stream_events() {
+    let events = parse_openai_stream_events(
+        "thread-stream",
+        "turn-stream",
+        r#"data: {"choices":[{"delta":{"content":"hel"}}]}
+data: {"choices":[{"delta":{"content":"lo"}}]}
+data: [DONE]
+"#,
+    )
+    .expect("stream events");
+
+    assert!(matches!(
+        events.first(),
+        Some(StreamEvent::ResponseStarted { .. })
+    ));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::MessageContent { delta, .. },
+            ..
+        } if delta == "hel"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ResponseCompleted {
+            status: ResponseStatus::Completed,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn openai_responses_stream_fixture_maps_reasoning_and_tool_argument_deltas() {
+    let events = parse_openai_stream_events(
+        "thread-response",
+        "turn-response",
+        r#"data: {"type":"response.reasoning_text.delta","item_id":"reasoning-1","delta":"thinking"}
+data: {"type":"response.function_call_arguments.delta","call_id":"call-1","delta":"{\"command\""}
+data: {"type":"response.completed"}
+"#,
+    )
+    .expect("stream events");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::ReasoningContent { item_id: Some(id), delta },
+            ..
+        } if id == "reasoning-1" && delta == "thinking"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::ToolCallArguments { call_id: Some(id), delta },
+            ..
+        } if id == "call-1" && delta == "{\"command\""
+    )));
 }
 
 #[test]
@@ -237,6 +436,66 @@ fn provider_tool_call_converts_to_yunxi_protocol_tool_call() {
             id: Some("call-1".to_string()),
             command: "echo yunxi".to_string()
         }
+    );
+}
+
+#[test]
+fn openai_response_parses_dynamic_tool_calls() {
+    let response = parse_openai_response_json(
+        r#"{
+          "choices": [
+            {
+              "message": {
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "id": "call_search",
+                    "type": "function",
+                    "function": {
+                      "name": "tool_search",
+                      "arguments": "{\"query\":\"apply_patch\"}"
+                    }
+                  },
+                  {
+                    "id": "call_input",
+                    "type": "function",
+                    "function": {
+                      "name": "request_user_input",
+                      "arguments": "{\"prompt\":\"Proceed?\"}"
+                    }
+                  },
+                  {
+                    "id": "call_image",
+                    "type": "function",
+                    "function": {
+                      "name": "view_image",
+                      "arguments": "{\"path\":\"diagram.png\"}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }"#,
+    )
+    .expect("provider response");
+
+    assert_eq!(
+        response.tool_calls,
+        vec![
+            ProviderToolCall::ToolSearch {
+                id: Some("call_search".to_string()),
+                query: "apply_patch".to_string()
+            },
+            ProviderToolCall::RequestUserInput {
+                id: Some("call_input".to_string()),
+                prompt: "Proceed?".to_string()
+            },
+            ProviderToolCall::ViewImage {
+                id: Some("call_image".to_string()),
+                path: "diagram.png".to_string()
+            }
+        ]
     );
 }
 

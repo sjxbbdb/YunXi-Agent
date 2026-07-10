@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,6 +26,24 @@ pub enum ProtocolRole {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentItem {
+    InputText {
+        text: String,
+    },
+    OutputText {
+        text: String,
+    },
+    InputImage {
+        image_url: String,
+        detail: Option<String>,
+    },
+    LocalImage {
+        path: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputItem {
     Message {
         role: ProtocolRole,
@@ -36,6 +56,27 @@ pub enum InputItem {
     LocalContext {
         name: String,
         content: String,
+    },
+    ResponseMessage {
+        id: Option<String>,
+        role: ProtocolRole,
+        content: Vec<ContentItem>,
+    },
+    FunctionCallOutput {
+        call_id: String,
+        output: FunctionCallOutput,
+    },
+    McpToolCallOutput {
+        call_id: String,
+        output: FunctionCallOutput,
+    },
+    CustomToolCallOutput {
+        call_id: String,
+        output: FunctionCallOutput,
+    },
+    ToolSearchOutput {
+        call_id: String,
+        output: String,
     },
 }
 
@@ -57,6 +98,200 @@ pub enum ResponseItem {
         cached_input_tokens: i64,
         output_tokens: i64,
         reasoning_output_tokens: i64,
+    },
+    AgentMessage {
+        id: String,
+        content: Vec<ContentItem>,
+        phase: MessagePhase,
+    },
+    ReasoningItem {
+        id: String,
+        summary_text: Vec<String>,
+        raw_content: Vec<String>,
+    },
+    LocalShellCall {
+        id: String,
+        status: ToolCallStatus,
+        command: Vec<String>,
+    },
+    FunctionCall {
+        id: String,
+        call_id: String,
+        name: String,
+        arguments: String,
+        status: ToolCallStatus,
+    },
+    FunctionCallOutput {
+        id: String,
+        call_id: String,
+        output: FunctionCallOutput,
+    },
+    McpToolCall {
+        id: String,
+        call_id: String,
+        server: String,
+        tool: String,
+        arguments: String,
+        status: ToolCallStatus,
+    },
+    ToolSearchCall {
+        id: String,
+        call_id: String,
+        query: String,
+        status: ToolCallStatus,
+    },
+    WebSearchCall {
+        id: String,
+        query: String,
+        status: ToolCallStatus,
+    },
+    Compaction {
+        id: String,
+        summary: String,
+    },
+    CompactionTrigger {
+        id: String,
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessagePhase {
+    Created,
+    Delta,
+    Completed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCallStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum FunctionCallOutput {
+    Text { text: String },
+    ContentItems { items: Vec<ContentItem> },
+    Json { value: Value },
+}
+
+impl FunctionCallOutput {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseItemDelta {
+    MessageContent {
+        item_id: Option<String>,
+        delta: String,
+    },
+    ReasoningContent {
+        item_id: Option<String>,
+        delta: String,
+    },
+    ToolCallArguments {
+        call_id: Option<String>,
+        delta: String,
+    },
+    ToolCallStatus {
+        call_id: Option<String>,
+        status: ToolCallStatus,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TurnMetadata {
+    pub thread_id: ThreadId,
+    pub turn_id: TurnId,
+    pub session_id: Option<String>,
+    pub parent_thread_id: Option<ThreadId>,
+    pub forked_from_thread_id: Option<ThreadId>,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub cwd: String,
+    pub approval_mode: Option<String>,
+    pub sandbox_mode: Option<String>,
+    pub turn_started_at_unix_ms: Option<i64>,
+    pub workspaces: BTreeMap<String, WorkspaceMetadata>,
+    pub extra: BTreeMap<String, String>,
+}
+
+impl TurnMetadata {
+    pub fn new(thread_id: ThreadId, turn_id: TurnId, cwd: impl Into<String>) -> Self {
+        Self {
+            thread_id,
+            turn_id,
+            session_id: None,
+            parent_thread_id: None,
+            forked_from_thread_id: None,
+            model: None,
+            provider: None,
+            cwd: cwd.into(),
+            approval_mode: None,
+            sandbox_mode: None,
+            turn_started_at_unix_ms: None,
+            workspaces: BTreeMap::new(),
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WorkspaceMetadata {
+    pub associated_remote_urls: Option<BTreeMap<String, String>>,
+    pub latest_git_commit_hash: Option<String>,
+    pub has_changes: Option<bool>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamEvent {
+    ResponseStarted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        metadata: Option<TurnMetadata>,
+    },
+    ItemStarted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        item: ResponseItem,
+    },
+    ItemDelta {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        delta: ResponseItemDelta,
+    },
+    ItemCompleted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        item: ResponseItem,
+    },
+    ResponseCompleted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        status: ResponseStatus,
+    },
+    ResponseFailed {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        message: String,
     },
 }
 
@@ -122,6 +357,11 @@ pub enum RuntimeEvent {
     ThreadStarted {
         thread_id: ThreadId,
     },
+    TurnMetadata {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        metadata: TurnMetadata,
+    },
     TurnStarted {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -130,6 +370,14 @@ pub enum RuntimeEvent {
         thread_id: ThreadId,
         turn_id: TurnId,
         item: ResponseItem,
+    },
+    ItemDelta {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        delta: ResponseItemDelta,
+    },
+    Stream {
+        event: StreamEvent,
     },
     ToolStarted {
         thread_id: ThreadId,
@@ -162,6 +410,17 @@ pub fn from_jsonl_line(line: &str) -> Result<RuntimeEvent, serde_json::Error> {
     serde_json::from_str(line)
 }
 
+pub fn stream_event_to_runtime_event(event: StreamEvent) -> RuntimeEvent {
+    RuntimeEvent::Stream { event }
+}
+
+pub fn response_text_delta(delta: impl Into<String>) -> ResponseItemDelta {
+    ResponseItemDelta::MessageContent {
+        item_id: None,
+        delta: delta.into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +440,49 @@ mod tests {
         let parsed = from_jsonl_line(&line).expect("parsed event");
 
         assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn stream_event_round_trips_through_runtime_event() {
+        let stream = StreamEvent::ItemDelta {
+            thread_id: ThreadId("thread-stream".to_string()),
+            turn_id: TurnId("turn-stream".to_string()),
+            delta: ResponseItemDelta::MessageContent {
+                item_id: Some("message-1".to_string()),
+                delta: "hello".to_string(),
+            },
+        };
+        let event = stream_event_to_runtime_event(stream.clone());
+
+        let line = to_jsonl_line(&event).expect("jsonl");
+        let parsed = from_jsonl_line(&line).expect("parsed event");
+
+        assert_eq!(parsed, RuntimeEvent::Stream { event: stream });
+    }
+
+    #[test]
+    fn turn_metadata_carries_workspace_and_policy_context() {
+        let mut metadata = TurnMetadata::new(
+            ThreadId("thread-1".to_string()),
+            TurnId("turn-1".to_string()),
+            "D:/YunXi Agent",
+        );
+        metadata.model = Some("yunxi-model".to_string());
+        metadata.approval_mode = Some("never".to_string());
+        metadata.sandbox_mode = Some("workspace-write".to_string());
+        metadata.workspaces.insert(
+            "D:/YunXi Agent".to_string(),
+            WorkspaceMetadata {
+                associated_remote_urls: None,
+                latest_git_commit_hash: Some("abc123".to_string()),
+                has_changes: Some(true),
+            },
+        );
+
+        assert_eq!(metadata.thread_id.0, "thread-1");
+        assert_eq!(
+            metadata.workspaces["D:/YunXi Agent"].has_changes,
+            Some(true)
+        );
     }
 }

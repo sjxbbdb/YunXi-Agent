@@ -1,0 +1,1 @@
+Use apply_patch for precise file edits. A patch starts with "*** Begin Patch", contains Add/Delete/Update file sections, may include "*** Move to:", and ends with "*** End Patch". File paths must be workspace-relative.

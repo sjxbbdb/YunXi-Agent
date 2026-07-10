@@ -2,7 +2,12 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentInput, AgentRunResult, ApprovalMode, BackendKind, SandboxMode,
+    Agent, AgentConfig, AgentEvent, AgentInput, AgentRunResult, ApprovalMode, BackendKind,
+    CommandStatus, SandboxMode,
+};
+use yunxi_agent_protocol::{
+    FunctionCallOutput, ProtocolRole, ResponseItem, ResponseItemDelta, RuntimeEvent, ThreadId,
+    ToolCall, ToolCallStatus, TurnId, to_jsonl_line,
 };
 use yunxi_agent_storage::{
     FileSessionStore, HistoryLoadOptions, RolloutRecord, SessionHistory, SessionId, SessionRecord,
@@ -265,8 +270,8 @@ async fn run_agent_backend(
 
 fn print_run_result(result: AgentRunResult, json: bool, jsonl: bool) -> Result<()> {
     if jsonl {
-        for event in result.events {
-            println!("{}", serde_json::to_string(&event)?);
+        for event in protocol_events_from_agent_events(&result.events) {
+            println!("{}", to_jsonl_line(&event)?);
         }
     } else if json {
         println!("{}", serde_json::to_string_pretty(&result)?);
@@ -275,6 +280,271 @@ fn print_run_result(result: AgentRunResult, json: bool, jsonl: bool) -> Result<(
     }
 
     Ok(())
+}
+
+fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent> {
+    let mut thread_id = ThreadId("cli-thread".to_string());
+    let turn_id = TurnId("cli-turn".to_string());
+    let mut output = Vec::new();
+    let mut emitted_thread = false;
+    let mut emitted_turn = false;
+
+    for event in events {
+        match event {
+            AgentEvent::ThreadStarted { thread_id: id } => {
+                thread_id = ThreadId(id.clone());
+                output.push(RuntimeEvent::ThreadStarted {
+                    thread_id: thread_id.clone(),
+                });
+                emitted_thread = true;
+            }
+            AgentEvent::Started { prompt } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::Item {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    item: ResponseItem::Message {
+                        role: ProtocolRole::User,
+                        content: prompt.clone(),
+                    },
+                });
+            }
+            AgentEvent::TurnStarted => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+            }
+            AgentEvent::Message { content } => output.push(RuntimeEvent::Item {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::Message {
+                    role: ProtocolRole::Assistant,
+                    content: content.clone(),
+                },
+            }),
+            AgentEvent::Reasoning { content } => output.push(RuntimeEvent::Item {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::Reasoning {
+                    content: content.clone(),
+                },
+            }),
+            AgentEvent::CommandStarted { id, command } => output.push(RuntimeEvent::ToolStarted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                call: ToolCall::Shell {
+                    id: id.clone(),
+                    command: command.clone(),
+                },
+            }),
+            AgentEvent::CommandUpdated {
+                id,
+                aggregated_output,
+                ..
+            } => output.push(RuntimeEvent::ItemDelta {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                delta: ResponseItemDelta::ToolCallArguments {
+                    call_id: id.clone(),
+                    delta: aggregated_output.clone(),
+                },
+            }),
+            AgentEvent::CommandCompleted {
+                id,
+                aggregated_output,
+                status,
+                ..
+            } => output.push(RuntimeEvent::ToolCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                call_id: id.clone(),
+                output: aggregated_output.clone(),
+                success: *status == CommandStatus::Completed,
+            }),
+            AgentEvent::CommandFinished { command, exit_code } => {
+                output.push(RuntimeEvent::ToolCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    call_id: None,
+                    output: format!("{command} exited with {exit_code}"),
+                    success: *exit_code == 0,
+                });
+            }
+            AgentEvent::PatchCompleted { status } => output.push(RuntimeEvent::Item {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::FunctionCallOutput {
+                    id: "patch".to_string(),
+                    call_id: "patch".to_string(),
+                    output: FunctionCallOutput::text(format!("patch status: {status:?}")),
+                },
+            }),
+            AgentEvent::McpToolStarted { id, server, tool } => {
+                output.push(RuntimeEvent::ToolStarted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    call: ToolCall::Mcp {
+                        id: id.clone(),
+                        server: server.clone(),
+                        tool: tool.clone(),
+                        arguments_json: None,
+                    },
+                });
+            }
+            AgentEvent::McpToolCompleted {
+                id,
+                server,
+                tool,
+                status,
+            } => output.push(RuntimeEvent::Item {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::McpToolCall {
+                    id: id.clone().unwrap_or_else(|| "mcp".to_string()),
+                    call_id: id.clone().unwrap_or_else(|| "mcp".to_string()),
+                    server: server.clone(),
+                    tool: tool.clone(),
+                    arguments: String::new(),
+                    status: match status {
+                        yunxi_agent_core::McpToolStatus::Completed => ToolCallStatus::Completed,
+                        yunxi_agent_core::McpToolStatus::InProgress => ToolCallStatus::InProgress,
+                        yunxi_agent_core::McpToolStatus::Failed => ToolCallStatus::Failed,
+                    },
+                },
+            }),
+            AgentEvent::ToolCallStarted {
+                id,
+                name,
+                arguments_json,
+            } => output.push(RuntimeEvent::ToolStarted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                call: dynamic_tool_call(id.clone(), name, arguments_json.clone()),
+            }),
+            AgentEvent::ToolCallCompleted {
+                id,
+                name,
+                output: tool_output,
+                status,
+            } => output.push(RuntimeEvent::ToolCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                call_id: id.clone(),
+                output: format!("{name}: {tool_output}"),
+                success: *status == CommandStatus::Completed,
+            }),
+            AgentEvent::FileChanged { path, kind } => output.push(RuntimeEvent::Item {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::Reasoning {
+                    content: format!("file changed: {path} ({kind:?})"),
+                },
+            }),
+            AgentEvent::TodoUpdated { id, items } => output.push(RuntimeEvent::Item {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::Reasoning {
+                    content: format!("todo updated {:?}: {} item(s)", id, items.len()),
+                },
+            }),
+            AgentEvent::Warning { message } | AgentEvent::Error { message } => {
+                output.push(RuntimeEvent::Error {
+                    thread_id: Some(thread_id.clone()),
+                    turn_id: Some(turn_id.clone()),
+                    message: message.clone(),
+                });
+            }
+            AgentEvent::Completed { status, .. } => {
+                output.push(RuntimeEvent::TurnCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                });
+                if *status == yunxi_agent_core::AgentRunStatus::Failed {
+                    output.push(RuntimeEvent::Error {
+                        thread_id: Some(thread_id.clone()),
+                        turn_id: Some(turn_id.clone()),
+                        message: "agent run failed".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    output
+}
+
+fn dynamic_tool_call(id: Option<String>, name: &str, arguments_json: Option<String>) -> ToolCall {
+    let value = arguments_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let arg = |key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string)
+    };
+    match name {
+        "skill" => ToolCall::Skill {
+            id,
+            name: arg("name").unwrap_or_else(|| "skill".to_string()),
+            arguments_json,
+        },
+        "multi_agent" => ToolCall::MultiAgent {
+            id,
+            action: arg("action").unwrap_or_else(|| "unknown".to_string()),
+            arguments_json,
+        },
+        "tool_search" => ToolCall::ToolSearch {
+            id,
+            query: arg("query").unwrap_or_default(),
+        },
+        "request_user_input" => ToolCall::RequestUserInput {
+            id,
+            prompt: arg("prompt").unwrap_or_default(),
+        },
+        "view_image" => ToolCall::ViewImage {
+            id,
+            path: arg("path").unwrap_or_default(),
+        },
+        other => ToolCall::MultiAgent {
+            id,
+            action: other.to_string(),
+            arguments_json,
+        },
+    }
+}
+
+fn ensure_protocol_turn_started(
+    output: &mut Vec<RuntimeEvent>,
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    emitted_thread: &mut bool,
+    emitted_turn: &mut bool,
+) {
+    if !*emitted_thread {
+        output.push(RuntimeEvent::ThreadStarted {
+            thread_id: thread_id.clone(),
+        });
+        *emitted_thread = true;
+    }
+    if !*emitted_turn {
+        output.push(RuntimeEvent::TurnStarted {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+        });
+        *emitted_turn = true;
+    }
 }
 
 async fn run_command(

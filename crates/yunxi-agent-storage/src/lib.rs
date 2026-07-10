@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use yunxi_agent_core::{AgentError, AgentEvent, AgentResult, AgentRunStatus};
+use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
 static NEXT_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -113,6 +114,115 @@ pub struct RolloutRecord {
     pub items: Vec<RolloutItem>,
     pub final_response: Option<String>,
     pub status: AgentRunStatus,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeRolloutItem {
+    pub turn_id: String,
+    pub event: RuntimeEvent,
+    pub estimated_bytes: usize,
+    pub recorded_at_millis: u128,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeRolloutRecord {
+    pub thread: ThreadMetadata,
+    pub items: Vec<RuntimeRolloutItem>,
+    pub truncated: bool,
+}
+
+impl RuntimeRolloutRecord {
+    pub fn replay_events(&self) -> Vec<RuntimeEvent> {
+        self.items.iter().map(|item| item.event.clone()).collect()
+    }
+
+    pub fn to_jsonl(&self) -> AgentResult<String> {
+        encode_runtime_rollout_jsonl(self.items.iter().map(|item| &item.event))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RolloutBudget {
+    pub max_items: usize,
+    pub max_bytes: usize,
+}
+
+impl RolloutBudget {
+    pub fn new(max_items: usize, max_bytes: usize) -> Self {
+        Self {
+            max_items: max_items.max(1),
+            max_bytes: max_bytes.max(1),
+        }
+    }
+}
+
+impl Default for RolloutBudget {
+    fn default() -> Self {
+        Self {
+            max_items: 1024,
+            max_bytes: 4 * 1024 * 1024,
+        }
+    }
+}
+
+pub fn runtime_rollout_from_events(
+    thread: ThreadMetadata,
+    turn_id: impl Into<String>,
+    events: Vec<RuntimeEvent>,
+    budget: RolloutBudget,
+) -> AgentResult<RuntimeRolloutRecord> {
+    let turn_id = turn_id.into();
+    let mut items = Vec::new();
+    let mut total_bytes = 0usize;
+    let mut truncated = false;
+    for event in events {
+        let line = to_jsonl_line(&event).map_err(|error| AgentError::Execution {
+            message: format!("failed to encode runtime rollout event: {error}"),
+        })?;
+        let estimated_bytes = line.len();
+        if items.len() >= budget.max_items
+            || total_bytes.saturating_add(estimated_bytes) > budget.max_bytes
+        {
+            truncated = true;
+            break;
+        }
+        total_bytes = total_bytes.saturating_add(estimated_bytes);
+        items.push(RuntimeRolloutItem {
+            turn_id: turn_id.clone(),
+            event,
+            estimated_bytes,
+            recorded_at_millis: now_millis(),
+        });
+    }
+    Ok(RuntimeRolloutRecord {
+        thread,
+        items,
+        truncated,
+    })
+}
+
+pub fn encode_runtime_rollout_jsonl<'a>(
+    events: impl IntoIterator<Item = &'a RuntimeEvent>,
+) -> AgentResult<String> {
+    let mut lines = Vec::new();
+    for event in events {
+        lines.push(to_jsonl_line(event).map_err(|error| AgentError::Execution {
+            message: format!("failed to encode runtime rollout JSONL: {error}"),
+        })?);
+    }
+    Ok(lines.join("\n"))
+}
+
+pub fn decode_runtime_rollout_jsonl(jsonl: &str) -> AgentResult<Vec<RuntimeEvent>> {
+    let mut events = Vec::new();
+    for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
+        events.push(
+            from_jsonl_line(line).map_err(|error| AgentError::Execution {
+                message: format!("failed to decode runtime rollout JSONL: {error}"),
+            })?,
+        );
+    }
+    Ok(events)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -535,4 +645,56 @@ fn now_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yunxi_agent_protocol::{ResponseItem, RuntimeEvent, ThreadId, TurnId};
+
+    #[test]
+    fn runtime_rollout_round_trips_jsonl() {
+        let events = vec![
+            RuntimeEvent::ThreadStarted {
+                thread_id: ThreadId("thread-1".to_string()),
+            },
+            RuntimeEvent::Item {
+                thread_id: ThreadId("thread-1".to_string()),
+                turn_id: TurnId("turn-1".to_string()),
+                item: ResponseItem::Reasoning {
+                    content: "thinking".to_string(),
+                },
+            },
+        ];
+
+        let jsonl = encode_runtime_rollout_jsonl(events.iter()).expect("jsonl");
+        let decoded = decode_runtime_rollout_jsonl(&jsonl).expect("decoded");
+
+        assert_eq!(decoded, events);
+    }
+
+    #[test]
+    fn runtime_rollout_applies_budget() {
+        let thread = ThreadMetadata::new(SessionId::new("thread-1"), ".");
+        let events = vec![
+            RuntimeEvent::ThreadStarted {
+                thread_id: ThreadId("thread-1".to_string()),
+            },
+            RuntimeEvent::TurnCompleted {
+                thread_id: ThreadId("thread-1".to_string()),
+                turn_id: TurnId("turn-1".to_string()),
+            },
+        ];
+
+        let rollout = runtime_rollout_from_events(
+            thread,
+            "turn-1",
+            events,
+            RolloutBudget::new(1, usize::MAX),
+        )
+        .expect("rollout");
+
+        assert!(rollout.truncated);
+        assert_eq!(rollout.items.len(), 1);
+    }
 }

@@ -64,6 +64,19 @@ pub enum ToolRequestKind {
         name: String,
         arguments_json: Option<String>,
     },
+    MultiAgent {
+        action: String,
+        arguments_json: Option<String>,
+    },
+    ToolSearch {
+        query: String,
+    },
+    RequestUserInput {
+        prompt: String,
+    },
+    ViewImage {
+        path: String,
+    },
 }
 
 impl ToolRequestKind {
@@ -73,6 +86,10 @@ impl ToolRequestKind {
             Self::Patch { .. } => ToolName::Patch,
             Self::Mcp { .. } => ToolName::Mcp,
             Self::Skill { .. } => ToolName::Skill,
+            Self::MultiAgent { .. } => ToolName::MultiAgent,
+            Self::ToolSearch { .. } => ToolName::ToolSearch,
+            Self::RequestUserInput { .. } => ToolName::RequestUserInput,
+            Self::ViewImage { .. } => ToolName::ViewImage,
         }
     }
 }
@@ -84,6 +101,10 @@ pub enum ToolName {
     Patch,
     Mcp,
     Skill,
+    MultiAgent,
+    ToolSearch,
+    RequestUserInput,
+    ViewImage,
 }
 
 impl ToolName {
@@ -93,6 +114,10 @@ impl ToolName {
             Self::Patch => "patch",
             Self::Mcp => "mcp",
             Self::Skill => "skill",
+            Self::MultiAgent => "multi_agent",
+            Self::ToolSearch => "tool_search",
+            Self::RequestUserInput => "request_user_input",
+            Self::ViewImage => "view_image",
         }
     }
 }
@@ -194,6 +219,10 @@ pub fn default_tool_registry() -> ToolRegistry {
         patch_tool_spec(),
         mcp_tool_spec(),
         skill_tool_spec(),
+        multi_agent_tool_spec(),
+        tool_search_tool_spec(),
+        request_user_input_tool_spec(),
+        view_image_tool_spec(),
     ])
 }
 
@@ -225,12 +254,16 @@ fn patch_tool_spec() -> ToolSpec {
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["write", "delete"],
+                    "enum": ["write", "delete", "move"],
                     "description": "Patch operation to apply."
                 },
                 "path": {
                     "type": "string",
                     "description": "Workspace-relative file path."
+                },
+                "from": {
+                    "type": "string",
+                    "description": "Workspace-relative source path for move operations."
                 },
                 "content": {
                     "type": "string",
@@ -288,6 +321,86 @@ fn skill_tool_spec() -> ToolSpec {
                 }
             },
             "required": ["name"],
+            "additionalProperties": false
+        }),
+        true,
+    )
+}
+
+fn multi_agent_tool_spec() -> ToolSpec {
+    ToolSpec::new(
+        ToolName::MultiAgent,
+        "Coordinate YunXi sub-agent lifecycle actions.",
+        json!({
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["spawn", "wait", "send_message", "follow_up", "interrupt", "list"]
+                },
+                "arguments_json": {
+                    "type": "string",
+                    "description": "Optional serialized JSON object for action arguments."
+                }
+            },
+            "required": ["action"],
+            "additionalProperties": false
+        }),
+        true,
+    )
+}
+
+fn tool_search_tool_spec() -> ToolSpec {
+    ToolSpec::new(
+        ToolName::ToolSearch,
+        "Search available YunXi tools and workspace file metadata.",
+        json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Tool or file metadata query."
+                }
+            },
+            "required": ["query"],
+            "additionalProperties": false
+        }),
+        true,
+    )
+}
+
+fn request_user_input_tool_spec() -> ToolSpec {
+    ToolSpec::new(
+        ToolName::RequestUserInput,
+        "Ask the interactive host for concise user input.",
+        json!({
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Question to present to the user."
+                }
+            },
+            "required": ["prompt"],
+            "additionalProperties": false
+        }),
+        true,
+    )
+}
+
+fn view_image_tool_spec() -> ToolSpec {
+    ToolSpec::new(
+        ToolName::ViewImage,
+        "Inspect a local image file from the workspace.",
+        json!({
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Local image path."
+                }
+            },
+            "required": ["path"],
             "additionalProperties": false
         }),
         true,
@@ -455,6 +568,7 @@ pub enum ToolFileChangeKind {
     Added,
     Deleted,
     Updated,
+    Moved,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -583,12 +697,20 @@ impl ToolRuntime for ShellToolRuntime {
         match request.kind {
             ToolRequestKind::Shell { command } => run_shell(request.id, request.cwd, command).await,
             ToolRequestKind::Patch { patch } => run_patch(request.id, request.cwd, patch),
-            ToolRequestKind::Mcp { .. } | ToolRequestKind::Skill { .. } => {
-                Ok(ToolResponse::declined(
-                    request.id,
-                    "YunXi only owns shell and constrained patch execution in this runtime slice",
-                ))
+            ToolRequestKind::ToolSearch { query } => {
+                run_tool_search(request.id, request.cwd, query)
             }
+            ToolRequestKind::ViewImage { path } => run_view_image(request.id, request.cwd, path),
+            ToolRequestKind::RequestUserInput { prompt } => Ok(ToolResponse::declined(
+                request.id,
+                format!("request_user_input requires an interactive host: {prompt}"),
+            )),
+            ToolRequestKind::Mcp { .. }
+            | ToolRequestKind::Skill { .. }
+            | ToolRequestKind::MultiAgent { .. } => Ok(ToolResponse::declined(
+                request.id,
+                "YunXi has registered this tool but the specialized runtime is not attached",
+            )),
         }
     }
 }
@@ -641,6 +763,7 @@ fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<Too
                 PatchFileChangeKind::Added => ToolFileChangeKind::Added,
                 PatchFileChangeKind::Updated => ToolFileChangeKind::Updated,
                 PatchFileChangeKind::Deleted => ToolFileChangeKind::Deleted,
+                PatchFileChangeKind::Moved => ToolFileChangeKind::Moved,
             },
         })
         .collect();
@@ -651,6 +774,85 @@ fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<Too
         Some(0),
         changed_files,
     ))
+}
+
+fn run_tool_search(id: Option<String>, cwd: PathBuf, query: String) -> AgentResult<ToolResponse> {
+    let query = query.trim().to_string();
+    let mut matches = Vec::new();
+    if !query.is_empty() && cwd.is_dir() {
+        collect_file_matches(&cwd, &cwd, &query, 50, &mut matches)?;
+    }
+    let output = serde_json::to_string(&json!({
+        "query": query,
+        "matches": matches
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+    }))
+    .map_err(|error| AgentError::Execution {
+        message: format!("failed to serialize tool_search output: {error}"),
+    })?;
+    Ok(ToolResponse::completed(id, output, Some(0), Vec::new()))
+}
+
+fn run_view_image(id: Option<String>, cwd: PathBuf, path: String) -> AgentResult<ToolResponse> {
+    let requested = PathBuf::from(path);
+    let full_path = if requested.is_absolute() {
+        requested
+    } else {
+        cwd.join(requested)
+    };
+    if !full_path.is_file() {
+        return Ok(ToolResponse::declined(
+            id,
+            format!("image file does not exist: {}", full_path.display()),
+        ));
+    }
+    Ok(ToolResponse::completed(
+        id,
+        format!("image file available: {}", full_path.display()),
+        Some(0),
+        Vec::new(),
+    ))
+}
+
+fn collect_file_matches(
+    root: &Path,
+    dir: &Path,
+    query: &str,
+    limit: usize,
+    matches: &mut Vec<PathBuf>,
+) -> AgentResult<()> {
+    if matches.len() >= limit {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir).map_err(|error| AgentError::Execution {
+        message: format!(
+            "failed to read tool_search directory {}: {error}",
+            dir.display()
+        ),
+    })? {
+        if matches.len() >= limit {
+            break;
+        }
+        let entry = entry.map_err(|error| AgentError::Execution {
+            message: format!("failed to read tool_search entry: {error}"),
+        })?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if should_skip_entry(&name) {
+            continue;
+        }
+        let metadata = entry.metadata().map_err(|error| AgentError::Execution {
+            message: format!("failed to read metadata for {}: {error}", path.display()),
+        })?;
+        if metadata.is_dir() {
+            collect_file_matches(root, &path, query, limit, matches)?;
+        } else if metadata.is_file() && name.contains(query) {
+            matches.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]

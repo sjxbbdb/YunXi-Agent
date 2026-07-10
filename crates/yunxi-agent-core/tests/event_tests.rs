@@ -87,3 +87,32 @@ fn mcp_patch_file_and_todo_events_have_stable_names() {
         ]
     );
 }
+
+#[test]
+fn dynamic_tool_events_have_stable_names() {
+    let events = vec![
+        AgentEvent::ToolCallStarted {
+            id: Some("tool-1".to_string()),
+            name: "tool_search".to_string(),
+            arguments_json: Some(r#"{"query":"runtime"}"#.to_string()),
+        },
+        AgentEvent::ToolCallCompleted {
+            id: Some("tool-1".to_string()),
+            name: "tool_search".to_string(),
+            output: "[]".to_string(),
+            status: CommandStatus::Completed,
+        },
+    ];
+
+    let names = events
+        .into_iter()
+        .map(|event| {
+            serde_json::to_value(event).expect("json")["type"]
+                .as_str()
+                .expect("type")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["toolCallStarted", "toolCallCompleted"]);
+}

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 use yunxi_agent_context::{
     ContextWindowBudget, ConversationMessage, ConversationRole, RestoredHistory,
     load_agents_md_hierarchy, restore_history_for_prompt,
@@ -165,6 +166,12 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         }
 
         let sink = VecEventSink::default();
+        let thread_id = generate_runtime_thread_id();
+        sink.emit(AgentEvent::ThreadStarted {
+            thread_id: thread_id.clone(),
+        })
+        .await?;
+        sink.emit(AgentEvent::TurnStarted).await?;
         sink.emit(AgentEvent::Started {
             prompt: prompt.to_string(),
         })
@@ -358,6 +365,202 @@ fn conversation_message_to_provider(message: ConversationMessage) -> ProviderMes
     }
 }
 
+pub fn protocol_stream_events_to_agent_events(
+    events: &[yunxi_agent_protocol::StreamEvent],
+) -> Vec<AgentEvent> {
+    let mut output = Vec::new();
+    for event in events {
+        match event {
+            yunxi_agent_protocol::StreamEvent::ResponseStarted { thread_id, .. } => {
+                output.push(AgentEvent::ThreadStarted {
+                    thread_id: thread_id.0.clone(),
+                });
+                output.push(AgentEvent::TurnStarted);
+            }
+            yunxi_agent_protocol::StreamEvent::ItemStarted { item, .. }
+            | yunxi_agent_protocol::StreamEvent::ItemCompleted { item, .. } => {
+                push_response_item_agent_event(item, &mut output);
+            }
+            yunxi_agent_protocol::StreamEvent::ItemDelta { delta, .. } => match delta {
+                yunxi_agent_protocol::ResponseItemDelta::MessageContent { delta, .. } => {
+                    output.push(AgentEvent::Message {
+                        content: delta.clone(),
+                    });
+                }
+                yunxi_agent_protocol::ResponseItemDelta::ReasoningContent { delta, .. } => {
+                    output.push(AgentEvent::Reasoning {
+                        content: delta.clone(),
+                    });
+                }
+                yunxi_agent_protocol::ResponseItemDelta::ToolCallArguments { call_id, delta } => {
+                    output.push(AgentEvent::CommandUpdated {
+                        id: call_id.clone(),
+                        command: "tool_arguments".to_string(),
+                        aggregated_output: delta.clone(),
+                    })
+                }
+                yunxi_agent_protocol::ResponseItemDelta::ToolCallStatus { call_id, status } => {
+                    output.push(AgentEvent::ToolCallCompleted {
+                        id: call_id.clone(),
+                        name: "tool".to_string(),
+                        output: format!("tool status: {status:?}"),
+                        status: match status {
+                            yunxi_agent_protocol::ToolCallStatus::Completed => {
+                                CommandStatus::Completed
+                            }
+                            yunxi_agent_protocol::ToolCallStatus::InProgress => {
+                                CommandStatus::InProgress
+                            }
+                            yunxi_agent_protocol::ToolCallStatus::Failed
+                            | yunxi_agent_protocol::ToolCallStatus::Cancelled => {
+                                CommandStatus::Failed
+                            }
+                        },
+                    });
+                }
+            },
+            yunxi_agent_protocol::StreamEvent::ResponseCompleted { status, .. } => {
+                output.push(AgentEvent::Completed {
+                    status: match status {
+                        yunxi_agent_protocol::ResponseStatus::Completed => {
+                            AgentRunStatus::Completed
+                        }
+                        yunxi_agent_protocol::ResponseStatus::InProgress
+                        | yunxi_agent_protocol::ResponseStatus::Failed
+                        | yunxi_agent_protocol::ResponseStatus::Cancelled => AgentRunStatus::Failed,
+                    },
+                    usage: None,
+                });
+            }
+            yunxi_agent_protocol::StreamEvent::ResponseFailed { message, .. } => {
+                output.push(AgentEvent::Error {
+                    message: message.clone(),
+                });
+            }
+        }
+    }
+    output
+}
+
+fn push_response_item_agent_event(
+    item: &yunxi_agent_protocol::ResponseItem,
+    output: &mut Vec<AgentEvent>,
+) {
+    match item {
+        yunxi_agent_protocol::ResponseItem::Message { content, .. } => {
+            output.push(AgentEvent::Message {
+                content: content.clone(),
+            })
+        }
+        yunxi_agent_protocol::ResponseItem::AgentMessage { content, .. } => {
+            if let Some(content) = first_content_text(content) {
+                output.push(AgentEvent::Message { content });
+            }
+        }
+        yunxi_agent_protocol::ResponseItem::Reasoning { content } => {
+            output.push(AgentEvent::Reasoning {
+                content: content.clone(),
+            })
+        }
+        yunxi_agent_protocol::ResponseItem::ReasoningItem { summary_text, .. } => {
+            if let Some(content) = summary_text.first() {
+                output.push(AgentEvent::Reasoning {
+                    content: content.clone(),
+                });
+            }
+        }
+        yunxi_agent_protocol::ResponseItem::ToolCall { call } => {
+            output.push(tool_call_started_event(call.clone()));
+        }
+        yunxi_agent_protocol::ResponseItem::FunctionCall {
+            call_id,
+            name,
+            arguments,
+            ..
+        } => output.push(AgentEvent::ToolCallStarted {
+            id: Some(call_id.clone()),
+            name: name.clone(),
+            arguments_json: Some(arguments.clone()),
+        }),
+        yunxi_agent_protocol::ResponseItem::McpToolCall {
+            call_id,
+            server,
+            tool,
+            ..
+        } => output.push(AgentEvent::McpToolStarted {
+            id: Some(call_id.clone()),
+            server: server.clone(),
+            tool: tool.clone(),
+        }),
+        yunxi_agent_protocol::ResponseItem::Compaction { summary, .. } => {
+            output.push(AgentEvent::Reasoning {
+                content: summary.clone(),
+            });
+        }
+        _ => {}
+    }
+}
+
+fn first_content_text(items: &[yunxi_agent_protocol::ContentItem]) -> Option<String> {
+    items.iter().find_map(|item| match item {
+        yunxi_agent_protocol::ContentItem::InputText { text }
+        | yunxi_agent_protocol::ContentItem::OutputText { text } => Some(text.clone()),
+        yunxi_agent_protocol::ContentItem::InputImage { .. }
+        | yunxi_agent_protocol::ContentItem::LocalImage { .. } => None,
+    })
+}
+
+fn tool_call_started_event(call: yunxi_agent_protocol::ToolCall) -> AgentEvent {
+    match call {
+        yunxi_agent_protocol::ToolCall::Shell { id, command } => {
+            AgentEvent::CommandStarted { id, command }
+        }
+        yunxi_agent_protocol::ToolCall::Patch { id, patch } => AgentEvent::ToolCallStarted {
+            id,
+            name: "patch".to_string(),
+            arguments_json: Some(patch),
+        },
+        yunxi_agent_protocol::ToolCall::Mcp {
+            id, server, tool, ..
+        } => AgentEvent::McpToolStarted { id, server, tool },
+        yunxi_agent_protocol::ToolCall::Skill {
+            id,
+            name,
+            arguments_json,
+        } => AgentEvent::ToolCallStarted {
+            id,
+            name,
+            arguments_json,
+        },
+        yunxi_agent_protocol::ToolCall::MultiAgent {
+            id,
+            action,
+            arguments_json,
+        } => AgentEvent::ToolCallStarted {
+            id,
+            name: format!("multi_agent:{action}"),
+            arguments_json,
+        },
+        yunxi_agent_protocol::ToolCall::ToolSearch { id, query } => AgentEvent::ToolCallStarted {
+            id,
+            name: "tool_search".to_string(),
+            arguments_json: Some(format!(r#"{{"query":{}}}"#, json_string(&query))),
+        },
+        yunxi_agent_protocol::ToolCall::RequestUserInput { id, prompt } => {
+            AgentEvent::ToolCallStarted {
+                id,
+                name: "request_user_input".to_string(),
+                arguments_json: Some(format!(r#"{{"prompt":{}}}"#, json_string(&prompt))),
+            }
+        }
+        yunxi_agent_protocol::ToolCall::ViewImage { id, path } => AgentEvent::ToolCallStarted {
+            id,
+            name: "view_image".to_string(),
+            arguments_json: Some(format!(r#"{{"path":{}}}"#, json_string(&path))),
+        },
+    }
+}
+
 fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolRequest {
     let cwd = config.cwd.clone();
     let policy = ToolPolicy::from_config(config);
@@ -402,6 +605,37 @@ fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolReque
             },
             policy,
         },
+        ProviderToolCall::MultiAgent {
+            id,
+            action,
+            arguments_json,
+        } => ToolRequest {
+            id,
+            cwd,
+            kind: ToolRequestKind::MultiAgent {
+                action,
+                arguments_json,
+            },
+            policy,
+        },
+        ProviderToolCall::ToolSearch { id, query } => ToolRequest {
+            id,
+            cwd,
+            kind: ToolRequestKind::ToolSearch { query },
+            policy,
+        },
+        ProviderToolCall::RequestUserInput { id, prompt } => ToolRequest {
+            id,
+            cwd,
+            kind: ToolRequestKind::RequestUserInput { prompt },
+            policy,
+        },
+        ProviderToolCall::ViewImage { id, path } => ToolRequest {
+            id,
+            cwd,
+            kind: ToolRequestKind::ViewImage { path },
+            policy,
+        },
     }
 }
 
@@ -442,8 +676,49 @@ where
             .await
         }
         ToolRequestKind::Skill { name, .. } => {
-            sink.emit(AgentEvent::Reasoning {
-                content: format!("Starting skill tool: {name}"),
+            sink.emit(AgentEvent::ToolCallStarted {
+                id: request.id.clone(),
+                name: "skill".to_string(),
+                arguments_json: Some(format!(r#"{{"name":{}}}"#, json_string(name))),
+            })
+            .await
+        }
+        ToolRequestKind::MultiAgent {
+            action,
+            arguments_json,
+        } => {
+            sink.emit(AgentEvent::ToolCallStarted {
+                id: request.id.clone(),
+                name: "multi_agent".to_string(),
+                arguments_json: Some(
+                    arguments_json
+                        .clone()
+                        .unwrap_or_else(|| format!(r#"{{"action":{}}}"#, json_string(action))),
+                ),
+            })
+            .await
+        }
+        ToolRequestKind::ToolSearch { query } => {
+            sink.emit(AgentEvent::ToolCallStarted {
+                id: request.id.clone(),
+                name: "tool_search".to_string(),
+                arguments_json: Some(format!(r#"{{"query":{}}}"#, json_string(query))),
+            })
+            .await
+        }
+        ToolRequestKind::RequestUserInput { prompt } => {
+            sink.emit(AgentEvent::ToolCallStarted {
+                id: request.id.clone(),
+                name: "request_user_input".to_string(),
+                arguments_json: Some(format!(r#"{{"prompt":{}}}"#, json_string(prompt))),
+            })
+            .await
+        }
+        ToolRequestKind::ViewImage { path } => {
+            sink.emit(AgentEvent::ToolCallStarted {
+                id: request.id.clone(),
+                name: "view_image".to_string(),
+                arguments_json: Some(format!(r#"{{"path":{}}}"#, json_string(path))),
             })
             .await
         }
@@ -497,8 +772,47 @@ where
             .await
         }
         ToolRequestKind::Skill { name, .. } => {
-            sink.emit(AgentEvent::Reasoning {
-                content: format!("Completed skill tool: {name}"),
+            sink.emit(AgentEvent::ToolCallCompleted {
+                id: response.id.clone(),
+                name: format!("skill:{name}"),
+                output: render_tool_response(response),
+                status: map_tool_status(response.status),
+            })
+            .await
+        }
+        ToolRequestKind::MultiAgent { action, .. } => {
+            sink.emit(AgentEvent::ToolCallCompleted {
+                id: response.id.clone(),
+                name: format!("multi_agent:{action}"),
+                output: render_tool_response(response),
+                status: map_tool_status(response.status),
+            })
+            .await
+        }
+        ToolRequestKind::ToolSearch { .. } => {
+            sink.emit(AgentEvent::ToolCallCompleted {
+                id: response.id.clone(),
+                name: "tool_search".to_string(),
+                output: render_tool_response(response),
+                status: map_tool_status(response.status),
+            })
+            .await
+        }
+        ToolRequestKind::RequestUserInput { .. } => {
+            sink.emit(AgentEvent::ToolCallCompleted {
+                id: response.id.clone(),
+                name: "request_user_input".to_string(),
+                output: render_tool_response(response),
+                status: map_tool_status(response.status),
+            })
+            .await
+        }
+        ToolRequestKind::ViewImage { .. } => {
+            sink.emit(AgentEvent::ToolCallCompleted {
+                id: response.id.clone(),
+                name: "view_image".to_string(),
+                output: render_tool_response(response),
+                status: map_tool_status(response.status),
             })
             .await
         }
@@ -546,6 +860,7 @@ where
                 ToolFileChangeKind::Added => FileChangeKind::Add,
                 ToolFileChangeKind::Deleted => FileChangeKind::Delete,
                 ToolFileChangeKind::Updated => FileChangeKind::Update,
+                ToolFileChangeKind::Moved => FileChangeKind::Move,
             },
         })
         .await?;
@@ -561,6 +876,18 @@ fn render_tool_response(response: &yunxi_agent_tools::ToolResponse) -> String {
         return error.clone();
     }
     format!("tool completed with status {:?}", response.status)
+}
+
+fn json_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+fn generate_runtime_thread_id() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!("yunxi-thread-{millis}")
 }
 
 #[async_trait]

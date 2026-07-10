@@ -1,8 +1,46 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use yunxi_agent_core::{AgentError, AgentResult};
 
 pub const DEFAULT_AGENTS_MD_FILENAME: &str = "AGENTS.md";
+pub const COMPACT_PROMPT_TEMPLATE: &str = include_str!("../assets/prompts/compact_prompt.md");
+pub const COMPACT_SUMMARY_PREFIX_TEMPLATE: &str =
+    include_str!("../assets/prompts/compact_summary_prefix.md");
+pub const APPLY_PATCH_TOOL_INSTRUCTIONS: &str =
+    include_str!("../assets/prompts/apply_patch_tool_instructions.md");
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PromptAsset {
+    pub name: String,
+    pub content: String,
+}
+
+impl PromptAsset {
+    pub fn new(name: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            content: content.into(),
+        }
+    }
+}
+
+pub fn built_in_prompt_assets() -> Vec<PromptAsset> {
+    vec![
+        PromptAsset::new("compact.prompt", COMPACT_PROMPT_TEMPLATE),
+        PromptAsset::new("compact.summary_prefix", COMPACT_SUMMARY_PREFIX_TEMPLATE),
+        PromptAsset::new(
+            "tools.apply_patch.instructions",
+            APPLY_PATCH_TOOL_INSTRUCTIONS,
+        ),
+    ]
+}
+
+pub fn built_in_prompt_asset(name: &str) -> Option<PromptAsset> {
+    built_in_prompt_assets()
+        .into_iter()
+        .find(|asset| asset.name == name)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AgentsMdDocument {
@@ -58,6 +96,104 @@ impl ContextBundle {
             }
         }
         parts.join("\n\n")
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MarkedContextFragment {
+    pub name: String,
+    pub role: ConversationRole,
+    pub start_marker: String,
+    pub end_marker: String,
+    pub body: String,
+    pub priority: i32,
+}
+
+impl MarkedContextFragment {
+    pub fn new(
+        name: impl Into<String>,
+        role: ConversationRole,
+        start_marker: impl Into<String>,
+        end_marker: impl Into<String>,
+        body: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            role,
+            start_marker: start_marker.into(),
+            end_marker: end_marker.into(),
+            body: body.into(),
+            priority: 0,
+        }
+    }
+
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    pub fn render(&self) -> String {
+        if self.start_marker.is_empty() || self.end_marker.is_empty() {
+            return self.body.clone();
+        }
+        format!("{}{}{}", self.start_marker, self.body, self.end_marker)
+    }
+
+    pub fn matches_text(&self, text: &str) -> bool {
+        matches_marked_text(&self.start_marker, &self.end_marker, text)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PromptAssembly {
+    pub assets: Vec<PromptAsset>,
+    pub fragments: Vec<MarkedContextFragment>,
+    pub messages: Vec<ConversationMessage>,
+}
+
+impl PromptAssembly {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_asset(mut self, asset: PromptAsset) -> Self {
+        self.assets.push(asset);
+        self
+    }
+
+    pub fn with_fragment(mut self, fragment: MarkedContextFragment) -> Self {
+        self.fragments.push(fragment);
+        self.fragments
+            .sort_by(|left, right| right.priority.cmp(&left.priority));
+        self
+    }
+
+    pub fn with_message(mut self, message: ConversationMessage) -> Self {
+        self.messages.push(message);
+        self
+    }
+
+    pub fn from_context_bundle(bundle: &ContextBundle, user_prompt: impl Into<String>) -> Self {
+        let mut assembly = Self::new();
+        let prefix = bundle.prompt_prefix();
+        if !prefix.is_empty() {
+            assembly = assembly.with_message(ConversationMessage::system(prefix));
+        }
+        assembly.with_message(ConversationMessage::user(user_prompt))
+    }
+
+    pub fn into_messages(mut self) -> Vec<ConversationMessage> {
+        let mut messages = Vec::new();
+        for asset in self.assets {
+            if !asset.content.trim().is_empty() {
+                messages.push(ConversationMessage::system(asset.content));
+            }
+        }
+        for fragment in self.fragments.drain(..) {
+            messages.push(ConversationMessage::new(fragment.role, fragment.render()));
+        }
+        messages.extend(self.messages);
+        messages
     }
 }
 
@@ -188,6 +324,79 @@ impl RestoredHistory {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactTrigger {
+    Manual,
+    TokenBudget,
+    Resume,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompactRequest {
+    pub messages: Vec<ConversationMessage>,
+    pub budget: ContextWindowBudget,
+    pub trigger: CompactTrigger,
+    pub prompt_template: String,
+}
+
+impl CompactRequest {
+    pub fn new(
+        messages: Vec<ConversationMessage>,
+        budget: ContextWindowBudget,
+        trigger: CompactTrigger,
+    ) -> Self {
+        Self {
+            messages,
+            budget,
+            trigger,
+            prompt_template: COMPACT_PROMPT_TEMPLATE.to_string(),
+        }
+    }
+
+    pub fn prompt(&self) -> String {
+        let mut prompt = self.prompt_template.trim().to_string();
+        prompt.push_str("\n\nConversation to compact:\n");
+        for message in &self.messages {
+            prompt.push_str(&format!(
+                "\n{:?}: {}",
+                message.role,
+                preview_for_summary(&message.content)
+            ));
+        }
+        prompt
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompactSummary {
+    pub trigger: CompactTrigger,
+    pub summary: String,
+    pub retained_messages: Vec<ConversationMessage>,
+    pub dropped_messages: usize,
+    pub status: ContextWindowStatus,
+}
+
+pub fn compact_messages(request: CompactRequest) -> CompactSummary {
+    let restored = restore_history_for_prompt(request.messages.clone(), request.budget);
+    let summary = if restored.compacted {
+        restored
+            .messages
+            .first()
+            .map(|message| message.content.clone())
+            .unwrap_or_else(|| compaction_summary(&request.messages))
+    } else {
+        compaction_summary(&request.messages)
+    };
+    CompactSummary {
+        trigger: request.trigger,
+        summary,
+        retained_messages: restored.messages,
+        dropped_messages: restored.dropped_messages,
+        status: restored.status,
+    }
+}
+
 pub fn restore_history_for_prompt(
     messages: Vec<ConversationMessage>,
     budget: ContextWindowBudget,
@@ -284,6 +493,113 @@ fn preview_for_summary(content: &str) -> String {
         .collect::<String>();
     preview.push_str("...");
     preview
+}
+
+pub fn matches_marked_text(start_marker: &str, end_marker: &str, text: &str) -> bool {
+    if start_marker.is_empty() || end_marker.is_empty() {
+        return false;
+    }
+    let trimmed_start = text.trim_start();
+    let starts = trimmed_start
+        .get(..start_marker.len())
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(start_marker));
+    let trimmed_end = text.trim_end();
+    let ends = trimmed_end
+        .get(trimmed_end.len().saturating_sub(end_marker.len())..)
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(end_marker));
+    starts && ends
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FileMention {
+    pub raw: String,
+    pub path: PathBuf,
+}
+
+pub fn extract_file_mentions(text: &str) -> Vec<FileMention> {
+    let mut mentions = Vec::new();
+    let mut seen = BTreeSet::new();
+    for token in text.split_whitespace() {
+        let trimmed = token.trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\'' | '`' | ',' | ';' | ':' | ')' | '(' | '[' | ']'
+            )
+        });
+        let candidate = trimmed.strip_prefix('@').unwrap_or(trimmed);
+        if !looks_like_path(candidate) {
+            continue;
+        }
+        let path = PathBuf::from(candidate);
+        if seen.insert(path.clone()) {
+            mentions.push(FileMention {
+                raw: trimmed.to_string(),
+                path,
+            });
+        }
+    }
+    mentions
+}
+
+pub fn search_workspace_files(
+    root: impl AsRef<Path>,
+    query: &str,
+    limit: usize,
+) -> AgentResult<Vec<PathBuf>> {
+    let root = root.as_ref();
+    let mut matches = Vec::new();
+    if !root.is_dir() || query.trim().is_empty() || limit == 0 {
+        return Ok(matches);
+    }
+    search_workspace_files_inner(root, root, query, limit, &mut matches)?;
+    Ok(matches)
+}
+
+fn search_workspace_files_inner(
+    root: &Path,
+    dir: &Path,
+    query: &str,
+    limit: usize,
+    matches: &mut Vec<PathBuf>,
+) -> AgentResult<()> {
+    if matches.len() >= limit {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir).map_err(|error| AgentError::Execution {
+        message: format!("failed to read search directory {}: {error}", dir.display()),
+    })? {
+        if matches.len() >= limit {
+            break;
+        }
+        let entry = entry.map_err(|error| AgentError::Execution {
+            message: format!("failed to read search directory entry: {error}"),
+        })?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if should_skip_search_entry(&name) {
+            continue;
+        }
+        let metadata = entry.metadata().map_err(|error| AgentError::Execution {
+            message: format!("failed to read metadata for {}: {error}", path.display()),
+        })?;
+        if metadata.is_dir() {
+            search_workspace_files_inner(root, &path, query, limit, matches)?;
+        } else if metadata.is_file() && name.contains(query) {
+            matches.push(path.strip_prefix(root).unwrap_or(&path).to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+fn looks_like_path(value: &str) -> bool {
+    value.contains('/') || value.contains('\\') || value.contains('.')
+}
+
+fn should_skip_search_entry(name: &str) -> bool {
+    matches!(
+        name,
+        ".git" | ".yunxi" | ".codegraph" | "target" | "vendor" | "extracted"
+    )
 }
 
 pub fn load_agents_md_hierarchy(cwd: impl AsRef<Path>) -> AgentResult<LoadedAgentsMd> {
@@ -392,5 +708,84 @@ mod tests {
                 .map(|message| message.content.as_str()),
             Some("newest assistant answer")
         );
+    }
+
+    #[test]
+    fn prompt_assets_include_compact_and_patch_templates() {
+        let assets = built_in_prompt_assets();
+
+        assert!(assets.iter().any(|asset| asset.name == "compact.prompt"));
+        assert!(
+            built_in_prompt_asset("tools.apply_patch.instructions")
+                .expect("patch asset")
+                .content
+                .contains("*** Begin Patch")
+        );
+    }
+
+    #[test]
+    fn marked_fragments_render_and_match_case_insensitive_markers() {
+        let fragment = MarkedContextFragment::new(
+            "environment",
+            ConversationRole::User,
+            "<environment_context>",
+            "</environment_context>",
+            "\nworkspace ready\n",
+        );
+
+        let rendered = fragment.render();
+
+        assert!(fragment.matches_text(&rendered));
+        assert!(matches_marked_text(
+            "<ENVIRONMENT_CONTEXT>",
+            "</ENVIRONMENT_CONTEXT>",
+            &rendered
+        ));
+    }
+
+    #[test]
+    fn compact_request_builds_handoff_prompt_and_summary() {
+        let request = CompactRequest::new(
+            vec![
+                ConversationMessage::user("please continue the extraction"),
+                ConversationMessage::assistant("patch layer completed"),
+            ],
+            ContextWindowBudget::new(Some(20), Some(12)),
+            CompactTrigger::TokenBudget,
+        );
+
+        let prompt = request.prompt();
+        let summary = compact_messages(request);
+
+        assert!(prompt.contains("Conversation to compact"));
+        assert_eq!(summary.trigger, CompactTrigger::TokenBudget);
+        assert!(!summary.retained_messages.is_empty());
+    }
+
+    #[test]
+    fn file_mentions_are_extracted_and_deduplicated() {
+        let mentions =
+            extract_file_mentions("edit @src/lib.rs and `docs/report.md`, then src/lib.rs");
+
+        assert_eq!(
+            mentions
+                .iter()
+                .map(|mention| mention.path.clone())
+                .collect::<Vec<_>>(),
+            vec![PathBuf::from("src/lib.rs"), PathBuf::from("docs/report.md")]
+        );
+    }
+
+    #[test]
+    fn workspace_file_search_skips_heavy_directories() {
+        let temp = TempDir::new().expect("temp dir");
+        std::fs::create_dir_all(temp.path().join("src")).expect("src dir");
+        std::fs::create_dir_all(temp.path().join("target")).expect("target dir");
+        std::fs::write(temp.path().join("src/lib.rs"), "").expect("src file");
+        std::fs::write(temp.path().join("target/lib.rs"), "").expect("target file");
+
+        let matches = search_workspace_files(temp.path(), "lib", 10).expect("search");
+
+        assert_eq!(matches, vec![PathBuf::from("src/lib.rs")]);
     }
 }

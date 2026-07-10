@@ -54,6 +54,17 @@ pub enum AgentEvent {
         tool: String,
         status: McpToolStatus,
     },
+    ToolCallStarted {
+        id: Option<String>,
+        name: String,
+        arguments_json: Option<String>,
+    },
+    ToolCallCompleted {
+        id: Option<String>,
+        name: String,
+        output: String,
+        status: CommandStatus,
+    },
     TodoUpdated {
         id: Option<String>,
         items: Vec<TodoStatus>,
@@ -92,6 +103,7 @@ pub enum FileChangeKind {
     Add,
     Delete,
     Update,
+    Move,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

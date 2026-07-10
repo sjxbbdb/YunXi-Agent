@@ -1,8 +1,12 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentInput, AgentResult, TokenUsage};
-use yunxi_agent_protocol::{ProtocolRole, ToolCall};
+use yunxi_agent_protocol::{ProtocolRole, response_text_delta};
+use yunxi_agent_protocol::{
+    ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall, ToolCallStatus, TurnId,
+};
 use yunxi_agent_tools::default_tool_registry;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -127,6 +131,23 @@ pub enum ProviderToolCall {
         name: String,
         arguments_json: Option<String>,
     },
+    MultiAgent {
+        id: Option<String>,
+        action: String,
+        arguments_json: Option<String>,
+    },
+    ToolSearch {
+        id: Option<String>,
+        query: String,
+    },
+    RequestUserInput {
+        id: Option<String>,
+        prompt: String,
+    },
+    ViewImage {
+        id: Option<String>,
+        path: String,
+    },
 }
 
 impl From<ProviderToolCall> for ToolCall {
@@ -154,6 +175,20 @@ impl From<ProviderToolCall> for ToolCall {
                 name,
                 arguments_json,
             },
+            ProviderToolCall::MultiAgent {
+                id,
+                action,
+                arguments_json,
+            } => Self::MultiAgent {
+                id,
+                action,
+                arguments_json,
+            },
+            ProviderToolCall::ToolSearch { id, query } => Self::ToolSearch { id, query },
+            ProviderToolCall::RequestUserInput { id, prompt } => {
+                Self::RequestUserInput { id, prompt }
+            }
+            ProviderToolCall::ViewImage { id, path } => Self::ViewImage { id, path },
         }
     }
 }
@@ -178,6 +213,113 @@ pub struct ProviderUsage {
 #[async_trait]
 pub trait AgentProvider: Send + Sync {
     async fn complete(&self, request: ProviderRequest) -> AgentResult<ProviderResponse>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProviderTransportRequest {
+    pub method: String,
+    pub url: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Value,
+    pub stream: bool,
+    pub timeout_millis: Option<u64>,
+}
+
+impl ProviderTransportRequest {
+    pub fn post_json(url: impl Into<String>, body: Value) -> Self {
+        Self {
+            method: "POST".to_string(),
+            url: url.into(),
+            headers: BTreeMap::new(),
+            body,
+            stream: false,
+            timeout_millis: None,
+        }
+    }
+
+    pub fn with_bearer_auth(mut self, token: impl Into<String>) -> Self {
+        self.headers.insert(
+            "authorization".to_string(),
+            format!("Bearer {}", token.into()),
+        );
+        self
+    }
+
+    pub fn with_stream(mut self, stream: bool) -> Self {
+        self.stream = stream;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProviderTransportResponse {
+    pub status: u16,
+    pub body: String,
+}
+
+impl ProviderTransportResponse {
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+}
+
+#[async_trait]
+pub trait ProviderTransport: Send + Sync {
+    async fn send(
+        &self,
+        request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixtureTransport {
+    response: ProviderTransportResponse,
+}
+
+impl FixtureTransport {
+    pub fn new(status: u16, body: impl Into<String>) -> Self {
+        Self {
+            response: ProviderTransportResponse {
+                status,
+                body: body.into(),
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl ProviderTransport for FixtureTransport {
+    async fn send(
+        &self,
+        _request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse> {
+        Ok(self.response.clone())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProviderRetryPolicy {
+    pub max_attempts: usize,
+    pub retry_statuses: Vec<u16>,
+}
+
+impl ProviderRetryPolicy {
+    pub fn new(max_attempts: usize) -> Self {
+        Self {
+            max_attempts: max_attempts.max(1),
+            retry_statuses: vec![408, 409, 429, 500, 502, 503, 504],
+        }
+    }
+
+    pub fn should_retry_status(&self, status: u16, attempt: usize) -> bool {
+        attempt + 1 < self.max_attempts && self.retry_statuses.contains(&status)
+    }
+}
+
+impl Default for ProviderRetryPolicy {
+    fn default() -> Self {
+        Self::new(3)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -252,8 +394,21 @@ impl OpenAiCompatibleProvider {
         build_openai_request_json(&self.config, request)
     }
 
+    pub fn streaming_request_json(&self, request: &ProviderRequest) -> AgentResult<Value> {
+        build_openai_stream_request_json(&self.config, request)
+    }
+
     pub fn parse_response_json(&self, response: &str) -> AgentResult<ProviderResponse> {
         parse_openai_response_json(response)
+    }
+
+    pub fn parse_stream_events(
+        &self,
+        thread_id: impl Into<String>,
+        turn_id: impl Into<String>,
+        stream: &str,
+    ) -> AgentResult<Vec<StreamEvent>> {
+        parse_openai_stream_events(thread_id, turn_id, stream)
     }
 
     pub fn auth(&self) -> &ProviderAuth {
@@ -274,6 +429,92 @@ impl AgentProvider for OpenAiCompatibleProvider {
             message: "openai-compatible HTTP transport is not configured in this runtime slice"
                 .to_string(),
         })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenAiTransportProvider<T> {
+    provider: OpenAiCompatibleProvider,
+    transport: T,
+    retry_policy: ProviderRetryPolicy,
+}
+
+impl<T> OpenAiTransportProvider<T>
+where
+    T: ProviderTransport,
+{
+    pub fn new(config: ProviderConfig, auth: ProviderAuth, transport: T) -> Self {
+        Self {
+            provider: OpenAiCompatibleProvider::new(config, auth),
+            transport,
+            retry_policy: ProviderRetryPolicy::default(),
+        }
+    }
+
+    pub fn with_retry_policy(mut self, retry_policy: ProviderRetryPolicy) -> Self {
+        self.retry_policy = retry_policy;
+        self
+    }
+
+    pub async fn stream_events(
+        &self,
+        request: ProviderRequest,
+        thread_id: impl Into<String>,
+        turn_id: impl Into<String>,
+    ) -> AgentResult<Vec<StreamEvent>> {
+        let transport_request = build_openai_transport_request(
+            &self.provider.config,
+            self.provider.auth(),
+            &request,
+            true,
+        )?;
+        let response = self.send_with_retries(transport_request).await?;
+        if !response.is_success() {
+            return Err(AgentError::Execution {
+                message: format!("provider transport returned HTTP {}", response.status),
+            });
+        }
+        self.provider
+            .parse_stream_events(thread_id, turn_id, &response.body)
+    }
+
+    async fn send_with_retries(
+        &self,
+        request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse> {
+        let mut attempt = 0usize;
+        loop {
+            let response = self.transport.send(request.clone()).await?;
+            if !self
+                .retry_policy
+                .should_retry_status(response.status, attempt)
+            {
+                return Ok(response);
+            }
+            attempt += 1;
+        }
+    }
+}
+
+#[async_trait]
+impl<T> AgentProvider for OpenAiTransportProvider<T>
+where
+    T: ProviderTransport + Send + Sync,
+{
+    async fn complete(&self, request: ProviderRequest) -> AgentResult<ProviderResponse> {
+        let transport_request = build_openai_transport_request(
+            &self.provider.config,
+            self.provider.auth(),
+            &request,
+            false,
+        )?;
+        let response = self.send_with_retries(transport_request).await?;
+        if !response.is_success() {
+            return Err(AgentError::Execution {
+                message: format!("provider transport returned HTTP {}", response.status),
+            });
+        }
+        self.provider.parse_response_json(&response.body)
     }
 }
 
@@ -338,6 +579,41 @@ pub fn build_openai_request_json(
     }))
 }
 
+pub fn build_openai_stream_request_json(
+    provider_config: &ProviderConfig,
+    request: &ProviderRequest,
+) -> AgentResult<Value> {
+    let mut value = build_openai_request_json(provider_config, request)?;
+    value["stream"] = Value::Bool(true);
+    value["stream_options"] = json!({ "include_usage": true });
+    Ok(value)
+}
+
+pub fn build_openai_transport_request(
+    provider_config: &ProviderConfig,
+    auth: &ProviderAuth,
+    request: &ProviderRequest,
+    stream: bool,
+) -> AgentResult<ProviderTransportRequest> {
+    let body = if stream {
+        build_openai_stream_request_json(provider_config, request)?
+    } else {
+        build_openai_request_json(provider_config, request)?
+    };
+    let url = format!(
+        "{}/chat/completions",
+        provider_config.base_url.trim_end_matches('/')
+    );
+    let mut transport_request = ProviderTransportRequest::post_json(url, body).with_stream(stream);
+    if let Some(token) = auth.resolve()? {
+        transport_request = transport_request.with_bearer_auth(token);
+    }
+    transport_request
+        .headers
+        .insert("content-type".to_string(), "application/json".to_string());
+    Ok(transport_request)
+}
+
 pub fn parse_openai_response_json(response: &str) -> AgentResult<ProviderResponse> {
     let value = serde_json::from_str::<Value>(response).map_err(|error| AgentError::Execution {
         message: format!("failed to parse provider response JSON: {error}"),
@@ -388,6 +664,218 @@ pub fn parse_openai_response_json(response: &str) -> AgentResult<ProviderRespons
     })
 }
 
+pub fn parse_openai_stream_events(
+    thread_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    stream: &str,
+) -> AgentResult<Vec<StreamEvent>> {
+    let thread_id = ThreadId(thread_id.into());
+    let turn_id = TurnId(turn_id.into());
+    let mut events = vec![StreamEvent::ResponseStarted {
+        thread_id: thread_id.clone(),
+        turn_id: turn_id.clone(),
+        metadata: None,
+    }];
+
+    for line in stream.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with(':') {
+            continue;
+        }
+        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
+            continue;
+        };
+        if data == "[DONE]" {
+            events.push(StreamEvent::ResponseCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                status: ResponseStatus::Completed,
+            });
+            continue;
+        }
+
+        let value = serde_json::from_str::<Value>(data).map_err(|error| AgentError::Execution {
+            message: format!("failed to parse provider stream event JSON: {error}"),
+        })?;
+        parse_stream_value(&thread_id, &turn_id, &value, &mut events);
+    }
+
+    if !events
+        .iter()
+        .any(|event| matches!(event, StreamEvent::ResponseCompleted { .. }))
+    {
+        events.push(StreamEvent::ResponseCompleted {
+            thread_id,
+            turn_id,
+            status: ResponseStatus::Completed,
+        });
+    }
+
+    Ok(events)
+}
+
+fn parse_stream_value(
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    value: &Value,
+    events: &mut Vec<StreamEvent>,
+) {
+    if let Some(event_type) = value.get("type").and_then(Value::as_str) {
+        parse_responses_api_stream_value(thread_id, turn_id, event_type, value, events);
+        return;
+    }
+
+    let Some(choice) = value
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+    else {
+        return;
+    };
+    if let Some(delta) = choice.pointer("/delta/content").and_then(Value::as_str) {
+        push_delta(thread_id, turn_id, response_text_delta(delta), events);
+    }
+    if let Some(delta) = choice
+        .pointer("/delta/reasoning_content")
+        .and_then(Value::as_str)
+    {
+        push_delta(
+            thread_id,
+            turn_id,
+            ResponseItemDelta::ReasoningContent {
+                item_id: None,
+                delta: delta.to_string(),
+            },
+            events,
+        );
+    }
+    if let Some(tool_calls) = choice
+        .pointer("/delta/tool_calls")
+        .and_then(Value::as_array)
+    {
+        for tool_call in tool_calls {
+            let call_id = tool_call
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
+            if let Some(delta) = tool_call
+                .pointer("/function/arguments")
+                .and_then(Value::as_str)
+            {
+                push_delta(
+                    thread_id,
+                    turn_id,
+                    ResponseItemDelta::ToolCallArguments {
+                        call_id,
+                        delta: delta.to_string(),
+                    },
+                    events,
+                );
+            }
+        }
+    }
+    if choice
+        .get("finish_reason")
+        .and_then(Value::as_str)
+        .is_some()
+    {
+        events.push(StreamEvent::ResponseCompleted {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            status: ResponseStatus::Completed,
+        });
+    }
+}
+
+fn parse_responses_api_stream_value(
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    event_type: &str,
+    value: &Value,
+    events: &mut Vec<StreamEvent>,
+) {
+    match event_type {
+        "response.output_text.delta" | "response.refusal.delta" => {
+            if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                push_delta(thread_id, turn_id, response_text_delta(delta), events);
+            }
+        }
+        "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
+            if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                push_delta(
+                    thread_id,
+                    turn_id,
+                    ResponseItemDelta::ReasoningContent {
+                        item_id: value
+                            .get("item_id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                        delta: delta.to_string(),
+                    },
+                    events,
+                );
+            }
+        }
+        "response.function_call_arguments.delta" => {
+            if let Some(delta) = value.get("delta").and_then(Value::as_str) {
+                push_delta(
+                    thread_id,
+                    turn_id,
+                    ResponseItemDelta::ToolCallArguments {
+                        call_id: value
+                            .get("call_id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                        delta: delta.to_string(),
+                    },
+                    events,
+                );
+            }
+        }
+        "response.completed" => events.push(StreamEvent::ResponseCompleted {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            status: ResponseStatus::Completed,
+        }),
+        "response.failed" => events.push(StreamEvent::ResponseFailed {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            message: value
+                .pointer("/response/error/message")
+                .and_then(Value::as_str)
+                .or_else(|| value.pointer("/error/message").and_then(Value::as_str))
+                .unwrap_or("provider stream failed")
+                .to_string(),
+        }),
+        "response.function_call.completed" => push_delta(
+            thread_id,
+            turn_id,
+            ResponseItemDelta::ToolCallStatus {
+                call_id: value
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                status: ToolCallStatus::Completed,
+            },
+            events,
+        ),
+        _ => {}
+    }
+}
+
+fn push_delta(
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    delta: ResponseItemDelta,
+    events: &mut Vec<StreamEvent>,
+) {
+    events.push(StreamEvent::ItemDelta {
+        thread_id: thread_id.clone(),
+        turn_id: turn_id.clone(),
+        delta,
+    });
+}
+
 fn parse_openai_tool_call(
     id: Option<String>,
     name: &str,
@@ -415,6 +903,23 @@ fn parse_openai_tool_call(
             id,
             name: required_string(&args, "name")?,
             arguments_json: optional_json_argument(&args, "arguments_json"),
+        }),
+        "multi_agent" => Ok(ProviderToolCall::MultiAgent {
+            id,
+            action: required_string(&args, "action")?,
+            arguments_json: optional_json_argument(&args, "arguments_json"),
+        }),
+        "tool_search" => Ok(ProviderToolCall::ToolSearch {
+            id,
+            query: required_string(&args, "query")?,
+        }),
+        "request_user_input" => Ok(ProviderToolCall::RequestUserInput {
+            id,
+            prompt: required_string(&args, "prompt")?,
+        }),
+        "view_image" => Ok(ProviderToolCall::ViewImage {
+            id,
+            path: required_string(&args, "path")?,
         }),
         other => Err(AgentError::Execution {
             message: format!("unsupported provider tool call: {other}"),

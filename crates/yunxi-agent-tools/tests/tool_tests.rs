@@ -22,7 +22,11 @@ fn default_tool_registry_exposes_model_visible_specs() {
             ToolName::Shell,
             ToolName::Patch,
             ToolName::Mcp,
-            ToolName::Skill
+            ToolName::Skill,
+            ToolName::MultiAgent,
+            ToolName::ToolSearch,
+            ToolName::RequestUserInput,
+            ToolName::ViewImage
         ]
     );
     assert_eq!(
@@ -48,7 +52,19 @@ fn default_tool_registry_exports_openai_function_schema() {
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(names, vec!["shell", "patch", "mcp", "skill"]);
+    assert_eq!(
+        names,
+        vec![
+            "shell",
+            "patch",
+            "mcp",
+            "skill",
+            "multi_agent",
+            "tool_search",
+            "request_user_input",
+            "view_image"
+        ]
+    );
     assert_eq!(tools[0]["type"], "function");
     assert_eq!(
         tools[0]["function"]["parameters"]["properties"]["command"]["type"],
@@ -306,4 +322,54 @@ async fn patch_tool_rejects_absolute_paths() {
         .expect_err("absolute patch should fail");
 
     assert!(error.to_string().contains("must be relative"));
+}
+
+#[tokio::test]
+async fn tool_search_returns_workspace_matches() {
+    let runtime = ShellToolRuntime;
+    let temp = TempDir::new().expect("temp dir");
+    std::fs::create_dir_all(temp.path().join("src")).expect("src dir");
+    std::fs::write(temp.path().join("src/lib.rs"), "").expect("file");
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: Some("search".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: yunxi_agent_tools::ToolRequestKind::ToolSearch {
+                query: "lib".to_string(),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("tool search");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    assert!(response.output.as_deref().expect("output").contains("src"));
+}
+
+#[tokio::test]
+async fn request_user_input_declines_without_interactive_host() {
+    let runtime = ShellToolRuntime;
+    let temp = TempDir::new().expect("temp dir");
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: None,
+            cwd: temp.path().to_path_buf(),
+            kind: yunxi_agent_tools::ToolRequestKind::RequestUserInput {
+                prompt: "Proceed?".to_string(),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("request input");
+
+    assert_eq!(response.status, ToolStatus::Declined);
+    assert!(
+        response
+            .error
+            .as_deref()
+            .expect("error")
+            .contains("interactive host")
+    );
 }

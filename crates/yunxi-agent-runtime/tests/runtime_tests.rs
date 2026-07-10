@@ -11,7 +11,7 @@ use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
     ProviderToolCall, StaticProvider,
 };
-use yunxi_agent_runtime::YunXiRuntimeBackend;
+use yunxi_agent_runtime::{YunXiRuntimeBackend, protocol_stream_events_to_agent_events};
 use yunxi_agent_storage::{InMemorySessionStore, SessionId, SessionRecord, SessionStore};
 use yunxi_agent_tools::{NoopToolRuntime, ShellToolRuntime};
 
@@ -33,12 +33,16 @@ async fn yunxi_runtime_runs_without_codex_backend() {
         result.final_response.as_deref(),
         Some("YunXi autonomous runtime accepted prompt: explain this project")
     );
-    assert_eq!(
-        result.events.first(),
-        Some(&AgentEvent::Started {
-            prompt: "explain this project".to_string()
-        })
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ThreadStarted { .. }))
     );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Started { prompt } if prompt == "explain this project"
+    )));
     assert_eq!(store.list().await.expect("session list").len(), 1);
 }
 
@@ -371,4 +375,91 @@ async fn yunxi_runtime_executes_provider_requested_shell_tool() {
         } if id == "shell-1" && aggregated_output.contains("yunxi-tool")
     )));
     assert_eq!(store.list().await.expect("session list").len(), 1);
+}
+
+#[derive(Clone, Default)]
+struct ToolSearchCallingProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for ToolSearchCallingProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "search result: {}",
+                tool_message.content.trim()
+            )));
+        }
+
+        Ok(ProviderResponse::tool_call(ProviderToolCall::ToolSearch {
+            id: Some("search-1".to_string()),
+            query: "runtime".to_string(),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn yunxi_runtime_executes_dynamic_tool_search() {
+    let temp = TempDir::new().expect("temp dir");
+    std::fs::write(temp.path().join("runtime-notes.md"), "notes").expect("file");
+    let backend = YunXiRuntimeBackend::with_parts(
+        ToolSearchCallingProvider,
+        ShellToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("search tools"))
+        .await
+        .expect("runtime should complete dynamic tool loop");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallStarted {
+            id: Some(id),
+            name,
+            ..
+        } if id == "search-1" && name == "tool_search"
+    )));
+    assert!(
+        result
+            .final_response
+            .as_deref()
+            .expect("final response")
+            .contains("runtime-notes.md")
+    );
+}
+
+#[test]
+fn protocol_stream_events_map_to_agent_events() {
+    let stream = vec![
+        yunxi_agent_protocol::StreamEvent::ResponseStarted {
+            thread_id: yunxi_agent_protocol::ThreadId("thread-1".to_string()),
+            turn_id: yunxi_agent_protocol::TurnId("turn-1".to_string()),
+            metadata: None,
+        },
+        yunxi_agent_protocol::StreamEvent::ItemDelta {
+            thread_id: yunxi_agent_protocol::ThreadId("thread-1".to_string()),
+            turn_id: yunxi_agent_protocol::TurnId("turn-1".to_string()),
+            delta: yunxi_agent_protocol::ResponseItemDelta::ReasoningContent {
+                item_id: None,
+                delta: "reason".to_string(),
+            },
+        },
+    ];
+
+    let events = protocol_stream_events_to_agent_events(&stream);
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Reasoning { content } if content == "reason"
+    )));
 }

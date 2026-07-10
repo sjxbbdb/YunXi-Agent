@@ -18,9 +18,10 @@ fn yunxi_jsonl_prints_one_json_event_per_line() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"type\":\"started\""))
-        .stdout(predicate::str::contains("\"type\":\"message\""))
-        .stdout(predicate::str::contains("\"type\":\"completed\""));
+        .stdout(predicate::str::contains("\"type\":\"thread_started\""))
+        .stdout(predicate::str::contains("\"type\":\"turn_started\""))
+        .stdout(predicate::str::contains("\"type\":\"item\""))
+        .stdout(predicate::str::contains("\"type\":\"turn_completed\""));
 
     let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
     for line in output.lines() {
@@ -36,9 +37,10 @@ fn dry_run_jsonl_prints_one_json_event_per_line() {
         .args(["--backend", "dry-run", "--jsonl", "jsonl dry run"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"type\":\"started\""))
-        .stdout(predicate::str::contains("\"type\":\"message\""))
-        .stdout(predicate::str::contains("\"type\":\"completed\""));
+        .stdout(predicate::str::contains("\"type\":\"thread_started\""))
+        .stdout(predicate::str::contains("\"type\":\"turn_started\""))
+        .stdout(predicate::str::contains("\"type\":\"item\""))
+        .stdout(predicate::str::contains("\"type\":\"turn_completed\""));
 
     let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
     for line in output.lines() {

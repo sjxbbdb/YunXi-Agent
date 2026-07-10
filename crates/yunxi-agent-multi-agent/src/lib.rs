@@ -21,6 +21,19 @@ pub struct AgentMetadata {
     pub parent_id: Option<AgentId>,
     pub task: String,
     pub status: AgentStatus,
+    #[serde(default)]
+    pub role: Option<AgentRole>,
+    #[serde(default)]
+    pub budget_tokens: Option<i64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRole {
+    General,
+    Explorer,
+    Awaiter,
+    Reviewer,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -47,13 +60,82 @@ pub enum MultiAgentCommand {
     List,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MultiAgentLifecycleEvent {
+    Spawned {
+        id: AgentId,
+        parent_id: Option<AgentId>,
+        task: String,
+    },
+    MessageSent {
+        id: AgentId,
+        message: String,
+    },
+    FollowUpQueued {
+        id: AgentId,
+        task: String,
+    },
+    Interrupted {
+        id: AgentId,
+    },
+    Completed {
+        id: AgentId,
+        status: AgentStatus,
+    },
+    Listed {
+        count: usize,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MultiAgentCommandResult {
+    pub status: AgentStatus,
+    pub agents: Vec<AgentMetadata>,
+    pub events: Vec<MultiAgentLifecycleEvent>,
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentGraph {
+    pub agents: BTreeMap<AgentId, AgentMetadata>,
+    pub children: BTreeMap<AgentId, Vec<AgentId>>,
+}
+
+impl AgentGraph {
+    pub fn insert(&mut self, metadata: AgentMetadata) {
+        if let Some(parent_id) = metadata.parent_id.clone() {
+            self.children
+                .entry(parent_id)
+                .or_default()
+                .push(metadata.id.clone());
+        }
+        self.agents.insert(metadata.id.clone(), metadata);
+    }
+
+    pub fn children_of(&self, id: &AgentId) -> Vec<AgentMetadata> {
+        self.children
+            .get(id)
+            .into_iter()
+            .flatten()
+            .filter_map(|child_id| self.agents.get(child_id).cloned())
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryAgentRegistry {
     agents: Arc<Mutex<BTreeMap<AgentId, AgentMetadata>>>,
+    events: Arc<Mutex<Vec<MultiAgentLifecycleEvent>>>,
 }
 
 impl InMemoryAgentRegistry {
     pub fn insert(&self, metadata: AgentMetadata) -> AgentResult<()> {
+        self.lock_events()?.push(MultiAgentLifecycleEvent::Spawned {
+            id: metadata.id.clone(),
+            parent_id: metadata.parent_id.clone(),
+            task: metadata.task.clone(),
+        });
         self.lock_agents()?.insert(metadata.id.clone(), metadata);
         Ok(())
     }
@@ -71,11 +153,184 @@ impl InMemoryAgentRegistry {
         Ok(())
     }
 
+    pub fn execute(&self, command: MultiAgentCommand) -> AgentResult<MultiAgentCommandResult> {
+        match command {
+            MultiAgentCommand::Spawn { task, parent_id } => {
+                let id = AgentId(format!("agent-{}", self.lock_agents()?.len() + 1));
+                let metadata = AgentMetadata {
+                    id: id.clone(),
+                    parent_id,
+                    task,
+                    status: AgentStatus::Running,
+                    role: Some(AgentRole::General),
+                    budget_tokens: None,
+                };
+                self.insert(metadata.clone())?;
+                Ok(MultiAgentCommandResult {
+                    status: AgentStatus::Running,
+                    agents: vec![metadata],
+                    events: self.events()?,
+                    message: Some(format!("spawned {}", id.0)),
+                })
+            }
+            MultiAgentCommand::Wait { id } => {
+                let agent = self.agent(&id)?;
+                Ok(MultiAgentCommandResult {
+                    status: agent.status,
+                    agents: vec![agent],
+                    events: self.events()?,
+                    message: Some(format!("wait completed for {}", id.0)),
+                })
+            }
+            MultiAgentCommand::SendMessage { id, message } => {
+                self.agent(&id)?;
+                self.lock_events()?
+                    .push(MultiAgentLifecycleEvent::MessageSent {
+                        id: id.clone(),
+                        message,
+                    });
+                Ok(MultiAgentCommandResult {
+                    status: AgentStatus::Running,
+                    agents: vec![self.agent(&id)?],
+                    events: self.events()?,
+                    message: Some(format!("message sent to {}", id.0)),
+                })
+            }
+            MultiAgentCommand::FollowUp { id, task } => {
+                self.agent(&id)?;
+                self.lock_events()?
+                    .push(MultiAgentLifecycleEvent::FollowUpQueued {
+                        id: id.clone(),
+                        task,
+                    });
+                Ok(MultiAgentCommandResult {
+                    status: AgentStatus::Running,
+                    agents: vec![self.agent(&id)?],
+                    events: self.events()?,
+                    message: Some(format!("follow-up queued for {}", id.0)),
+                })
+            }
+            MultiAgentCommand::Interrupt { id } => {
+                self.set_status(&id, AgentStatus::Interrupted)?;
+                self.lock_events()?
+                    .push(MultiAgentLifecycleEvent::Interrupted { id: id.clone() });
+                Ok(MultiAgentCommandResult {
+                    status: AgentStatus::Interrupted,
+                    agents: vec![self.agent(&id)?],
+                    events: self.events()?,
+                    message: Some(format!("interrupted {}", id.0)),
+                })
+            }
+            MultiAgentCommand::List => {
+                let agents = self.list()?;
+                self.lock_events()?.push(MultiAgentLifecycleEvent::Listed {
+                    count: agents.len(),
+                });
+                Ok(MultiAgentCommandResult {
+                    status: AgentStatus::Completed,
+                    agents,
+                    events: self.events()?,
+                    message: None,
+                })
+            }
+        }
+    }
+
+    pub fn events(&self) -> AgentResult<Vec<MultiAgentLifecycleEvent>> {
+        Ok(self.lock_events()?.clone())
+    }
+
+    pub fn graph(&self) -> AgentResult<AgentGraph> {
+        let mut graph = AgentGraph::default();
+        for metadata in self.list()? {
+            graph.insert(metadata);
+        }
+        Ok(graph)
+    }
+
+    fn agent(&self, id: &AgentId) -> AgentResult<AgentMetadata> {
+        self.lock_agents()?
+            .get(id)
+            .cloned()
+            .ok_or_else(|| AgentError::Execution {
+                message: format!("agent not found: {}", id.0),
+            })
+    }
+
     fn lock_agents(
         &self,
     ) -> AgentResult<std::sync::MutexGuard<'_, BTreeMap<AgentId, AgentMetadata>>> {
         self.agents.lock().map_err(|_| AgentError::Execution {
             message: "multi-agent registry lock was poisoned".to_string(),
         })
+    }
+
+    fn lock_events(&self) -> AgentResult<std::sync::MutexGuard<'_, Vec<MultiAgentLifecycleEvent>>> {
+        self.events.lock().map_err(|_| AgentError::Execution {
+            message: "multi-agent event lock was poisoned".to_string(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_executes_spawn_message_interrupt_and_list() {
+        let registry = InMemoryAgentRegistry::default();
+        let spawned = registry
+            .execute(MultiAgentCommand::Spawn {
+                task: "explore runtime".to_string(),
+                parent_id: None,
+            })
+            .expect("spawn");
+        let id = spawned.agents[0].id.clone();
+
+        registry
+            .execute(MultiAgentCommand::SendMessage {
+                id: id.clone(),
+                message: "continue".to_string(),
+            })
+            .expect("message");
+        let interrupted = registry
+            .execute(MultiAgentCommand::Interrupt { id: id.clone() })
+            .expect("interrupt");
+        let listed = registry.execute(MultiAgentCommand::List).expect("list");
+
+        assert_eq!(interrupted.status, AgentStatus::Interrupted);
+        assert_eq!(listed.agents.len(), 1);
+        assert!(
+            registry
+                .events()
+                .expect("events")
+                .iter()
+                .any(|event| matches!(event, MultiAgentLifecycleEvent::MessageSent { .. }))
+        );
+    }
+
+    #[test]
+    fn graph_tracks_parent_child_relationships() {
+        let mut graph = AgentGraph::default();
+        let parent = AgentId("parent".to_string());
+        let child = AgentId("child".to_string());
+        graph.insert(AgentMetadata {
+            id: parent.clone(),
+            parent_id: None,
+            task: "parent task".to_string(),
+            status: AgentStatus::Running,
+            role: Some(AgentRole::General),
+            budget_tokens: Some(1000),
+        });
+        graph.insert(AgentMetadata {
+            id: child.clone(),
+            parent_id: Some(parent.clone()),
+            task: "child task".to_string(),
+            status: AgentStatus::Running,
+            role: Some(AgentRole::Explorer),
+            budget_tokens: Some(500),
+        });
+
+        assert_eq!(graph.children_of(&parent)[0].id, child);
     }
 }

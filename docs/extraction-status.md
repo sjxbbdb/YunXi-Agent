@@ -325,6 +325,21 @@ Stage 4G sandbox approval escalation verification passed on 2026-07-10:
   `yunxi-agent-codex`: pass with no matches
 - `git diff --check`: pass with Windows line-ending warnings only
 
+## Stage 4H Planned Direction
+
+The next stage is upstream core gap closure. Its goal is to use
+`vendor/codex-rs` and `extracted/codex-core-agent-sources` as direct behavior
+references and close the remaining Codex CLI headless Agent parity gaps in
+YunXi-owned crates, without restoring upstream runtime dependencies.
+
+Stage 4H must follow the project hard constraint: build the remaining capability
+surface first, avoid repeated mid-construction validation loops, and run the
+full verification gate only after the 12 remaining parity layers are migrated
+and wired into the default YunXi runtime.
+
+The Stage 4H development report is recorded in
+`docs/reports/2026-07-10-yunxi-stage-4h-upstream-core-gap-closure-development-report.md`.
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

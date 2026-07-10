@@ -884,6 +884,61 @@ async fn yunxi_runtime_executes_provider_requested_multi_agent_tool() {
 }
 
 #[derive(Clone, Default)]
+struct MultiAgentSpawnRunProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for MultiAgentSpawnRunProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "child result: {}",
+                tool_message.content.trim()
+            )));
+        }
+
+        Ok(ProviderResponse::tool_call(ProviderToolCall::MultiAgent {
+            id: Some("agent-run-1".to_string()),
+            action: "spawn_run".to_string(),
+            arguments_json: Some(r#"{"task":"review runtime deeply"}"#.to_string()),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn yunxi_runtime_emits_multi_agent_events_from_spawn_run() {
+    let temp = TempDir::new().expect("temp dir");
+    let backend = YunXiRuntimeBackend::with_parts(
+        MultiAgentSpawnRunProvider,
+        CompositeToolRuntime::default(),
+        InMemorySessionStore::default(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("spawn and run reviewer"))
+        .await
+        .expect("runtime should complete child run loop");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MultiAgentEvent {
+            agent_id,
+            status,
+            message: Some(message),
+            ..
+        } if agent_id == "agent-1" && status == "completed" && message.contains("review runtime deeply")
+    )));
+}
+
+#[derive(Clone, Default)]
 struct McpCallingProvider;
 
 #[async_trait::async_trait]

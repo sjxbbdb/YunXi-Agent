@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use yunxi_agent_core::{AgentError, AgentResult};
 
@@ -33,7 +34,10 @@ pub enum PatchDiagnosticKind {
     InvalidEnvelope,
     InvalidJson,
     InvalidPath,
+    DuplicatePath,
     MissingTarget,
+    TargetExists,
+    NonUtf8,
     ContextMismatch,
     UnsupportedOperation,
     Io,
@@ -134,6 +138,10 @@ pub enum PatchOperation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ParsedPatchOperation {
+    Add {
+        path: PathBuf,
+        content: String,
+    },
     Write {
         path: PathBuf,
         content: String,
@@ -171,10 +179,40 @@ pub fn apply_patch(cwd: impl AsRef<Path>, patch: &str) -> AgentResult<PatchRepor
 pub fn apply_patch_detailed(cwd: impl AsRef<Path>, patch: &str) -> PatchApplyResult<PatchReport> {
     let cwd = cwd.as_ref();
     let operations = parse_patch(patch)?;
+    validate_operation_paths(&operations)?;
     let mut changed_files = Vec::new();
 
     for operation in operations {
         match operation {
+            ParsedPatchOperation::Add { path, content } => {
+                let relative = validate_relative_path(&path)?;
+                let full_path = cwd.join(&relative);
+                if full_path.exists() {
+                    return Err(patch_error(
+                        PatchDiagnosticKind::TargetExists,
+                        format!("patch add target already exists: {}", relative.display()),
+                    )
+                    .with_path(relative));
+                }
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|error| {
+                        patch_error(
+                            PatchDiagnosticKind::Io,
+                            format!("failed to create patch parent directory: {error}"),
+                        )
+                    })?;
+                }
+                std::fs::write(&full_path, content).map_err(|error| {
+                    patch_error(
+                        PatchDiagnosticKind::Io,
+                        format!("failed to add patch file {}: {error}", full_path.display()),
+                    )
+                })?;
+                changed_files.push(PatchFileChange {
+                    path: relative,
+                    kind: PatchFileChangeKind::Added,
+                });
+            }
             ParsedPatchOperation::Write { path, content } => {
                 let relative = validate_relative_path(&path)?;
                 let full_path = cwd.join(&relative);
@@ -377,7 +415,7 @@ fn parse_apply_patch(patch: &str) -> PatchApplyResult<Vec<ParsedPatchOperation>>
                 content.push_str(next.strip_prefix('+').unwrap_or(next));
                 content.push('\n');
             }
-            operations.push(ParsedPatchOperation::Write {
+            operations.push(ParsedPatchOperation::Add {
                 path: PathBuf::from(path),
                 content,
             });
@@ -475,10 +513,10 @@ fn is_patch_operation_marker(line: &str) -> bool {
 
 fn read_patch_file(path: &Path) -> PatchApplyResult<String> {
     std::fs::read_to_string(path).map_err(|error| {
-        let kind = if error.kind() == std::io::ErrorKind::NotFound {
-            PatchDiagnosticKind::MissingTarget
-        } else {
-            PatchDiagnosticKind::Io
+        let kind = match error.kind() {
+            std::io::ErrorKind::NotFound => PatchDiagnosticKind::MissingTarget,
+            std::io::ErrorKind::InvalidData => PatchDiagnosticKind::NonUtf8,
+            _ => PatchDiagnosticKind::Io,
         };
         patch_error(
             kind,
@@ -535,16 +573,12 @@ fn move_file(cwd: &Path, from: &Path, to: &Path) -> PatchApplyResult<()> {
             )
         })?;
     }
-    if destination.is_file() {
-        std::fs::remove_file(&destination).map_err(|error| {
-            patch_error(
-                PatchDiagnosticKind::Io,
-                format!(
-                    "failed to remove existing patch move target {}: {error}",
-                    destination.display()
-                ),
-            )
-        })?;
+    if destination.exists() {
+        return Err(patch_error(
+            PatchDiagnosticKind::TargetExists,
+            format!("patch move target already exists: {}", to.display()),
+        )
+        .with_path(to));
     }
     std::fs::rename(&source, &destination).map_err(|error| {
         patch_error(
@@ -556,6 +590,44 @@ fn move_file(cwd: &Path, from: &Path, to: &Path) -> PatchApplyResult<()> {
             ),
         )
     })
+}
+
+fn validate_operation_paths(operations: &[ParsedPatchOperation]) -> PatchApplyResult<()> {
+    let mut touched = BTreeSet::new();
+    for operation in operations {
+        for path in operation.touched_paths() {
+            let relative = validate_relative_path(path)?;
+            if !touched.insert(relative.clone()) {
+                return Err(patch_error(
+                    PatchDiagnosticKind::DuplicatePath,
+                    format!(
+                        "patch touches the same path more than once: {}",
+                        relative.display()
+                    ),
+                )
+                .with_path(relative));
+            }
+        }
+    }
+    Ok(())
+}
+
+impl ParsedPatchOperation {
+    fn touched_paths(&self) -> Vec<&Path> {
+        match self {
+            Self::Add { path, .. } | Self::Write { path, .. } | Self::Delete { path } => {
+                vec![path.as_path()]
+            }
+            Self::Move { from, to } => vec![from.as_path(), to.as_path()],
+            Self::Update { path, move_to, .. } => {
+                let mut paths = vec![path.as_path()];
+                if let Some(move_to) = move_to {
+                    paths.push(move_to.as_path());
+                }
+                paths
+            }
+        }
+    }
 }
 
 fn validate_relative_path(path: &Path) -> PatchApplyResult<PathBuf> {
@@ -669,5 +741,49 @@ mod tests {
             error.diagnostics[0].path.as_deref(),
             Some(Path::new("../escape.txt"))
         );
+    }
+
+    #[test]
+    fn add_file_rejects_existing_target() {
+        let temp = TempDir::new().expect("temp dir");
+        std::fs::write(temp.path().join("notes.txt"), "existing\n").expect("existing");
+
+        let error = apply_patch_detailed(
+            temp.path(),
+            "*** Begin Patch\n*** Add File: notes.txt\n+new\n*** End Patch",
+        )
+        .expect_err("existing add target should fail");
+
+        assert_eq!(error.diagnostics[0].kind, PatchDiagnosticKind::TargetExists);
+    }
+
+    #[test]
+    fn patch_rejects_duplicate_touched_paths() {
+        let temp = TempDir::new().expect("temp dir");
+
+        let error = apply_patch_detailed(
+            temp.path(),
+            "*** Begin Patch\n*** Add File: notes.txt\n+one\n*** Add File: notes.txt\n+two\n*** End Patch",
+        )
+        .expect_err("duplicate touched path should fail");
+
+        assert_eq!(
+            error.diagnostics[0].kind,
+            PatchDiagnosticKind::DuplicatePath
+        );
+    }
+
+    #[test]
+    fn update_rejects_non_utf8_target_with_diagnostic() {
+        let temp = TempDir::new().expect("temp dir");
+        std::fs::write(temp.path().join("binary.bin"), [0xff, 0xfe, 0xfd]).expect("binary");
+
+        let error = apply_patch_detailed(
+            temp.path(),
+            "*** Begin Patch\n*** Update File: binary.bin\n@@\n-old\n+new\n*** End Patch",
+        )
+        .expect_err("non-utf8 update target should fail");
+
+        assert_eq!(error.diagnostics[0].kind, PatchDiagnosticKind::NonUtf8);
     }
 }

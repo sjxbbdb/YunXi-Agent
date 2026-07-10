@@ -96,6 +96,40 @@ pub struct ChildAgentRunResult {
     pub events: Vec<AgentEvent>,
 }
 
+pub trait ChildAgentRuntime {
+    fn run_child(&self, request: ChildAgentRunRequest) -> AgentResult<ChildAgentRunResult>;
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FixtureChildAgentRuntime;
+
+impl ChildAgentRuntime for FixtureChildAgentRuntime {
+    fn run_child(&self, request: ChildAgentRunRequest) -> AgentResult<ChildAgentRunResult> {
+        let final_response = format!(
+            "YunXi child agent {} completed task: {}",
+            request.agent.id.0, request.prompt
+        );
+        Ok(ChildAgentRunResult {
+            agent_id: request.agent.id.clone(),
+            session_id: request.session_id,
+            status: AgentRunStatus::Completed,
+            final_response: Some(final_response.clone()),
+            events: vec![
+                AgentEvent::Started {
+                    prompt: request.prompt,
+                },
+                AgentEvent::Message {
+                    content: final_response,
+                },
+                AgentEvent::Completed {
+                    status: AgentRunStatus::Completed,
+                    usage: None,
+                },
+            ],
+        })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRole {
@@ -109,6 +143,10 @@ pub enum AgentRole {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MultiAgentCommand {
     Spawn {
+        task: String,
+        parent_id: Option<AgentId>,
+    },
+    SpawnRun {
         task: String,
         parent_id: Option<AgentId>,
     },
@@ -145,6 +183,10 @@ pub enum MultiAgentLifecycleEvent {
         id: AgentId,
         task: String,
     },
+    ChildRunStarted {
+        id: AgentId,
+        session_id: String,
+    },
     Interrupted {
         id: AgentId,
     },
@@ -163,6 +205,8 @@ pub struct MultiAgentCommandResult {
     pub agents: Vec<AgentMetadata>,
     pub events: Vec<MultiAgentLifecycleEvent>,
     pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_run: Option<ChildAgentRunResult>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -282,9 +326,20 @@ impl InMemoryAgentRegistry {
     }
 
     pub fn execute(&self, command: MultiAgentCommand) -> AgentResult<MultiAgentCommandResult> {
+        self.execute_with_child_runtime(command, &FixtureChildAgentRuntime)
+    }
+
+    pub fn execute_with_child_runtime<R>(
+        &self,
+        command: MultiAgentCommand,
+        child_runtime: &R,
+    ) -> AgentResult<MultiAgentCommandResult>
+    where
+        R: ChildAgentRuntime,
+    {
         match command {
             MultiAgentCommand::Spawn { task, parent_id } => {
-                let id = AgentId(format!("agent-{}", self.lock_agents()?.len() + 1));
+                let id = self.next_agent_id()?;
                 let metadata = AgentMetadata {
                     id: id.clone(),
                     parent_id,
@@ -299,6 +354,46 @@ impl InMemoryAgentRegistry {
                     agents: vec![metadata],
                     events: self.events()?,
                     message: Some(format!("spawned {}", id.0)),
+                    child_run: None,
+                })
+            }
+            MultiAgentCommand::SpawnRun { task, parent_id } => {
+                let id = self.next_agent_id()?;
+                let metadata = AgentMetadata {
+                    id: id.clone(),
+                    parent_id: parent_id.clone(),
+                    task: task.clone(),
+                    status: AgentStatus::Running,
+                    role: Some(AgentRole::General),
+                    budget_tokens: None,
+                };
+                self.insert(metadata.clone())?;
+                let session_id = format!("{}-session", id.0);
+                self.lock_events()?
+                    .push(MultiAgentLifecycleEvent::ChildRunStarted {
+                        id: id.clone(),
+                        session_id: session_id.clone(),
+                    });
+                let run_request = ChildAgentRunRequest::new(
+                    metadata.clone(),
+                    session_id,
+                    parent_id.map(|parent| parent.0),
+                    task,
+                );
+                let child_run = child_runtime.run_child(run_request)?;
+                let status = agent_status_from_run_status(child_run.status);
+                self.set_status(&id, status)?;
+                self.lock_events()?
+                    .push(MultiAgentLifecycleEvent::Completed {
+                        id: id.clone(),
+                        status,
+                    });
+                Ok(MultiAgentCommandResult {
+                    status,
+                    agents: vec![self.agent(&id)?],
+                    events: self.events()?,
+                    message: Some(format!("spawned and ran {}", id.0)),
+                    child_run: Some(child_run),
                 })
             }
             MultiAgentCommand::Wait { id } => {
@@ -308,6 +403,7 @@ impl InMemoryAgentRegistry {
                     agents: vec![agent],
                     events: self.events()?,
                     message: Some(format!("wait completed for {}", id.0)),
+                    child_run: None,
                 })
             }
             MultiAgentCommand::SendMessage { id, message } => {
@@ -322,6 +418,7 @@ impl InMemoryAgentRegistry {
                     agents: vec![self.agent(&id)?],
                     events: self.events()?,
                     message: Some(format!("message sent to {}", id.0)),
+                    child_run: None,
                 })
             }
             MultiAgentCommand::FollowUp { id, task } => {
@@ -336,6 +433,7 @@ impl InMemoryAgentRegistry {
                     agents: vec![self.agent(&id)?],
                     events: self.events()?,
                     message: Some(format!("follow-up queued for {}", id.0)),
+                    child_run: None,
                 })
             }
             MultiAgentCommand::Interrupt { id } => {
@@ -347,6 +445,7 @@ impl InMemoryAgentRegistry {
                     agents: vec![self.agent(&id)?],
                     events: self.events()?,
                     message: Some(format!("interrupted {}", id.0)),
+                    child_run: None,
                 })
             }
             MultiAgentCommand::List => {
@@ -359,6 +458,7 @@ impl InMemoryAgentRegistry {
                     agents,
                     events: self.events()?,
                     message: None,
+                    child_run: None,
                 })
             }
         }
@@ -385,6 +485,10 @@ impl InMemoryAgentRegistry {
             })
     }
 
+    fn next_agent_id(&self) -> AgentResult<AgentId> {
+        Ok(AgentId(format!("agent-{}", self.lock_agents()?.len() + 1)))
+    }
+
     fn lock_agents(
         &self,
     ) -> AgentResult<std::sync::MutexGuard<'_, BTreeMap<AgentId, AgentMetadata>>> {
@@ -397,6 +501,13 @@ impl InMemoryAgentRegistry {
         self.events.lock().map_err(|_| AgentError::Execution {
             message: "multi-agent event lock was poisoned".to_string(),
         })
+    }
+}
+
+fn agent_status_from_run_status(status: AgentRunStatus) -> AgentStatus {
+    match status {
+        AgentRunStatus::Completed => AgentStatus::Completed,
+        AgentRunStatus::Failed => AgentStatus::Failed,
     }
 }
 
@@ -523,5 +634,33 @@ mod tests {
         .expect("session metadata should rebuild graph");
 
         assert_eq!(graph.children_of(&root.id), vec![child]);
+    }
+
+    #[test]
+    fn registry_can_spawn_and_run_child_fixture_runtime() {
+        let registry = InMemoryAgentRegistry::default();
+        let result = registry
+            .execute(MultiAgentCommand::SpawnRun {
+                task: "review runtime".to_string(),
+                parent_id: None,
+            })
+            .expect("spawn run");
+
+        assert_eq!(result.status, AgentStatus::Completed);
+        assert_eq!(result.agents[0].status, AgentStatus::Completed);
+        assert!(
+            result
+                .child_run
+                .as_ref()
+                .and_then(|run| run.final_response.as_deref())
+                .is_some_and(|response| response.contains("review runtime"))
+        );
+        assert!(
+            registry
+                .events()
+                .expect("events")
+                .iter()
+                .any(|event| { matches!(event, MultiAgentLifecycleEvent::ChildRunStarted { .. }) })
+        );
     }
 }

@@ -8,10 +8,12 @@ use std::time::UNIX_EPOCH;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
 use yunxi_agent_exec::{ExecCommand, ExecLifecycleEvent, ExecManager};
 use yunxi_agent_mcp::{
-    InMemoryMcpRuntime, McpRuntime, McpSessionManager, McpToolInvocation,
-    load_in_memory_runtime_seed, load_workspace_mcp_configs,
+    InMemoryMcpRuntime, McpRuntime, McpSessionManager, McpSessionState, McpSessionStatus,
+    McpToolInvocation, load_in_memory_runtime_seed, load_workspace_mcp_configs,
 };
-use yunxi_agent_multi_agent::{AgentId, InMemoryAgentRegistry, MultiAgentCommand};
+use yunxi_agent_multi_agent::{
+    AgentId, AgentMetadata, InMemoryAgentRegistry, MultiAgentCommand, MultiAgentCommandResult,
+};
 use yunxi_agent_patch::{PatchFileChangeKind, apply_patch_detailed};
 use yunxi_agent_sandbox::{
     ApprovalRequirement, ExecutionPolicy, NetworkPolicy, PolicyDecision, PolicyEvaluation,
@@ -479,7 +481,7 @@ fn multi_agent_tool_spec() -> ToolSpec {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["spawn", "wait", "send_message", "follow_up", "interrupt", "list"]
+                    "enum": ["spawn", "spawn_run", "wait", "send_message", "follow_up", "interrupt", "list"]
                 },
                 "arguments_json": {
                     "type": "string",
@@ -670,6 +672,8 @@ pub struct ToolResponse {
     pub exit_code: Option<i32>,
     pub changed_files: Vec<ToolFileChange>,
     pub lifecycle_events: Vec<ExecLifecycleEvent>,
+    #[serde(default)]
+    pub runtime_events: Vec<ToolRuntimeEvent>,
 }
 
 impl ToolResponse {
@@ -687,6 +691,7 @@ impl ToolResponse {
             exit_code,
             changed_files,
             lifecycle_events: Vec::new(),
+            runtime_events: Vec::new(),
         }
     }
 
@@ -704,6 +709,7 @@ impl ToolResponse {
             exit_code,
             changed_files,
             lifecycle_events: Vec::new(),
+            runtime_events: Vec::new(),
         }
     }
 
@@ -716,6 +722,7 @@ impl ToolResponse {
             exit_code: None,
             changed_files: Vec::new(),
             lifecycle_events: Vec::new(),
+            runtime_events: Vec::new(),
         }
     }
 
@@ -723,6 +730,40 @@ impl ToolResponse {
         self.lifecycle_events = events;
         self
     }
+
+    pub fn with_runtime_events(mut self, events: Vec<ToolRuntimeEvent>) -> Self {
+        self.runtime_events.extend(events);
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolRuntimeEvent {
+    SandboxDecision {
+        allowed: bool,
+        backend: String,
+        network: String,
+        escalation_required: bool,
+        denial_reason: Option<String>,
+    },
+    McpSession {
+        server: String,
+        status: String,
+        message: Option<String>,
+    },
+    MultiAgent {
+        agent_id: String,
+        parent_agent_id: Option<String>,
+        status: String,
+        message: Option<String>,
+    },
+    PatchDiagnostic {
+        kind: String,
+        message: String,
+        path: Option<String>,
+        line: Option<usize>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -823,6 +864,25 @@ impl ToolPolicy {
     }
 }
 
+fn policy_runtime_events(request: &ToolRequest) -> Vec<ToolRuntimeEvent> {
+    let evaluation = request.policy.evaluation_for(request);
+    let plan = evaluation.execution_plan();
+    vec![ToolRuntimeEvent::SandboxDecision {
+        allowed: plan.allowed,
+        backend: format!("{:?}", plan.backend),
+        network: format!("{:?}", plan.network),
+        escalation_required: plan.escalation_required,
+        denial_reason: plan.denial_reason,
+    }]
+}
+
+fn declined_by_policy(request: &ToolRequest) -> Option<ToolResponse> {
+    request.policy.denial_for(request).map(|reason| {
+        ToolResponse::declined(request.id.clone(), reason)
+            .with_runtime_events(policy_runtime_events(request))
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
@@ -864,11 +924,12 @@ pub struct ShellToolRuntime;
 #[async_trait]
 impl ToolRuntime for ShellToolRuntime {
     async fn execute(&self, request: ToolRequest) -> AgentResult<ToolResponse> {
-        if let Some(reason) = request.policy.denial_for(&request) {
-            return Ok(ToolResponse::declined(request.id, reason));
+        let runtime_events = policy_runtime_events(&request);
+        if let Some(response) = declined_by_policy(&request) {
+            return Ok(response);
         }
 
-        match request.kind {
+        let response = match request.kind {
             ToolRequestKind::Shell { command } => run_shell(request.id, request.cwd, command).await,
             ToolRequestKind::Patch { patch } => run_patch(request.id, request.cwd, patch),
             ToolRequestKind::ToolSearch { query } => {
@@ -885,7 +946,8 @@ impl ToolRuntime for ShellToolRuntime {
                 request.id,
                 "YunXi has registered this tool but the specialized runtime is not attached",
             )),
-        }
+        }?;
+        Ok(response.with_runtime_events(runtime_events))
     }
 }
 
@@ -946,11 +1008,12 @@ impl CompositeToolRuntime {
 #[async_trait]
 impl ToolRuntime for CompositeToolRuntime {
     async fn execute(&self, request: ToolRequest) -> AgentResult<ToolResponse> {
-        if let Some(reason) = request.policy.denial_for(&request) {
-            return Ok(ToolResponse::declined(request.id, reason));
+        let runtime_events = policy_runtime_events(&request);
+        if let Some(response) = declined_by_policy(&request) {
+            return Ok(response);
         }
 
-        match request.kind.clone() {
+        let response = match request.kind.clone() {
             ToolRequestKind::Mcp {
                 server,
                 tool,
@@ -980,8 +1043,9 @@ impl ToolRuntime for CompositeToolRuntime {
                 action,
                 arguments_json,
             } => run_multi_agent(request.id, &self.agents, action, arguments_json),
-            _ => self.shell.execute(request).await,
-        }
+            _ => return self.shell.execute(request).await,
+        }?;
+        Ok(response.with_runtime_events(runtime_events))
     }
 }
 
@@ -1008,10 +1072,24 @@ fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<Too
     let report = match apply_patch_detailed(&cwd, &patch) {
         Ok(report) => report,
         Err(error) => {
+            let runtime_events = error
+                .diagnostics
+                .iter()
+                .map(|diagnostic| ToolRuntimeEvent::PatchDiagnostic {
+                    kind: format!("{:?}", diagnostic.kind),
+                    message: diagnostic.message.clone(),
+                    path: diagnostic
+                        .path
+                        .as_ref()
+                        .map(|path| path.display().to_string()),
+                    line: diagnostic.line,
+                })
+                .collect::<Vec<_>>();
             let output = serde_json::to_string(&error).map_err(|error| AgentError::Execution {
                 message: format!("failed to serialize patch diagnostics: {error}"),
             })?;
-            return Ok(ToolResponse::failed(id, output, None, Vec::new()));
+            return Ok(ToolResponse::failed(id, output, None, Vec::new())
+                .with_runtime_events(runtime_events));
         }
     };
     let changed_files = report
@@ -1035,7 +1113,21 @@ fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<Too
     .map_err(|error| AgentError::Execution {
         message: format!("failed to serialize patch report: {error}"),
     })?;
-    Ok(ToolResponse::completed(id, output, Some(0), changed_files))
+    let runtime_events = report
+        .diagnostics
+        .iter()
+        .map(|diagnostic| ToolRuntimeEvent::PatchDiagnostic {
+            kind: format!("{:?}", diagnostic.kind),
+            message: diagnostic.message.clone(),
+            path: diagnostic
+                .path
+                .as_ref()
+                .map(|path| path.display().to_string()),
+            line: diagnostic.line,
+        })
+        .collect::<Vec<_>>();
+    Ok(ToolResponse::completed(id, output, Some(0), changed_files)
+        .with_runtime_events(runtime_events))
 }
 
 fn run_tool_search(id: Option<String>, cwd: PathBuf, query: String) -> AgentResult<ToolResponse> {
@@ -1125,31 +1217,58 @@ async fn run_mcp_tool(
         tool,
         arguments_json,
     };
+    let mut runtime_events = Vec::new();
     let workspace_runtime = load_workspace_mcp_runtime(&cwd)?;
     let workspace_session = McpSessionManager::from_workspace(&cwd)?;
     let result = match workspace_runtime {
         Some(workspace_runtime) => workspace_runtime.call_tool(invocation).await,
         None => match workspace_session {
             Some(workspace_session) => {
-                let _ = workspace_session.initialize(&invocation.server).await;
+                runtime_events.extend(
+                    workspace_session
+                        .snapshot()?
+                        .into_iter()
+                        .map(mcp_session_runtime_event),
+                );
+                match workspace_session.initialize(&invocation.server).await {
+                    Ok(state) => runtime_events.push(mcp_session_runtime_event(state)),
+                    Err(error) => runtime_events.push(ToolRuntimeEvent::McpSession {
+                        server: invocation.server.clone(),
+                        status: "failed".to_string(),
+                        message: Some(error.to_string()),
+                    }),
+                }
                 workspace_session.call_tool(invocation).await
             }
             None => runtime.call_tool(invocation).await,
         },
     };
     match result {
-        Ok(result) => Ok(ToolResponse::completed(
-            id,
-            result.content,
-            Some(0),
-            Vec::new(),
-        )),
-        Err(error) => Ok(ToolResponse::failed(
-            id,
-            error.to_string(),
-            None,
-            Vec::new(),
-        )),
+        Ok(result) => Ok(
+            ToolResponse::completed(id, result.content, Some(0), Vec::new())
+                .with_runtime_events(runtime_events),
+        ),
+        Err(error) => Ok(
+            ToolResponse::failed(id, error.to_string(), None, Vec::new())
+                .with_runtime_events(runtime_events),
+        ),
+    }
+}
+
+fn mcp_session_runtime_event(state: McpSessionState) -> ToolRuntimeEvent {
+    ToolRuntimeEvent::McpSession {
+        server: state.server,
+        status: mcp_session_status_name(state.status).to_string(),
+        message: state.last_error,
+    }
+}
+
+fn mcp_session_status_name(status: McpSessionStatus) -> &'static str {
+    match status {
+        McpSessionStatus::Configured => "configured",
+        McpSessionStatus::Initialized => "initialized",
+        McpSessionStatus::Failed => "failed",
+        McpSessionStatus::Shutdown => "shutdown",
     }
 }
 
@@ -1207,10 +1326,12 @@ fn run_multi_agent(
     let command = parse_multi_agent_command(&action, arguments_json.as_deref())?;
     match registry.execute(command) {
         Ok(result) => {
+            let runtime_events = multi_agent_runtime_events(&result);
             let output = serde_json::to_string(&result).map_err(|error| AgentError::Execution {
                 message: format!("failed to serialize multi-agent result: {error}"),
             })?;
-            Ok(ToolResponse::completed(id, output, Some(0), Vec::new()))
+            Ok(ToolResponse::completed(id, output, Some(0), Vec::new())
+                .with_runtime_events(runtime_events))
         }
         Err(error) => Ok(ToolResponse::failed(
             id,
@@ -1228,6 +1349,10 @@ fn parse_multi_agent_command(
     let arguments = parse_arguments_object(arguments_json)?;
     match action {
         "spawn" => Ok(MultiAgentCommand::Spawn {
+            task: required_string(&arguments, "task")?,
+            parent_id: optional_string(&arguments, "parent_id").map(AgentId),
+        }),
+        "spawn_run" | "spawnRun" | "run" => Ok(MultiAgentCommand::SpawnRun {
             task: required_string(&arguments, "task")?,
             parent_id: optional_string(&arguments, "parent_id").map(AgentId),
         }),
@@ -1249,6 +1374,32 @@ fn parse_multi_agent_command(
         _ => Err(AgentError::Execution {
             message: format!("unsupported multi-agent action: {action}"),
         }),
+    }
+}
+
+fn multi_agent_runtime_events(result: &MultiAgentCommandResult) -> Vec<ToolRuntimeEvent> {
+    let mut events = result
+        .agents
+        .iter()
+        .map(agent_runtime_event)
+        .collect::<Vec<_>>();
+    if let Some(child_run) = &result.child_run {
+        events.push(ToolRuntimeEvent::MultiAgent {
+            agent_id: child_run.agent_id.0.clone(),
+            parent_agent_id: None,
+            status: format!("{:?}", child_run.status).to_ascii_lowercase(),
+            message: child_run.final_response.clone(),
+        });
+    }
+    events
+}
+
+fn agent_runtime_event(agent: &AgentMetadata) -> ToolRuntimeEvent {
+    ToolRuntimeEvent::MultiAgent {
+        agent_id: agent.id.0.clone(),
+        parent_agent_id: agent.parent_id.as_ref().map(|parent| parent.0.clone()),
+        status: format!("{:?}", agent.status).to_ascii_lowercase(),
+        message: Some(agent.task.clone()),
     }
 }
 

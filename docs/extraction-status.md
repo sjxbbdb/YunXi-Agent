@@ -570,6 +570,29 @@ Stage 4J construction verification passed on 2026-07-10:
 - `cargo clean`: pass; removed 1.4GiB of build artifacts
 - Local `.yunxi` smoke session artifacts from the Stage 4J fixture were removed
 
+## Stage 4K Planned Direction
+
+The next stage is DeepSeek live provider and real-world parity validation. Stage
+4J proved the offline autonomous runtime chain; Stage 4K should connect that
+chain to a real OpenAI-compatible provider using the DeepSeek API key stored
+outside the repository at `C:\Users\admin\Desktop\api.txt`.
+
+The Stage 4K development report is recorded in
+`docs/reports/2026-07-10-yunxi-stage-4k-deepseek-live-provider-parity-development-report.md`.
+
+Stage 4K focuses on:
+
+- secret-safe DeepSeek smoke harness
+- optional `YUNXI_PROVIDER_PROFILE=deepseek` compatibility profile
+- provider error classification and redaction
+- non-stream and stream DeepSeek live smoke matrix
+- mapping live provider failures back to actionable parity buckets
+- keeping the default YunXi CLI dependency tree free of `codex`, `vendor`, and
+  `yunxi-agent-codex`
+
+Live smoke must never print or persist API keys. All smoke artifacts, `.yunxi`
+session output, and `target` build artifacts must be removed after verification.
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

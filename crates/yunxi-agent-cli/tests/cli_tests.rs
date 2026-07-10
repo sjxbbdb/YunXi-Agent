@@ -1,6 +1,8 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use serde_json::Value;
 use std::fs;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[test]
@@ -123,6 +125,68 @@ fn cli_lists_and_shows_yunxi_sessions() {
         .stdout(predicate::str::contains("\"prompt\""))
         .stdout(predicate::str::contains("remember this session"))
         .stdout(predicate::str::contains("\"events\""));
+
+    let rollout = run_json_command(&["--cwd", cwd, "--json", "sessions", "rollout", &session_id]);
+    assert_eq!(rollout["thread"]["id"].as_str(), Some(session_id.as_str()));
+    assert_eq!(rollout["prompt"].as_str(), Some("remember this session"));
+    assert!(
+        rollout["items"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty())
+    );
+}
+
+#[test]
+fn cli_manages_yunxi_session_lifecycle() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
+
+    let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    run.args(["--cwd", cwd, "remember this lifecycle"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "YunXi autonomous runtime accepted prompt: remember this lifecycle",
+        ));
+
+    let session_id = first_session_id(&temp);
+
+    let pinned = run_json_command(&["--cwd", cwd, "--json", "sessions", "pin", &session_id]);
+    assert_eq!(pinned["pinned"], true);
+
+    let archived = run_json_command(&["--cwd", cwd, "--json", "sessions", "archive", &session_id]);
+    assert_eq!(archived["archived"], true);
+
+    let forked = run_json_command(&["--cwd", cwd, "--json", "sessions", "fork", &session_id]);
+    assert_ne!(forked["id"].as_str(), Some(session_id.as_str()));
+    assert_eq!(forked["parent_id"].as_str(), Some(session_id.as_str()));
+    assert_eq!(forked["prompt"].as_str(), Some("remember this lifecycle"));
+
+    let mut resume = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    resume
+        .args([
+            "--cwd",
+            cwd,
+            "sessions",
+            "resume",
+            &session_id,
+            "continue",
+            "the",
+            "work",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "YunXi autonomous runtime accepted prompt",
+        ));
+
+    let sessions = session_values(&temp);
+    assert!(sessions.iter().any(|session| {
+        session["parent_id"].as_str() == Some(session_id.as_str())
+            && session["prompt"]
+                .as_str()
+                .is_some_and(|prompt| prompt.contains("continue the work"))
+    }));
 }
 
 #[test]
@@ -137,4 +201,48 @@ fn cli_prints_codex_core_parity_map() {
         .stdout(predicate::str::contains(
             "vendor/codex-rs/core/src/codex_thread.rs",
         ));
+}
+
+fn first_session_id(temp: &TempDir) -> String {
+    session_json_files(temp)
+        .first()
+        .and_then(|path| path.file_stem())
+        .and_then(|value| value.to_str())
+        .expect("session id")
+        .to_string()
+}
+
+fn session_values(temp: &TempDir) -> Vec<Value> {
+    session_json_files(temp)
+        .into_iter()
+        .map(|path| {
+            let content = fs::read_to_string(&path).expect("session file should be readable");
+            serde_json::from_str(&content).expect("session file should contain JSON")
+        })
+        .collect()
+}
+
+fn session_json_files(temp: &TempDir) -> Vec<PathBuf> {
+    let session_dir = temp.path().join(".yunxi").join("sessions");
+    let mut files = fs::read_dir(&session_dir)
+        .expect("session dir should exist")
+        .map(|entry| entry.expect("session entry").path())
+        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    files.sort();
+    files
+}
+
+fn run_json_command(args: &[&str]) -> Value {
+    let output = Command::cargo_bin("yunxi-agent-cli")
+        .expect("binary should build")
+        .args(args)
+        .output()
+        .expect("command should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("stdout should contain JSON")
 }

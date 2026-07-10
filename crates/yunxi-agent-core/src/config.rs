@@ -9,6 +9,10 @@ pub struct AgentConfig {
     pub codex_home: Option<PathBuf>,
     pub approval_mode: ApprovalMode,
     pub sandbox_mode: SandboxMode,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub session_title: Option<String>,
 }
 
 impl AgentConfig {
@@ -20,6 +24,8 @@ impl AgentConfig {
             codex_home: None,
             approval_mode: ApprovalMode::OnRequest,
             sandbox_mode: SandboxMode::WorkspaceWrite,
+            parent_session_id: None,
+            session_title: None,
         }
     }
 
@@ -45,6 +51,16 @@ impl AgentConfig {
 
     pub fn with_sandbox_mode(mut self, sandbox_mode: SandboxMode) -> Self {
         self.sandbox_mode = sandbox_mode;
+        self
+    }
+
+    pub fn with_parent_session_id(mut self, parent_session_id: impl Into<String>) -> Self {
+        self.parent_session_id = Some(parent_session_id.into());
+        self
+    }
+
+    pub fn with_session_title(mut self, session_title: impl Into<String>) -> Self {
+        self.session_title = Some(session_title.into());
         self
     }
 }

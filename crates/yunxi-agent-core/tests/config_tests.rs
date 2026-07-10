@@ -11,6 +11,8 @@ fn default_config_uses_workspace_write_and_on_request() {
     assert_eq!(config.model, None);
     assert_eq!(config.provider, None);
     assert_eq!(config.codex_home, None);
+    assert_eq!(config.parent_session_id, None);
+    assert_eq!(config.session_title, None);
 }
 
 #[test]
@@ -20,11 +22,15 @@ fn builder_methods_set_optional_values() {
         .with_provider("openai")
         .with_codex_home(PathBuf::from("D:/codex-home"))
         .with_approval_mode(ApprovalMode::Never)
-        .with_sandbox_mode(SandboxMode::ReadOnly);
+        .with_sandbox_mode(SandboxMode::ReadOnly)
+        .with_parent_session_id("parent-1")
+        .with_session_title("Resume parent-1");
 
     assert_eq!(config.model.as_deref(), Some("gpt-5"));
     assert_eq!(config.provider.as_deref(), Some("openai"));
     assert_eq!(config.codex_home, Some(PathBuf::from("D:/codex-home")));
     assert_eq!(config.approval_mode, ApprovalMode::Never);
     assert_eq!(config.sandbox_mode, SandboxMode::ReadOnly);
+    assert_eq!(config.parent_session_id.as_deref(), Some("parent-1"));
+    assert_eq!(config.session_title.as_deref(), Some("Resume parent-1"));
 }

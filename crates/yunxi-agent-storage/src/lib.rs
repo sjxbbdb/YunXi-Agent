@@ -36,7 +36,17 @@ pub struct SessionRecord {
     pub status: AgentRunStatus,
     pub model: Option<String>,
     pub provider: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<SessionId>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub pinned: bool,
     pub created_at_millis: u128,
+    #[serde(default = "now_millis")]
+    pub updated_at_millis: u128,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -106,7 +116,7 @@ pub struct RolloutRecord {
 
 impl From<SessionRecord> for RolloutRecord {
     fn from(record: SessionRecord) -> Self {
-        let thread = ThreadMetadata::new(record.id.clone(), record.cwd.clone());
+        let thread = record.thread_metadata();
         Self {
             thread,
             prompt: record.prompt,
@@ -132,6 +142,7 @@ impl SessionRecord {
         final_response: Option<String>,
         events: Vec<AgentEvent>,
     ) -> Self {
+        let now = now_millis();
         Self {
             id: SessionId::generate(),
             cwd: cwd.into(),
@@ -141,7 +152,12 @@ impl SessionRecord {
             status: AgentRunStatus::Completed,
             model: None,
             provider: None,
-            created_at_millis: now_millis(),
+            parent_id: None,
+            title: None,
+            archived: false,
+            pinned: false,
+            created_at_millis: now,
+            updated_at_millis: now,
         }
     }
 
@@ -159,6 +175,64 @@ impl SessionRecord {
         self.provider = provider;
         self
     }
+
+    pub fn with_parent_id(mut self, parent_id: SessionId) -> Self {
+        self.parent_id = Some(parent_id);
+        self.updated_at_millis = now_millis();
+        self
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self.updated_at_millis = now_millis();
+        self
+    }
+
+    pub fn with_archived(mut self, archived: bool) -> Self {
+        self.archived = archived;
+        self.updated_at_millis = now_millis();
+        self
+    }
+
+    pub fn with_pinned(mut self, pinned: bool) -> Self {
+        self.pinned = pinned;
+        self.updated_at_millis = now_millis();
+        self
+    }
+
+    pub fn touch(mut self) -> Self {
+        self.updated_at_millis = now_millis();
+        self
+    }
+
+    pub fn forked_from(mut self, parent_id: SessionId) -> Self {
+        let now = now_millis();
+        let title = self
+            .title
+            .clone()
+            .unwrap_or_else(|| preview_title(&self.prompt));
+        self.id = SessionId::generate();
+        self.parent_id = Some(parent_id);
+        self.title = Some(format!("Fork of {title}"));
+        self.archived = false;
+        self.pinned = false;
+        self.created_at_millis = now;
+        self.updated_at_millis = now;
+        self
+    }
+
+    pub fn thread_metadata(&self) -> ThreadMetadata {
+        ThreadMetadata {
+            id: self.id.clone(),
+            parent_id: self.parent_id.clone(),
+            cwd: self.cwd.clone(),
+            title: self.title.clone(),
+            archived: self.archived,
+            pinned: self.pinned,
+            created_at_millis: self.created_at_millis,
+            updated_at_millis: self.updated_at_millis,
+        }
+    }
 }
 
 #[async_trait]
@@ -166,6 +240,37 @@ pub trait SessionStore: Send + Sync {
     async fn save(&self, record: SessionRecord) -> AgentResult<SessionId>;
     async fn load(&self, id: &SessionId) -> AgentResult<Option<SessionRecord>>;
     async fn list(&self) -> AgentResult<Vec<SessionRecord>>;
+
+    async fn update(&self, record: SessionRecord) -> AgentResult<()> {
+        self.save(record).await.map(|_| ())
+    }
+
+    async fn archive(&self, id: &SessionId, archived: bool) -> AgentResult<Option<SessionRecord>> {
+        let Some(record) = self.load(id).await? else {
+            return Ok(None);
+        };
+        let record = record.with_archived(archived);
+        self.update(record.clone()).await?;
+        Ok(Some(record))
+    }
+
+    async fn pin(&self, id: &SessionId, pinned: bool) -> AgentResult<Option<SessionRecord>> {
+        let Some(record) = self.load(id).await? else {
+            return Ok(None);
+        };
+        let record = record.with_pinned(pinned);
+        self.update(record.clone()).await?;
+        Ok(Some(record))
+    }
+
+    async fn fork(&self, id: &SessionId) -> AgentResult<Option<SessionRecord>> {
+        let Some(record) = self.load(id).await? else {
+            return Ok(None);
+        };
+        let forked = record.forked_from(id.clone());
+        self.save(forked.clone()).await?;
+        Ok(Some(forked))
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -200,6 +305,16 @@ impl SessionStore for InMemorySessionStore {
 
     async fn list(&self) -> AgentResult<Vec<SessionRecord>> {
         Ok(self.lock_records()?.clone())
+    }
+
+    async fn update(&self, record: SessionRecord) -> AgentResult<()> {
+        let mut records = self.lock_records()?;
+        if let Some(existing) = records.iter_mut().find(|existing| existing.id == record.id) {
+            *existing = record;
+        } else {
+            records.push(record);
+        }
+        Ok(())
     }
 }
 
@@ -298,6 +413,24 @@ impl SessionStore for FileSessionStore {
         records.sort_by(|left, right| left.id.0.cmp(&right.id.0));
         Ok(records)
     }
+}
+
+fn preview_title(prompt: &str) -> String {
+    const MAX: usize = 48;
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return "untitled session".to_string();
+    }
+    if trimmed.chars().count() <= MAX {
+        return trimmed.to_string();
+    }
+
+    let mut value = trimmed
+        .chars()
+        .take(MAX.saturating_sub(3))
+        .collect::<String>();
+    value.push_str("...");
+    value
 }
 
 fn now_millis() -> u128 {

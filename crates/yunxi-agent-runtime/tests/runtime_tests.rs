@@ -112,6 +112,32 @@ async fn yunxi_runtime_injects_agents_md_before_user_prompt() {
 }
 
 #[tokio::test]
+async fn yunxi_runtime_records_parent_session_metadata() {
+    let store = InMemorySessionStore::default();
+    let backend =
+        YunXiRuntimeBackend::with_parts(StaticProvider::default(), NoopToolRuntime, store.clone());
+    let agent = Agent::new(
+        AgentConfig::new(PathBuf::from("."))
+            .with_parent_session_id("parent-session")
+            .with_session_title("Resume parent-session")
+            .with_approval_mode(ApprovalMode::Never),
+    );
+
+    agent
+        .run_with_backend(&backend, AgentInput::text("continue work"))
+        .await
+        .expect("yunxi runtime should complete");
+
+    let sessions = store.list().await.expect("session list");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(
+        sessions[0].parent_id.as_ref().map(|id| id.0.as_str()),
+        Some("parent-session")
+    );
+    assert_eq!(sessions[0].title.as_deref(), Some("Resume parent-session"));
+}
+
+#[tokio::test]
 async fn yunxi_runtime_executes_provider_requested_patch_tool() {
     let temp = TempDir::new().expect("temp dir");
     let store = InMemorySessionStore::default();

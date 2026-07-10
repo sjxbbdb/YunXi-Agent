@@ -9,7 +9,9 @@ use yunxi_agent_core::{
 use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderToolCall, StaticProvider,
 };
-use yunxi_agent_storage::{FileSessionStore, InMemorySessionStore, SessionRecord, SessionStore};
+use yunxi_agent_storage::{
+    FileSessionStore, InMemorySessionStore, SessionId, SessionRecord, SessionStore,
+};
 use yunxi_agent_tools::{
     ShellToolRuntime, ToolFileChangeKind, ToolPolicy, ToolRequest, ToolRequestKind, ToolRuntime,
     ToolStatus,
@@ -221,19 +223,22 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         let session_cwd = turn.config.cwd.clone();
         let session_model = turn.config.model.clone();
         let session_provider = turn.config.provider.clone();
-        self.storage
-            .save(
-                SessionRecord::new(
-                    session_cwd,
-                    prompt,
-                    Some(final_response.clone()),
-                    events.clone(),
-                )
-                .with_status(AgentRunStatus::Completed)
-                .with_model(session_model)
-                .with_provider(session_provider),
-            )
-            .await?;
+        let mut session = SessionRecord::new(
+            session_cwd,
+            prompt,
+            Some(final_response.clone()),
+            events.clone(),
+        )
+        .with_status(AgentRunStatus::Completed)
+        .with_model(session_model)
+        .with_provider(session_provider);
+        if let Some(parent_session_id) = turn.config.parent_session_id.clone() {
+            session = session.with_parent_id(SessionId::new(parent_session_id));
+        }
+        if let Some(session_title) = turn.config.session_title.clone() {
+            session = session.with_title(session_title);
+        }
+        self.storage.save(session).await?;
 
         Ok(AgentRunResult {
             status: AgentRunStatus::Completed,

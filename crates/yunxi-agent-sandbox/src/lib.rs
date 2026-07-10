@@ -335,6 +335,43 @@ pub struct SandboxRunnerDecision {
     pub cwd: PathBuf,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum EscalationResponse {
+    Approved {
+        sandbox: Option<SandboxRequirement>,
+        network: Option<NetworkPolicy>,
+        justification: Option<String>,
+    },
+    Declined {
+        reason: String,
+    },
+    NotAvailable {
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EscalationOutcome {
+    pub request: EscalationRequest,
+    pub response: EscalationResponse,
+}
+
+impl EscalationOutcome {
+    pub fn non_interactive_decline(request: EscalationRequest) -> Self {
+        Self {
+            request,
+            response: EscalationResponse::NotAvailable {
+                reason: "escalation requires an interactive host in this runtime".to_string(),
+            },
+        }
+    }
+
+    pub fn approved(&self) -> bool {
+        matches!(self.response, EscalationResponse::Approved { .. })
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SandboxRunner;
 
@@ -351,6 +388,16 @@ impl SandboxRunner {
             command: command.map(ToString::to_string),
             cwd: cwd.to_path_buf(),
         }
+    }
+
+    pub fn non_interactive_escalation_outcome(
+        &self,
+        evaluation: &PolicyEvaluation,
+    ) -> Option<EscalationOutcome> {
+        evaluation
+            .escalation_request
+            .clone()
+            .map(EscalationOutcome::non_interactive_decline)
     }
 }
 

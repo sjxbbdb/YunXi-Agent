@@ -87,6 +87,29 @@ pub enum AgentEvent {
         approved: bool,
         reason: Option<String>,
     },
+    McpSession {
+        server: String,
+        status: String,
+        message: Option<String>,
+    },
+    MultiAgentEvent {
+        agent_id: String,
+        parent_agent_id: Option<String>,
+        status: String,
+        message: Option<String>,
+    },
+    ContextStatus {
+        active_context_tokens: i64,
+        token_limit_reached: bool,
+        compacted: bool,
+        dropped_messages: usize,
+    },
+    StorageState {
+        session_id: Option<String>,
+        parent_session_id: Option<String>,
+        rollout_items: usize,
+        rollout_truncated: bool,
+    },
     TodoUpdated {
         id: Option<String>,
         items: Vec<TodoStatus>,

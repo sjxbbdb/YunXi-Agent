@@ -201,6 +201,10 @@ pub enum ResponseItemDelta {
         call_id: Option<String>,
         delta: String,
     },
+    ToolCallName {
+        call_id: Option<String>,
+        name: String,
+    },
     ToolCallStatus {
         call_id: Option<String>,
         status: ToolCallStatus,
@@ -430,6 +434,43 @@ pub enum RuntimeEvent {
         approved: bool,
         reason: Option<String>,
     },
+    McpSession {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        server: String,
+        status: String,
+        message: Option<String>,
+    },
+    MultiAgent {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        agent_id: String,
+        parent_agent_id: Option<String>,
+        status: String,
+        message: Option<String>,
+    },
+    ContextStatus {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        active_context_tokens: i64,
+        token_limit_reached: bool,
+        compacted: bool,
+        dropped_messages: usize,
+    },
+    StorageState {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        session_id: Option<String>,
+        parent_session_id: Option<String>,
+        rollout_items: usize,
+        rollout_truncated: bool,
+    },
+    FileChanged {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        path: String,
+        kind: String,
+    },
     TurnCompleted {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -594,5 +635,31 @@ mod tests {
 
         assert_eq!(parsed.protocol_version, ProtocolVersion::V1);
         assert_eq!(parsed.event, event);
+    }
+
+    #[test]
+    fn deep_parity_runtime_events_round_trip_jsonl() {
+        let context = RuntimeEvent::ContextStatus {
+            thread_id: ThreadId("thread-context".to_string()),
+            turn_id: TurnId("turn-context".to_string()),
+            active_context_tokens: 120,
+            token_limit_reached: true,
+            compacted: true,
+            dropped_messages: 3,
+        };
+        let storage = RuntimeEvent::StorageState {
+            thread_id: ThreadId("thread-storage".to_string()),
+            turn_id: TurnId("turn-storage".to_string()),
+            session_id: Some("session-1".to_string()),
+            parent_session_id: Some("session-root".to_string()),
+            rollout_items: 8,
+            rollout_truncated: false,
+        };
+
+        for event in [context, storage] {
+            let line = to_jsonl_line(&event).expect("jsonl");
+            let parsed = from_jsonl_line(&line).expect("parsed event");
+            assert_eq!(parsed, event);
+        }
     }
 }

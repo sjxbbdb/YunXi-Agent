@@ -412,6 +412,65 @@ Stage 4I focuses on the remaining deep gaps:
 The Stage 4I development report is recorded in
 `docs/reports/2026-07-10-yunxi-stage-4i-behavior-level-core-parity-closure-development-report.md`.
 
+## Stage 4I First Construction Slice
+
+Stage 4I implementation has completed the first behavior-level parity
+foundation slice. Construction followed the build-first constraint and ran the
+full verification gate only after the slice was wired.
+
+Implemented in this slice:
+
+- `yunxi-agent-provider` now owns an incremental SSE decoder,
+  `ProviderStreamChunk`, and `OpenAiStreamAccumulator` so provider stream
+  events can be consumed chunk by chunk instead of only after full-body parsing.
+- Provider stream parsing now emits `ToolCallName` deltas alongside argument
+  deltas, allowing streamed dynamic function calls to retain their tool names.
+- `yunxi-agent-runtime` uses streamed tool-call names when reconstructing
+  provider tool calls, avoiding the previous shell fallback for argument-only
+  streams.
+- `yunxi-agent-protocol` now includes deep parity runtime event shapes for MCP
+  session state, multi-agent state, context status, storage state, and file
+  changes.
+- `yunxi-agent-core`, `yunxi-agent-runtime`, and `yunxi-agent-cli` now carry
+  context/storage state events through to protocol JSONL output.
+- `yunxi-agent-mcp` now owns a workspace MCP config loader and
+  `McpSessionManager` with configured/initialized/failed/shutdown session
+  state, stdio/http JSON-RPC request dispatch, tool/resource listing, resource
+  read, and tool call boundaries.
+- `yunxi-agent-tools` now injects enabled workspace MCP servers from
+  `.yunxi/mcp.json`, `.yunxi/mcp-servers.json`, or `.mcp.json` into the dynamic
+  provider tool registry and routes MCP calls through workspace session manager
+  before falling back to injected runtime.
+- `yunxi-agent-exec` now owns `ExecHandleRegistry` for long-running command
+  status, cancellation request, output polling, and handle listing.
+- `yunxi-agent-sandbox` now owns `EscalationResponse` and `EscalationOutcome`
+  for approved/declined/not-available escalation results.
+- `yunxi-agent-multi-agent` now owns child runtime request/result facade types
+  without depending on the runtime crate, keeping the child execution boundary
+  YunXi-owned and cycle-free.
+- `yunxi-agent-context` now owns `ContextWindowPhase` and
+  `PromptDebugSnapshot`, giving prompt/context debugging a structured state
+  surface.
+- `yunxi-agent-storage` now owns `RuntimeStateSnapshot` for session, parent,
+  rollout, archive, and pin state reconstruction.
+- Fixture tests cover incremental SSE decoding, MCP config dynamic tool
+  injection, MCP config loading, and new protocol event round-trips.
+
+Stage 4I first construction verification passed on 2026-07-10:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4i fixture"`:
+  pass, including `storage_state` JSONL output
+- `cargo tree -p yunxi-agent-cli`: pass; dependency keyword scan found no
+  `codex`, `vendor`, or `yunxi-agent-codex` dependency in the default CLI tree
+- `git diff --check`: pass with Windows line-ending warnings only
+- `cargo clean`: pass; removed 1.3GiB of build artifacts
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

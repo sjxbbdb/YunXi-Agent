@@ -20,22 +20,22 @@ const CODEX_CORE_PARITY_MAP: &str =
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CliExitCode {
     Success,
-    Failure,
     InvalidInput,
     ProviderError,
     ToolError,
     Cancelled,
+    InternalError,
 }
 
 impl CliExitCode {
     fn code(self) -> i32 {
         match self {
             Self::Success => 0,
-            Self::Failure => 1,
             Self::InvalidInput => 2,
             Self::ProviderError => 10,
             Self::ToolError => 20,
             Self::Cancelled => 130,
+            Self::InternalError => 70,
         }
     }
 }
@@ -294,7 +294,7 @@ fn classify_cli_error(error: &anyhow::Error) -> CliExitCode {
     {
         CliExitCode::ToolError
     } else {
-        CliExitCode::Failure
+        CliExitCode::InternalError
     }
 }
 
@@ -559,12 +559,61 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 approved: *approved,
                 reason: reason.clone(),
             }),
-            AgentEvent::FileChanged { path, kind } => output.push(RuntimeEvent::Item {
+            AgentEvent::McpSession {
+                server,
+                status,
+                message,
+            } => output.push(RuntimeEvent::McpSession {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
-                item: ResponseItem::Reasoning {
-                    content: format!("file changed: {path} ({kind:?})"),
-                },
+                server: server.clone(),
+                status: status.clone(),
+                message: message.clone(),
+            }),
+            AgentEvent::MultiAgentEvent {
+                agent_id,
+                parent_agent_id,
+                status,
+                message,
+            } => output.push(RuntimeEvent::MultiAgent {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                agent_id: agent_id.clone(),
+                parent_agent_id: parent_agent_id.clone(),
+                status: status.clone(),
+                message: message.clone(),
+            }),
+            AgentEvent::ContextStatus {
+                active_context_tokens,
+                token_limit_reached,
+                compacted,
+                dropped_messages,
+            } => output.push(RuntimeEvent::ContextStatus {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                active_context_tokens: *active_context_tokens,
+                token_limit_reached: *token_limit_reached,
+                compacted: *compacted,
+                dropped_messages: *dropped_messages,
+            }),
+            AgentEvent::StorageState {
+                session_id,
+                parent_session_id,
+                rollout_items,
+                rollout_truncated,
+            } => output.push(RuntimeEvent::StorageState {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                session_id: session_id.clone(),
+                parent_session_id: parent_session_id.clone(),
+                rollout_items: *rollout_items,
+                rollout_truncated: *rollout_truncated,
+            }),
+            AgentEvent::FileChanged { path, kind } => output.push(RuntimeEvent::FileChanged {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                path: path.clone(),
+                kind: format!("{kind:?}"),
             }),
             AgentEvent::TodoUpdated { id, items } => output.push(RuntimeEvent::Item {
                 thread_id: thread_id.clone(),

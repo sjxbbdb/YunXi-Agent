@@ -8,7 +8,8 @@ use std::time::UNIX_EPOCH;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
 use yunxi_agent_exec::{ExecCommand, ExecLifecycleEvent, ExecManager};
 use yunxi_agent_mcp::{
-    InMemoryMcpRuntime, McpRuntime, McpToolInvocation, load_in_memory_runtime_seed,
+    InMemoryMcpRuntime, McpRuntime, McpSessionManager, McpToolInvocation,
+    load_in_memory_runtime_seed, load_workspace_mcp_configs,
 };
 use yunxi_agent_multi_agent::{AgentId, InMemoryAgentRegistry, MultiAgentCommand};
 use yunxi_agent_patch::{PatchFileChangeKind, apply_patch_detailed};
@@ -315,7 +316,57 @@ pub fn default_tool_registry() -> ToolRegistry {
 }
 
 pub fn workspace_tool_registry(cwd: impl AsRef<Path>) -> AgentResult<ToolRegistry> {
-    Ok(default_tool_registry().with_dynamic_tools(workspace_dynamic_tools(cwd)?))
+    let cwd = cwd.as_ref();
+    let mut dynamic_tools = workspace_dynamic_tools(cwd)?;
+    dynamic_tools.extend(workspace_mcp_dynamic_tools(cwd)?);
+    Ok(default_tool_registry().with_dynamic_tools(dynamic_tools))
+}
+
+fn workspace_mcp_dynamic_tools(cwd: &Path) -> AgentResult<Vec<DynamicToolMetadata>> {
+    load_workspace_mcp_configs(cwd).map(|servers| {
+        servers
+            .into_iter()
+            .filter(|server| server.enabled)
+            .map(|server| DynamicToolMetadata {
+                name: format!("mcp__{}", sanitize_dynamic_tool_name(&server.name)),
+                kind: DynamicToolKind::Mcp,
+                description: format!("Call or discover YunXi MCP server {}.", server.name),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "server": {"type": "string"},
+                        "tool": {"type": "string"},
+                        "arguments_json": {"type": "string"}
+                    },
+                    "required": ["tool"],
+                    "additionalProperties": false
+                }),
+                source: Some(format!("workspace-mcp:{}", server.name)),
+            })
+            .collect()
+    })
+}
+
+fn sanitize_dynamic_tool_name(name: &str) -> String {
+    let mut sanitized = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    while sanitized.contains("__") {
+        sanitized = sanitized.replace("__", "_");
+    }
+    let sanitized = sanitized.trim_matches('_').to_string();
+    if sanitized.is_empty() {
+        "server".to_string()
+    } else {
+        sanitized
+    }
 }
 
 fn shell_tool_spec() -> ToolSpec {
@@ -1075,9 +1126,16 @@ async fn run_mcp_tool(
         arguments_json,
     };
     let workspace_runtime = load_workspace_mcp_runtime(&cwd)?;
+    let workspace_session = McpSessionManager::from_workspace(&cwd)?;
     let result = match workspace_runtime {
         Some(workspace_runtime) => workspace_runtime.call_tool(invocation).await,
-        None => runtime.call_tool(invocation).await,
+        None => match workspace_session {
+            Some(workspace_session) => {
+                let _ = workspace_session.initialize(&invocation.server).await;
+                workspace_session.call_tool(invocation).await
+            }
+            None => runtime.call_tool(invocation).await,
+        },
     };
     match result {
         Ok(result) => Ok(ToolResponse::completed(

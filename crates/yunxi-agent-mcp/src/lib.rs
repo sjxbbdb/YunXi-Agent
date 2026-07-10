@@ -283,6 +283,387 @@ where
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpWorkspaceConfig {
+    #[serde(default)]
+    pub servers: Vec<McpServerConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpSessionStatus {
+    Configured,
+    Initialized,
+    Failed,
+    Shutdown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpSessionState {
+    pub server: String,
+    pub status: McpSessionStatus,
+    pub transport: McpTransport,
+    pub capabilities: Option<Value>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct McpSessionManager {
+    sessions: Arc<Mutex<BTreeMap<String, McpSessionState>>>,
+    events: Arc<Mutex<Vec<McpLifecycleEvent>>>,
+}
+
+impl McpSessionManager {
+    pub fn from_configs(configs: impl IntoIterator<Item = McpServerConfig>) -> AgentResult<Self> {
+        let manager = Self::default();
+        for config in configs {
+            manager.register(config)?;
+        }
+        Ok(manager)
+    }
+
+    pub fn from_workspace(cwd: impl AsRef<Path>) -> AgentResult<Option<Self>> {
+        let configs = load_workspace_mcp_configs(cwd)?;
+        if configs.is_empty() {
+            Ok(None)
+        } else {
+            Self::from_configs(configs).map(Some)
+        }
+    }
+
+    pub fn register(&self, config: McpServerConfig) -> AgentResult<()> {
+        if !config.enabled {
+            return Ok(());
+        }
+        let state = McpSessionState {
+            server: config.name.clone(),
+            status: McpSessionStatus::Configured,
+            transport: config.transport,
+            capabilities: None,
+            last_error: None,
+        };
+        self.lock_sessions()?.insert(config.name.clone(), state);
+        self.emit(McpLifecycleEvent::ServerConfigured {
+            server: config.name,
+        })?;
+        Ok(())
+    }
+
+    pub async fn initialize(&self, server: &str) -> AgentResult<McpSessionState> {
+        self.session(server)?;
+        let response = self
+            .request(
+                server,
+                McpJsonRpcRequest::initialize(format!("{server}:initialize")),
+            )
+            .await;
+        let mut sessions = self.lock_sessions()?;
+        let session = sessions
+            .get_mut(server)
+            .ok_or_else(|| AgentError::Execution {
+                message: format!("MCP server is not configured: {server}"),
+            })?;
+        match response {
+            Ok(response) if response.error.is_none() => {
+                session.status = McpSessionStatus::Initialized;
+                session.capabilities = response
+                    .result
+                    .as_ref()
+                    .and_then(|value| value.get("capabilities").cloned())
+                    .or(response.result);
+                session.last_error = None;
+            }
+            Ok(response) => {
+                session.status = McpSessionStatus::Failed;
+                session.last_error = Some(
+                    response
+                        .error
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "MCP initialize failed".to_string()),
+                );
+            }
+            Err(error) => {
+                session.status = McpSessionStatus::Failed;
+                session.last_error = Some(error.to_string());
+            }
+        }
+        Ok(session.clone())
+    }
+
+    pub async fn shutdown(&self, server: &str) -> AgentResult<McpSessionState> {
+        let mut sessions = self.lock_sessions()?;
+        let session = sessions
+            .get_mut(server)
+            .ok_or_else(|| AgentError::Execution {
+                message: format!("MCP server is not configured: {server}"),
+            })?;
+        session.status = McpSessionStatus::Shutdown;
+        Ok(session.clone())
+    }
+
+    pub fn snapshot(&self) -> AgentResult<Vec<McpSessionState>> {
+        Ok(self.lock_sessions()?.values().cloned().collect())
+    }
+
+    async fn request(
+        &self,
+        server: &str,
+        request: McpJsonRpcRequest,
+    ) -> AgentResult<McpJsonRpcResponse> {
+        let state = self.session(server)?;
+        match state.transport {
+            McpTransport::Stdio { command, args } => {
+                StdioMcpClient::new(command, args)
+                    .request_once(request)
+                    .await
+            }
+            McpTransport::Http { url } => HttpMcpClient::new(url).request_once(request).await,
+        }
+    }
+
+    fn session(&self, server: &str) -> AgentResult<McpSessionState> {
+        self.lock_sessions()?
+            .get(server)
+            .cloned()
+            .ok_or_else(|| AgentError::Execution {
+                message: format!("MCP server is not configured: {server}"),
+            })
+    }
+
+    fn emit(&self, event: McpLifecycleEvent) -> AgentResult<()> {
+        self.lock_events()?.push(event);
+        Ok(())
+    }
+
+    fn lock_sessions(
+        &self,
+    ) -> AgentResult<std::sync::MutexGuard<'_, BTreeMap<String, McpSessionState>>> {
+        self.sessions.lock().map_err(|_| AgentError::Execution {
+            message: "MCP session manager lock was poisoned".to_string(),
+        })
+    }
+
+    fn lock_events(&self) -> AgentResult<std::sync::MutexGuard<'_, Vec<McpLifecycleEvent>>> {
+        self.events.lock().map_err(|_| AgentError::Execution {
+            message: "MCP session event lock was poisoned".to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl McpRuntime for McpSessionManager {
+    async fn list_resources(&self, server: &str) -> AgentResult<Vec<String>> {
+        let response = self
+            .request(
+                server,
+                McpJsonRpcRequest {
+                    id: format!("{server}:resources"),
+                    method: "resources/list".to_string(),
+                    params: Some(json!({})),
+                },
+            )
+            .await?;
+        if let Some(error) = response.error {
+            return Err(AgentError::Execution {
+                message: format!("MCP resources/list failed on {server}: {error}"),
+            });
+        }
+        let resources = response
+            .result
+            .and_then(|value| value.get("resources").cloned())
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|value| {
+                value
+                    .get("uri")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .collect::<Vec<_>>();
+        self.emit(McpLifecycleEvent::ResourcesListed {
+            server: server.to_string(),
+            count: resources.len(),
+        })?;
+        Ok(resources)
+    }
+
+    async fn list_tools(&self, server: &str) -> AgentResult<Vec<McpToolSpec>> {
+        let response = self
+            .request(
+                server,
+                McpJsonRpcRequest::list_tools(format!("{server}:tools")),
+            )
+            .await?;
+        if let Some(error) = response.error {
+            return Err(AgentError::Execution {
+                message: format!("MCP tools/list failed on {server}: {error}"),
+            });
+        }
+        Ok(parse_mcp_tool_specs(server, response.result.as_ref()))
+    }
+
+    async fn read_resource(&self, request: McpResourceRequest) -> AgentResult<String> {
+        let uri = request.uri.clone();
+        let response = self
+            .request(
+                &request.server,
+                McpJsonRpcRequest {
+                    id: format!("{}:resource", request.server),
+                    method: "resources/read".to_string(),
+                    params: Some(json!({ "uri": uri })),
+                },
+            )
+            .await?;
+        if let Some(error) = response.error {
+            return Err(AgentError::Execution {
+                message: format!("MCP resources/read failed on {}: {error}", request.server),
+            });
+        }
+        self.emit(McpLifecycleEvent::ResourceRead {
+            server: request.server,
+            uri: request.uri,
+        })?;
+        Ok(render_mcp_result_content(response.result.as_ref()))
+    }
+
+    async fn call_tool(&self, invocation: McpToolInvocation) -> AgentResult<McpToolResult> {
+        self.emit(McpLifecycleEvent::ToolStarted {
+            call_id: None,
+            server: invocation.server.clone(),
+            tool: invocation.tool.clone(),
+        })?;
+        let arguments = invocation
+            .arguments_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<Value>(json).ok());
+        let response = self
+            .request(
+                &invocation.server,
+                McpJsonRpcRequest::call_tool(
+                    format!("{}:{}", invocation.server, invocation.tool),
+                    invocation.tool.clone(),
+                    arguments,
+                ),
+            )
+            .await?;
+        if let Some(error) = response.error {
+            self.emit(McpLifecycleEvent::ToolCompleted {
+                call_id: None,
+                server: invocation.server.clone(),
+                tool: invocation.tool.clone(),
+                status: McpToolCallStatus::Failed,
+            })?;
+            return Err(AgentError::Execution {
+                message: format!(
+                    "MCP tools/call failed on {}.{}: {error}",
+                    invocation.server, invocation.tool
+                ),
+            });
+        }
+        self.emit(McpLifecycleEvent::ToolCompleted {
+            call_id: None,
+            server: invocation.server,
+            tool: invocation.tool,
+            status: McpToolCallStatus::Completed,
+        })?;
+        Ok(McpToolResult {
+            content: render_mcp_result_content(response.result.as_ref()),
+        })
+    }
+
+    async fn events(&self) -> AgentResult<Vec<McpLifecycleEvent>> {
+        Ok(self.lock_events()?.clone())
+    }
+}
+
+pub fn load_workspace_mcp_configs(cwd: impl AsRef<Path>) -> AgentResult<Vec<McpServerConfig>> {
+    let cwd = cwd.as_ref();
+    let candidates = [
+        cwd.join(".yunxi").join("mcp.json"),
+        cwd.join(".yunxi").join("mcp-servers.json"),
+        cwd.join(".mcp.json"),
+    ];
+    for path in candidates {
+        if !path.is_file() {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path).map_err(|error| AgentError::Execution {
+            message: format!("failed to read MCP config {}: {error}", path.display()),
+        })?;
+        if let Ok(config) = serde_json::from_str::<McpWorkspaceConfig>(&content) {
+            return Ok(config.servers);
+        }
+        let servers = serde_json::from_str::<Vec<McpServerConfig>>(&content).map_err(|error| {
+            AgentError::Execution {
+                message: format!("failed to parse MCP config {}: {error}", path.display()),
+            }
+        })?;
+        return Ok(servers);
+    }
+    Ok(Vec::new())
+}
+
+fn parse_mcp_tool_specs(server: &str, result: Option<&Value>) -> Vec<McpToolSpec> {
+    result
+        .and_then(|value| value.get("tools"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| {
+            let name = tool.get("name").and_then(Value::as_str)?.to_string();
+            Some(McpToolSpec {
+                server: server.to_string(),
+                name,
+                title: tool
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                description: tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                input_schema: tool
+                    .get("inputSchema")
+                    .or_else(|| tool.get("input_schema"))
+                    .cloned()
+                    .unwrap_or_else(|| json!({"type": "object"})),
+                destructive_hint: tool
+                    .pointer("/annotations/destructiveHint")
+                    .and_then(Value::as_bool),
+                open_world_hint: tool
+                    .pointer("/annotations/openWorldHint")
+                    .and_then(Value::as_bool),
+                requires_approval: tool
+                    .pointer("/annotations/destructiveHint")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+fn render_mcp_result_content(result: Option<&Value>) -> String {
+    let Some(result) = result else {
+        return String::new();
+    };
+    if let Some(content) = result.get("content").and_then(Value::as_array) {
+        let rendered = content
+            .iter()
+            .filter_map(|item| {
+                item.get("text")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.get("content").and_then(Value::as_str))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !rendered.is_empty() {
+            return rendered;
+        }
+    }
+    result.to_string()
+}
+
 pub fn parse_json_rpc_response(output: &str) -> AgentResult<McpJsonRpcResponse> {
     let line = output
         .lines()
@@ -974,5 +1355,31 @@ mod tests {
                 .content,
             "pong"
         );
+    }
+
+    #[test]
+    fn loads_workspace_mcp_config_servers() {
+        let temp = TempDir::new().expect("temp dir");
+        let config_dir = temp.path().join(".yunxi");
+        std::fs::create_dir_all(&config_dir).expect("config dir");
+        std::fs::write(
+            config_dir.join("mcp.json"),
+            json!({
+                "servers": [
+                    {
+                        "name": "local",
+                        "transport": {"type": "stdio", "command": "fixture", "args": []},
+                        "enabled": true
+                    }
+                ]
+            })
+            .to_string(),
+        )
+        .expect("mcp config");
+
+        let servers = load_workspace_mcp_configs(temp.path()).expect("configs");
+
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "local");
     }
 }

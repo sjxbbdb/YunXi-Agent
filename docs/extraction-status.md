@@ -104,6 +104,16 @@ Verified on 2026-07-10:
   `vendor/codex-rs` to `vendor/codex-rs.disabled`
 - `git diff --check`: pass with Windows line-ending warnings only
 
+## Stage 4D Planned Direction
+
+The next stage is Codex core agent parity extraction. Its goal is to replicate
+the Codex CLI headless Agent core capabilities in YunXi-owned crates while
+keeping the default YunXi runtime independent from `vendor/codex-rs` and
+`codex-*` crates.
+
+The Stage 4D development report is recorded in
+`docs/reports/2026-07-10-yunxi-stage-4d-codex-core-agent-parity-report.md`.
+
 ## Stage 4B Full Autonomy Slice
 
 Implemented in this slice:

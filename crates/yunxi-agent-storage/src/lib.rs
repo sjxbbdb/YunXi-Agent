@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -112,6 +113,70 @@ pub struct RolloutRecord {
     pub items: Vec<RolloutItem>,
     pub final_response: Option<String>,
     pub status: AgentRunStatus,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryItemKind {
+    User,
+    Assistant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct HistoryItem {
+    pub session_id: SessionId,
+    pub kind: HistoryItemKind,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionHistory {
+    pub sessions: Vec<SessionRecord>,
+    pub items: Vec<HistoryItem>,
+}
+
+impl SessionHistory {
+    pub fn from_sessions(sessions: Vec<SessionRecord>) -> Self {
+        let mut items = Vec::new();
+        for session in &sessions {
+            items.push(HistoryItem {
+                session_id: session.id.clone(),
+                kind: HistoryItemKind::User,
+                content: session.prompt.clone(),
+            });
+            if let Some(final_response) = &session.final_response {
+                items.push(HistoryItem {
+                    session_id: session.id.clone(),
+                    kind: HistoryItemKind::Assistant,
+                    content: final_response.clone(),
+                });
+            }
+        }
+        Self { sessions, items }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sessions.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HistoryLoadOptions {
+    pub max_sessions: usize,
+}
+
+impl HistoryLoadOptions {
+    pub fn new(max_sessions: usize) -> Self {
+        Self {
+            max_sessions: max_sessions.max(1),
+        }
+    }
+}
+
+impl Default for HistoryLoadOptions {
+    fn default() -> Self {
+        Self { max_sessions: 128 }
+    }
 }
 
 impl From<SessionRecord> for RolloutRecord {
@@ -240,6 +305,38 @@ pub trait SessionStore: Send + Sync {
     async fn save(&self, record: SessionRecord) -> AgentResult<SessionId>;
     async fn load(&self, id: &SessionId) -> AgentResult<Option<SessionRecord>>;
     async fn list(&self) -> AgentResult<Vec<SessionRecord>>;
+
+    async fn history(
+        &self,
+        id: &SessionId,
+        options: HistoryLoadOptions,
+    ) -> AgentResult<Option<SessionHistory>> {
+        let mut records = Vec::new();
+        let mut seen = HashSet::new();
+        let mut current_id = Some(id.clone());
+
+        while let Some(id) = current_id {
+            if records.len() >= options.max_sessions {
+                break;
+            }
+            if !seen.insert(id.clone()) {
+                return Err(AgentError::Execution {
+                    message: format!("cycle detected while loading session history at {}", id.0),
+                });
+            }
+            let Some(record) = self.load(&id).await? else {
+                if records.is_empty() {
+                    return Ok(None);
+                }
+                break;
+            };
+            current_id = record.parent_id.clone();
+            records.push(record);
+        }
+
+        records.reverse();
+        Ok(Some(SessionHistory::from_sessions(records)))
+    }
 
     async fn update(&self, record: SessionRecord) -> AgentResult<()> {
         self.save(record).await.map(|_| ())

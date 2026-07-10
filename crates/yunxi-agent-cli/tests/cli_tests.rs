@@ -134,6 +134,14 @@ fn cli_lists_and_shows_yunxi_sessions() {
             .as_array()
             .is_some_and(|items| !items.is_empty())
     );
+
+    let history = run_json_command(&["--cwd", cwd, "--json", "sessions", "history", &session_id]);
+    assert_eq!(history["sessions"].as_array().map(Vec::len), Some(1));
+    assert_eq!(history["items"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        history["items"][0]["content"].as_str(),
+        Some("remember this session")
+    );
 }
 
 #[test]
@@ -181,6 +189,32 @@ fn cli_manages_yunxi_session_lifecycle() {
         ));
 
     let sessions = session_values(&temp);
+    let resumed = sessions
+        .iter()
+        .find(|session| {
+            session["parent_id"].as_str() == Some(session_id.as_str())
+                && session["prompt"]
+                    .as_str()
+                    .is_some_and(|prompt| prompt.contains("continue the work"))
+        })
+        .expect("resumed child session should be persisted");
+    assert!(resumed["prompt"].as_str().is_some_and(|prompt| {
+        prompt == "continue the work" && !prompt.contains("Previous prompt")
+    }));
+
+    let resumed_id = resumed["id"].as_str().expect("resumed id");
+    let history = run_json_command(&["--cwd", cwd, "--json", "sessions", "history", resumed_id]);
+    let history_items = history["items"].as_array().expect("history items");
+    assert!(
+        history_items
+            .iter()
+            .any(|item| { item["content"].as_str() == Some("remember this lifecycle") })
+    );
+    assert!(
+        history_items
+            .iter()
+            .any(|item| { item["content"].as_str() == Some("continue the work") })
+    );
     assert!(sessions.iter().any(|session| {
         session["parent_id"].as_str() == Some(session_id.as_str())
             && session["prompt"]

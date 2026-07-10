@@ -13,6 +13,10 @@ pub struct AgentConfig {
     pub parent_session_id: Option<String>,
     #[serde(default)]
     pub session_title: Option<String>,
+    #[serde(default)]
+    pub context_window_tokens: Option<i64>,
+    #[serde(default)]
+    pub auto_compact_threshold_tokens: Option<i64>,
 }
 
 impl AgentConfig {
@@ -26,6 +30,8 @@ impl AgentConfig {
             sandbox_mode: SandboxMode::WorkspaceWrite,
             parent_session_id: None,
             session_title: None,
+            context_window_tokens: None,
+            auto_compact_threshold_tokens: None,
         }
     }
 
@@ -61,6 +67,19 @@ impl AgentConfig {
 
     pub fn with_session_title(mut self, session_title: impl Into<String>) -> Self {
         self.session_title = Some(session_title.into());
+        self
+    }
+
+    pub fn with_context_window_tokens(mut self, context_window_tokens: i64) -> Self {
+        self.context_window_tokens = Some(context_window_tokens.max(1));
+        self
+    }
+
+    pub fn with_auto_compact_threshold_tokens(
+        mut self,
+        auto_compact_threshold_tokens: i64,
+    ) -> Self {
+        self.auto_compact_threshold_tokens = Some(auto_compact_threshold_tokens.max(1));
         self
     }
 }

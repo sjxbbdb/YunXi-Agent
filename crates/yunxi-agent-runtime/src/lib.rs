@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use yunxi_agent_context::load_agents_md_hierarchy;
+use yunxi_agent_context::{
+    ContextWindowBudget, ConversationMessage, ConversationRole, RestoredHistory,
+    load_agents_md_hierarchy, restore_history_for_prompt,
+};
 use yunxi_agent_core::{
     AgentBackend, AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunResult,
     AgentRunStatus, CommandStatus, FileChangeKind,
@@ -10,7 +13,8 @@ use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderToolCall, StaticProvider,
 };
 use yunxi_agent_storage::{
-    FileSessionStore, InMemorySessionStore, SessionId, SessionRecord, SessionStore,
+    FileSessionStore, HistoryItemKind, HistoryLoadOptions, InMemorySessionStore, SessionHistory,
+    SessionId, SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
     ShellToolRuntime, ToolFileChangeKind, ToolPolicy, ToolRequest, ToolRequestKind, ToolRuntime,
@@ -159,7 +163,18 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         })
         .await?;
 
-        let mut messages = build_initial_messages(&turn.config, prompt)?;
+        let initial_messages = self.build_initial_messages(&turn.config, prompt).await?;
+        if let Some(history) = &initial_messages.restored_history {
+            sink.emit(AgentEvent::Reasoning {
+                content: format!(
+                    "Restored {} history message(s); compacted={}",
+                    history.messages.len(),
+                    history.compacted
+                ),
+            })
+            .await?;
+        }
+        let mut messages = initial_messages.messages;
         let mut final_response = None;
         let mut usage = None;
 
@@ -248,15 +263,90 @@ impl RuntimeBackend for YunXiRuntimeBackend {
     }
 }
 
-fn build_initial_messages(config: &AgentConfig, prompt: &str) -> AgentResult<Vec<ProviderMessage>> {
-    let mut messages = Vec::new();
-    let agents = load_agents_md_hierarchy(&config.cwd)?;
-    let instructions = agents.combined_instructions();
-    if !instructions.is_empty() {
-        messages.push(ProviderMessage::system(instructions));
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InitialMessages {
+    messages: Vec<ProviderMessage>,
+    restored_history: Option<RestoredHistory>,
+}
+
+impl YunXiRuntimeBackend {
+    async fn build_initial_messages(
+        &self,
+        config: &AgentConfig,
+        prompt: &str,
+    ) -> AgentResult<InitialMessages> {
+        let mut messages = Vec::new();
+        let agents = load_agents_md_hierarchy(&config.cwd)?;
+        let instructions = agents.combined_instructions();
+        if !instructions.is_empty() {
+            messages.push(ProviderMessage::system(instructions));
+        }
+
+        let restored_history = self.restore_parent_history(config).await?;
+        if let Some(restored_history) = &restored_history {
+            messages.extend(
+                restored_history
+                    .messages
+                    .iter()
+                    .cloned()
+                    .map(conversation_message_to_provider),
+            );
+        }
+
+        messages.push(ProviderMessage::user(prompt));
+        Ok(InitialMessages {
+            messages,
+            restored_history,
+        })
     }
-    messages.push(ProviderMessage::user(prompt));
-    Ok(messages)
+
+    async fn restore_parent_history(
+        &self,
+        config: &AgentConfig,
+    ) -> AgentResult<Option<RestoredHistory>> {
+        let Some(parent_session_id) = &config.parent_session_id else {
+            return Ok(None);
+        };
+        let Some(history) = self
+            .storage
+            .history(
+                &SessionId::new(parent_session_id.clone()),
+                HistoryLoadOptions::default(),
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        let messages = session_history_to_conversation_messages(&history);
+        let budget = ContextWindowBudget::new(
+            config.context_window_tokens,
+            config.auto_compact_threshold_tokens,
+        );
+        Ok(Some(restore_history_for_prompt(messages, budget)))
+    }
+}
+
+fn session_history_to_conversation_messages(history: &SessionHistory) -> Vec<ConversationMessage> {
+    history
+        .items
+        .iter()
+        .map(|item| {
+            let role = match item.kind {
+                HistoryItemKind::User => ConversationRole::User,
+                HistoryItemKind::Assistant => ConversationRole::Assistant,
+            };
+            ConversationMessage::new(role, item.content.clone())
+        })
+        .collect()
+}
+
+fn conversation_message_to_provider(message: ConversationMessage) -> ProviderMessage {
+    match message.role {
+        ConversationRole::System => ProviderMessage::system(message.content),
+        ConversationRole::User => ProviderMessage::user(message.content),
+        ConversationRole::Assistant => ProviderMessage::assistant(message.content),
+        ConversationRole::Tool => ProviderMessage::tool(message.content),
+    }
 }
 
 fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolRequest {

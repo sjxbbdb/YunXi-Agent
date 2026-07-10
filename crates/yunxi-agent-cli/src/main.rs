@@ -5,7 +5,8 @@ use yunxi_agent_core::{
     Agent, AgentConfig, AgentInput, AgentRunResult, ApprovalMode, BackendKind, SandboxMode,
 };
 use yunxi_agent_storage::{
-    FileSessionStore, RolloutRecord, SessionId, SessionRecord, SessionStore,
+    FileSessionStore, HistoryLoadOptions, RolloutRecord, SessionHistory, SessionId, SessionRecord,
+    SessionStore,
 };
 
 const CODEX_CORE_PARITY_MAP: &str =
@@ -37,6 +38,12 @@ struct Cli {
 
     #[arg(long = "codex-home", value_name = "PATH")]
     codex_home: Option<PathBuf>,
+
+    #[arg(long, value_name = "TOKENS")]
+    context_window_tokens: Option<i64>,
+
+    #[arg(long, value_name = "TOKENS")]
+    auto_compact_threshold_tokens: Option<i64>,
 
     #[arg(
         long,
@@ -87,6 +94,10 @@ enum SessionCommand {
         id: String,
     },
     Rollout {
+        #[arg(value_name = "SESSION_ID")]
+        id: String,
+    },
+    History {
         #[arg(value_name = "SESSION_ID")]
         id: String,
     },
@@ -200,6 +211,12 @@ async fn main() -> Result<()> {
     }
     if let Some(codex_home) = cli.codex_home.clone() {
         config = config.with_codex_home(codex_home);
+    }
+    if let Some(context_window_tokens) = cli.context_window_tokens {
+        config = config.with_context_window_tokens(context_window_tokens);
+    }
+    if let Some(auto_compact_threshold_tokens) = cli.auto_compact_threshold_tokens {
+        config = config.with_auto_compact_threshold_tokens(auto_compact_threshold_tokens);
     }
 
     if let Some(command) = cli.command {
@@ -343,6 +360,14 @@ async fn run_session_command(
             let rollout = RolloutRecord::from(session);
             print_rollout(&rollout, json)?;
         }
+        SessionCommand::History { id } => {
+            let history = store
+                .history(&SessionId::new(id.clone()), HistoryLoadOptions::default())
+                .await
+                .context("failed to load session history")?
+                .ok_or_else(|| anyhow::anyhow!("session not found: {id}"))?;
+            print_history(&history, json)?;
+        }
         SessionCommand::Resume { id, prompt } => {
             let session_id = SessionId::new(id.clone());
             let session = store
@@ -363,7 +388,7 @@ async fn run_session_command(
                     resume_config = resume_config.with_provider(provider);
                 }
             }
-            let resume_prompt = build_resume_prompt(&session, &prompt.join(" "));
+            let resume_prompt = build_resume_prompt(&prompt.join(" "));
             let result = run_agent_backend(backend, resume_config, resume_prompt).await?;
             print_run_result(result, json, jsonl)?;
         }
@@ -411,21 +436,13 @@ async fn run_session_command(
     Ok(())
 }
 
-fn build_resume_prompt(session: &SessionRecord, prompt: &str) -> String {
-    let new_prompt = if prompt.trim().is_empty() {
+fn build_resume_prompt(prompt: &str) -> String {
+    if prompt.trim().is_empty() {
         "Continue from the previous session."
     } else {
         prompt.trim()
-    };
-    let mut parts = vec![
-        format!("Resume YunXi session {}.", session.id.0),
-        format!("Previous prompt:\n{}", session.prompt),
-    ];
-    if let Some(final_response) = &session.final_response {
-        parts.push(format!("Previous final response:\n{final_response}"));
     }
-    parts.push(format!("New user prompt:\n{new_prompt}"));
-    parts.join("\n\n")
+    .to_string()
 }
 
 fn print_record(record: &SessionRecord, json: bool) -> Result<()> {
@@ -450,6 +467,24 @@ fn print_rollout(rollout: &RolloutRecord, json: bool) -> Result<()> {
         println!("prompt: {}", rollout.prompt);
         if let Some(final_response) = &rollout.final_response {
             println!("final_response: {final_response}");
+        }
+    }
+    Ok(())
+}
+
+fn print_history(history: &SessionHistory, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(history)?);
+    } else {
+        println!("sessions: {}", history.sessions.len());
+        println!("items: {}", history.items.len());
+        for item in &history.items {
+            println!(
+                "{}\t{:?}\t{}",
+                item.session_id.0,
+                item.kind,
+                preview(&item.content)
+            );
         }
     }
     Ok(())

@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentEvent, AgentRunStatus};
 use yunxi_agent_storage::{
-    FileSessionStore, InMemorySessionStore, RolloutRecord, SessionId, SessionRecord, SessionStore,
-    ThreadMetadata,
+    FileSessionStore, HistoryItemKind, HistoryLoadOptions, InMemorySessionStore, RolloutRecord,
+    SessionId, SessionRecord, SessionStore, ThreadMetadata,
 };
 
 #[tokio::test]
@@ -163,4 +163,74 @@ async fn file_session_store_updates_thread_lifecycle_fields() {
             .iter()
             .any(|session| session.parent_id == Some(id.clone()))
     );
+}
+
+#[tokio::test]
+async fn session_store_reconstructs_parent_history_from_root_to_child() {
+    let store = InMemorySessionStore::default();
+
+    let mut root = SessionRecord::new(".", "root prompt", Some("root answer".to_string()), vec![]);
+    root.id = SessionId::new("root");
+    store.save(root.clone()).await.expect("save root");
+
+    let mut child = SessionRecord::new(
+        ".",
+        "child prompt",
+        Some("child answer".to_string()),
+        vec![],
+    )
+    .with_parent_id(root.id.clone());
+    child.id = SessionId::new("child");
+    store.save(child.clone()).await.expect("save child");
+
+    let history = store
+        .history(&child.id, HistoryLoadOptions::default())
+        .await
+        .expect("history load should succeed")
+        .expect("history should exist");
+
+    assert_eq!(
+        history
+            .sessions
+            .iter()
+            .map(|session| session.id.0.as_str())
+            .collect::<Vec<_>>(),
+        vec!["root", "child"]
+    );
+    assert_eq!(
+        history
+            .items
+            .iter()
+            .map(|item| (item.kind, item.content.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (HistoryItemKind::User, "root prompt"),
+            (HistoryItemKind::Assistant, "root answer"),
+            (HistoryItemKind::User, "child prompt"),
+            (HistoryItemKind::Assistant, "child answer"),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn session_store_rejects_cyclic_parent_history() {
+    let store = InMemorySessionStore::default();
+
+    let mut left = SessionRecord::new(".", "left", Some("left answer".to_string()), vec![]);
+    left.id = SessionId::new("left");
+    left.parent_id = Some(SessionId::new("right"));
+
+    let mut right = SessionRecord::new(".", "right", Some("right answer".to_string()), vec![]);
+    right.id = SessionId::new("right");
+    right.parent_id = Some(SessionId::new("left"));
+
+    store.save(left).await.expect("save left");
+    store.save(right).await.expect("save right");
+
+    let error = store
+        .history(&SessionId::new("left"), HistoryLoadOptions::default())
+        .await
+        .expect_err("cycle should be rejected");
+
+    assert!(format!("{error}").contains("cycle detected"));
 }

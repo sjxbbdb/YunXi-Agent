@@ -8,11 +8,11 @@ use yunxi_agent_core::{
     CommandStatus, FileChangeKind, PatchStatus,
 };
 use yunxi_agent_provider::{
-    AgentProvider, ProviderRequest, ProviderResponse, ProviderRole, ProviderToolCall,
-    StaticProvider,
+    AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
+    ProviderToolCall, StaticProvider,
 };
 use yunxi_agent_runtime::YunXiRuntimeBackend;
-use yunxi_agent_storage::{InMemorySessionStore, SessionStore};
+use yunxi_agent_storage::{InMemorySessionStore, SessionId, SessionRecord, SessionStore};
 use yunxi_agent_tools::{NoopToolRuntime, ShellToolRuntime};
 
 #[tokio::test]
@@ -72,7 +72,7 @@ impl AgentProvider for PatchCallingProvider {
 
 #[derive(Clone, Default)]
 struct CapturingProvider {
-    messages: Arc<Mutex<Vec<ProviderRole>>>,
+    messages: Arc<Mutex<Vec<ProviderMessage>>>,
 }
 
 #[async_trait::async_trait]
@@ -81,11 +81,8 @@ impl AgentProvider for CapturingProvider {
         &self,
         request: ProviderRequest,
     ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
-        *self.messages.lock().expect("messages lock") = request
-            .messages
-            .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>();
+        *self.messages.lock().expect("messages lock") =
+            request.messages.iter().cloned().collect::<Vec<_>>();
         Ok(ProviderResponse::assistant("captured"))
     }
 }
@@ -106,7 +103,12 @@ async fn yunxi_runtime_injects_agents_md_before_user_prompt() {
         .expect("runtime should complete");
 
     assert_eq!(
-        *messages.lock().expect("messages lock"),
+        messages
+            .lock()
+            .expect("messages lock")
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
         vec![ProviderRole::System, ProviderRole::User]
     );
 }
@@ -135,6 +137,111 @@ async fn yunxi_runtime_records_parent_session_metadata() {
         Some("parent-session")
     );
     assert_eq!(sessions[0].title.as_deref(), Some("Resume parent-session"));
+}
+
+#[tokio::test]
+async fn yunxi_runtime_restores_parent_session_history_before_current_prompt() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let mut root = SessionRecord::new(
+        temp.path(),
+        "root prompt",
+        Some("root answer".to_string()),
+        vec![],
+    );
+    root.id = SessionId::new("root");
+    store.save(root.clone()).await.expect("save root");
+
+    let mut child = SessionRecord::new(
+        temp.path(),
+        "child prompt",
+        Some("child answer".to_string()),
+        vec![],
+    )
+    .with_parent_id(root.id.clone());
+    child.id = SessionId::new("child");
+    store.save(child.clone()).await.expect("save child");
+
+    let provider = CapturingProvider::default();
+    let messages = Arc::clone(&provider.messages);
+    let backend = YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, store);
+    let agent = Agent::new(
+        AgentConfig::new(temp.path())
+            .with_parent_session_id("child")
+            .with_approval_mode(ApprovalMode::Never),
+    );
+
+    agent
+        .run_with_backend(&backend, AgentInput::text("continue work"))
+        .await
+        .expect("runtime should complete");
+
+    let captured = messages.lock().expect("messages lock").clone();
+    assert_eq!(
+        captured
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
+        vec![
+            ProviderRole::User,
+            ProviderRole::Assistant,
+            ProviderRole::User,
+            ProviderRole::Assistant,
+            ProviderRole::User,
+        ]
+    );
+    assert_eq!(captured[0].content, "root prompt");
+    assert_eq!(captured[1].content, "root answer");
+    assert_eq!(captured[2].content, "child prompt");
+    assert_eq!(captured[3].content, "child answer");
+    assert_eq!(captured[4].content, "continue work");
+}
+
+#[tokio::test]
+async fn yunxi_runtime_compacts_restored_history_when_budget_is_exceeded() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let mut root = SessionRecord::new(
+        temp.path(),
+        "root prompt with enough words to exceed a tiny compact budget",
+        Some("root answer with enough words to exceed a tiny compact budget".to_string()),
+        vec![],
+    );
+    root.id = SessionId::new("root");
+    store.save(root.clone()).await.expect("save root");
+
+    let provider = CapturingProvider::default();
+    let messages = Arc::clone(&provider.messages);
+    let backend = YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, store);
+    let agent = Agent::new(
+        AgentConfig::new(temp.path())
+            .with_parent_session_id("root")
+            .with_context_window_tokens(16)
+            .with_auto_compact_threshold_tokens(12)
+            .with_approval_mode(ApprovalMode::Never),
+    );
+
+    agent
+        .run_with_backend(&backend, AgentInput::text("continue compacted work"))
+        .await
+        .expect("runtime should complete");
+
+    let captured = messages.lock().expect("messages lock").clone();
+    assert_eq!(
+        captured.first().map(|message| message.role),
+        Some(ProviderRole::System)
+    );
+    assert!(
+        captured
+            .first()
+            .expect("first message")
+            .content
+            .contains("Compacted")
+    );
+    assert_eq!(
+        captured.last().map(|message| message.content.as_str()),
+        Some("continue compacted work")
+    );
 }
 
 #[tokio::test]

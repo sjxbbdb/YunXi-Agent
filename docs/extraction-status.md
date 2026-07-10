@@ -160,6 +160,31 @@ Stage 4D foundation verification passed on 2026-07-10:
   `vendor/codex-rs` to `vendor/codex-rs.disabled`
 - `git diff --check`: pass with Windows line-ending warnings only
 
+## Stage 4D History Restore And Compact Entry Slice
+
+Implemented in this slice:
+
+- `yunxi-agent-storage` can reconstruct parent-linked session history from root
+  to child through `SessionStore::history`.
+- `yunxi-agent-storage` exposes `SessionHistory` and `HistoryItem` records for
+  resume, history inspection, and future rollout reconstruction.
+- `yunxi-agent-context` owns the first YunXi context-window budget model,
+  approximate token counting, compact pressure status, and deterministic
+  history compaction summary.
+- `AgentConfig` carries optional context-window and auto-compact token limits.
+- `yunxi-agent-runtime` restores parent session history into provider messages
+  before the current user prompt.
+- `yunxi-agent-runtime` compacts restored history into a system summary when the
+  configured context budget is exceeded.
+- `yunxi-agent-cli` exposes `sessions history <id>`.
+- `yunxi-agent-cli sessions resume` now passes only the new user prompt and
+  relies on runtime-owned history restore instead of embedding previous prompt
+  text in the prompt string.
+
+This slice is still a parity step, not the end state. It adds the autonomous
+history restore and compact entry points required before migrating deeper Codex
+context-manager behavior.
+
 ## Stage 4B Full Autonomy Slice
 
 Implemented in this slice:

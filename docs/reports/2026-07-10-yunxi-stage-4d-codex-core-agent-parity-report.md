@@ -768,3 +768,71 @@ crate，再按这个索引进行机械迁移。这样可以避免继续在单点
 ```text
 完整复刻 Codex CLI 端核心 Agent 能力，同时保持 YunXi 默认运行不依赖上游源码。
 ```
+
+## Implementation Update: Foundation Slice
+
+Stage 4D implementation has started with a build-first foundation slice.
+
+Implemented in this slice:
+
+- Added `docs/extraction-index/codex-core-agent-parity-map.md` as the source
+  migration index for Codex core agent parity.
+- Added `yunxi-agent-protocol` for YunXi-owned runtime protocol, response item,
+  tool-call, and JSONL event types.
+- Added `yunxi-agent-context` for AGENTS.md hierarchy loading and context bundle
+  assembly.
+- Added `yunxi-agent-sandbox` for approval, sandbox, cwd, and network policy
+  decisions.
+- Added `yunxi-agent-exec` for command canonicalization and output aggregation
+  primitives.
+- Added `yunxi-agent-patch` for constrained JSON patch and Codex-style
+  `*** Begin Patch` application.
+- Added `yunxi-agent-mcp` for MCP configuration, resource, and tool invocation
+  interfaces.
+- Added `yunxi-agent-skills` for skill discovery, metadata, and invocation
+  interfaces.
+- Added `yunxi-agent-multi-agent` for multi-agent command and registry
+  interfaces.
+- Routed `yunxi-agent-tools` patch execution through `yunxi-agent-patch`.
+- Routed shell output aggregation through `yunxi-agent-exec`.
+- Routed runtime startup through `yunxi-agent-context` so AGENTS.md
+  instructions enter provider messages before the user prompt.
+- Added provider-to-protocol tool-call conversion.
+- Added storage rollout/thread metadata types.
+- Added `yunxi-agent-cli parity map` to expose the parity index from the CLI.
+
+This slice does not claim full Codex CLI core parity. It creates the autonomous
+YunXi-owned surfaces required to continue mechanical migration without adding
+`codex-*` or `vendor/codex-rs` dependencies to the default graph.
+
+Verification status:
+
+- Unified post-build verification passed on 2026-07-10.
+- Disabled-vendor independence verification passed on 2026-07-10 after
+  temporarily renaming `vendor/codex-rs` to `vendor/codex-rs.disabled`.
+- Default `cargo tree -p yunxi-agent-cli` contains no `yunxi-agent-codex`,
+  `vendor/codex-rs`, or `codex-*` crates.
+
+Commands verified:
+
+- `cargo fmt -- --check`
+- `cargo test`
+- `cargo check -p yunxi-agent-core`
+- `cargo check -p yunxi-agent-protocol`
+- `cargo check -p yunxi-agent-provider`
+- `cargo check -p yunxi-agent-context`
+- `cargo check -p yunxi-agent-sandbox`
+- `cargo check -p yunxi-agent-exec`
+- `cargo check -p yunxi-agent-patch`
+- `cargo check -p yunxi-agent-tools`
+- `cargo check -p yunxi-agent-mcp`
+- `cargo check -p yunxi-agent-skills`
+- `cargo check -p yunxi-agent-multi-agent`
+- `cargo check -p yunxi-agent-storage`
+- `cargo check -p yunxi-agent-runtime`
+- `cargo check -p yunxi-agent-cli`
+- `cargo build -p yunxi-agent-cli`
+- `cargo run -p yunxi-agent-cli -- --cwd <temp> --backend yunxi --jsonl "explain this project"`
+- `cargo run -p yunxi-agent-cli -- parity map`
+- `cargo tree -p yunxi-agent-cli`
+- `git diff --check`

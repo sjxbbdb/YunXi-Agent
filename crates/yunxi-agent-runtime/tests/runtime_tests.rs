@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 use yunxi_agent_core::{
@@ -67,6 +68,47 @@ impl AgentProvider for PatchCallingProvider {
             patch: r#"{"op":"write","path":"runtime-patch.txt","content":"patched"}"#.to_string(),
         }))
     }
+}
+
+#[derive(Clone, Default)]
+struct CapturingProvider {
+    messages: Arc<Mutex<Vec<ProviderRole>>>,
+}
+
+#[async_trait::async_trait]
+impl AgentProvider for CapturingProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        *self.messages.lock().expect("messages lock") = request
+            .messages
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>();
+        Ok(ProviderResponse::assistant("captured"))
+    }
+}
+
+#[tokio::test]
+async fn yunxi_runtime_injects_agents_md_before_user_prompt() {
+    let temp = TempDir::new().expect("temp dir");
+    std::fs::write(temp.path().join("AGENTS.md"), "Use YunXi instructions").expect("agents file");
+    let provider = CapturingProvider::default();
+    let messages = Arc::clone(&provider.messages);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let agent = Agent::new(AgentConfig::new(temp.path()));
+
+    agent
+        .run_with_backend(&backend, AgentInput::text("hello"))
+        .await
+        .expect("runtime should complete");
+
+    assert_eq!(
+        *messages.lock().expect("messages lock"),
+        vec![ProviderRole::System, ProviderRole::User]
+    );
 }
 
 #[tokio::test]

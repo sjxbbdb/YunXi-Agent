@@ -1,15 +1,13 @@
 [package]
-name = "yunxi-agent-provider"
+name = "yunxi-agent-patch"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
 
 [dependencies]
-async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
-yunxi-agent-protocol = { path = "../yunxi-agent-protocol" }
 
 [dev-dependencies]
-tokio.workspace = true
+tempfile.workspace = true

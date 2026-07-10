@@ -124,3 +124,17 @@ fn cli_lists_and_shows_yunxi_sessions() {
         .stdout(predicate::str::contains("remember this session"))
         .stdout(predicate::str::contains("\"events\""));
 }
+
+#[test]
+fn cli_prints_codex_core_parity_map() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.args(["parity", "map"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Codex Core Agent Parity Map"))
+        .stdout(predicate::str::contains("yunxi-agent-protocol"))
+        .stdout(predicate::str::contains(
+            "vendor/codex-rs/core/src/codex_thread.rs",
+        ));
+}

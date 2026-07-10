@@ -10,6 +10,8 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
+yunxi-agent-exec = { path = "../yunxi-agent-exec" }
+yunxi-agent-patch = { path = "../yunxi-agent-patch" }
 
 [dev-dependencies]
 tempfile.workspace = true

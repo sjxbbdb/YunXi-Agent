@@ -158,6 +158,29 @@ async fn patch_tool_writes_updates_and_deletes_files() {
 }
 
 #[tokio::test]
+async fn patch_tool_accepts_codex_style_apply_patch() {
+    let runtime = ShellToolRuntime;
+    let temp = TempDir::new().expect("temp dir");
+
+    let response = runtime
+        .execute(ToolRequest::patch(
+            temp.path(),
+            "*** Begin Patch\n*** Add File: codex-style.txt\n+hello\n*** End Patch",
+        ))
+        .await
+        .expect("codex style patch");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    assert_eq!(
+        std::fs::read_to_string(temp.path().join("codex-style.txt")).expect("file"),
+        "hello\n"
+    );
+    assert!(response.changed_files.iter().any(|change| {
+        change.path == PathBuf::from("codex-style.txt") && change.kind == ToolFileChangeKind::Added
+    }));
+}
+
+#[tokio::test]
 async fn patch_tool_rejects_parent_directory_escape() {
     let runtime = ShellToolRuntime;
     let temp = TempDir::new().expect("temp dir");

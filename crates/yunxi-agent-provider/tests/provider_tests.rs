@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use yunxi_agent_core::{AgentConfig, AgentInput};
+use yunxi_agent_protocol::ToolCall;
 use yunxi_agent_provider::{
     AgentProvider, OpenAiCompatibleProvider, ProviderAuth, ProviderConfig, ProviderRequest,
     ProviderRole, ProviderToolCall, StaticProvider, build_openai_request_json,
@@ -147,6 +148,22 @@ fn openai_response_json_parses_patch_tool_call() {
             id: Some("call_patch".to_string()),
             patch: r#"{"op":"write","path":"notes.txt","content":"hello"}"#.to_string()
         }]
+    );
+}
+
+#[test]
+fn provider_tool_call_converts_to_yunxi_protocol_tool_call() {
+    let call = ProviderToolCall::Shell {
+        id: Some("call-1".to_string()),
+        command: "echo yunxi".to_string(),
+    };
+
+    assert_eq!(
+        ToolCall::from(call),
+        ToolCall::Shell {
+            id: Some("call-1".to_string()),
+            command: "echo yunxi".to_string()
+        }
     );
 }
 

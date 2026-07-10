@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use tokio::process::Command;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
+use yunxi_agent_exec::{OutputLimits, combine_output, truncate_output};
+use yunxi_agent_patch::{PatchFileChangeKind, apply_patch};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ToolRequest {
@@ -276,14 +277,7 @@ async fn run_shell(id: Option<String>, cwd: PathBuf, command: String) -> AgentRe
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let mut combined = String::new();
-    combined.push_str(&stdout);
-    if !stderr.is_empty() {
-        if !combined.is_empty() && !combined.ends_with('\n') {
-            combined.push('\n');
-        }
-        combined.push_str(&stderr);
-    }
+    let combined = truncate_output(&combine_output(&stdout, &stderr), OutputLimits::default());
 
     let changed_files = before.diff(&WorkspaceSnapshot::capture(&cwd)?);
     let exit_code = output.status.code();
@@ -307,60 +301,19 @@ fn platform_shell(command: &str) -> Command {
 }
 
 fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<ToolResponse> {
-    let operations = parse_patch_operations(&patch)?;
-    let mut changed_files = Vec::new();
-
-    for operation in operations {
-        match operation {
-            PatchOperation::Write { path, content } => {
-                let relative = validate_relative_path(&path)?;
-                let full_path = cwd.join(&relative);
-                let kind = if full_path.is_file() {
-                    ToolFileChangeKind::Updated
-                } else {
-                    ToolFileChangeKind::Added
-                };
-                if let Some(parent) = full_path.parent() {
-                    std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
-                        message: format!("failed to create patch parent directory: {error}"),
-                    })?;
-                }
-                std::fs::write(&full_path, content).map_err(|error| AgentError::Execution {
-                    message: format!(
-                        "failed to write patch file {}: {error}",
-                        full_path.display()
-                    ),
-                })?;
-                changed_files.push(ToolFileChange {
-                    path: relative,
-                    kind,
-                });
-            }
-            PatchOperation::Delete { path } => {
-                let relative = validate_relative_path(&path)?;
-                let full_path = cwd.join(&relative);
-                if full_path.is_file() {
-                    std::fs::remove_file(&full_path).map_err(|error| AgentError::Execution {
-                        message: format!(
-                            "failed to delete patch file {}: {error}",
-                            full_path.display()
-                        ),
-                    })?;
-                    changed_files.push(ToolFileChange {
-                        path: relative,
-                        kind: ToolFileChangeKind::Deleted,
-                    });
-                } else {
-                    return Ok(ToolResponse::failed(
-                        id,
-                        format!("patch delete target does not exist: {}", relative.display()),
-                        None,
-                        Vec::new(),
-                    ));
-                }
-            }
-        }
-    }
+    let report = apply_patch(&cwd, &patch)?;
+    let changed_files = report
+        .changed_files
+        .into_iter()
+        .map(|change| ToolFileChange {
+            path: change.path,
+            kind: match change.kind {
+                PatchFileChangeKind::Added => ToolFileChangeKind::Added,
+                PatchFileChangeKind::Updated => ToolFileChangeKind::Updated,
+                PatchFileChangeKind::Deleted => ToolFileChangeKind::Deleted,
+            },
+        })
+        .collect();
 
     Ok(ToolResponse::completed(
         id,
@@ -368,50 +321,6 @@ fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<Too
         Some(0),
         changed_files,
     ))
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-pub enum PatchOperation {
-    Write { path: PathBuf, content: String },
-    Delete { path: PathBuf },
-}
-
-fn parse_patch_operations(patch: &str) -> AgentResult<Vec<PatchOperation>> {
-    let value = serde_json::from_str::<Value>(patch).map_err(|error| AgentError::Execution {
-        message: format!("failed to parse constrained patch JSON: {error}"),
-    })?;
-    if value.is_array() {
-        return serde_json::from_value::<Vec<PatchOperation>>(value).map_err(|error| {
-            AgentError::Execution {
-                message: format!("failed to parse constrained patch operations: {error}"),
-            }
-        });
-    }
-    serde_json::from_value::<PatchOperation>(value)
-        .map(|operation| vec![operation])
-        .map_err(|error| AgentError::Execution {
-            message: format!("failed to parse constrained patch operation: {error}"),
-        })
-}
-
-fn validate_relative_path(path: &Path) -> AgentResult<PathBuf> {
-    if path.is_absolute() {
-        return Err(AgentError::Execution {
-            message: format!("patch path must be relative: {}", path.display()),
-        });
-    }
-    if path.components().any(|component| {
-        matches!(
-            component,
-            Component::ParentDir | Component::RootDir | Component::Prefix(_)
-        )
-    }) {
-        return Err(AgentError::Execution {
-            message: format!("patch path cannot escape workspace: {}", path.display()),
-        });
-    }
-    Ok(path.to_path_buf())
 }
 
 #[cfg(not(windows))]

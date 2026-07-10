@@ -39,6 +39,92 @@ pub struct SessionRecord {
     pub created_at_millis: u128,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ThreadMetadata {
+    pub id: SessionId,
+    pub parent_id: Option<SessionId>,
+    pub cwd: PathBuf,
+    pub title: Option<String>,
+    pub archived: bool,
+    pub pinned: bool,
+    pub created_at_millis: u128,
+    pub updated_at_millis: u128,
+}
+
+impl ThreadMetadata {
+    pub fn new(id: SessionId, cwd: impl Into<PathBuf>) -> Self {
+        let now = now_millis();
+        Self {
+            id,
+            parent_id: None,
+            cwd: cwd.into(),
+            title: None,
+            archived: false,
+            pinned: false,
+            created_at_millis: now,
+            updated_at_millis: now,
+        }
+    }
+
+    pub fn with_parent(mut self, parent_id: SessionId) -> Self {
+        self.parent_id = Some(parent_id);
+        self
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn archived(mut self, archived: bool) -> Self {
+        self.archived = archived;
+        self.updated_at_millis = now_millis();
+        self
+    }
+
+    pub fn pinned(mut self, pinned: bool) -> Self {
+        self.pinned = pinned;
+        self.updated_at_millis = now_millis();
+        self
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RolloutItem {
+    pub turn_id: String,
+    pub event: AgentEvent,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RolloutRecord {
+    pub thread: ThreadMetadata,
+    pub prompt: String,
+    pub items: Vec<RolloutItem>,
+    pub final_response: Option<String>,
+    pub status: AgentRunStatus,
+}
+
+impl From<SessionRecord> for RolloutRecord {
+    fn from(record: SessionRecord) -> Self {
+        let thread = ThreadMetadata::new(record.id.clone(), record.cwd.clone());
+        Self {
+            thread,
+            prompt: record.prompt,
+            items: record
+                .events
+                .into_iter()
+                .enumerate()
+                .map(|(index, event)| RolloutItem {
+                    turn_id: format!("turn-{index}"),
+                    event,
+                })
+                .collect(),
+            final_response: record.final_response,
+            status: record.status,
+        }
+    }
+}
+
 impl SessionRecord {
     pub fn new(
         cwd: impl Into<PathBuf>,

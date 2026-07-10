@@ -1,0 +1,9 @@
+[package]
+name = "yunxi-agent-multi-agent"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+yunxi-agent-core = { path = "../yunxi-agent-core" }

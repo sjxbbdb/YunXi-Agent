@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use yunxi_agent_context::load_agents_md_hierarchy;
 use yunxi_agent_core::{
     AgentBackend, AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunResult,
     AgentRunStatus, CommandStatus, FileChangeKind,
@@ -156,7 +157,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         })
         .await?;
 
-        let mut messages = vec![ProviderMessage::user(prompt)];
+        let mut messages = build_initial_messages(&turn.config, prompt)?;
         let mut final_response = None;
         let mut usage = None;
 
@@ -240,6 +241,17 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             events,
         })
     }
+}
+
+fn build_initial_messages(config: &AgentConfig, prompt: &str) -> AgentResult<Vec<ProviderMessage>> {
+    let mut messages = Vec::new();
+    let agents = load_agents_md_hierarchy(&config.cwd)?;
+    let instructions = agents.combined_instructions();
+    if !instructions.is_empty() {
+        messages.push(ProviderMessage::system(instructions));
+    }
+    messages.push(ProviderMessage::user(prompt));
+    Ok(messages)
 }
 
 fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolRequest {

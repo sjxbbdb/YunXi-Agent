@@ -114,6 +114,52 @@ keeping the default YunXi runtime independent from `vendor/codex-rs` and
 The Stage 4D development report is recorded in
 `docs/reports/2026-07-10-yunxi-stage-4d-codex-core-agent-parity-report.md`.
 
+Stage 4D implementation has started with the first parity foundation slice:
+
+- `docs/extraction-index/codex-core-agent-parity-map.md` maps Codex core agent
+  source files to YunXi-owned target crates.
+- `yunxi-agent-protocol` owns provider/runtime input, response, tool-call, and
+  JSONL event protocol types.
+- `yunxi-agent-context` owns the first AGENTS.md hierarchy loader and context
+  bundle facade.
+- `yunxi-agent-sandbox` owns approval, sandbox, cwd, and network policy
+  decision types.
+- `yunxi-agent-exec` owns command canonicalization and output aggregation
+  primitives.
+- `yunxi-agent-patch` owns constrained JSON patch and Codex-style
+  `*** Begin Patch` application.
+- `yunxi-agent-mcp` owns MCP configuration, resource, and tool invocation
+  interfaces.
+- `yunxi-agent-skills` owns skill discovery, metadata, and invocation
+  interfaces.
+- `yunxi-agent-multi-agent` owns multi-agent command and registry interfaces.
+- `yunxi-agent-runtime` now loads workspace `AGENTS.md` instructions into the
+  provider message stream.
+- `yunxi-agent-cli parity map` prints the Codex core parity migration map.
+
+Stage 4D full parity is not complete yet. The current slice establishes the
+autonomous YunXi-owned module boundaries needed to continue mechanical
+migration from `vendor/codex-rs` without adding upstream crate dependencies.
+
+Stage 4D foundation verification passed on 2026-07-10:
+
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- package checks for `yunxi-agent-core`, `yunxi-agent-protocol`,
+  `yunxi-agent-provider`, `yunxi-agent-context`, `yunxi-agent-sandbox`,
+  `yunxi-agent-exec`, `yunxi-agent-patch`, `yunxi-agent-tools`,
+  `yunxi-agent-mcp`, `yunxi-agent-skills`, `yunxi-agent-multi-agent`,
+  `yunxi-agent-storage`, `yunxi-agent-runtime`, and `yunxi-agent-cli`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- --cwd <temp> --backend yunxi --jsonl "explain this project"`:
+  pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo tree -p yunxi-agent-cli`: pass; default tree contains no
+  `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
+- disabled-vendor verification: pass after temporarily renaming
+  `vendor/codex-rs` to `vendor/codex-rs.disabled`
+- `git diff --check`: pass with Windows line-ending warnings only
+
 ## Stage 4B Full Autonomy Slice
 
 Implemented in this slice:

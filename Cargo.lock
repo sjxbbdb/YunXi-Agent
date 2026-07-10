@@ -586,6 +586,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "yunxi-agent-context"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "yunxi-agent-core",
+]
+
+[[package]]
 name = "yunxi-agent-core"
 version = "0.1.0"
 dependencies = [
@@ -598,6 +607,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "yunxi-agent-exec"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "yunxi-agent-core",
+ "yunxi-agent-sandbox",
+]
+
+[[package]]
+name = "yunxi-agent-mcp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "yunxi-agent-core",
+]
+
+[[package]]
+name = "yunxi-agent-multi-agent"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "yunxi-agent-core",
+]
+
+[[package]]
+name = "yunxi-agent-patch"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "yunxi-agent-core",
+]
+
+[[package]]
+name = "yunxi-agent-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "yunxi-agent-provider"
 version = "0.1.0"
 dependencies = [
@@ -606,6 +660,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "yunxi-agent-core",
+ "yunxi-agent-protocol",
 ]
 
 [[package]]
@@ -615,10 +670,28 @@ dependencies = [
  "async-trait",
  "tempfile",
  "tokio",
+ "yunxi-agent-context",
  "yunxi-agent-core",
  "yunxi-agent-provider",
  "yunxi-agent-storage",
  "yunxi-agent-tools",
+]
+
+[[package]]
+name = "yunxi-agent-sandbox"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "yunxi-agent-core",
+]
+
+[[package]]
+name = "yunxi-agent-skills"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "yunxi-agent-core",
 ]
 
 [[package]]
@@ -643,6 +716,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "yunxi-agent-core",
+ "yunxi-agent-exec",
+ "yunxi-agent-patch",
 ]
 
 [[package]]

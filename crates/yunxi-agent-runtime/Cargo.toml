@@ -7,6 +7,7 @@ version.workspace = true
 [dependencies]
 async-trait.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
+yunxi-agent-context = { path = "../yunxi-agent-context" }
 yunxi-agent-provider = { path = "../yunxi-agent-provider" }
 yunxi-agent-storage = { path = "../yunxi-agent-storage" }
 yunxi-agent-tools = { path = "../yunxi-agent-tools" }

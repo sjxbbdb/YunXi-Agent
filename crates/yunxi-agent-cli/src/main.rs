@@ -6,6 +6,9 @@ use yunxi_agent_core::{
 };
 use yunxi_agent_storage::{FileSessionStore, SessionId, SessionRecord, SessionStore};
 
+const CODEX_CORE_PARITY_MAP: &str =
+    include_str!("../../../docs/extraction-index/codex-core-agent-parity-map.md");
+
 #[derive(Debug, Parser)]
 #[command(name = "yunxi-agent-cli")]
 #[command(about = "Run the extracted YunXi Agent core")]
@@ -68,6 +71,10 @@ enum CliCommand {
         #[command(subcommand)]
         command: SessionCommand,
     },
+    Parity {
+        #[command(subcommand)]
+        command: ParityCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -77,6 +84,11 @@ enum SessionCommand {
         #[arg(value_name = "SESSION_ID")]
         id: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ParityCommand {
+    Map,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -204,7 +216,27 @@ async fn main() -> Result<()> {
 async fn run_command(command: CliCommand, cwd: PathBuf, json: bool) -> Result<()> {
     match command {
         CliCommand::Sessions { command } => run_session_command(command, cwd, json).await,
+        CliCommand::Parity { command } => run_parity_command(command, json).await,
     }
+}
+
+async fn run_parity_command(command: ParityCommand, json: bool) -> Result<()> {
+    match command {
+        ParityCommand::Map => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "path": "docs/extraction-index/codex-core-agent-parity-map.md",
+                        "content": CODEX_CORE_PARITY_MAP,
+                    })
+                );
+            } else {
+                print!("{CODEX_CORE_PARITY_MAP}");
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn run_session_command(command: SessionCommand, cwd: PathBuf, json: bool) -> Result<()> {

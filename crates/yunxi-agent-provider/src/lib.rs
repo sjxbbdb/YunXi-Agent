@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use yunxi_agent_core::{AgentConfig, AgentError, AgentInput, AgentResult, TokenUsage};
+use yunxi_agent_protocol::{ProtocolRole, ToolCall};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProviderRequest {
@@ -125,6 +126,46 @@ pub enum ProviderToolCall {
         name: String,
         arguments_json: Option<String>,
     },
+}
+
+impl From<ProviderToolCall> for ToolCall {
+    fn from(value: ProviderToolCall) -> Self {
+        match value {
+            ProviderToolCall::Shell { id, command } => Self::Shell { id, command },
+            ProviderToolCall::Patch { id, patch } => Self::Patch { id, patch },
+            ProviderToolCall::Mcp {
+                id,
+                server,
+                tool,
+                arguments_json,
+            } => Self::Mcp {
+                id,
+                server,
+                tool,
+                arguments_json,
+            },
+            ProviderToolCall::Skill {
+                id,
+                name,
+                arguments_json,
+            } => Self::Skill {
+                id,
+                name,
+                arguments_json,
+            },
+        }
+    }
+}
+
+impl From<ProviderRole> for ProtocolRole {
+    fn from(value: ProviderRole) -> Self {
+        match value {
+            ProviderRole::System => Self::System,
+            ProviderRole::User => Self::User,
+            ProviderRole::Assistant => Self::Assistant,
+            ProviderRole::Tool => Self::Tool,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

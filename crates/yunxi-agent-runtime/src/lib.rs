@@ -1,7 +1,9 @@
 use async_trait::async_trait;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use yunxi_agent_context::{
     ContextWindowBudget, ConversationMessage, ConversationRole, RestoredHistory,
@@ -12,6 +14,10 @@ use yunxi_agent_core::{
     AgentRunStatus, CommandStatus, FileChangeKind, TokenUsage,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
+use yunxi_agent_multi_agent::{
+    AgentId, AgentStatus, ChildAgentRunRequest, ChildAgentRunResult, ChildAgentRuntime,
+    InMemoryAgentRegistry, MultiAgentCommand, MultiAgentCommandResult,
+};
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
     TurnId,
@@ -20,16 +26,19 @@ use yunxi_agent_provider::{
     AgentProvider, ProviderBootstrap, ProviderMessage, ProviderRequest, ProviderResponse,
     ProviderRole, ProviderStream, ProviderToolCall, StaticProvider,
 };
+use yunxi_agent_sandbox::ApprovalRequirement;
 use yunxi_agent_storage::{
     FileSessionStore, HistoryItemKind, HistoryLoadOptions, InMemorySessionStore, SessionHistory,
     SessionId, SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
-    CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolRequest,
-    ToolRequestKind, ToolRouter, ToolRuntime, ToolRuntimeEvent, ToolStatus,
+    ApprovalDecision, CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy,
+    ToolRequest, ToolRequestKind, ToolResponse, ToolRouter, ToolRuntime, ToolRuntimeEvent,
+    ToolStatus,
 };
 
 const DEFAULT_MAX_TURNS: usize = 8;
+const DEFAULT_MAX_CHILD_DEPTH: usize = 2;
 const MAX_MENTIONED_FILE_CONTEXT_FILES: usize = 8;
 const MAX_MENTIONED_FILE_CONTEXT_BYTES: u64 = 32 * 1024;
 
@@ -102,7 +111,9 @@ pub struct YunXiRuntimeBackend {
     tools: Arc<dyn ToolRuntime>,
     tool_router: ToolRouter,
     storage: Arc<dyn SessionStore>,
+    agents: InMemoryAgentRegistry,
     max_turns: usize,
+    max_child_depth: usize,
 }
 
 impl YunXiRuntimeBackend {
@@ -139,7 +150,25 @@ impl YunXiRuntimeBackend {
             tools: Arc::new(tools),
             tool_router: ToolRouter::default(),
             storage: Arc::new(storage),
+            agents: InMemoryAgentRegistry::default(),
             max_turns: DEFAULT_MAX_TURNS,
+            max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
+        }
+    }
+
+    pub fn with_shared_parts(
+        provider: Arc<dyn AgentProvider>,
+        tools: Arc<dyn ToolRuntime>,
+        storage: Arc<dyn SessionStore>,
+    ) -> Self {
+        Self {
+            provider,
+            tools,
+            tool_router: ToolRouter::default(),
+            storage,
+            agents: InMemoryAgentRegistry::default(),
+            max_turns: DEFAULT_MAX_TURNS,
+            max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
         }
     }
 
@@ -148,8 +177,18 @@ impl YunXiRuntimeBackend {
         self
     }
 
+    pub fn with_max_child_depth(mut self, max_child_depth: usize) -> Self {
+        self.max_child_depth = max_child_depth;
+        self
+    }
+
     pub fn with_tool_router(mut self, tool_router: ToolRouter) -> Self {
         self.tool_router = tool_router;
+        self
+    }
+
+    pub fn with_agent_registry(mut self, registry: InMemoryAgentRegistry) -> Self {
+        self.agents = registry;
         self
     }
 
@@ -164,6 +203,49 @@ impl YunXiRuntimeBackend {
     pub fn storage(&self) -> Arc<dyn SessionStore> {
         Arc::clone(&self.storage)
     }
+
+    async fn execute_tool_request(
+        &self,
+        config: &AgentConfig,
+        request: ToolRequest,
+    ) -> AgentResult<ToolResponse> {
+        match &request.kind {
+            ToolRequestKind::MultiAgent {
+                action,
+                arguments_json,
+            } => self.execute_multi_agent_tool(config, request.id.clone(), action, arguments_json),
+            _ => self.tools.execute(request).await,
+        }
+    }
+
+    fn execute_multi_agent_tool(
+        &self,
+        config: &AgentConfig,
+        id: Option<String>,
+        action: &str,
+        arguments_json: &Option<String>,
+    ) -> AgentResult<ToolResponse> {
+        let command = parse_runtime_multi_agent_command(action, arguments_json.as_deref())?;
+        let child_runtime = YunXiChildAgentRuntime::new(
+            config.clone(),
+            Arc::clone(&self.storage),
+            self.max_turns,
+            self.max_child_depth,
+        );
+        let result = self
+            .agents
+            .execute_with_child_runtime(command, &child_runtime)?;
+        let runtime_events = runtime_multi_agent_events(&result);
+        let output = serde_json::to_string(&result).map_err(|error| AgentError::Execution {
+            message: format!("failed to serialize multi-agent result: {error}"),
+        })?;
+        let response = if matches!(result.status, AgentStatus::Failed) {
+            ToolResponse::failed(id, output, None, Vec::new())
+        } else {
+            ToolResponse::completed(id, output, Some(0), Vec::new())
+        };
+        Ok(response.with_runtime_events(runtime_events))
+    }
 }
 
 impl Default for YunXiRuntimeBackend {
@@ -176,6 +258,128 @@ impl Default for YunXiRuntimeBackend {
     }
 }
 
+#[derive(Clone)]
+struct YunXiChildAgentRuntime {
+    base_config: AgentConfig,
+    storage: Arc<dyn SessionStore>,
+    max_turns: usize,
+    remaining_depth: usize,
+}
+
+impl YunXiChildAgentRuntime {
+    fn new(
+        base_config: AgentConfig,
+        storage: Arc<dyn SessionStore>,
+        max_turns: usize,
+        remaining_depth: usize,
+    ) -> Self {
+        Self {
+            base_config,
+            storage,
+            max_turns,
+            remaining_depth,
+        }
+    }
+
+    fn failed_result(
+        &self,
+        request: ChildAgentRunRequest,
+        message: impl Into<String>,
+    ) -> ChildAgentRunResult {
+        let message = message.into();
+        ChildAgentRunResult {
+            agent_id: request.agent.id,
+            session_id: request.session_id,
+            parent_session_id: request.parent_session_id,
+            status: AgentRunStatus::Failed,
+            final_response: None,
+            events: vec![
+                AgentEvent::Error {
+                    message: message.clone(),
+                },
+                AgentEvent::Completed {
+                    status: AgentRunStatus::Failed,
+                    usage: None,
+                },
+            ],
+        }
+    }
+}
+
+impl ChildAgentRuntime for YunXiChildAgentRuntime {
+    fn run_child(&self, request: ChildAgentRunRequest) -> AgentResult<ChildAgentRunResult> {
+        if self.remaining_depth == 0 {
+            return Ok(self.failed_result(
+                request,
+                "child runtime recursion depth exceeded for multi_agent spawn_run",
+            ));
+        }
+
+        let mut child_config = self.base_config.clone();
+        child_config.parent_session_id = request.parent_session_id.clone();
+        child_config.session_id = Some(request.session_id.clone());
+        child_config.session_title = Some(format!(
+            "Child {}: {}",
+            request.agent.id.0,
+            preview_child_title(&request.prompt)
+        ));
+
+        let child_prompt = request.prompt.clone();
+        let child_session_id = request.session_id.clone();
+        let parent_session_id = request.parent_session_id.clone();
+        let child_agent_id = request.agent.id.clone();
+        let child_storage = Arc::clone(&self.storage);
+        let max_turns = self.max_turns;
+        let child_provider = Arc::new(StaticProvider::new(format!(
+            "YunXi child agent {} completed task",
+            child_agent_id.0
+        )));
+        let child_tools = Arc::new(CompositeToolRuntime::default());
+
+        let handle = thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| AgentError::Execution {
+                    message: format!("failed to build child runtime executor: {error}"),
+                })?;
+            let backend =
+                YunXiRuntimeBackend::with_shared_parts(child_provider, child_tools, child_storage)
+                    .with_max_turns(max_turns);
+            runtime.block_on(RuntimeBackend::run_turn(
+                &backend,
+                AgentTurn::new(child_config, AgentInput::text(child_prompt)),
+            ))
+        });
+
+        match handle.join().map_err(|_| AgentError::Execution {
+            message: "child runtime executor thread panicked".to_string(),
+        })? {
+            Ok(run_result) => {
+                let final_response = run_result.final_response.clone();
+                let status = if run_result.status == AgentRunStatus::Completed
+                    && final_response
+                        .as_deref()
+                        .is_some_and(|value| !value.is_empty())
+                {
+                    AgentRunStatus::Completed
+                } else {
+                    AgentRunStatus::Failed
+                };
+                Ok(ChildAgentRunResult {
+                    agent_id: child_agent_id,
+                    session_id: child_session_id,
+                    parent_session_id,
+                    status,
+                    final_response,
+                    events: run_result.events,
+                })
+            }
+            Err(error) => Ok(self.failed_result(request, error.to_string())),
+        }
+    }
+}
+
 #[async_trait]
 impl RuntimeBackend for YunXiRuntimeBackend {
     async fn run_turn(&self, turn: AgentTurn) -> AgentResult<AgentRunResult> {
@@ -183,6 +387,15 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         if prompt.is_empty() {
             return Err(AgentError::EmptyPrompt);
         }
+
+        let session_id = turn
+            .config
+            .session_id
+            .clone()
+            .map(SessionId::new)
+            .unwrap_or_else(SessionId::generate);
+        let mut runtime_config = turn.config.clone();
+        runtime_config.session_id = Some(session_id.0.clone());
 
         let sink = VecEventSink::default();
         let thread_id = generate_runtime_thread_id();
@@ -197,7 +410,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         })
         .await?;
 
-        let initial_messages = self.build_initial_messages(&turn.config, prompt).await?;
+        let initial_messages = self.build_initial_messages(&runtime_config, prompt).await?;
         if let Some(history) = &initial_messages.restored_history {
             sink.emit(AgentEvent::Reasoning {
                 content: format!(
@@ -228,7 +441,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 .provider
                 .stream(
                     ProviderRequest::with_messages(
-                        turn.config.clone(),
+                        runtime_config.clone(),
                         AgentInput::text(prompt),
                         messages.clone(),
                     ),
@@ -254,13 +467,15 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             }
 
             for tool_call in provider_response.tool_calls {
-                let tool_request = map_tool_call(&turn.config, tool_call);
+                let tool_request = map_tool_call(&runtime_config, &session_id, tool_call);
                 let dispatch = self.tool_router.route(tool_request)?;
                 emit_tool_dispatch_trace(&sink, &dispatch.trace).await?;
                 emit_approval_requested_if_needed(&sink, &dispatch.trace).await?;
                 emit_escalation_requested_if_needed(&sink, &dispatch.trace).await?;
                 emit_tool_started(&sink, &dispatch.request).await?;
-                let tool_response = self.tools.execute(dispatch.request.clone()).await?;
+                let tool_response = self
+                    .execute_tool_request(&runtime_config, dispatch.request.clone())
+                    .await?;
                 emit_tool_lifecycle_events(&sink, &tool_response).await?;
                 emit_tool_runtime_events(&sink, &tool_response).await?;
                 emit_tool_completed(&sink, &dispatch.request, &tool_response).await?;
@@ -290,9 +505,10 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         .await?;
 
         let pre_storage_events = sink.events().await?;
-        let session_cwd = turn.config.cwd.clone();
-        let session_model = turn.config.model.clone();
-        let session_provider = turn.config.provider.clone();
+        let session_cwd = runtime_config.cwd.clone();
+        let session_model = runtime_config.model.clone();
+        let session_provider = runtime_config.provider.clone();
+        let child_session_ids = child_session_ids_from_agent_events(&pre_storage_events);
         let mut session = SessionRecord::new(
             session_cwd,
             prompt,
@@ -302,10 +518,11 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         .with_status(AgentRunStatus::Completed)
         .with_model(session_model)
         .with_provider(session_provider);
-        if let Some(parent_session_id) = turn.config.parent_session_id.clone() {
+        session.id = session_id.clone();
+        if let Some(parent_session_id) = runtime_config.parent_session_id.clone() {
             session = session.with_parent_id(SessionId::new(parent_session_id));
         }
-        if let Some(session_title) = turn.config.session_title.clone() {
+        if let Some(session_title) = runtime_config.session_title.clone() {
             session = session.with_title(session_title);
         }
         sink.emit(AgentEvent::StorageState {
@@ -313,6 +530,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             parent_session_id: session.parent_id.as_ref().map(|id| id.0.clone()),
             rollout_items: pre_storage_events.len(),
             rollout_truncated: false,
+            child_session_ids,
         })
         .await?;
         let events = sink.events().await?;
@@ -1050,7 +1268,167 @@ fn optional_json_string(value: &serde_json::Value, key: &str) -> Option<String> 
     })
 }
 
-fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolRequest {
+fn inject_multi_agent_parent(
+    arguments_json: Option<String>,
+    current_session_id: &SessionId,
+) -> Option<String> {
+    let mut value = arguments_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Value>(json).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    if value.get("parent_id").is_none() {
+        value["parent_id"] = Value::String(current_session_id.0.clone());
+    }
+    serde_json::to_string(&value).ok()
+}
+
+fn parse_runtime_multi_agent_command(
+    action: &str,
+    arguments_json: Option<&str>,
+) -> AgentResult<MultiAgentCommand> {
+    let arguments = parse_arguments_object(arguments_json)?;
+    match action {
+        "spawn" => Ok(MultiAgentCommand::Spawn {
+            task: required_argument_string(&arguments, "task")?,
+            parent_id: optional_argument_string(&arguments, "parent_id").map(AgentId),
+        }),
+        "spawn_run" | "spawnRun" | "run" => Ok(MultiAgentCommand::SpawnRun {
+            task: required_argument_string(&arguments, "task")?,
+            parent_id: optional_argument_string(&arguments, "parent_id").map(AgentId),
+        }),
+        "wait" => Ok(MultiAgentCommand::Wait {
+            id: AgentId(required_argument_string(&arguments, "id")?),
+        }),
+        "send_message" | "sendMessage" | "message" => Ok(MultiAgentCommand::SendMessage {
+            id: AgentId(required_argument_string(&arguments, "id")?),
+            message: required_argument_string(&arguments, "message")?,
+        }),
+        "follow_up" | "followUp" => Ok(MultiAgentCommand::FollowUp {
+            id: AgentId(required_argument_string(&arguments, "id")?),
+            task: required_argument_string(&arguments, "task")?,
+        }),
+        "interrupt" => Ok(MultiAgentCommand::Interrupt {
+            id: AgentId(required_argument_string(&arguments, "id")?),
+        }),
+        "list" => Ok(MultiAgentCommand::List),
+        other => Err(AgentError::Execution {
+            message: format!("unsupported multi-agent action: {other}"),
+        }),
+    }
+}
+
+fn parse_arguments_object(arguments_json: Option<&str>) -> AgentResult<Value> {
+    let Some(arguments_json) = arguments_json
+        .map(str::trim)
+        .filter(|json| !json.is_empty())
+    else {
+        return Ok(json!({}));
+    };
+    let value =
+        serde_json::from_str::<Value>(arguments_json).map_err(|error| AgentError::Execution {
+            message: format!("failed to parse tool arguments JSON: {error}"),
+        })?;
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err(AgentError::Execution {
+            message: "tool arguments JSON must be an object".to_string(),
+        })
+    }
+}
+
+fn required_argument_string(arguments: &Value, name: &str) -> AgentResult<String> {
+    optional_argument_string(arguments, name).ok_or_else(|| AgentError::Execution {
+        message: format!("missing required multi-agent argument: {name}"),
+    })
+}
+
+fn optional_argument_string(arguments: &Value, name: &str) -> Option<String> {
+    arguments
+        .get(name)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn runtime_multi_agent_events(result: &MultiAgentCommandResult) -> Vec<ToolRuntimeEvent> {
+    let mut events = result
+        .agents
+        .iter()
+        .map(|agent| ToolRuntimeEvent::MultiAgent {
+            agent_id: agent.id.0.clone(),
+            parent_agent_id: agent.parent_id.as_ref().map(|parent| parent.0.clone()),
+            status: format!("{:?}", agent.status).to_ascii_lowercase(),
+            message: Some(agent.task.clone()),
+        })
+        .collect::<Vec<_>>();
+    if let Some(child_run) = &result.child_run {
+        events.push(ToolRuntimeEvent::ChildAgent {
+            agent_id: child_run.agent_id.0.clone(),
+            child_session_id: child_run.session_id.clone(),
+            parent_session_id: child_run.parent_session_id.clone(),
+            status: format!("{:?}", child_run.status).to_ascii_lowercase(),
+            message: child_run.final_response.clone(),
+        });
+        for event in &child_run.events {
+            if let Some(message) = summarize_child_event(event) {
+                events.push(ToolRuntimeEvent::ChildAgent {
+                    agent_id: child_run.agent_id.0.clone(),
+                    child_session_id: child_run.session_id.clone(),
+                    parent_session_id: child_run.parent_session_id.clone(),
+                    status: child_event_status(event).to_string(),
+                    message: Some(message),
+                });
+            }
+        }
+    }
+    events
+}
+
+fn summarize_child_event(event: &AgentEvent) -> Option<String> {
+    match event {
+        AgentEvent::Started { prompt } => Some(format!("child started: {prompt}")),
+        AgentEvent::Message { content } => Some(content.clone()),
+        AgentEvent::Reasoning { content } => Some(format!("child reasoning: {content}")),
+        AgentEvent::ToolCallStarted { name, .. } => Some(format!("child tool started: {name}")),
+        AgentEvent::ToolCallCompleted { name, output, .. } => {
+            Some(format!("child tool completed: {name}: {output}"))
+        }
+        AgentEvent::CommandStarted { command, .. } => {
+            Some(format!("child command started: {command}"))
+        }
+        AgentEvent::CommandCompleted {
+            command,
+            aggregated_output,
+            ..
+        } => Some(format!(
+            "child command completed: {command}: {aggregated_output}"
+        )),
+        AgentEvent::StorageState { session_id, .. } => {
+            Some(format!("child storage state: {:?}", session_id))
+        }
+        AgentEvent::Warning { message } => Some(format!("child warning: {message}")),
+        AgentEvent::Error { message } => Some(format!("child error: {message}")),
+        AgentEvent::Completed { status, .. } => Some(format!("child completed: {status:?}")),
+        _ => None,
+    }
+}
+
+fn child_event_status(event: &AgentEvent) -> &'static str {
+    match event {
+        AgentEvent::Error { .. } => "failed",
+        AgentEvent::Completed { status, .. } if *status == AgentRunStatus::Failed => "failed",
+        AgentEvent::Completed { .. } => "completed",
+        AgentEvent::Started { .. } => "started",
+        _ => "event",
+    }
+}
+
+fn map_tool_call(
+    config: &AgentConfig,
+    current_session_id: &SessionId,
+    tool_call: ProviderToolCall,
+) -> ToolRequest {
     let cwd = config.cwd.clone();
     let policy = ToolPolicy::from_config(config);
     match tool_call {
@@ -1098,15 +1476,20 @@ fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolReque
             id,
             action,
             arguments_json,
-        } => ToolRequest {
-            id,
-            cwd,
-            kind: ToolRequestKind::MultiAgent {
-                action,
-                arguments_json,
-            },
-            policy,
-        },
+        } => {
+            let mut policy = policy;
+            policy.approval = ApprovalDecision::Approved;
+            policy.execution_policy.approval = ApprovalRequirement::PreApproved;
+            ToolRequest {
+                id,
+                cwd,
+                kind: ToolRequestKind::MultiAgent {
+                    action,
+                    arguments_json: inject_multi_agent_parent(arguments_json, current_session_id),
+                },
+                policy,
+            }
+        }
         ProviderToolCall::ToolSearch { id, query } => ToolRequest {
             id,
             cwd,
@@ -1322,6 +1705,22 @@ where
                 sink.emit(AgentEvent::MultiAgentEvent {
                     agent_id: agent_id.clone(),
                     parent_agent_id: parent_agent_id.clone(),
+                    status: status.clone(),
+                    message: message.clone(),
+                })
+                .await?;
+            }
+            ToolRuntimeEvent::ChildAgent {
+                agent_id,
+                child_session_id,
+                parent_session_id,
+                status,
+                message,
+            } => {
+                sink.emit(AgentEvent::ChildAgentEvent {
+                    agent_id: agent_id.clone(),
+                    child_session_id: child_session_id.clone(),
+                    parent_session_id: parent_session_id.clone(),
                     status: status.clone(),
                     message: message.clone(),
                 })
@@ -1605,6 +2004,35 @@ fn render_tool_response(response: &yunxi_agent_tools::ToolResponse) -> String {
         ToolStatus::Declined => "tool execution declined".to_string(),
         ToolStatus::Completed | ToolStatus::InProgress => String::new(),
     }
+}
+
+fn child_session_ids_from_agent_events(events: &[AgentEvent]) -> Vec<String> {
+    let mut ids = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ChildAgentEvent {
+                child_session_id, ..
+            } => Some(child_session_id.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+fn preview_child_title(prompt: &str) -> String {
+    const MAX: usize = 48;
+    let trimmed = prompt.trim();
+    if trimmed.chars().count() <= MAX {
+        return trimmed.to_string();
+    }
+    let mut value = trimmed
+        .chars()
+        .take(MAX.saturating_sub(3))
+        .collect::<String>();
+    value.push_str("...");
+    value
 }
 
 fn json_string(value: &str) -> String {

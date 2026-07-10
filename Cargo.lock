@@ -1647,8 +1647,10 @@ dependencies = [
  "yunxi-agent-context",
  "yunxi-agent-core",
  "yunxi-agent-exec",
+ "yunxi-agent-multi-agent",
  "yunxi-agent-protocol",
  "yunxi-agent-provider",
+ "yunxi-agent-sandbox",
  "yunxi-agent-storage",
  "yunxi-agent-tools",
 ]

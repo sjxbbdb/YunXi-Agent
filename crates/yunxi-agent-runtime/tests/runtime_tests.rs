@@ -915,10 +915,11 @@ impl AgentProvider for MultiAgentSpawnRunProvider {
 #[tokio::test]
 async fn yunxi_runtime_emits_multi_agent_events_from_spawn_run() {
     let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
     let backend = YunXiRuntimeBackend::with_parts(
         MultiAgentSpawnRunProvider,
         CompositeToolRuntime::default(),
-        InMemorySessionStore::default(),
+        store.clone(),
     );
     let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
 
@@ -935,6 +936,70 @@ async fn yunxi_runtime_emits_multi_agent_events_from_spawn_run() {
             message: Some(message),
             ..
         } if agent_id == "agent-1" && status == "completed" && message.contains("review runtime deeply")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ChildAgentEvent {
+            agent_id,
+            child_session_id,
+            parent_session_id: Some(parent_session_id),
+            status,
+            message: Some(message),
+        } if agent_id == "agent-1"
+            && child_session_id == "agent-1-session"
+            && !parent_session_id.is_empty()
+            && status == "completed"
+            && message.contains("YunXi child agent agent-1 completed task")
+    )));
+
+    let sessions = store.list().await.expect("sessions");
+    assert_eq!(sessions.len(), 2);
+    let parent = sessions
+        .iter()
+        .find(|session| session.prompt == "spawn and run reviewer")
+        .expect("parent session");
+    let child = sessions
+        .iter()
+        .find(|session| session.id.0 == "agent-1-session")
+        .expect("child session");
+    assert_eq!(child.parent_id.as_ref(), Some(&parent.id));
+    assert!(parent.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::StorageState {
+            child_session_ids,
+            ..
+        } if child_session_ids == &vec!["agent-1-session".to_string()]
+    )));
+}
+
+#[tokio::test]
+async fn yunxi_runtime_returns_structured_child_failure_at_depth_limit() {
+    let temp = TempDir::new().expect("temp dir");
+    let backend = YunXiRuntimeBackend::with_parts(
+        MultiAgentSpawnRunProvider,
+        CompositeToolRuntime::default(),
+        InMemorySessionStore::default(),
+    )
+    .with_max_child_depth(0);
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("spawn and run reviewer"))
+        .await
+        .expect("parent runtime should keep running after child failure");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ChildAgentEvent {
+            agent_id,
+            child_session_id,
+            status,
+            message: Some(message),
+            ..
+        } if agent_id == "agent-1"
+            && child_session_id == "agent-1-session"
+            && status == "failed"
+            && message.contains("recursion depth exceeded")
     )));
 }
 

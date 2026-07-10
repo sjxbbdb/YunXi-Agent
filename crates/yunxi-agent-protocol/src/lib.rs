@@ -449,6 +449,15 @@ pub enum RuntimeEvent {
         status: String,
         message: Option<String>,
     },
+    ChildAgent {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        agent_id: String,
+        child_session_id: String,
+        parent_session_id: Option<String>,
+        status: String,
+        message: Option<String>,
+    },
     ContextStatus {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -464,6 +473,8 @@ pub enum RuntimeEvent {
         parent_session_id: Option<String>,
         rollout_items: usize,
         rollout_truncated: bool,
+        #[serde(default)]
+        child_session_ids: Vec<String>,
     },
     FileChanged {
         thread_id: ThreadId,
@@ -654,6 +665,7 @@ mod tests {
             parent_session_id: Some("session-root".to_string()),
             rollout_items: 8,
             rollout_truncated: false,
+            child_session_ids: vec!["session-child".to_string()],
         };
 
         for event in [context, storage] {

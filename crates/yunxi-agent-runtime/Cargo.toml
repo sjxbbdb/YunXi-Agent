@@ -8,11 +8,14 @@ version.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
 yunxi-agent-context = { path = "../yunxi-agent-context" }
 yunxi-agent-exec = { path = "../yunxi-agent-exec" }
+yunxi-agent-multi-agent = { path = "../yunxi-agent-multi-agent" }
 yunxi-agent-protocol = { path = "../yunxi-agent-protocol" }
 yunxi-agent-provider = { path = "../yunxi-agent-provider" }
+yunxi-agent-sandbox = { path = "../yunxi-agent-sandbox" }
 yunxi-agent-storage = { path = "../yunxi-agent-storage" }
 yunxi-agent-tools = { path = "../yunxi-agent-tools" }
 

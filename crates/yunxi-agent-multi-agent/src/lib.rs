@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
-use yunxi_agent_core::{AgentError, AgentResult};
+use yunxi_agent_core::{AgentError, AgentEvent, AgentResult, AgentRunStatus};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct AgentId(pub String);
@@ -51,6 +51,49 @@ impl AgentGraphSessionMetadata {
             updated_at_millis: 0,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildRuntimeKind {
+    YunXi,
+    Fixture,
+    ExternalHost,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChildAgentRunRequest {
+    pub agent: AgentMetadata,
+    pub session_id: String,
+    pub parent_session_id: Option<String>,
+    pub prompt: String,
+    pub runtime: ChildRuntimeKind,
+}
+
+impl ChildAgentRunRequest {
+    pub fn new(
+        agent: AgentMetadata,
+        session_id: impl Into<String>,
+        parent_session_id: Option<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self {
+            agent,
+            session_id: session_id.into(),
+            parent_session_id,
+            prompt: prompt.into(),
+            runtime: ChildRuntimeKind::YunXi,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ChildAgentRunResult {
+    pub agent_id: AgentId,
+    pub session_id: String,
+    pub status: AgentRunStatus,
+    pub final_response: Option<String>,
+    pub events: Vec<AgentEvent>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

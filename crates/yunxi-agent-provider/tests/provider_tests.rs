@@ -6,11 +6,11 @@ use yunxi_agent_protocol::{
     ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId,
 };
 use yunxi_agent_provider::{
-    AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiTransportProvider,
-    ProviderAuth, ProviderConfig, ProviderRequest, ProviderRetryPolicy, ProviderRole,
-    ProviderToolCall, ProviderTransport, StaticProvider, build_openai_request_json,
-    build_openai_stream_request_json, build_openai_transport_request, parse_openai_response_json,
-    parse_openai_stream_events,
+    AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiStreamAccumulator,
+    OpenAiTransportProvider, ProviderAuth, ProviderConfig, ProviderRequest, ProviderRetryPolicy,
+    ProviderRole, ProviderSseDecoder, ProviderToolCall, ProviderTransport, StaticProvider,
+    build_openai_request_json, build_openai_stream_request_json, build_openai_transport_request,
+    parse_openai_response_json, parse_openai_stream_events,
 };
 
 #[tokio::test]
@@ -662,4 +662,46 @@ async fn openai_compatible_provider_can_use_fixture_response() {
             .map(|message| message.content.as_str()),
         Some("fixture answer")
     );
+}
+
+#[test]
+fn incremental_sse_decoder_feeds_provider_stream_accumulator() {
+    let mut decoder = ProviderSseDecoder::default();
+    let mut accumulator = OpenAiStreamAccumulator::new("thread-incremental", "turn-incremental");
+
+    let first = accumulator
+        .push_raw_chunk(
+            &mut decoder,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n",
+        )
+        .expect("first chunk");
+    let second = accumulator
+        .push_raw_chunk(
+            &mut decoder,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n",
+        )
+        .expect("second chunk");
+    let events = accumulator.finish(&mut decoder).expect("finished stream");
+
+    assert!(first.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::MessageContent { delta, .. },
+            ..
+        } if delta == "hel"
+    )));
+    assert!(second.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::MessageContent { delta, .. },
+            ..
+        } if delta == "lo"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ResponseCompleted {
+            status: ResponseStatus::Completed,
+            ..
+        }
+    )));
 }

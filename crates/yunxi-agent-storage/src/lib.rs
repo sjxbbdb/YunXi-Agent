@@ -299,6 +299,38 @@ impl RuntimeRolloutRecord {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RuntimeStateSnapshot {
+    pub session_id: SessionId,
+    pub parent_session_id: Option<SessionId>,
+    pub status: AgentRunStatus,
+    pub rollout_items: usize,
+    pub rollout_truncated: bool,
+    pub archived: bool,
+    pub pinned: bool,
+    pub updated_at_millis: u128,
+}
+
+impl RuntimeStateSnapshot {
+    pub fn from_session_and_rollout(
+        session: &SessionRecord,
+        rollout: Option<&RuntimeRolloutRecord>,
+    ) -> Self {
+        Self {
+            session_id: session.id.clone(),
+            parent_session_id: session.parent_id.clone(),
+            status: session.status,
+            rollout_items: rollout
+                .map(|rollout| rollout.items.len())
+                .unwrap_or_default(),
+            rollout_truncated: rollout.map(|rollout| rollout.truncated).unwrap_or(false),
+            archived: session.archived,
+            pinned: session.pinned,
+            updated_at_millis: session.updated_at_millis,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RolloutBudget {
     pub max_items: usize,

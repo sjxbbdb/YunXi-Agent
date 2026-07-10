@@ -305,6 +305,63 @@ pub struct ContextWindowStatus {
     pub token_limit_reached: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextWindowPhase {
+    Normal,
+    Pressure,
+    NeedsCompaction,
+    Compacted,
+}
+
+impl ContextWindowStatus {
+    pub fn phase(&self, compacted: bool) -> ContextWindowPhase {
+        if compacted {
+            ContextWindowPhase::Compacted
+        } else if self.token_limit_reached {
+            ContextWindowPhase::NeedsCompaction
+        } else if self
+            .tokens_until_compaction
+            .is_some_and(|remaining| remaining <= self.active_context_tokens.max(1) / 5)
+        {
+            ContextWindowPhase::Pressure
+        } else {
+            ContextWindowPhase::Normal
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PromptDebugSnapshot {
+    pub assets: Vec<String>,
+    pub fragments: Vec<String>,
+    pub message_count: usize,
+    pub estimated_tokens: i64,
+    pub phase: ContextWindowPhase,
+}
+
+impl PromptDebugSnapshot {
+    pub fn from_assembly(assembly: &PromptAssembly, budget: ContextWindowBudget) -> Self {
+        let messages = assembly.clone().into_messages();
+        let status = budget.status(&messages);
+        Self {
+            assets: assembly
+                .assets
+                .iter()
+                .map(|asset| asset.name.clone())
+                .collect(),
+            fragments: assembly
+                .fragments
+                .iter()
+                .map(|fragment| fragment.name.clone())
+                .collect(),
+            message_count: messages.len(),
+            estimated_tokens: status.active_context_tokens,
+            phase: status.phase(false),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RestoredHistory {
     pub messages: Vec<ConversationMessage>,

@@ -280,6 +280,165 @@ impl ProviderStream {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ProviderStreamChunk {
+    Data { value: String },
+    Done,
+    Comment { value: String },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ProviderSseDecoder {
+    buffer: String,
+}
+
+impl ProviderSseDecoder {
+    pub fn push_chunk(&mut self, chunk: &str) -> AgentResult<Vec<ProviderStreamChunk>> {
+        self.buffer.push_str(chunk);
+        let mut decoded = Vec::new();
+        while let Some(newline) = self.buffer.find('\n') {
+            let mut line = self.buffer.drain(..=newline).collect::<String>();
+            while line.ends_with('\n') || line.ends_with('\r') {
+                line.pop();
+            }
+            if let Some(chunk) = decode_sse_line(&line) {
+                decoded.push(chunk);
+            }
+        }
+        Ok(decoded)
+    }
+
+    pub fn finish(&mut self) -> AgentResult<Vec<ProviderStreamChunk>> {
+        if self.buffer.is_empty() {
+            return Ok(Vec::new());
+        }
+        let line = std::mem::take(&mut self.buffer);
+        Ok(
+            decode_sse_line(line.trim_end_matches(|ch| ch == '\r' || ch == '\n'))
+                .into_iter()
+                .collect(),
+        )
+    }
+}
+
+fn decode_sse_line(line: &str) -> Option<ProviderStreamChunk> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if let Some(comment) = line.strip_prefix(':') {
+        return Some(ProviderStreamChunk::Comment {
+            value: comment.trim().to_string(),
+        });
+    }
+    let data = line.strip_prefix("data:")?.trim();
+    if data == "[DONE]" {
+        Some(ProviderStreamChunk::Done)
+    } else {
+        Some(ProviderStreamChunk::Data {
+            value: data.to_string(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenAiStreamAccumulator {
+    thread_id: ThreadId,
+    turn_id: TurnId,
+    events: Vec<StreamEvent>,
+    chat_tool_calls: BTreeMap<usize, ChatToolCallDelta>,
+    completed: bool,
+}
+
+impl OpenAiStreamAccumulator {
+    pub fn new(thread_id: impl Into<String>, turn_id: impl Into<String>) -> Self {
+        let thread_id = ThreadId(thread_id.into());
+        let turn_id = TurnId(turn_id.into());
+        let events = vec![StreamEvent::ResponseStarted {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            metadata: None,
+        }];
+        Self {
+            thread_id,
+            turn_id,
+            events,
+            chat_tool_calls: BTreeMap::new(),
+            completed: false,
+        }
+    }
+
+    pub fn push_sse_chunk(&mut self, chunk: ProviderStreamChunk) -> AgentResult<Vec<StreamEvent>> {
+        let before = self.events.len();
+        match chunk {
+            ProviderStreamChunk::Data { value } => {
+                let value = serde_json::from_str::<Value>(&value).map_err(|error| {
+                    AgentError::Execution {
+                        message: format!("failed to parse provider stream event JSON: {error}"),
+                    }
+                })?;
+                parse_stream_value(
+                    &self.thread_id,
+                    &self.turn_id,
+                    &value,
+                    &mut self.events,
+                    &mut self.chat_tool_calls,
+                );
+                if self.events[before..]
+                    .iter()
+                    .any(|event| matches!(event, StreamEvent::ResponseCompleted { .. }))
+                {
+                    self.completed = true;
+                }
+            }
+            ProviderStreamChunk::Done => self.complete_response(),
+            ProviderStreamChunk::Comment { .. } => {}
+        }
+        Ok(self.events[before..].to_vec())
+    }
+
+    pub fn push_raw_chunk(
+        &mut self,
+        decoder: &mut ProviderSseDecoder,
+        chunk: &str,
+    ) -> AgentResult<Vec<StreamEvent>> {
+        let before = self.events.len();
+        for decoded in decoder.push_chunk(chunk)? {
+            self.push_sse_chunk(decoded)?;
+        }
+        Ok(self.events[before..].to_vec())
+    }
+
+    pub fn finish(mut self, decoder: &mut ProviderSseDecoder) -> AgentResult<Vec<StreamEvent>> {
+        for decoded in decoder.finish()? {
+            self.push_sse_chunk(decoded)?;
+        }
+        if !self.completed {
+            self.complete_response();
+        }
+        Ok(self.events)
+    }
+
+    fn complete_response(&mut self) {
+        if self.completed {
+            return;
+        }
+        flush_chat_tool_calls(
+            &self.thread_id,
+            &self.turn_id,
+            &mut self.events,
+            &self.chat_tool_calls,
+        );
+        self.events.push(StreamEvent::ResponseCompleted {
+            thread_id: self.thread_id.clone(),
+            turn_id: self.turn_id.clone(),
+            status: ResponseStatus::Completed,
+        });
+        self.completed = true;
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProviderTransportRequest {
     pub method: String,
     pub url: String,
@@ -974,57 +1133,18 @@ pub fn parse_openai_stream_events(
     turn_id: impl Into<String>,
     stream: &str,
 ) -> AgentResult<Vec<StreamEvent>> {
-    let thread_id = ThreadId(thread_id.into());
-    let turn_id = TurnId(turn_id.into());
-    let mut events = vec![StreamEvent::ResponseStarted {
-        thread_id: thread_id.clone(),
-        turn_id: turn_id.clone(),
-        metadata: None,
-    }];
-    let mut chat_tool_calls = BTreeMap::<usize, ChatToolCallDelta>::new();
+    let mut decoder = ProviderSseDecoder::default();
+    let accumulator = OpenAiStreamAccumulator::new(thread_id, turn_id);
+    parse_openai_stream_events_incremental(accumulator, &mut decoder, stream)
+}
 
-    for line in stream.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with(':') {
-            continue;
-        }
-        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
-            continue;
-        };
-        if data == "[DONE]" {
-            flush_chat_tool_calls(&thread_id, &turn_id, &mut events, &chat_tool_calls);
-            events.push(StreamEvent::ResponseCompleted {
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                status: ResponseStatus::Completed,
-            });
-            continue;
-        }
-
-        let value = serde_json::from_str::<Value>(data).map_err(|error| AgentError::Execution {
-            message: format!("failed to parse provider stream event JSON: {error}"),
-        })?;
-        parse_stream_value(
-            &thread_id,
-            &turn_id,
-            &value,
-            &mut events,
-            &mut chat_tool_calls,
-        );
-    }
-
-    if !events
-        .iter()
-        .any(|event| matches!(event, StreamEvent::ResponseCompleted { .. }))
-    {
-        events.push(StreamEvent::ResponseCompleted {
-            thread_id,
-            turn_id,
-            status: ResponseStatus::Completed,
-        });
-    }
-
-    Ok(events)
+pub fn parse_openai_stream_events_incremental(
+    mut accumulator: OpenAiStreamAccumulator,
+    decoder: &mut ProviderSseDecoder,
+    stream: &str,
+) -> AgentResult<Vec<StreamEvent>> {
+    accumulator.push_raw_chunk(decoder, stream)?;
+    accumulator.finish(decoder)
 }
 
 fn parse_stream_value(
@@ -1079,6 +1199,15 @@ fn parse_stream_value(
             }
             if let Some(name) = tool_call.pointer("/function/name").and_then(Value::as_str) {
                 accumulator.name = Some(name.to_string());
+                push_delta(
+                    thread_id,
+                    turn_id,
+                    ResponseItemDelta::ToolCallName {
+                        call_id: accumulator.id.clone(),
+                        name: name.to_string(),
+                    },
+                    events,
+                );
             }
             let call_id = accumulator.id.clone().or_else(|| {
                 tool_call

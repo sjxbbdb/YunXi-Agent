@@ -207,6 +207,13 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 ),
             })
             .await?;
+            sink.emit(AgentEvent::ContextStatus {
+                active_context_tokens: history.status.active_context_tokens,
+                token_limit_reached: history.status.token_limit_reached,
+                compacted: history.compacted,
+                dropped_messages: history.dropped_messages,
+            })
+            .await?;
         }
         let mut messages = initial_messages.messages;
         let mut final_response = None;
@@ -281,7 +288,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         })
         .await?;
 
-        let events = sink.events().await?;
+        let pre_storage_events = sink.events().await?;
         let session_cwd = turn.config.cwd.clone();
         let session_model = turn.config.model.clone();
         let session_provider = turn.config.provider.clone();
@@ -289,7 +296,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             session_cwd,
             prompt,
             Some(final_response.clone()),
-            events.clone(),
+            pre_storage_events.clone(),
         )
         .with_status(AgentRunStatus::Completed)
         .with_model(session_model)
@@ -300,6 +307,15 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         if let Some(session_title) = turn.config.session_title.clone() {
             session = session.with_title(session_title);
         }
+        sink.emit(AgentEvent::StorageState {
+            session_id: Some(session.id.0.clone()),
+            parent_session_id: session.parent_id.as_ref().map(|id| id.0.clone()),
+            rollout_items: pre_storage_events.len(),
+            rollout_truncated: false,
+        })
+        .await?;
+        let events = sink.events().await?;
+        session.events = events.clone();
         self.storage.save(session).await?;
 
         Ok(AgentRunResult {
@@ -495,6 +511,7 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResp
     let mut tool_calls = Vec::new();
     let mut usage = None;
     let mut argument_deltas: BTreeMap<String, String> = BTreeMap::new();
+    let mut function_names: BTreeMap<String, String> = BTreeMap::new();
     let mut failed_message = None;
     let mut cancelled_reason = None;
 
@@ -513,7 +530,14 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResp
                 } => {
                     argument_deltas.entry(call_id).or_default().push_str(&delta);
                 }
+                ResponseItemDelta::ToolCallName {
+                    call_id: Some(call_id),
+                    name,
+                } => {
+                    function_names.insert(call_id, name);
+                }
                 ResponseItemDelta::ReasoningContent { .. }
+                | ResponseItemDelta::ToolCallName { call_id: None, .. }
                 | ResponseItemDelta::ToolCallArguments { call_id: None, .. }
                 | ResponseItemDelta::ToolCallStatus { .. }
                 | ResponseItemDelta::ToolOutput { .. } => {}
@@ -552,8 +576,12 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResp
         {
             continue;
         }
+        let name = function_names
+            .get(&call_id)
+            .map(String::as_str)
+            .unwrap_or("shell");
         if let Ok(tool_call) =
-            provider_tool_call_from_function(Some(call_id.clone()), "shell", &arguments)
+            provider_tool_call_from_function(Some(call_id.clone()), name, &arguments)
         {
             tool_calls.push(tool_call);
         }
@@ -685,6 +713,13 @@ pub fn protocol_stream_events_to_agent_events(
                         command: "tool_arguments".to_string(),
                         aggregated_output: delta.clone(),
                     })
+                }
+                yunxi_agent_protocol::ResponseItemDelta::ToolCallName { call_id, name } => {
+                    output.push(AgentEvent::ToolCallStarted {
+                        id: call_id.clone(),
+                        name: name.clone(),
+                        arguments_json: None,
+                    });
                 }
                 yunxi_agent_protocol::ResponseItemDelta::ToolCallStatus { call_id, status } => {
                     output.push(AgentEvent::ToolCallCompleted {

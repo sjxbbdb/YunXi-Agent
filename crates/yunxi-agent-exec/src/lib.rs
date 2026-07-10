@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
@@ -357,6 +358,69 @@ pub enum ExecHandleStatus {
     CancelRequested,
     Completed,
     Failed,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ExecHandleRegistry {
+    handles: Arc<Mutex<BTreeMap<String, ExecHandle>>>,
+}
+
+impl ExecHandleRegistry {
+    pub fn register(
+        &self,
+        id: impl Into<String>,
+        command: &ExecCommand,
+    ) -> AgentResult<ExecHandle> {
+        let id = id.into();
+        let handle = ExecHandle::new(id.clone(), command);
+        self.lock_handles()?.insert(id, handle.clone());
+        Ok(handle)
+    }
+
+    pub fn update_output(
+        &self,
+        id: &str,
+        output: impl Into<String>,
+        status: ExecHandleStatus,
+    ) -> AgentResult<ExecHandle> {
+        let mut handles = self.lock_handles()?;
+        let handle = handles.get_mut(id).ok_or_else(|| AgentError::Execution {
+            message: format!("exec handle not found: {id}"),
+        })?;
+        handle.buffered_output = output.into();
+        handle.status = status;
+        Ok(handle.clone())
+    }
+
+    pub fn request_cancel(&self, id: &str) -> AgentResult<ExecHandle> {
+        let mut handles = self.lock_handles()?;
+        let handle = handles.get_mut(id).ok_or_else(|| AgentError::Execution {
+            message: format!("exec handle not found: {id}"),
+        })?;
+        handle.status = ExecHandleStatus::CancelRequested;
+        Ok(handle.clone())
+    }
+
+    pub fn status(&self, id: &str) -> AgentResult<Option<ExecHandle>> {
+        Ok(self.lock_handles()?.get(id).cloned())
+    }
+
+    pub fn poll_output(&self, id: &str, limits: OutputLimits) -> AgentResult<Option<String>> {
+        Ok(self
+            .lock_handles()?
+            .get(id)
+            .map(|handle| truncate_output(&handle.buffered_output, limits)))
+    }
+
+    pub fn list(&self) -> AgentResult<Vec<ExecHandle>> {
+        Ok(self.lock_handles()?.values().cloned().collect())
+    }
+
+    fn lock_handles(&self) -> AgentResult<std::sync::MutexGuard<'_, BTreeMap<String, ExecHandle>>> {
+        self.handles.lock().map_err(|_| AgentError::Execution {
+            message: "exec handle registry lock was poisoned".to_string(),
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

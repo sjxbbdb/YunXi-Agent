@@ -105,6 +105,35 @@ fn workspace_tool_registry_exports_dynamic_skill_functions() {
 }
 
 #[test]
+fn workspace_tool_registry_includes_mcp_config_servers_as_dynamic_tools() {
+    let temp = TempDir::new().expect("temp dir");
+    let config_dir = temp.path().join(".yunxi");
+    std::fs::create_dir_all(&config_dir).expect("config dir");
+    std::fs::write(
+        config_dir.join("mcp.json"),
+        serde_json::json!({
+            "servers": [
+                {
+                    "name": "local-mcp",
+                    "transport": {"type": "stdio", "command": "fixture", "args": []},
+                    "enabled": true
+                }
+            ]
+        })
+        .to_string(),
+    )
+    .expect("mcp config");
+
+    let registry = workspace_tool_registry(temp.path()).expect("registry");
+    let names = registry
+        .dynamic_specs()
+        .map(|spec| spec.name.clone())
+        .collect::<Vec<_>>();
+
+    assert!(names.contains(&"mcp__local-mcp".to_string()));
+}
+
+#[test]
 fn tool_router_routes_requests_and_records_trace() {
     let mut request = ToolRequest::shell(PathBuf::from("."), "echo routed");
     request.id = Some("call-shell".to_string());

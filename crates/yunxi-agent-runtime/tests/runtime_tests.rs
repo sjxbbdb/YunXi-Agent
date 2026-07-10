@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use tempfile::TempDir;
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunStatus, ApprovalMode,
-    CommandStatus, FileChangeKind, PatchStatus,
+    CommandStatus, FileChangeKind, PatchStatus, SandboxMode,
 };
 use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
@@ -327,6 +327,62 @@ impl AgentProvider for ShellCallingProvider {
     }
 }
 
+#[derive(Clone, Default)]
+struct FailingShellProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for FailingShellProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "tool said: {}",
+                tool_message.content.trim()
+            )));
+        }
+
+        Ok(ProviderResponse::tool_call(ProviderToolCall::Shell {
+            id: Some("shell-1".to_string()),
+            command: "exit 7".to_string(),
+        }))
+    }
+}
+
+#[derive(Clone, Default)]
+struct WriteShellProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for WriteShellProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "tool said: {}",
+                tool_message.content.trim()
+            )));
+        }
+
+        Ok(ProviderResponse::tool_call(ProviderToolCall::Shell {
+            id: Some("shell-write-1".to_string()),
+            command: "echo denied > denied.txt".to_string(),
+        }))
+    }
+}
+
 #[tokio::test]
 async fn yunxi_runtime_executes_provider_requested_shell_tool() {
     let store = InMemorySessionStore::default();
@@ -375,6 +431,85 @@ async fn yunxi_runtime_executes_provider_requested_shell_tool() {
         } if id == "shell-1" && aggregated_output.contains("yunxi-tool")
     )));
     assert_eq!(store.list().await.expect("session list").len(), 1);
+}
+
+#[tokio::test]
+async fn yunxi_runtime_reports_failed_shell_tool_with_warning() {
+    let store = InMemorySessionStore::default();
+    let backend =
+        YunXiRuntimeBackend::with_parts(FailingShellProvider, ShellToolRuntime, store.clone());
+    let agent =
+        Agent::new(AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("use a failing tool"))
+        .await
+        .expect("yunxi runtime should complete tool loop");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(
+        result
+            .final_response
+            .as_deref()
+            .expect("final response")
+            .contains("exit code 7")
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Warning { message } if message.contains("exit code 7")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::CommandCompleted {
+            id: Some(id),
+            status: CommandStatus::Failed,
+            ..
+        } if id == "shell-1"
+    )));
+    assert_eq!(store.list().await.expect("session list").len(), 1);
+}
+
+#[tokio::test]
+async fn yunxi_runtime_emits_escalation_events_when_sandbox_blocks_tool() {
+    let workspace = TempDir::new().expect("workspace");
+    let backend = YunXiRuntimeBackend::with_parts(
+        WriteShellProvider,
+        ShellToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let agent = Agent::new(
+        AgentConfig::new(workspace.path())
+            .with_approval_mode(ApprovalMode::Never)
+            .with_sandbox_mode(SandboxMode::ReadOnly),
+    );
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("write through a guarded tool"))
+        .await
+        .expect("runtime should complete sandbox-blocked tool loop");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::EscalationRequested {
+            id: Some(id),
+            tool_name,
+            reason,
+            required_sandbox: Some(required_sandbox),
+            required_network: None,
+        } if id == "shell-write-1"
+            && tool_name == "shell"
+            && reason.contains("read-only")
+            && required_sandbox == "workspace-write"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::EscalationCompleted {
+            id: Some(id),
+            approved: false,
+            reason: Some(reason),
+        } if id == "shell-write-1" && reason.contains("read-only")
+    )));
+    assert!(!workspace.path().join("denied.txt").exists());
 }
 
 #[tokio::test]

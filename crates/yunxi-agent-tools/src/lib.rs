@@ -4,17 +4,18 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Instant, UNIX_EPOCH};
-use tokio::process::Command;
+use std::time::UNIX_EPOCH;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
-use yunxi_agent_exec::{
-    ExecCommand, ExecLifecycleEvent, ExecOutput, ExecTrace, OutputLimits, truncate_output,
-};
+use yunxi_agent_exec::{ExecCommand, ExecLifecycleEvent, ExecManager};
 use yunxi_agent_mcp::{
     InMemoryMcpRuntime, McpRuntime, McpToolInvocation, load_in_memory_runtime_seed,
 };
 use yunxi_agent_multi_agent::{AgentId, InMemoryAgentRegistry, MultiAgentCommand};
 use yunxi_agent_patch::{PatchFileChangeKind, apply_patch};
+use yunxi_agent_sandbox::{
+    ApprovalRequirement, ExecutionPolicy, NetworkPolicy, PolicyDecision, PolicyEvaluation,
+    SandboxRequirement,
+};
 use yunxi_agent_skills::{
     SkillCatalog, SkillInvocation, SkillInvocationResult, load_skill_injection,
 };
@@ -100,6 +101,19 @@ impl ToolRequestKind {
             Self::ToolSearch { .. } => ToolName::ToolSearch,
             Self::RequestUserInput { .. } => ToolName::RequestUserInput,
             Self::ViewImage { .. } => ToolName::ViewImage,
+        }
+    }
+
+    fn policy_command(&self) -> Option<String> {
+        match self {
+            Self::Shell { command } => Some(command.clone()),
+            Self::Patch { .. } => Some("apply_patch > workspace".to_string()),
+            Self::Mcp { server, tool, .. } => Some(format!("mcp {server} {tool}")),
+            Self::Skill { name, .. } => Some(format!("skill {name}")),
+            Self::MultiAgent { action, .. } => Some(format!("multi_agent {action}")),
+            Self::ToolSearch { query } => Some(format!("tool_search {query}")),
+            Self::RequestUserInput { prompt } => Some(format!("request_user_input {prompt}")),
+            Self::ViewImage { path } => Some(format!("view_image {path}")),
         }
     }
 }
@@ -436,6 +450,7 @@ pub struct ToolDispatchTrace {
     pub tool_name: ToolName,
     pub route_status: ToolRouteStatus,
     pub policy_decision: ToolPolicyDecision,
+    pub policy_evaluation: PolicyEvaluation,
 }
 
 impl ToolDispatchTrace {
@@ -445,8 +460,21 @@ impl ToolDispatchTrace {
             ToolPolicyDecision::Approved => "approved".to_string(),
             ToolPolicyDecision::Declined { reason } => format!("declined:{reason}"),
         };
+        let sandbox = &self.policy_evaluation.sandbox_backend.backend;
+        let network = &self.policy_evaluation.network_decision;
+        let escalation = self
+            .policy_evaluation
+            .escalation_request
+            .as_ref()
+            .map(|request| {
+                format!(
+                    ", escalation={:?}/{:?}",
+                    request.required_sandbox, request.required_network
+                )
+            })
+            .unwrap_or_default();
         format!(
-            "Tool dispatch routed {} (id={id}, route={:?}, policy={policy})",
+            "Tool dispatch routed {} (id={id}, route={:?}, policy={policy}, sandbox={sandbox:?}, network={network:?}{escalation})",
             self.tool_name, self.route_status
         )
     }
@@ -491,11 +519,14 @@ impl ToolRouter {
             name: tool_name,
             model_visible: spec.model_visible,
         };
+        let policy_evaluation = request.policy.evaluation_for(&request);
+        let policy_decision = ToolPolicy::decision_from_evaluation(&policy_evaluation);
         let trace = ToolDispatchTrace {
             request_id: request.id.clone(),
             tool_name,
             route_status: ToolRouteStatus::Routed,
-            policy_decision: request.policy.decision_for(&request),
+            policy_decision,
+            policy_evaluation,
         };
         Ok(ToolDispatch {
             request,
@@ -604,24 +635,34 @@ pub struct ToolPolicy {
     pub approval: ApprovalDecision,
     pub sandbox: SandboxPolicy,
     pub workspace_root: Option<PathBuf>,
+    pub network: NetworkPolicy,
+    pub execution_policy: ExecutionPolicy,
 }
 
 impl ToolPolicy {
     pub fn trusted() -> Self {
+        let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
             approval: ApprovalDecision::Approved,
             sandbox: SandboxPolicy::DangerFullAccess,
-            workspace_root: None,
+            workspace_root: Some(workspace_root.clone()),
+            network: NetworkPolicy::Inherit,
+            execution_policy: ExecutionPolicy {
+                approval: ApprovalRequirement::PreApproved,
+                sandbox: SandboxRequirement::DangerFullAccess,
+                network: NetworkPolicy::Inherit,
+                workspace_root,
+            },
         }
     }
 
     pub fn from_config(config: &AgentConfig) -> Self {
+        let execution_policy = ExecutionPolicy::from_config(config);
         Self {
             approval: match config.approval_mode {
                 ApprovalMode::Never => ApprovalDecision::Approved,
-                ApprovalMode::OnRequest | ApprovalMode::OnFailure | ApprovalMode::Untrusted => {
-                    ApprovalDecision::Required
-                }
+                ApprovalMode::OnFailure => ApprovalDecision::OnFailure,
+                ApprovalMode::OnRequest | ApprovalMode::Untrusted => ApprovalDecision::Required,
             },
             sandbox: match config.sandbox_mode {
                 SandboxMode::ReadOnly => SandboxPolicy::ReadOnly,
@@ -629,42 +670,36 @@ impl ToolPolicy {
                 SandboxMode::DangerFullAccess => SandboxPolicy::DangerFullAccess,
             },
             workspace_root: Some(config.cwd.clone()),
+            network: execution_policy.network,
+            execution_policy,
         }
     }
 
     pub fn decision_for(&self, request: &ToolRequest) -> ToolPolicyDecision {
-        match self.denial_for(request) {
-            Some(reason) => ToolPolicyDecision::Declined { reason },
-            None => ToolPolicyDecision::Approved,
+        Self::decision_from_evaluation(&self.evaluation_for(request))
+    }
+
+    pub fn evaluation_for(&self, request: &ToolRequest) -> PolicyEvaluation {
+        let mut policy = self.execution_policy.clone();
+        if let Some(workspace_root) = self.workspace_root.clone() {
+            policy.workspace_root = workspace_root;
+        }
+        policy.evaluate(&request.cwd, request.kind.policy_command().as_deref())
+    }
+
+    fn decision_from_evaluation(evaluation: &PolicyEvaluation) -> ToolPolicyDecision {
+        match &evaluation.decision {
+            PolicyDecision::Allowed => ToolPolicyDecision::Approved,
+            PolicyDecision::Blocked { reason } => ToolPolicyDecision::Declined {
+                reason: reason.clone(),
+            },
         }
     }
 
     fn denial_for(&self, request: &ToolRequest) -> Option<String> {
-        match &self.approval {
-            ApprovalDecision::Approved => {}
-            ApprovalDecision::Required => {
-                return Some("tool execution requires approval".to_string());
-            }
-            ApprovalDecision::Declined { reason } => {
-                return Some(reason.clone());
-            }
-        }
-
-        match self.sandbox {
-            SandboxPolicy::ReadOnly => Some("sandbox is read-only".to_string()),
-            SandboxPolicy::WorkspaceWrite => {
-                let root = self.workspace_root.as_ref()?;
-                if is_within_workspace(root, &request.cwd) {
-                    None
-                } else {
-                    Some(format!(
-                        "tool cwd {} is outside workspace {}",
-                        request.cwd.display(),
-                        root.display()
-                    ))
-                }
-            }
-            SandboxPolicy::DangerFullAccess => None,
+        match self.evaluation_for(request).decision {
+            PolicyDecision::Allowed => None,
+            PolicyDecision::Blocked { reason } => Some(reason),
         }
     }
 }
@@ -673,6 +708,7 @@ impl ToolPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     Approved,
+    OnFailure,
     Required,
     Declined { reason: String },
 }
@@ -832,37 +868,13 @@ impl ToolRuntime for CompositeToolRuntime {
 
 async fn run_shell(id: Option<String>, cwd: PathBuf, command: String) -> AgentResult<ToolResponse> {
     let before = WorkspaceSnapshot::capture(&cwd)?;
-    let mut process = platform_shell(&command);
-    process.current_dir(&cwd);
-    let started_at = Instant::now();
-
-    let output = process
-        .output()
-        .await
-        .map_err(|error| AgentError::Execution {
-            message: format!("shell command failed to start: {error}"),
-        })?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let exec_output = ExecOutput {
-        stdout,
-        stderr,
-        exit_code: output.status.code(),
-    };
-    let exec_command =
-        ExecCommand::observed_shell(cwd.clone(), command.clone()).with_id(id.clone());
-    let exec_trace = ExecTrace::from_completed_output(
-        &exec_command,
-        exec_output.clone(),
-        Some(started_at.elapsed()),
-        false,
-    );
-    let combined = truncate_output(&exec_output.combined(), OutputLimits::default());
+    let exec_command = ExecCommand::observed_shell(cwd.clone(), command).with_id(id.clone());
+    let exec_trace = ExecManager::default().run(exec_command).await?;
 
     let changed_files = before.diff(&WorkspaceSnapshot::capture(&cwd)?);
-    let exit_code = output.status.code();
-    if output.status.success() {
+    let combined = exec_trace.summary.aggregated_output.clone();
+    let exit_code = exec_trace.summary.exit_code;
+    if !exec_trace.summary.timed_out && exit_code == Some(0) {
         Ok(
             ToolResponse::completed(id, combined, exit_code, changed_files)
                 .with_lifecycle_events(exec_trace.events),
@@ -871,13 +883,6 @@ async fn run_shell(id: Option<String>, cwd: PathBuf, command: String) -> AgentRe
         Ok(ToolResponse::failed(id, combined, exit_code, changed_files)
             .with_lifecycle_events(exec_trace.events))
     }
-}
-
-#[cfg(windows)]
-fn platform_shell(command: &str) -> Command {
-    let mut process = Command::new("cmd");
-    process.args(["/C", command]);
-    process
 }
 
 fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<ToolResponse> {
@@ -1274,16 +1279,4 @@ impl FileState {
 
 fn should_skip_entry(name: &str) -> bool {
     matches!(name, ".git" | ".yunxi" | "target" | "vendor")
-}
-
-fn is_within_workspace(root: &Path, cwd: &Path) -> bool {
-    let root = match std::fs::canonicalize(root) {
-        Ok(path) => path,
-        Err(_) => return false,
-    };
-    let cwd = match std::fs::canonicalize(cwd) {
-        Ok(path) => path,
-        Err(_) => return false,
-    };
-    cwd.starts_with(root)
 }

@@ -612,6 +612,7 @@ name = "yunxi-agent-exec"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "tokio",
  "yunxi-agent-core",
  "yunxi-agent-sandbox",
 ]
@@ -672,6 +673,7 @@ name = "yunxi-agent-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -730,6 +732,7 @@ dependencies = [
  "yunxi-agent-mcp",
  "yunxi-agent-multi-agent",
  "yunxi-agent-patch",
+ "yunxi-agent-sandbox",
  "yunxi-agent-skills",
 ]
 

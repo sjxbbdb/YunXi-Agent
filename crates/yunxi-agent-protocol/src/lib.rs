@@ -414,6 +414,22 @@ pub enum RuntimeEvent {
         approved: bool,
         reason: Option<String>,
     },
+    EscalationRequested {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        call_id: Option<String>,
+        tool_name: String,
+        reason: String,
+        required_sandbox: Option<String>,
+        required_network: Option<String>,
+    },
+    EscalationCompleted {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        call_id: Option<String>,
+        approved: bool,
+        reason: Option<String>,
+    },
     TurnCompleted {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -517,6 +533,24 @@ mod tests {
             call_id: Some("call-approval".to_string()),
             tool_name: "shell".to_string(),
             reason: "tool execution requires approval".to_string(),
+        };
+
+        let line = to_jsonl_line(&event).expect("jsonl");
+        let parsed = from_jsonl_line(&line).expect("parsed event");
+
+        assert_eq!(parsed, event);
+    }
+
+    #[test]
+    fn escalation_runtime_event_round_trips_jsonl() {
+        let event = RuntimeEvent::EscalationRequested {
+            thread_id: ThreadId("thread-escalation".to_string()),
+            turn_id: TurnId("turn-escalation".to_string()),
+            call_id: Some("call-escalation".to_string()),
+            tool_name: "shell".to_string(),
+            reason: "sandbox is read-only".to_string(),
+            required_sandbox: Some("workspace-write".to_string()),
+            required_network: None,
         };
 
         let line = to_jsonl_line(&event).expect("jsonl");

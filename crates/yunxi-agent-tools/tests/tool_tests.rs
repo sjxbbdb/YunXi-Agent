@@ -92,12 +92,17 @@ fn tool_router_routes_requests_and_records_trace() {
     assert_eq!(dispatch.trace.tool_name, ToolName::Shell);
     assert_eq!(dispatch.trace.route_status, ToolRouteStatus::Routed);
     assert_eq!(dispatch.trace.policy_decision, ToolPolicyDecision::Approved);
+    assert!(matches!(
+        dispatch.trace.policy_evaluation.decision,
+        yunxi_agent_sandbox::PolicyDecision::Allowed
+    ));
     assert!(
         dispatch
             .trace
             .summary()
             .contains("Tool dispatch routed shell")
     );
+    assert!(dispatch.trace.summary().contains("sandbox="));
 }
 
 #[test]
@@ -179,6 +184,19 @@ async fn shell_tool_runtime_executes_shell_command() {
 }
 
 #[tokio::test]
+async fn shell_tool_runtime_reports_failed_exit_status() {
+    let runtime = ShellToolRuntime;
+
+    let response = runtime
+        .execute(ToolRequest::shell(PathBuf::from("."), "exit 7"))
+        .await
+        .expect("shell runtime response should succeed");
+
+    assert_eq!(response.status, ToolStatus::Failed);
+    assert_eq!(response.exit_code, Some(7));
+}
+
+#[tokio::test]
 async fn shell_tool_runtime_declines_when_approval_is_required() {
     let runtime = ShellToolRuntime;
     let temp = TempDir::new().expect("temp dir");
@@ -226,6 +244,47 @@ async fn shell_tool_runtime_declines_cwd_outside_workspace() {
             .expect("error")
             .contains("outside workspace")
     );
+}
+
+#[tokio::test]
+async fn shell_tool_runtime_allows_low_risk_command_in_read_only_sandbox() {
+    let runtime = ShellToolRuntime;
+    let workspace = TempDir::new().expect("workspace");
+    let config = AgentConfig::new(workspace.path())
+        .with_approval_mode(ApprovalMode::Never)
+        .with_sandbox_mode(SandboxMode::ReadOnly);
+
+    let response = runtime
+        .execute(
+            ToolRequest::shell(workspace.path(), "echo read-only-ok")
+                .with_policy(ToolPolicy::from_config(&config)),
+        )
+        .await
+        .expect("policy response should succeed");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    assert!(response.output.expect("output").contains("read-only-ok"));
+}
+
+#[tokio::test]
+async fn shell_tool_runtime_declines_write_command_in_read_only_sandbox() {
+    let runtime = ShellToolRuntime;
+    let workspace = TempDir::new().expect("workspace");
+    let config = AgentConfig::new(workspace.path())
+        .with_approval_mode(ApprovalMode::Never)
+        .with_sandbox_mode(SandboxMode::ReadOnly);
+
+    let response = runtime
+        .execute(
+            ToolRequest::shell(workspace.path(), "echo denied > denied.txt")
+                .with_policy(ToolPolicy::from_config(&config)),
+        )
+        .await
+        .expect("policy response should succeed");
+
+    assert_eq!(response.status, ToolStatus::Declined);
+    assert!(response.error.expect("error").contains("read-only"));
+    assert!(!workspace.path().join("denied.txt").exists());
 }
 
 #[tokio::test]

@@ -245,6 +245,86 @@ Stage 4G first construction verification passed on 2026-07-10:
   `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
 - `git diff --check`: pass with Windows line-ending warnings only
 
+## Stage 4G Exec Manager Runtime Slice
+
+This slice turns the first Stage 4G exec foundation into default YunXi runtime
+behavior.
+
+Implemented in this slice:
+
+- `yunxi-agent-exec` owns an async `ExecManager` that spawns platform shell
+  commands, writes optional stdin, captures stdout/stderr, enforces timeout
+  limits, kills timed-out processes, records lifecycle events, and returns an
+  `ExecTrace`.
+- `yunxi-agent-exec` now depends on workspace `tokio` with `io-util` and
+  `time` features so process I/O and timeout handling live in the YunXi-owned
+  exec crate.
+- `yunxi-agent-tools` routes shell execution through `ExecManager` instead of
+  direct `process.output()`, so the default tool runtime consumes the shared
+  exec lifecycle path.
+- `yunxi-agent-runtime` renders non-empty tool output/errors first, then falls
+  back to structured failed/declined messages when shell output is empty.
+- `yunxi-agent-runtime` emits useful warnings for failed shell tools, including
+  exit-code-only failures, while avoiding duplicate warnings for cancelled exec
+  lifecycle events.
+- Tests cover stdin capture, timeout cancellation, non-zero shell exit status,
+  and runtime propagation of failed shell tool output.
+
+Stage 4G exec manager runtime verification passed on 2026-07-10:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo tree -p yunxi-agent-cli`: pass; default tree contains no
+  `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
+- `git diff --check`: pass with Windows line-ending warnings only
+
+## Stage 4G Sandbox Approval Escalation Slice
+
+This slice turns migrated sandbox, approval, and escalation policy primitives
+into default YunXi runtime behavior.
+
+Implemented in this slice:
+
+- `yunxi-agent-sandbox` evaluates approval, sandbox, cwd, command-risk, and
+  network policy in one `PolicyEvaluation`.
+- `yunxi-agent-sandbox` records explicit `ApprovalRequest` and
+  `EscalationRequest` details, including required sandbox or network policy
+  changes for blocked commands.
+- `yunxi-agent-tools` stores the full policy evaluation in
+  `ToolDispatchTrace`, routes shell, patch, MCP, skill, multi-agent, search,
+  image, and host-input requests through the shared evaluation path, and keeps
+  low-risk read-only shell commands runnable while blocking write-risk commands.
+- `yunxi-agent-core` exposes escalation requested/completed agent events with
+  stable JSON names.
+- `yunxi-agent-protocol` exposes escalation requested/completed JSONL runtime
+  events.
+- `yunxi-agent-runtime` emits approval and escalation lifecycle events from the
+  shared tool dispatch trace instead of relying on string matching against
+  declined policy reasons.
+- `yunxi-agent-cli` maps escalation lifecycle agent events into protocol JSONL
+  runtime events.
+- Tests cover read-only sandbox write blocking, network-disabled escalation,
+  outside-workspace escalation, stable escalation event names, escalation JSONL
+  round-trips, and runtime escalation emission.
+
+Stage 4G sandbox approval escalation verification passed on 2026-07-10:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo tree -p yunxi-agent-cli`: pass; default tree contains no
+  `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
+- dependency-tree keyword scan for `codex`, `vendor`, and
+  `yunxi-agent-codex`: pass with no matches
+- `git diff --check`: pass with Windows line-ending warnings only
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

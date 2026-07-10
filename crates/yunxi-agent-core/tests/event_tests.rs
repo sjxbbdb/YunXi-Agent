@@ -144,3 +144,33 @@ fn approval_events_have_stable_names() {
 
     assert_eq!(names, vec!["approvalRequested", "approvalCompleted"]);
 }
+
+#[test]
+fn escalation_events_have_stable_names() {
+    let events = vec![
+        AgentEvent::EscalationRequested {
+            id: Some("call-1".to_string()),
+            tool_name: "shell".to_string(),
+            reason: "sandbox is read-only".to_string(),
+            required_sandbox: Some("workspace-write".to_string()),
+            required_network: None,
+        },
+        AgentEvent::EscalationCompleted {
+            id: Some("call-1".to_string()),
+            approved: false,
+            reason: Some("sandbox is read-only".to_string()),
+        },
+    ];
+
+    let names = events
+        .into_iter()
+        .map(|event| {
+            serde_json::to_value(event).expect("json")["type"]
+                .as_str()
+                .expect("type")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["escalationRequested", "escalationCompleted"]);
+}

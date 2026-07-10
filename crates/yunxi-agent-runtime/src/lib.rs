@@ -19,8 +19,8 @@ use yunxi_agent_storage::{
     SessionId, SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
-    CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolPolicyDecision,
-    ToolRequest, ToolRequestKind, ToolRouter, ToolRuntime, ToolStatus,
+    CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolRequest,
+    ToolRequestKind, ToolRouter, ToolRuntime, ToolStatus,
 };
 
 const DEFAULT_MAX_TURNS: usize = 8;
@@ -226,11 +226,13 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 let dispatch = self.tool_router.route(tool_request)?;
                 emit_tool_dispatch_trace(&sink, &dispatch.trace).await?;
                 emit_approval_requested_if_needed(&sink, &dispatch.trace).await?;
+                emit_escalation_requested_if_needed(&sink, &dispatch.trace).await?;
                 emit_tool_started(&sink, &dispatch.request).await?;
                 let tool_response = self.tools.execute(dispatch.request.clone()).await?;
                 emit_tool_lifecycle_events(&sink, &tool_response).await?;
                 emit_tool_completed(&sink, &dispatch.request, &tool_response).await?;
                 emit_approval_completed_if_needed(&sink, &dispatch.trace, &tool_response).await?;
+                emit_escalation_completed_if_needed(&sink, &dispatch.trace, &tool_response).await?;
                 emit_tool_warning(&sink, &tool_response).await?;
                 emit_file_changes(&sink, &tool_response).await?;
                 messages.push(ProviderMessage::tool(render_tool_response(&tool_response)));
@@ -678,15 +680,13 @@ async fn emit_approval_requested_if_needed<S>(
 where
     S: RuntimeEventSink,
 {
-    if let ToolPolicyDecision::Declined { reason } = &trace.policy_decision {
-        if reason.contains("approval") {
-            sink.emit(AgentEvent::ApprovalRequested {
-                id: trace.request_id.clone(),
-                tool_name: trace.tool_name.to_string(),
-                reason: reason.clone(),
-            })
-            .await?;
-        }
+    if let Some(request) = &trace.policy_evaluation.approval_request {
+        sink.emit(AgentEvent::ApprovalRequested {
+            id: trace.request_id.clone(),
+            tool_name: trace.tool_name.to_string(),
+            reason: request.reason.clone(),
+        })
+        .await?;
     }
     Ok(())
 }
@@ -699,17 +699,72 @@ async fn emit_approval_completed_if_needed<S>(
 where
     S: RuntimeEventSink,
 {
-    if let ToolPolicyDecision::Declined { reason } = &trace.policy_decision {
-        if reason.contains("approval") {
-            sink.emit(AgentEvent::ApprovalCompleted {
-                id: response.id.clone().or_else(|| trace.request_id.clone()),
-                approved: false,
-                reason: response.error.clone().or_else(|| Some(reason.clone())),
-            })
-            .await?;
-        }
+    if let Some(request) = &trace.policy_evaluation.approval_request {
+        sink.emit(AgentEvent::ApprovalCompleted {
+            id: response.id.clone().or_else(|| trace.request_id.clone()),
+            approved: false,
+            reason: response
+                .error
+                .clone()
+                .or_else(|| Some(request.reason.clone())),
+        })
+        .await?;
     }
     Ok(())
+}
+
+async fn emit_escalation_requested_if_needed<S>(
+    sink: &S,
+    trace: &ToolDispatchTrace,
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    if let Some(request) = &trace.policy_evaluation.escalation_request {
+        sink.emit(AgentEvent::EscalationRequested {
+            id: trace.request_id.clone(),
+            tool_name: trace.tool_name.to_string(),
+            reason: request.reason.clone(),
+            required_sandbox: request
+                .required_sandbox
+                .as_ref()
+                .and_then(policy_value_to_string),
+            required_network: request
+                .required_network
+                .as_ref()
+                .and_then(policy_value_to_string),
+        })
+        .await?;
+    }
+    Ok(())
+}
+
+async fn emit_escalation_completed_if_needed<S>(
+    sink: &S,
+    trace: &ToolDispatchTrace,
+    response: &yunxi_agent_tools::ToolResponse,
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    if let Some(request) = &trace.policy_evaluation.escalation_request {
+        sink.emit(AgentEvent::EscalationCompleted {
+            id: response.id.clone().or_else(|| trace.request_id.clone()),
+            approved: false,
+            reason: response
+                .error
+                .clone()
+                .or_else(|| Some(request.reason.clone())),
+        })
+        .await?;
+    }
+    Ok(())
+}
+
+fn policy_value_to_string<T: serde::Serialize>(value: &T) -> Option<String> {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(ToString::to_string))
 }
 
 async fn emit_tool_lifecycle_events<S>(
@@ -944,12 +999,30 @@ where
     S: RuntimeEventSink,
 {
     if matches!(response.status, ToolStatus::Declined | ToolStatus::Failed) {
-        if let Some(message) = response.error.as_ref().or(response.output.as_ref()) {
-            sink.emit(AgentEvent::Warning {
-                message: message.clone(),
-            })
-            .await?;
+        if response.lifecycle_events.iter().any(|event| {
+            matches!(
+                event,
+                ExecLifecycleEvent::Cancelled { .. } | ExecLifecycleEvent::Failed { .. }
+            )
+        }) {
+            return Ok(());
         }
+        let message = response
+            .error
+            .as_ref()
+            .or(response.output.as_ref())
+            .map(|message| message.trim())
+            .filter(|message| !message.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| match response.status {
+                ToolStatus::Failed => match response.exit_code {
+                    Some(code) => format!("tool execution failed with exit code {code}"),
+                    None => "tool execution failed".to_string(),
+                },
+                ToolStatus::Declined => "tool execution declined".to_string(),
+                ToolStatus::InProgress | ToolStatus::Completed => String::new(),
+            });
+        sink.emit(AgentEvent::Warning { message }).await?;
     }
     Ok(())
 }
@@ -977,13 +1050,24 @@ where
 }
 
 fn render_tool_response(response: &yunxi_agent_tools::ToolResponse) -> String {
-    if let Some(output) = &response.output {
-        return output.clone();
+    if let Some(output) = response.output.as_ref().map(|output| output.trim()) {
+        if !output.is_empty() {
+            return output.to_string();
+        }
     }
-    if let Some(error) = &response.error {
-        return error.clone();
+    if let Some(error) = response.error.as_ref().map(|error| error.trim()) {
+        if !error.is_empty() {
+            return error.to_string();
+        }
     }
-    format!("tool completed with status {:?}", response.status)
+    match response.status {
+        ToolStatus::Failed => match response.exit_code {
+            Some(code) => format!("tool execution failed with exit code {code}"),
+            None => "tool execution failed".to_string(),
+        },
+        ToolStatus::Declined => "tool execution declined".to_string(),
+        ToolStatus::Completed | ToolStatus::InProgress => String::new(),
+    }
 }
 
 fn json_string(value: &str) -> String {

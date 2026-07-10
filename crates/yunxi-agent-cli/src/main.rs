@@ -465,6 +465,32 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 approved: *approved,
                 reason: reason.clone(),
             }),
+            AgentEvent::EscalationRequested {
+                id,
+                tool_name,
+                reason,
+                required_sandbox,
+                required_network,
+            } => output.push(RuntimeEvent::EscalationRequested {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                call_id: id.clone(),
+                tool_name: tool_name.clone(),
+                reason: reason.clone(),
+                required_sandbox: required_sandbox.clone(),
+                required_network: required_network.clone(),
+            }),
+            AgentEvent::EscalationCompleted {
+                id,
+                approved,
+                reason,
+            } => output.push(RuntimeEvent::EscalationCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                call_id: id.clone(),
+                approved: *approved,
+                reason: reason.clone(),
+            }),
             AgentEvent::FileChanged { path, kind } => output.push(RuntimeEvent::Item {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),

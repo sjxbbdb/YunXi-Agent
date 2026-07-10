@@ -37,42 +37,64 @@ impl ExecutionPolicy {
         let risk = command
             .map(CommandRisk::classify)
             .unwrap_or(CommandRisk::Low);
-        if !self.approval.is_approved_without_prompt() {
+        let sandbox_backend = SandboxBackendSelection::from_requirement(self.sandbox);
+        let network_decision = NetworkDecision::from_policy(self.network);
+        if let Some(reason) = self.network_denial_for(risk) {
             return PolicyEvaluation {
                 decision: PolicyDecision::Blocked {
-                    reason: "execution requires approval".to_string(),
+                    reason: reason.clone(),
+                },
+                approval_request: None,
+                escalation_request: Some(EscalationRequest {
+                    reason,
+                    command: command.map(ToString::to_string),
+                    cwd: cwd.to_path_buf(),
+                    risk,
+                    required_sandbox: None,
+                    required_network: Some(NetworkPolicy::Enabled),
+                }),
+                sandbox_backend,
+                network_decision,
+            };
+        }
+
+        if let Some(reason) = self.approval.prompt_reason_before_run(risk) {
+            return PolicyEvaluation {
+                decision: PolicyDecision::Blocked {
+                    reason: reason.clone(),
                 },
                 approval_request: Some(ApprovalRequest {
-                    reason: "execution requires approval".to_string(),
+                    reason,
                     command: command.map(ToString::to_string),
                     cwd: cwd.to_path_buf(),
                     risk,
                 }),
-                sandbox_backend: SandboxBackendSelection::from_requirement(self.sandbox),
-                network_decision: NetworkDecision::from_policy(self.network),
+                escalation_request: None,
+                sandbox_backend,
+                network_decision,
             };
         }
 
-        let decision = self.sandbox_decision_for_cwd(cwd);
+        let decision = self.sandbox_decision_for_cwd(cwd, risk);
+        let escalation_request =
+            escalation_request_for_decision(&decision, command, cwd, risk, self.sandbox);
         PolicyEvaluation {
             decision,
             approval_request: None,
-            sandbox_backend: SandboxBackendSelection::from_requirement(self.sandbox),
-            network_decision: NetworkDecision::from_policy(self.network),
+            escalation_request,
+            sandbox_backend,
+            network_decision,
         }
     }
 
-    fn sandbox_decision_for_cwd(&self, cwd: &Path) -> PolicyDecision {
-        if !self.approval.is_approved_without_prompt() {
-            return PolicyDecision::Blocked {
-                reason: "execution requires approval".to_string(),
-            };
-        }
-
+    fn sandbox_decision_for_cwd(&self, cwd: &Path, risk: CommandRisk) -> PolicyDecision {
         match self.sandbox {
-            SandboxRequirement::ReadOnly => PolicyDecision::Blocked {
-                reason: "sandbox is read-only".to_string(),
-            },
+            SandboxRequirement::ReadOnly if risk.requires_write_access() => {
+                PolicyDecision::Blocked {
+                    reason: "sandbox is read-only".to_string(),
+                }
+            }
+            SandboxRequirement::ReadOnly => PolicyDecision::Allowed,
             SandboxRequirement::WorkspaceWrite => {
                 if is_within_workspace(&self.workspace_root, cwd) {
                     PolicyDecision::Allowed
@@ -89,6 +111,14 @@ impl ExecutionPolicy {
             SandboxRequirement::DangerFullAccess => PolicyDecision::Allowed,
         }
     }
+
+    fn network_denial_for(&self, risk: CommandRisk) -> Option<String> {
+        if matches!(self.network, NetworkPolicy::Disabled) && risk.requires_network() {
+            Some("network access is disabled by policy".to_string())
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -102,7 +132,15 @@ pub enum ApprovalRequirement {
 
 impl ApprovalRequirement {
     pub fn is_approved_without_prompt(self) -> bool {
-        matches!(self, Self::PreApproved)
+        matches!(self, Self::PreApproved | Self::AskOnFailure)
+    }
+
+    pub fn prompt_reason_before_run(self, risk: CommandRisk) -> Option<String> {
+        match self {
+            Self::PreApproved | Self::AskOnFailure => None,
+            Self::AskBeforeRunning => Some("tool execution requires approval".to_string()),
+            Self::Declined => Some(format!("approval was declined for {risk:?} command")),
+        }
     }
 }
 
@@ -125,8 +163,11 @@ pub enum ApprovalResponse {
 #[serde(rename_all = "snake_case")]
 pub enum CommandRisk {
     Low,
+    ReadsWorkspace,
     WritesWorkspace,
     Network,
+    CredentialAccess,
+    ProcessControl,
     Destructive,
 }
 
@@ -135,10 +176,57 @@ impl CommandRisk {
         let lower = command.to_ascii_lowercase();
         if contains_any(
             &lower,
-            &["rm -rf", "del /", "format ", "remove-item", "rd /s"],
+            &[
+                "rm -rf",
+                "del /",
+                "format ",
+                "remove-item",
+                "rd /s",
+                "rmdir /s",
+                "erase ",
+            ],
         ) {
             Self::Destructive
-        } else if contains_any(&lower, &["curl ", "wget ", "invoke-webrequest", "irm "]) {
+        } else if contains_any(
+            &lower,
+            &[
+                "taskkill",
+                "kill ",
+                "pkill ",
+                "stop-process",
+                "shutdown",
+                "restart-computer",
+            ],
+        ) {
+            Self::ProcessControl
+        } else if contains_any(
+            &lower,
+            &[
+                "api_key",
+                "apikey",
+                "password",
+                "passwd",
+                "token",
+                "credential",
+                "secret",
+                ".env",
+                "id_rsa",
+            ],
+        ) {
+            Self::CredentialAccess
+        } else if contains_any(
+            &lower,
+            &[
+                "curl ",
+                "wget ",
+                "invoke-webrequest",
+                "invoke-restmethod",
+                "irm ",
+                "npm install",
+                "cargo install",
+                "pip install",
+            ],
+        ) {
             Self::Network
         } else if contains_any(
             &lower,
@@ -150,12 +238,42 @@ impl CommandRisk {
                 " move ",
                 "new-item",
                 "set-content",
+                "out-file",
+                "add-content",
+                "apply_patch",
             ],
         ) {
             Self::WritesWorkspace
+        } else if contains_any(
+            &lower,
+            &[
+                "cat ",
+                "type ",
+                "get-content",
+                "rg ",
+                "ripgrep ",
+                "findstr ",
+            ],
+        ) {
+            Self::ReadsWorkspace
         } else {
             Self::Low
         }
+    }
+
+    pub fn requires_write_access(self) -> bool {
+        matches!(
+            self,
+            Self::WritesWorkspace | Self::Destructive | Self::ProcessControl
+        )
+    }
+
+    pub fn requires_network(self) -> bool {
+        matches!(self, Self::Network)
+    }
+
+    pub fn requires_escalation_from_read_only(self) -> bool {
+        self.requires_write_access()
     }
 }
 
@@ -179,8 +297,19 @@ pub enum NetworkPolicy {
 pub struct PolicyEvaluation {
     pub decision: PolicyDecision,
     pub approval_request: Option<ApprovalRequest>,
+    pub escalation_request: Option<EscalationRequest>,
     pub sandbox_backend: SandboxBackendSelection,
     pub network_decision: NetworkDecision,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EscalationRequest {
+    pub reason: String,
+    pub command: Option<String>,
+    pub cwd: PathBuf,
+    pub risk: CommandRisk,
+    pub required_sandbox: Option<SandboxRequirement>,
+    pub required_network: Option<NetworkPolicy>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -253,6 +382,37 @@ fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
 }
 
+fn escalation_request_for_decision(
+    decision: &PolicyDecision,
+    command: Option<&str>,
+    cwd: &Path,
+    risk: CommandRisk,
+    sandbox: SandboxRequirement,
+) -> Option<EscalationRequest> {
+    let PolicyDecision::Blocked { reason } = decision else {
+        return None;
+    };
+    let required_sandbox = if matches!(sandbox, SandboxRequirement::ReadOnly)
+        && risk.requires_escalation_from_read_only()
+    {
+        Some(SandboxRequirement::WorkspaceWrite)
+    } else if matches!(sandbox, SandboxRequirement::WorkspaceWrite)
+        && reason.contains("outside workspace")
+    {
+        Some(SandboxRequirement::DangerFullAccess)
+    } else {
+        None
+    };
+    required_sandbox.map(|required_sandbox| EscalationRequest {
+        reason: reason.clone(),
+        command: command.map(ToString::to_string),
+        cwd: cwd.to_path_buf(),
+        risk,
+        required_sandbox: Some(required_sandbox),
+        required_network: None,
+    })
+}
+
 fn is_within_workspace(root: &Path, cwd: &Path) -> bool {
     let root = match std::fs::canonicalize(root) {
         Ok(path) => path,
@@ -306,6 +466,14 @@ mod tests {
             CommandRisk::classify("echo hi > file.txt"),
             CommandRisk::WritesWorkspace
         );
+        assert_eq!(
+            CommandRisk::classify("taskkill /pid 1234"),
+            CommandRisk::ProcessControl
+        );
+        assert_eq!(
+            CommandRisk::classify("cat .env"),
+            CommandRisk::CredentialAccess
+        );
     }
 
     #[test]
@@ -314,5 +482,87 @@ mod tests {
             SandboxBackendSelection::from_requirement(SandboxRequirement::DangerFullAccess);
 
         assert_eq!(selection.backend, SandboxBackend::DangerFullAccess);
+    }
+
+    #[test]
+    fn read_only_allows_low_risk_but_blocks_writes_with_escalation() {
+        let workspace = TempDir::new().expect("workspace");
+        let policy = ExecutionPolicy {
+            approval: ApprovalRequirement::PreApproved,
+            sandbox: SandboxRequirement::ReadOnly,
+            network: NetworkPolicy::Inherit,
+            workspace_root: workspace.path().to_path_buf(),
+        };
+
+        assert!(matches!(
+            policy
+                .evaluate(workspace.path(), Some("echo yunxi"))
+                .decision,
+            PolicyDecision::Allowed
+        ));
+
+        let evaluation = policy.evaluate(workspace.path(), Some("echo yunxi > file.txt"));
+        assert!(matches!(
+            evaluation.decision,
+            PolicyDecision::Blocked { ref reason } if reason.contains("read-only")
+        ));
+        assert_eq!(
+            evaluation
+                .escalation_request
+                .expect("escalation")
+                .required_sandbox,
+            Some(SandboxRequirement::WorkspaceWrite)
+        );
+    }
+
+    #[test]
+    fn disabled_network_blocks_network_commands_with_escalation() {
+        let workspace = TempDir::new().expect("workspace");
+        let policy = ExecutionPolicy {
+            approval: ApprovalRequirement::PreApproved,
+            sandbox: SandboxRequirement::WorkspaceWrite,
+            network: NetworkPolicy::Disabled,
+            workspace_root: workspace.path().to_path_buf(),
+        };
+
+        let evaluation = policy.evaluate(workspace.path(), Some("curl https://example.test"));
+
+        assert!(matches!(
+            evaluation.decision,
+            PolicyDecision::Blocked { ref reason } if reason.contains("network")
+        ));
+        assert_eq!(
+            evaluation
+                .escalation_request
+                .expect("network escalation")
+                .required_network,
+            Some(NetworkPolicy::Enabled)
+        );
+    }
+
+    #[test]
+    fn workspace_write_outside_workspace_requests_full_access_escalation() {
+        let workspace = TempDir::new().expect("workspace");
+        let outside = TempDir::new().expect("outside");
+        let policy = ExecutionPolicy {
+            approval: ApprovalRequirement::PreApproved,
+            sandbox: SandboxRequirement::WorkspaceWrite,
+            network: NetworkPolicy::Inherit,
+            workspace_root: workspace.path().to_path_buf(),
+        };
+
+        let evaluation = policy.evaluate(outside.path(), Some("echo yunxi > file.txt"));
+
+        assert!(matches!(
+            evaluation.decision,
+            PolicyDecision::Blocked { ref reason } if reason.contains("outside workspace")
+        ));
+        assert_eq!(
+            evaluation
+                .escalation_request
+                .expect("workspace escalation")
+                .required_sandbox,
+            Some(SandboxRequirement::DangerFullAccess)
+        );
     }
 }

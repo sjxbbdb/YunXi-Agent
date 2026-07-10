@@ -471,6 +471,50 @@ Stage 4I first construction verification passed on 2026-07-10:
 - `git diff --check`: pass with Windows line-ending warnings only
 - `cargo clean`: pass; removed 1.3GiB of build artifacts
 
+## Stage 4I Second Construction Slice
+
+Stage 4I continued with a second behavior-level parity construction slice. This
+slice kept the build-first constraint: implementation was wired first, then the
+full verification gate was run once.
+
+Implemented in this slice:
+
+- `yunxi-agent-tools` now carries structured `ToolRuntimeEvent` values on
+  `ToolResponse`, allowing sandbox decisions, MCP session state, multi-agent
+  state, and patch diagnostics to cross the tool/runtime boundary.
+- `yunxi-agent-runtime` maps tool runtime events into YunXi `AgentEvent`
+  values, including MCP session JSONL events, multi-agent JSONL events,
+  sandbox reasoning, and patch diagnostic warnings.
+- `yunxi-agent-multi-agent` now owns a `ChildAgentRuntime` boundary,
+  `FixtureChildAgentRuntime`, and `SpawnRun` command so child-agent execution
+  has an autonomous YunXi-owned run-result path without depending on the
+  runtime crate.
+- `yunxi-agent-tools` exposes `spawn_run` as a model-visible multi-agent action
+  and returns child run results plus multi-agent runtime events from the
+  composite tool runtime.
+- `yunxi-agent-patch` now rejects Codex-style `Add File` operations that would
+  overwrite an existing target, rejects duplicate touched paths in a single
+  patch, rejects move destinations that already exist, and reports non-UTF-8
+  update targets with a dedicated diagnostic kind.
+- New fixture tests cover child-agent spawn/run, runtime multi-agent event
+  emission, multi-agent tool runtime events, and the new patch boundary
+  diagnostics.
+
+Stage 4I second construction verification passed on 2026-07-10:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4i second slice fixture"`:
+  pass, including `storage_state` JSONL output
+- `cargo tree -p yunxi-agent-cli`: pass; dependency keyword scan found no
+  `codex`, `vendor`, or `yunxi-agent-codex` dependency in the default CLI tree
+- `git diff --check`: pass with Windows line-ending warnings only
+- `cargo clean`: pass; removed 1.3GiB of build artifacts
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

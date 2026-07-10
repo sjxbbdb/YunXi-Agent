@@ -9,7 +9,8 @@ use yunxi_agent_mcp::{
 use yunxi_agent_tools::{
     CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime, ToolFileChangeKind, ToolName,
     ToolPolicy, ToolPolicyDecision, ToolRegistry, ToolRequest, ToolRequestKind, ToolRouteStatus,
-    ToolRouter, ToolRuntime, ToolStatus, default_tool_registry, workspace_tool_registry,
+    ToolRouter, ToolRuntime, ToolRuntimeEvent, ToolStatus, default_tool_registry,
+    workspace_tool_registry,
 };
 
 #[test]
@@ -741,4 +742,36 @@ async fn composite_runtime_executes_multi_agent_lifecycle() {
             .expect("list output")
             .contains("explore runtime")
     );
+}
+
+#[tokio::test]
+async fn composite_runtime_executes_multi_agent_spawn_run_with_runtime_events() {
+    let temp = TempDir::new().expect("temp dir");
+    let runtime = CompositeToolRuntime::default();
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: Some("spawn-run".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: ToolRequestKind::MultiAgent {
+                action: "spawn_run".to_string(),
+                arguments_json: Some(r#"{"task":"review runtime"}"#.to_string()),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("spawn run response");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    assert!(response.output.as_deref().is_some_and(|output| {
+        output.contains("child_run") && output.contains("review runtime")
+    }));
+    assert!(response.runtime_events.iter().any(|event| matches!(
+        event,
+        ToolRuntimeEvent::MultiAgent {
+            agent_id,
+            status,
+            ..
+        } if agent_id == "agent-1" && status == "completed"
+    )));
 }

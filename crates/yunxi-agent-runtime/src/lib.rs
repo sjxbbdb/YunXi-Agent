@@ -26,7 +26,7 @@ use yunxi_agent_storage::{
 };
 use yunxi_agent_tools::{
     CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolRequest,
-    ToolRequestKind, ToolRouter, ToolRuntime, ToolStatus,
+    ToolRequestKind, ToolRouter, ToolRuntime, ToolRuntimeEvent, ToolStatus,
 };
 
 const DEFAULT_MAX_TURNS: usize = 8;
@@ -262,6 +262,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 emit_tool_started(&sink, &dispatch.request).await?;
                 let tool_response = self.tools.execute(dispatch.request.clone()).await?;
                 emit_tool_lifecycle_events(&sink, &tool_response).await?;
+                emit_tool_runtime_events(&sink, &tool_response).await?;
                 emit_tool_completed(&sink, &dispatch.request, &tool_response).await?;
                 emit_approval_completed_if_needed(&sink, &dispatch.trace, &tool_response).await?;
                 emit_escalation_completed_if_needed(&sink, &dispatch.trace, &tool_response).await?;
@@ -1271,6 +1272,78 @@ where
                 .await?;
             }
             ExecLifecycleEvent::Started { .. } | ExecLifecycleEvent::Completed { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+async fn emit_tool_runtime_events<S>(
+    sink: &S,
+    response: &yunxi_agent_tools::ToolResponse,
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    for event in &response.runtime_events {
+        match event {
+            ToolRuntimeEvent::SandboxDecision {
+                allowed,
+                backend,
+                network,
+                escalation_required,
+                denial_reason,
+            } => {
+                sink.emit(AgentEvent::Reasoning {
+                    content: format!(
+                        "Sandbox decision: allowed={allowed}, backend={backend}, network={network}, escalation_required={escalation_required}, denial_reason={}",
+                        denial_reason.as_deref().unwrap_or("none")
+                    ),
+                })
+                .await?;
+            }
+            ToolRuntimeEvent::McpSession {
+                server,
+                status,
+                message,
+            } => {
+                sink.emit(AgentEvent::McpSession {
+                    server: server.clone(),
+                    status: status.clone(),
+                    message: message.clone(),
+                })
+                .await?;
+            }
+            ToolRuntimeEvent::MultiAgent {
+                agent_id,
+                parent_agent_id,
+                status,
+                message,
+            } => {
+                sink.emit(AgentEvent::MultiAgentEvent {
+                    agent_id: agent_id.clone(),
+                    parent_agent_id: parent_agent_id.clone(),
+                    status: status.clone(),
+                    message: message.clone(),
+                })
+                .await?;
+            }
+            ToolRuntimeEvent::PatchDiagnostic {
+                kind,
+                message,
+                path,
+                line,
+            } => {
+                let location = match (path, line) {
+                    (Some(path), Some(line)) => format!(" at {path}:{line}"),
+                    (Some(path), None) => format!(" at {path}"),
+                    (None, Some(line)) => format!(" at line {line}"),
+                    (None, None) => String::new(),
+                };
+                sink.emit(AgentEvent::Warning {
+                    message: format!("patch diagnostic [{kind}]{location}: {message}"),
+                })
+                .await?;
+            }
         }
     }
     Ok(())

@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -63,6 +64,328 @@ pub enum ToolRequestKind {
         name: String,
         arguments_json: Option<String>,
     },
+}
+
+impl ToolRequestKind {
+    pub fn tool_name(&self) -> ToolName {
+        match self {
+            Self::Shell { .. } => ToolName::Shell,
+            Self::Patch { .. } => ToolName::Patch,
+            Self::Mcp { .. } => ToolName::Mcp,
+            Self::Skill { .. } => ToolName::Skill,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolName {
+    Shell,
+    Patch,
+    Mcp,
+    Skill,
+}
+
+impl ToolName {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shell => "shell",
+            Self::Patch => "patch",
+            Self::Mcp => "mcp",
+            Self::Skill => "skill",
+        }
+    }
+}
+
+impl Default for ToolName {
+    fn default() -> Self {
+        Self::Shell
+    }
+}
+
+impl std::fmt::Display for ToolName {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolSpec {
+    pub name: ToolName,
+    pub description: String,
+    pub parameters: Value,
+    pub model_visible: bool,
+}
+
+impl ToolSpec {
+    pub fn new(
+        name: ToolName,
+        description: impl Into<String>,
+        parameters: Value,
+        model_visible: bool,
+    ) -> Self {
+        Self {
+            name,
+            description: description.into(),
+            parameters,
+            model_visible,
+        }
+    }
+
+    pub fn openai_tool_json(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": self.name.as_str(),
+                "description": self.description.clone(),
+                "parameters": self.parameters.clone(),
+            }
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolRegistry {
+    specs: BTreeMap<ToolName, ToolSpec>,
+}
+
+impl ToolRegistry {
+    pub fn new(specs: impl IntoIterator<Item = ToolSpec>) -> Self {
+        Self {
+            specs: specs
+                .into_iter()
+                .map(|spec| (spec.name, spec))
+                .collect::<BTreeMap<_, _>>(),
+        }
+    }
+
+    pub fn spec(&self, name: ToolName) -> Option<&ToolSpec> {
+        self.specs.get(&name)
+    }
+
+    pub fn specs(&self) -> impl Iterator<Item = &ToolSpec> {
+        self.specs.values()
+    }
+
+    pub fn model_visible_specs(&self) -> Vec<&ToolSpec> {
+        self.specs
+            .values()
+            .filter(|spec| spec.model_visible)
+            .collect()
+    }
+
+    pub fn openai_tools_json(&self) -> Vec<Value> {
+        self.model_visible_specs()
+            .into_iter()
+            .map(ToolSpec::openai_tool_json)
+            .collect()
+    }
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        default_tool_registry()
+    }
+}
+
+pub fn default_tool_registry() -> ToolRegistry {
+    ToolRegistry::new([
+        shell_tool_spec(),
+        patch_tool_spec(),
+        mcp_tool_spec(),
+        skill_tool_spec(),
+    ])
+}
+
+fn shell_tool_spec() -> ToolSpec {
+    ToolSpec::new(
+        ToolName::Shell,
+        "Run a shell command inside the configured YunXi workspace.",
+        json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Command to execute with the platform shell."
+                }
+            },
+            "required": ["command"],
+            "additionalProperties": false
+        }),
+        true,
+    )
+}
+
+fn patch_tool_spec() -> ToolSpec {
+    ToolSpec::new(
+        ToolName::Patch,
+        "Apply a constrained YunXi patch operation inside the configured workspace.",
+        json!({
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "enum": ["write", "delete"],
+                    "description": "Patch operation to apply."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Workspace-relative file path."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "File content for write operations."
+                }
+            },
+            "required": ["op", "path"],
+            "additionalProperties": false
+        }),
+        true,
+    )
+}
+
+fn mcp_tool_spec() -> ToolSpec {
+    ToolSpec::new(
+        ToolName::Mcp,
+        "Call a registered YunXi MCP server tool.",
+        json!({
+            "type": "object",
+            "properties": {
+                "server": {
+                    "type": "string",
+                    "description": "MCP server name."
+                },
+                "tool": {
+                    "type": "string",
+                    "description": "Tool name on the MCP server."
+                },
+                "arguments_json": {
+                    "type": "string",
+                    "description": "Optional serialized JSON object for tool arguments."
+                }
+            },
+            "required": ["server", "tool"],
+            "additionalProperties": false
+        }),
+        true,
+    )
+}
+
+fn skill_tool_spec() -> ToolSpec {
+    ToolSpec::new(
+        ToolName::Skill,
+        "Invoke a registered YunXi skill by name.",
+        json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill name."
+                },
+                "arguments_json": {
+                    "type": "string",
+                    "description": "Optional serialized JSON object for skill arguments."
+                }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+        }),
+        true,
+    )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolRoute {
+    pub name: ToolName,
+    pub model_visible: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolDispatch {
+    pub request: ToolRequest,
+    pub route: ToolRoute,
+    pub trace: ToolDispatchTrace,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ToolDispatchTrace {
+    pub request_id: Option<String>,
+    pub tool_name: ToolName,
+    pub route_status: ToolRouteStatus,
+    pub policy_decision: ToolPolicyDecision,
+}
+
+impl ToolDispatchTrace {
+    pub fn summary(&self) -> String {
+        let id = self.request_id.as_deref().unwrap_or("none");
+        let policy = match &self.policy_decision {
+            ToolPolicyDecision::Approved => "approved".to_string(),
+            ToolPolicyDecision::Declined { reason } => format!("declined:{reason}"),
+        };
+        format!(
+            "Tool dispatch routed {} (id={id}, route={:?}, policy={policy})",
+            self.tool_name, self.route_status
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolRouteStatus {
+    Routed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolPolicyDecision {
+    Approved,
+    Declined { reason: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ToolRouter {
+    registry: ToolRegistry,
+}
+
+impl ToolRouter {
+    pub fn new(registry: ToolRegistry) -> Self {
+        Self { registry }
+    }
+
+    pub fn registry(&self) -> &ToolRegistry {
+        &self.registry
+    }
+
+    pub fn route(&self, request: ToolRequest) -> AgentResult<ToolDispatch> {
+        let tool_name = request.kind.tool_name();
+        let spec = self
+            .registry
+            .spec(tool_name)
+            .ok_or_else(|| AgentError::Execution {
+                message: format!("tool is not registered in YunXi router: {tool_name}"),
+            })?;
+        let route = ToolRoute {
+            name: tool_name,
+            model_visible: spec.model_visible,
+        };
+        let trace = ToolDispatchTrace {
+            request_id: request.id.clone(),
+            tool_name,
+            route_status: ToolRouteStatus::Routed,
+            policy_decision: request.policy.decision_for(&request),
+        };
+        Ok(ToolDispatch {
+            request,
+            route,
+            trace,
+        })
+    }
+}
+
+impl Default for ToolRouter {
+    fn default() -> Self {
+        Self::new(default_tool_registry())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -173,6 +496,13 @@ impl ToolPolicy {
                 SandboxMode::DangerFullAccess => SandboxPolicy::DangerFullAccess,
             },
             workspace_root: Some(config.cwd.clone()),
+        }
+    }
+
+    pub fn decision_for(&self, request: &ToolRequest) -> ToolPolicyDecision {
+        match self.denial_for(request) {
+            Some(reason) => ToolPolicyDecision::Declined { reason },
+            None => ToolPolicyDecision::Approved,
         }
     }
 

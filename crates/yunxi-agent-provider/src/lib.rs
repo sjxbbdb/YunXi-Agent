@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use yunxi_agent_core::{AgentConfig, AgentError, AgentInput, AgentResult, TokenUsage};
 use yunxi_agent_protocol::{ProtocolRole, ToolCall};
+use yunxi_agent_tools::default_tool_registry;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProviderRequest {
@@ -333,38 +334,7 @@ pub fn build_openai_request_json(
             .as_deref()
             .unwrap_or(provider_config.model.as_str()),
         "messages": messages,
-        "tools": [
-            {
-                "type": "function",
-                "function": {
-                    "name": "shell",
-                    "description": "Run a shell command inside the configured YunXi workspace.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "command": { "type": "string" }
-                        },
-                        "required": ["command"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "patch",
-                    "description": "Apply a constrained YunXi patch JSON operation.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "op": { "type": "string" },
-                            "path": { "type": "string" },
-                            "content": { "type": "string" }
-                        },
-                        "required": ["op", "path"]
-                    }
-                }
-            }
-        ]
+        "tools": default_tool_registry().openai_tools_json()
     }))
 }
 
@@ -439,17 +409,26 @@ fn parse_openai_tool_call(
             id,
             server: required_string(&args, "server")?,
             tool: required_string(&args, "tool")?,
-            arguments_json: args.get("arguments_json").map(Value::to_string),
+            arguments_json: optional_json_argument(&args, "arguments_json"),
         }),
         "skill" => Ok(ProviderToolCall::Skill {
             id,
             name: required_string(&args, "name")?,
-            arguments_json: args.get("arguments_json").map(Value::to_string),
+            arguments_json: optional_json_argument(&args, "arguments_json"),
         }),
         other => Err(AgentError::Execution {
             message: format!("unsupported provider tool call: {other}"),
         }),
     }
+}
+
+fn optional_json_argument(value: &Value, key: &str) -> Option<String> {
+    value.get(key).map(|argument| {
+        argument
+            .as_str()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| argument.to_string())
+    })
 }
 
 fn required_string(value: &Value, key: &str) -> AgentResult<String> {

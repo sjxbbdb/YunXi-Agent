@@ -17,8 +17,8 @@ use yunxi_agent_storage::{
     SessionId, SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
-    ShellToolRuntime, ToolFileChangeKind, ToolPolicy, ToolRequest, ToolRequestKind, ToolRuntime,
-    ToolStatus,
+    ShellToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolRequest,
+    ToolRequestKind, ToolRouter, ToolRuntime, ToolStatus,
 };
 
 const DEFAULT_MAX_TURNS: usize = 8;
@@ -90,6 +90,7 @@ impl RuntimeEventSink for VecEventSink {
 pub struct YunXiRuntimeBackend {
     provider: Arc<dyn AgentProvider>,
     tools: Arc<dyn ToolRuntime>,
+    tool_router: ToolRouter,
     storage: Arc<dyn SessionStore>,
     max_turns: usize,
 }
@@ -116,6 +117,7 @@ impl YunXiRuntimeBackend {
         Self {
             provider: Arc::new(provider),
             tools: Arc::new(tools),
+            tool_router: ToolRouter::default(),
             storage: Arc::new(storage),
             max_turns: DEFAULT_MAX_TURNS,
         }
@@ -123,6 +125,11 @@ impl YunXiRuntimeBackend {
 
     pub fn with_max_turns(mut self, max_turns: usize) -> Self {
         self.max_turns = max_turns.max(1);
+        self
+    }
+
+    pub fn with_tool_router(mut self, tool_router: ToolRouter) -> Self {
+        self.tool_router = tool_router;
         self
     }
 
@@ -208,9 +215,11 @@ impl RuntimeBackend for YunXiRuntimeBackend {
 
             for tool_call in provider_response.tool_calls {
                 let tool_request = map_tool_call(&turn.config, tool_call);
-                emit_tool_started(&sink, &tool_request).await?;
-                let tool_response = self.tools.execute(tool_request.clone()).await?;
-                emit_tool_completed(&sink, &tool_request, &tool_response).await?;
+                let dispatch = self.tool_router.route(tool_request)?;
+                emit_tool_dispatch_trace(&sink, &dispatch.trace).await?;
+                emit_tool_started(&sink, &dispatch.request).await?;
+                let tool_response = self.tools.execute(dispatch.request.clone()).await?;
+                emit_tool_completed(&sink, &dispatch.request, &tool_response).await?;
                 emit_tool_warning(&sink, &tool_response).await?;
                 emit_file_changes(&sink, &tool_response).await?;
                 messages.push(ProviderMessage::tool(render_tool_response(&tool_response)));
@@ -394,6 +403,16 @@ fn map_tool_call(config: &AgentConfig, tool_call: ProviderToolCall) -> ToolReque
             policy,
         },
     }
+}
+
+async fn emit_tool_dispatch_trace<S>(sink: &S, trace: &ToolDispatchTrace) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    sink.emit(AgentEvent::Reasoning {
+        content: trace.summary(),
+    })
+    .await
 }
 
 async fn emit_tool_started<S>(sink: &S, request: &ToolRequest) -> AgentResult<()>

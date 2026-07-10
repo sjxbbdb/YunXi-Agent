@@ -2,9 +2,97 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentConfig, ApprovalMode, SandboxMode};
 use yunxi_agent_tools::{
-    NoopToolRuntime, ShellToolRuntime, ToolFileChangeKind, ToolPolicy, ToolRequest, ToolRuntime,
-    ToolStatus,
+    NoopToolRuntime, ShellToolRuntime, ToolFileChangeKind, ToolName, ToolPolicy,
+    ToolPolicyDecision, ToolRegistry, ToolRequest, ToolRouteStatus, ToolRouter, ToolRuntime,
+    ToolStatus, default_tool_registry,
 };
+
+#[test]
+fn default_tool_registry_exposes_model_visible_specs() {
+    let registry = default_tool_registry();
+    let names = registry
+        .model_visible_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        names,
+        vec![
+            ToolName::Shell,
+            ToolName::Patch,
+            ToolName::Mcp,
+            ToolName::Skill
+        ]
+    );
+    assert_eq!(
+        registry.spec(ToolName::Shell).expect("shell").parameters["required"],
+        serde_json::json!(["command"])
+    );
+    assert_eq!(
+        registry.spec(ToolName::Patch).expect("patch").parameters["required"],
+        serde_json::json!(["op", "path"])
+    );
+}
+
+#[test]
+fn default_tool_registry_exports_openai_function_schema() {
+    let registry = default_tool_registry();
+    let tools = registry.openai_tools_json();
+    let names = tools
+        .iter()
+        .map(|tool| {
+            tool.pointer("/function/name")
+                .and_then(serde_json::Value::as_str)
+                .expect("tool function name")
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, vec!["shell", "patch", "mcp", "skill"]);
+    assert_eq!(tools[0]["type"], "function");
+    assert_eq!(
+        tools[0]["function"]["parameters"]["properties"]["command"]["type"],
+        "string"
+    );
+}
+
+#[test]
+fn tool_router_routes_requests_and_records_trace() {
+    let mut request = ToolRequest::shell(PathBuf::from("."), "echo routed");
+    request.id = Some("call-shell".to_string());
+
+    let dispatch = ToolRouter::default()
+        .route(request)
+        .expect("shell route should exist");
+
+    assert_eq!(dispatch.route.name, ToolName::Shell);
+    assert!(dispatch.route.model_visible);
+    assert_eq!(dispatch.trace.request_id.as_deref(), Some("call-shell"));
+    assert_eq!(dispatch.trace.tool_name, ToolName::Shell);
+    assert_eq!(dispatch.trace.route_status, ToolRouteStatus::Routed);
+    assert_eq!(dispatch.trace.policy_decision, ToolPolicyDecision::Approved);
+    assert!(
+        dispatch
+            .trace
+            .summary()
+            .contains("Tool dispatch routed shell")
+    );
+}
+
+#[test]
+fn tool_router_rejects_unregistered_requests() {
+    let shell_spec = default_tool_registry()
+        .spec(ToolName::Shell)
+        .expect("shell")
+        .clone();
+    let router = ToolRouter::new(ToolRegistry::new([shell_spec]));
+
+    let error = router
+        .route(ToolRequest::patch(PathBuf::from("."), "{}"))
+        .expect_err("patch is not registered");
+
+    assert!(error.to_string().contains("tool is not registered"));
+}
 
 #[tokio::test]
 async fn noop_tool_runtime_declines_execution() {

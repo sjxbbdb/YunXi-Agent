@@ -1,3 +1,4 @@
+use serde_json::json;
 use std::path::PathBuf;
 use yunxi_agent_core::{AgentConfig, AgentInput};
 use yunxi_agent_protocol::ToolCall;
@@ -45,6 +46,25 @@ fn openai_request_json_uses_yunxi_provider_messages() {
     assert_eq!(json["model"], "yunxi-model");
     assert_eq!(json["messages"][0]["role"], "user");
     assert_eq!(json["messages"][0]["content"], "explain this project");
+
+    let tools = json["tools"].as_array().expect("tools");
+    let tool_names = tools
+        .iter()
+        .map(|tool| {
+            tool.pointer("/function/name")
+                .and_then(serde_json::Value::as_str)
+                .expect("tool name")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(tool_names, vec!["shell", "patch", "mcp", "skill"]);
+    assert_eq!(
+        tools[0]["function"]["parameters"]["required"],
+        json!(["command"])
+    );
+    assert_eq!(
+        tools[2]["function"]["parameters"]["required"],
+        json!(["server", "tool"])
+    );
 }
 
 #[test]
@@ -148,6 +168,59 @@ fn openai_response_json_parses_patch_tool_call() {
             id: Some("call_patch".to_string()),
             patch: r#"{"op":"write","path":"notes.txt","content":"hello"}"#.to_string()
         }]
+    );
+}
+
+#[test]
+fn openai_response_json_parses_mcp_and_skill_tool_calls() {
+    let response = parse_openai_response_json(
+        r#"{
+          "choices": [
+            {
+              "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "call_mcp",
+                    "type": "function",
+                    "function": {
+                      "name": "mcp",
+                      "arguments": "{\"server\":\"fs\",\"tool\":\"read\",\"arguments_json\":\"{\\\"path\\\":\\\"README.md\\\"}\"}"
+                    }
+                  },
+                  {
+                    "id": "call_skill",
+                    "type": "function",
+                    "function": {
+                      "name": "skill",
+                      "arguments": "{\"name\":\"code-review\",\"arguments_json\":\"{\\\"scope\\\":\\\"runtime\\\"}\"}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }"#,
+    )
+    .expect("provider response");
+
+    assert_eq!(response.message, None);
+    assert_eq!(
+        response.tool_calls,
+        vec![
+            ProviderToolCall::Mcp {
+                id: Some("call_mcp".to_string()),
+                server: "fs".to_string(),
+                tool: "read".to_string(),
+                arguments_json: Some(r#"{"path":"README.md"}"#.to_string())
+            },
+            ProviderToolCall::Skill {
+                id: Some("call_skill".to_string()),
+                name: "code-review".to_string(),
+                arguments_json: Some(r#"{"scope":"runtime"}"#.to_string())
+            }
+        ]
     );
 }
 

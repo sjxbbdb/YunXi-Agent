@@ -349,6 +349,13 @@ async fn yunxi_runtime_executes_provider_requested_shell_tool() {
     );
     assert!(result.events.iter().any(|event| matches!(
         event,
+        AgentEvent::Reasoning {
+            content
+        } if content.contains("Tool dispatch routed shell")
+            && content.contains("policy=approved")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
         AgentEvent::CommandStarted {
             id: Some(id),
             command

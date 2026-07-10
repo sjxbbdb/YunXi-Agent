@@ -13,7 +13,7 @@ use yunxi_agent_provider::{
 };
 use yunxi_agent_runtime::{YunXiRuntimeBackend, protocol_stream_events_to_agent_events};
 use yunxi_agent_storage::{InMemorySessionStore, SessionId, SessionRecord, SessionStore};
-use yunxi_agent_tools::{NoopToolRuntime, ShellToolRuntime};
+use yunxi_agent_tools::{CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime};
 
 #[tokio::test]
 async fn yunxi_runtime_runs_without_codex_backend() {
@@ -435,6 +435,239 @@ async fn yunxi_runtime_executes_dynamic_tool_search() {
             .as_deref()
             .expect("final response")
             .contains("runtime-notes.md")
+    );
+}
+
+#[derive(Clone, Default)]
+struct SkillCallingProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for SkillCallingProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "skill result: {}",
+                tool_message.content.trim()
+            )));
+        }
+
+        Ok(ProviderResponse::tool_call(ProviderToolCall::Skill {
+            id: Some("skill-1".to_string()),
+            name: "writer".to_string(),
+            arguments_json: Some(r#"{"topic":"runtime"}"#.to_string()),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn yunxi_runtime_executes_provider_requested_skill_tool() {
+    let temp = TempDir::new().expect("temp dir");
+    let skill_dir = temp.path().join(".codex/skills/writer");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: writer\ndescription: writes reports\n---\n# Writer\n",
+    )
+    .expect("skill file");
+    let backend = YunXiRuntimeBackend::with_parts(
+        SkillCallingProvider,
+        CompositeToolRuntime::default(),
+        InMemorySessionStore::default(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("use skill"))
+        .await
+        .expect("runtime should complete skill loop");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallCompleted {
+            id: Some(id),
+            name,
+            status: CommandStatus::Completed,
+            output,
+        } if id == "skill-1" && name == "skill:writer" && output.contains("# Writer")
+    )));
+    assert!(
+        result
+            .final_response
+            .as_deref()
+            .expect("final response")
+            .contains("# Writer")
+    );
+}
+
+#[derive(Clone, Default)]
+struct MultiAgentCallingProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for MultiAgentCallingProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "multi-agent result: {}",
+                tool_message.content.trim()
+            )));
+        }
+
+        Ok(ProviderResponse::tool_call(ProviderToolCall::MultiAgent {
+            id: Some("agent-call-1".to_string()),
+            action: "spawn".to_string(),
+            arguments_json: Some(r#"{"task":"review runtime"}"#.to_string()),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn yunxi_runtime_executes_provider_requested_multi_agent_tool() {
+    let temp = TempDir::new().expect("temp dir");
+    let backend = YunXiRuntimeBackend::with_parts(
+        MultiAgentCallingProvider,
+        CompositeToolRuntime::default(),
+        InMemorySessionStore::default(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("spawn reviewer"))
+        .await
+        .expect("runtime should complete multi-agent loop");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallCompleted {
+            id: Some(id),
+            name,
+            status: CommandStatus::Completed,
+            output,
+        } if id == "agent-call-1" && name == "multi_agent:spawn" && output.contains("agent-1")
+    )));
+    assert!(
+        result
+            .final_response
+            .as_deref()
+            .expect("final response")
+            .contains("review runtime")
+    );
+}
+
+#[derive(Clone, Default)]
+struct McpCallingProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for McpCallingProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "mcp result: {}",
+                tool_message.content.trim()
+            )));
+        }
+
+        Ok(ProviderResponse::tool_call(ProviderToolCall::Mcp {
+            id: Some("mcp-1".to_string()),
+            server: "local".to_string(),
+            tool: "echo".to_string(),
+            arguments_json: Some(r#"{"text":"ping"}"#.to_string()),
+        }))
+    }
+}
+
+#[tokio::test]
+async fn yunxi_runtime_executes_provider_requested_mcp_tool_from_workspace_seed() {
+    let temp = TempDir::new().expect("temp dir");
+    let seed_dir = temp.path().join(".yunxi");
+    std::fs::create_dir_all(&seed_dir).expect("seed dir");
+    std::fs::write(
+        seed_dir.join("mcp-runtime.json"),
+        serde_json::json!({
+            "snapshot": {
+                "servers": {
+                    "local": {
+                        "config": {
+                            "name": "local",
+                            "transport": {"type": "stdio", "command": "fixture", "args": []},
+                            "enabled": true
+                        },
+                        "resources": [],
+                        "tools": [
+                            {
+                                "server": "local",
+                                "name": "echo",
+                                "title": "Echo",
+                                "description": "fixture echo",
+                                "input_schema": {"type": "object"},
+                                "destructive_hint": false,
+                                "open_world_hint": false,
+                                "requires_approval": false
+                            }
+                        ],
+                        "auth_status": "authenticated"
+                    }
+                },
+                "plugins_available": false,
+                "available_environment_ids": []
+            },
+            "tool_results": [
+                {"server": "local", "tool": "echo", "content": "runtime-pong"}
+            ]
+        })
+        .to_string(),
+    )
+    .expect("seed file");
+    let backend = YunXiRuntimeBackend::with_parts(
+        McpCallingProvider,
+        CompositeToolRuntime::default(),
+        InMemorySessionStore::default(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::text("use mcp"))
+        .await
+        .expect("runtime should complete mcp loop");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::McpToolCompleted {
+            id: Some(id),
+            server,
+            tool,
+            ..
+        } if id == "mcp-1" && server == "local" && tool == "echo"
+    )));
+    assert!(
+        result
+            .final_response
+            .as_deref()
+            .expect("final response")
+            .contains("runtime-pong")
     );
 }
 

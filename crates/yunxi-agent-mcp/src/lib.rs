@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use yunxi_agent_core::{AgentError, AgentResult};
 
@@ -207,6 +208,62 @@ impl McpRuntimeSnapshot {
             .resources
             .push(resource);
     }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpRuntimeSeed {
+    #[serde(default)]
+    pub snapshot: McpRuntimeSnapshot,
+    #[serde(default)]
+    pub resource_contents: Vec<McpResourceContentSeed>,
+    #[serde(default)]
+    pub tool_results: Vec<McpToolResultSeed>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpResourceContentSeed {
+    pub server: String,
+    pub uri: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpToolResultSeed {
+    pub server: String,
+    pub tool: String,
+    pub content: String,
+}
+
+pub fn load_in_memory_runtime_seed(path: impl AsRef<Path>) -> AgentResult<InMemoryMcpRuntime> {
+    let path = path.as_ref();
+    let content = std::fs::read_to_string(path).map_err(|error| AgentError::Execution {
+        message: format!(
+            "failed to read MCP runtime seed {}: {error}",
+            path.display()
+        ),
+    })?;
+    let seed = serde_json::from_str::<McpRuntimeSeed>(&content).map_err(|error| {
+        AgentError::Execution {
+            message: format!(
+                "failed to parse MCP runtime seed {}: {error}",
+                path.display()
+            ),
+        }
+    })?;
+    let runtime = InMemoryMcpRuntime::new(seed.snapshot);
+    for resource in seed.resource_contents {
+        runtime.add_resource_content(resource.server, resource.uri, resource.content)?;
+    }
+    for result in seed.tool_results {
+        runtime.add_tool_result(
+            result.server,
+            result.tool,
+            McpToolResult {
+                content: result.content,
+            },
+        )?;
+    }
+    Ok(runtime)
 }
 
 #[async_trait]
@@ -434,6 +491,7 @@ impl McpRuntime for InMemoryMcpRuntime {
 mod tests {
     use super::*;
     use serde_json::json;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn in_memory_runtime_lists_reads_and_calls_tools() {
@@ -524,5 +582,84 @@ mod tests {
 
         assert!(rendered.question.contains("Calendar"));
         assert_eq!(rendered.tool_params_display.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn loads_in_memory_runtime_seed_from_json_file() {
+        let temp = TempDir::new().expect("temp dir");
+        let seed_path = temp.path().join("mcp-runtime.json");
+        std::fs::write(
+            &seed_path,
+            json!({
+                "snapshot": {
+                    "servers": {
+                        "local": {
+                            "config": {
+                                "name": "local",
+                                "transport": {"type": "stdio", "command": "fixture", "args": []},
+                                "enabled": true
+                            },
+                            "resources": [
+                                {
+                                    "server": "local",
+                                    "uri": "file://notes",
+                                    "name": "notes",
+                                    "description": null,
+                                    "mime_type": "text/plain"
+                                }
+                            ],
+                            "tools": [
+                                {
+                                    "server": "local",
+                                    "name": "echo",
+                                    "title": "Echo",
+                                    "description": "fixture echo",
+                                    "input_schema": {"type": "object"},
+                                    "destructive_hint": false,
+                                    "open_world_hint": false,
+                                    "requires_approval": false
+                                }
+                            ],
+                            "auth_status": "authenticated"
+                        }
+                    },
+                    "plugins_available": false,
+                    "available_environment_ids": []
+                },
+                "resource_contents": [
+                    {"server": "local", "uri": "file://notes", "content": "hello"}
+                ],
+                "tool_results": [
+                    {"server": "local", "tool": "echo", "content": "pong"}
+                ]
+            })
+            .to_string(),
+        )
+        .expect("seed file");
+
+        let runtime = load_in_memory_runtime_seed(seed_path).expect("runtime");
+
+        assert_eq!(
+            runtime
+                .read_resource(McpResourceRequest {
+                    server: "local".to_string(),
+                    uri: "file://notes".to_string(),
+                })
+                .await
+                .expect("resource"),
+            "hello"
+        );
+        assert_eq!(
+            runtime
+                .call_tool(McpToolInvocation {
+                    server: "local".to_string(),
+                    tool: "echo".to_string(),
+                    arguments_json: None,
+                })
+                .await
+                .expect("tool")
+                .content,
+            "pong"
+        );
     }
 }

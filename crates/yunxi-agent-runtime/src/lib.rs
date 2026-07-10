@@ -18,7 +18,7 @@ use yunxi_agent_storage::{
     SessionId, SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
-    ShellToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolRequest,
+    CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy, ToolRequest,
     ToolRequestKind, ToolRouter, ToolRuntime, ToolStatus,
 };
 
@@ -104,7 +104,7 @@ impl YunXiRuntimeBackend {
     pub fn for_workspace(cwd: impl AsRef<Path>) -> Self {
         Self::with_parts(
             StaticProvider::default(),
-            ShellToolRuntime,
+            CompositeToolRuntime::default(),
             FileSessionStore::for_workspace(cwd),
         )
     }
@@ -151,7 +151,7 @@ impl Default for YunXiRuntimeBackend {
     fn default() -> Self {
         Self::with_parts(
             StaticProvider::default(),
-            ShellToolRuntime,
+            CompositeToolRuntime::default(),
             InMemorySessionStore::default(),
         )
     }

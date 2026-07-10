@@ -623,6 +623,7 @@ dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "yunxi-agent-core",
 ]
@@ -725,7 +726,10 @@ dependencies = [
  "tokio",
  "yunxi-agent-core",
  "yunxi-agent-exec",
+ "yunxi-agent-mcp",
+ "yunxi-agent-multi-agent",
  "yunxi-agent-patch",
+ "yunxi-agent-skills",
 ]
 
 [[package]]

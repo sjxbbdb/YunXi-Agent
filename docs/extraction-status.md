@@ -160,6 +160,45 @@ Stage 4D foundation verification passed on 2026-07-10:
   `vendor/codex-rs` to `vendor/codex-rs.disabled`
 - `git diff --check`: pass with Windows line-ending warnings only
 
+## Stage 4F Dynamic Tool Autonomy Slice
+
+This slice turns a first group of migrated Codex core dynamic-tool surfaces into
+YunXi-owned runtime behavior instead of schema-only placeholders.
+
+Implemented in this slice:
+
+- `yunxi-agent-tools` owns `CompositeToolRuntime`, which keeps shell, patch,
+  tool search, image inspection, and host-input behavior while dispatching MCP,
+  skill, and multi-agent requests to YunXi-owned runtimes.
+- `yunxi-agent-runtime` defaults to `CompositeToolRuntime`, so provider-emitted
+  MCP, skill, and multi-agent tool calls can execute through the default YunXi
+  backend.
+- `yunxi-agent-mcp` can load an in-memory MCP runtime seed from a project-local
+  JSON file, enabling workspace-owned MCP server/tool/resource fixtures without
+  depending on upstream Codex source.
+- Default composite MCP execution checks `.yunxi/mcp-runtime.json` in the
+  current workspace before falling back to an injected MCP runtime.
+- Skill execution discovers workspace skills from `.codex/skills`,
+  `.yunxi/skills`, and `skills`, then returns the selected `SKILL.md`
+  instruction payload through the tool result channel.
+- Multi-agent execution supports spawn, wait, send-message, follow-up,
+  interrupt, and list actions through `yunxi-agent-multi-agent`'s in-memory
+  registry.
+- Runtime tests cover provider-requested MCP, skill, and multi-agent tool calls
+  flowing through the autonomous YunXi backend.
+
+Stage 4F verification passed on 2026-07-10:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo tree -p yunxi-agent-cli`: pass; default tree contains no
+  `yunxi-agent-codex`, `vendor/codex-rs`, or `codex-*` crates
+- `git diff --check`: pass with Windows line-ending warnings only
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

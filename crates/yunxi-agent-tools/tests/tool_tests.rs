@@ -1,10 +1,14 @@
 use std::path::PathBuf;
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentConfig, ApprovalMode, SandboxMode};
+use yunxi_agent_mcp::{
+    InMemoryMcpRuntime, McpRuntimeSnapshot, McpServerConfig, McpToolResult, McpToolSpec,
+    McpTransport,
+};
 use yunxi_agent_tools::{
-    NoopToolRuntime, ShellToolRuntime, ToolFileChangeKind, ToolName, ToolPolicy,
-    ToolPolicyDecision, ToolRegistry, ToolRequest, ToolRouteStatus, ToolRouter, ToolRuntime,
-    ToolStatus, default_tool_registry,
+    CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime, ToolFileChangeKind, ToolName,
+    ToolPolicy, ToolPolicyDecision, ToolRegistry, ToolRequest, ToolRequestKind, ToolRouteStatus,
+    ToolRouter, ToolRuntime, ToolStatus, default_tool_registry,
 };
 
 #[test]
@@ -371,5 +375,198 @@ async fn request_user_input_declines_without_interactive_host() {
             .as_deref()
             .expect("error")
             .contains("interactive host")
+    );
+}
+
+#[tokio::test]
+async fn composite_runtime_executes_mcp_tool_with_yunxi_runtime() {
+    let temp = TempDir::new().expect("temp dir");
+    let mut snapshot = McpRuntimeSnapshot::default();
+    snapshot.register_server(McpServerConfig {
+        name: "local".to_string(),
+        transport: McpTransport::Stdio {
+            command: "fixture".to_string(),
+            args: Vec::new(),
+        },
+        enabled: true,
+    });
+    snapshot.register_tool(McpToolSpec {
+        server: "local".to_string(),
+        name: "echo".to_string(),
+        title: Some("Echo".to_string()),
+        description: Some("fixture echo".to_string()),
+        input_schema: serde_json::json!({"type": "object"}),
+        destructive_hint: Some(false),
+        open_world_hint: Some(false),
+        requires_approval: false,
+    });
+    let mcp = InMemoryMcpRuntime::new(snapshot);
+    mcp.add_tool_result(
+        "local",
+        "echo",
+        McpToolResult {
+            content: "pong".to_string(),
+        },
+    )
+    .expect("tool result");
+    let runtime = CompositeToolRuntime::default().with_mcp_runtime(mcp);
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: Some("mcp-call".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: ToolRequestKind::Mcp {
+                server: "local".to_string(),
+                tool: "echo".to_string(),
+                arguments_json: Some(r#"{"text":"ping"}"#.to_string()),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("mcp response");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    assert_eq!(response.output.as_deref(), Some("pong"));
+}
+
+#[tokio::test]
+async fn composite_runtime_executes_workspace_mcp_seed() {
+    let temp = TempDir::new().expect("temp dir");
+    let seed_dir = temp.path().join(".yunxi");
+    std::fs::create_dir_all(&seed_dir).expect("seed dir");
+    std::fs::write(
+        seed_dir.join("mcp-runtime.json"),
+        serde_json::json!({
+            "snapshot": {
+                "servers": {
+                    "local": {
+                        "config": {
+                            "name": "local",
+                            "transport": {"type": "stdio", "command": "fixture", "args": []},
+                            "enabled": true
+                        },
+                        "resources": [],
+                        "tools": [
+                            {
+                                "server": "local",
+                                "name": "echo",
+                                "title": "Echo",
+                                "description": "fixture echo",
+                                "input_schema": {"type": "object"},
+                                "destructive_hint": false,
+                                "open_world_hint": false,
+                                "requires_approval": false
+                            }
+                        ],
+                        "auth_status": "authenticated"
+                    }
+                },
+                "plugins_available": false,
+                "available_environment_ids": []
+            },
+            "tool_results": [
+                {"server": "local", "tool": "echo", "content": "workspace-pong"}
+            ]
+        })
+        .to_string(),
+    )
+    .expect("seed file");
+    let runtime = CompositeToolRuntime::default();
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: Some("workspace-mcp-call".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: ToolRequestKind::Mcp {
+                server: "local".to_string(),
+                tool: "echo".to_string(),
+                arguments_json: None,
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("mcp response");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    assert_eq!(response.output.as_deref(), Some("workspace-pong"));
+}
+
+#[tokio::test]
+async fn composite_runtime_loads_and_invokes_workspace_skill() {
+    let temp = TempDir::new().expect("temp dir");
+    let skill_dir = temp.path().join(".codex/skills/writer");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: writer\ndescription: writes reports\n---\n# Writer\nUse concise prose.\n",
+    )
+    .expect("skill file");
+    let runtime = CompositeToolRuntime::default();
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: Some("skill-call".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: ToolRequestKind::Skill {
+                name: "writer".to_string(),
+                arguments_json: Some(r#"{"topic":"report"}"#.to_string()),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("skill response");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    let output = response.output.as_deref().expect("skill output");
+    assert!(output.contains(r#""accepted":true"#));
+    assert!(output.contains("# Writer"));
+}
+
+#[tokio::test]
+async fn composite_runtime_executes_multi_agent_lifecycle() {
+    let runtime = CompositeToolRuntime::default();
+    let temp = TempDir::new().expect("temp dir");
+
+    let spawned = runtime
+        .execute(ToolRequest {
+            id: Some("spawn".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: ToolRequestKind::MultiAgent {
+                action: "spawn".to_string(),
+                arguments_json: Some(r#"{"task":"explore runtime"}"#.to_string()),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("spawn response");
+    assert_eq!(spawned.status, ToolStatus::Completed);
+    assert!(
+        spawned
+            .output
+            .as_deref()
+            .expect("spawn output")
+            .contains("agent-1")
+    );
+
+    let listed = runtime
+        .execute(ToolRequest {
+            id: Some("list".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: ToolRequestKind::MultiAgent {
+                action: "list".to_string(),
+                arguments_json: None,
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("list response");
+
+    assert_eq!(listed.status, ToolStatus::Completed);
+    assert!(
+        listed
+            .output
+            .as_deref()
+            .expect("list output")
+            .contains("explore runtime")
     );
 }

@@ -3,11 +3,19 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use tokio::process::Command;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
 use yunxi_agent_exec::{OutputLimits, combine_output, truncate_output};
+use yunxi_agent_mcp::{
+    InMemoryMcpRuntime, McpRuntime, McpToolInvocation, load_in_memory_runtime_seed,
+};
+use yunxi_agent_multi_agent::{AgentId, InMemoryAgentRegistry, MultiAgentCommand};
 use yunxi_agent_patch::{PatchFileChangeKind, apply_patch};
+use yunxi_agent_skills::{
+    SkillCatalog, SkillInvocation, SkillInvocationResult, load_skill_injection,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ToolRequest {
@@ -715,6 +723,102 @@ impl ToolRuntime for ShellToolRuntime {
     }
 }
 
+#[derive(Clone)]
+pub struct CompositeToolRuntime {
+    shell: ShellToolRuntime,
+    mcp: Arc<dyn McpRuntime>,
+    agents: InMemoryAgentRegistry,
+    skill_roots: Vec<PathBuf>,
+}
+
+impl std::fmt::Debug for CompositeToolRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CompositeToolRuntime")
+            .field("shell", &self.shell)
+            .field("agents", &self.agents)
+            .field("skill_roots", &self.skill_roots)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Default for CompositeToolRuntime {
+    fn default() -> Self {
+        Self {
+            shell: ShellToolRuntime,
+            mcp: Arc::new(InMemoryMcpRuntime::default()),
+            agents: InMemoryAgentRegistry::default(),
+            skill_roots: default_skill_roots(),
+        }
+    }
+}
+
+impl CompositeToolRuntime {
+    pub fn with_mcp_runtime<R>(mut self, runtime: R) -> Self
+    where
+        R: McpRuntime + 'static,
+    {
+        self.mcp = Arc::new(runtime);
+        self
+    }
+
+    pub fn with_agent_registry(mut self, registry: InMemoryAgentRegistry) -> Self {
+        self.agents = registry;
+        self
+    }
+
+    pub fn with_skill_roots(mut self, roots: impl IntoIterator<Item = impl Into<PathBuf>>) -> Self {
+        self.skill_roots = roots.into_iter().map(Into::into).collect();
+        self
+    }
+
+    pub fn agent_registry(&self) -> &InMemoryAgentRegistry {
+        &self.agents
+    }
+}
+
+#[async_trait]
+impl ToolRuntime for CompositeToolRuntime {
+    async fn execute(&self, request: ToolRequest) -> AgentResult<ToolResponse> {
+        if let Some(reason) = request.policy.denial_for(&request) {
+            return Ok(ToolResponse::declined(request.id, reason));
+        }
+
+        match request.kind.clone() {
+            ToolRequestKind::Mcp {
+                server,
+                tool,
+                arguments_json,
+            } => {
+                run_mcp_tool(
+                    Arc::clone(&self.mcp),
+                    request.id,
+                    request.cwd,
+                    server,
+                    tool,
+                    arguments_json,
+                )
+                .await
+            }
+            ToolRequestKind::Skill {
+                name,
+                arguments_json,
+            } => run_skill(
+                request.id,
+                request.cwd,
+                self.skill_roots.clone(),
+                name,
+                arguments_json,
+            ),
+            ToolRequestKind::MultiAgent {
+                action,
+                arguments_json,
+            } => run_multi_agent(request.id, &self.agents, action, arguments_json),
+            _ => self.shell.execute(request).await,
+        }
+    }
+}
+
 async fn run_shell(id: Option<String>, cwd: PathBuf, command: String) -> AgentResult<ToolResponse> {
     let before = WorkspaceSnapshot::capture(&cwd)?;
     let mut process = platform_shell(&command);
@@ -814,6 +918,192 @@ fn run_view_image(id: Option<String>, cwd: PathBuf, path: String) -> AgentResult
         Some(0),
         Vec::new(),
     ))
+}
+
+async fn run_mcp_tool(
+    runtime: Arc<dyn McpRuntime>,
+    id: Option<String>,
+    cwd: PathBuf,
+    server: String,
+    tool: String,
+    arguments_json: Option<String>,
+) -> AgentResult<ToolResponse> {
+    let invocation = McpToolInvocation {
+        server,
+        tool,
+        arguments_json,
+    };
+    let workspace_runtime = load_workspace_mcp_runtime(&cwd)?;
+    let result = match workspace_runtime {
+        Some(workspace_runtime) => workspace_runtime.call_tool(invocation).await,
+        None => runtime.call_tool(invocation).await,
+    };
+    match result {
+        Ok(result) => Ok(ToolResponse::completed(
+            id,
+            result.content,
+            Some(0),
+            Vec::new(),
+        )),
+        Err(error) => Ok(ToolResponse::failed(
+            id,
+            error.to_string(),
+            None,
+            Vec::new(),
+        )),
+    }
+}
+
+fn load_workspace_mcp_runtime(cwd: &Path) -> AgentResult<Option<InMemoryMcpRuntime>> {
+    let seed_path = cwd.join(".yunxi").join("mcp-runtime.json");
+    if !seed_path.is_file() {
+        return Ok(None);
+    }
+    Ok(Some(load_in_memory_runtime_seed(seed_path)?))
+}
+
+fn run_skill(
+    id: Option<String>,
+    cwd: PathBuf,
+    skill_roots: Vec<PathBuf>,
+    name: String,
+    arguments_json: Option<String>,
+) -> AgentResult<ToolResponse> {
+    let invocation = SkillInvocation {
+        name: name.clone(),
+        arguments_json,
+    };
+    for root in resolve_skill_roots(&cwd, skill_roots) {
+        let catalog = SkillCatalog::from_root(&root)?;
+        if let Some(skill) = catalog.find(&name) {
+            let injection = load_skill_injection(skill)?;
+            let result = SkillInvocationResult {
+                name,
+                accepted: true,
+                output: injection.content,
+            };
+            let output =
+                serde_json::to_string(&json!({"invocation": invocation, "result": result}))
+                    .map_err(|error| AgentError::Execution {
+                        message: format!("failed to serialize skill invocation result: {error}"),
+                    })?;
+            return Ok(ToolResponse::completed(id, output, Some(0), Vec::new()));
+        }
+    }
+
+    Ok(ToolResponse::failed(
+        id,
+        format!("skill is not registered in YunXi runtime: {name}"),
+        None,
+        Vec::new(),
+    ))
+}
+
+fn run_multi_agent(
+    id: Option<String>,
+    registry: &InMemoryAgentRegistry,
+    action: String,
+    arguments_json: Option<String>,
+) -> AgentResult<ToolResponse> {
+    let command = parse_multi_agent_command(&action, arguments_json.as_deref())?;
+    match registry.execute(command) {
+        Ok(result) => {
+            let output = serde_json::to_string(&result).map_err(|error| AgentError::Execution {
+                message: format!("failed to serialize multi-agent result: {error}"),
+            })?;
+            Ok(ToolResponse::completed(id, output, Some(0), Vec::new()))
+        }
+        Err(error) => Ok(ToolResponse::failed(
+            id,
+            error.to_string(),
+            None,
+            Vec::new(),
+        )),
+    }
+}
+
+fn parse_multi_agent_command(
+    action: &str,
+    arguments_json: Option<&str>,
+) -> AgentResult<MultiAgentCommand> {
+    let arguments = parse_arguments_object(arguments_json)?;
+    match action {
+        "spawn" => Ok(MultiAgentCommand::Spawn {
+            task: required_string(&arguments, "task")?,
+            parent_id: optional_string(&arguments, "parent_id").map(AgentId),
+        }),
+        "wait" => Ok(MultiAgentCommand::Wait {
+            id: AgentId(required_string(&arguments, "id")?),
+        }),
+        "send_message" | "sendMessage" | "message" => Ok(MultiAgentCommand::SendMessage {
+            id: AgentId(required_string(&arguments, "id")?),
+            message: required_string(&arguments, "message")?,
+        }),
+        "follow_up" | "followUp" => Ok(MultiAgentCommand::FollowUp {
+            id: AgentId(required_string(&arguments, "id")?),
+            task: required_string(&arguments, "task")?,
+        }),
+        "interrupt" => Ok(MultiAgentCommand::Interrupt {
+            id: AgentId(required_string(&arguments, "id")?),
+        }),
+        "list" => Ok(MultiAgentCommand::List),
+        _ => Err(AgentError::Execution {
+            message: format!("unsupported multi-agent action: {action}"),
+        }),
+    }
+}
+
+fn parse_arguments_object(arguments_json: Option<&str>) -> AgentResult<Value> {
+    let Some(arguments_json) = arguments_json
+        .map(str::trim)
+        .filter(|json| !json.is_empty())
+    else {
+        return Ok(json!({}));
+    };
+    let value =
+        serde_json::from_str::<Value>(arguments_json).map_err(|error| AgentError::Execution {
+            message: format!("failed to parse tool arguments JSON: {error}"),
+        })?;
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err(AgentError::Execution {
+            message: "tool arguments JSON must be an object".to_string(),
+        })
+    }
+}
+
+fn required_string(arguments: &Value, name: &str) -> AgentResult<String> {
+    optional_string(arguments, name).ok_or_else(|| AgentError::Execution {
+        message: format!("missing required multi-agent argument: {name}"),
+    })
+}
+
+fn optional_string(arguments: &Value, name: &str) -> Option<String> {
+    arguments
+        .get(name)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn default_skill_roots() -> Vec<PathBuf> {
+    [".codex/skills", ".yunxi/skills", "skills"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect()
+}
+
+fn resolve_skill_roots(cwd: &Path, roots: Vec<PathBuf>) -> Vec<PathBuf> {
+    roots
+        .into_iter()
+        .map(|root| {
+            if root.is_absolute() {
+                root
+            } else {
+                cwd.join(root)
+            }
+        })
+        .collect()
 }
 
 fn collect_file_matches(

@@ -1033,6 +1033,36 @@ The v1.0 CLI package is still intentionally headless. It does not add TUI,
 desktop, cloud task, updater, doctor, completion, marketplace, or installer
 surfaces beyond the local PowerShell install helper.
 
+## YunXi Agent v1.1 Planned Direction
+
+The next product stage is YunXi Agent v1.1 interactive CLI. The v1.0 package is
+installable and callable from PowerShell, but its default command surface is
+still a headless one-shot runner: `yunxi "prompt"` runs one turn, while `yunxi`
+without a prompt reports `a prompt is required`.
+
+YunXi Agent v1.1 should make `yunxi` without a prompt enter an interactive
+terminal session while preserving one-shot script compatibility. The v1.1
+development report is recorded in
+`docs/reports/2026-07-11-yunxi-agent-v1-1-interactive-cli-development-report.md`.
+
+The v1.1 implementation should connect the already autonomous runtime/provider
+chain to a terminal host with:
+
+- REPL input loop and slash commands.
+- Stable one-shot, JSON, and JSONL compatibility.
+- Session id reuse, history restore, and `/resume`.
+- Live provider configuration through replaceable provider interfaces.
+- Streaming terminal renderer for assistant deltas and tool lifecycle events.
+- Ctrl+C cancellation for the active turn without losing the whole REPL.
+- Interactive approval and escalation prompts.
+- MCP, skills, and child scoped stream visibility in terminal output.
+- Version/documentation/install updates for `1.1.0`.
+
+The same project constraints continue to apply: default `yunxi` must not depend
+on `vendor/codex-rs`, `codex-*`, or `yunxi-agent-codex`; API keys must never be
+printed or committed; construction should be done as one build slice and the
+full verification gate should run only after the slice is wired.
+
 ## Stage 3 Verification
 
 Verified on 2026-07-10:

@@ -884,6 +884,30 @@ pub struct McpRuntimeSnapshot {
     pub available_environment_ids: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpCapabilityNegotiation {
+    pub server: String,
+    pub protocol_version: Option<String>,
+    pub tools: Vec<String>,
+    pub resources: Vec<String>,
+    pub prompts: Vec<String>,
+    pub auth_status: Option<McpAuthStatus>,
+    pub approval_template: Option<McpToolApprovalTemplate>,
+    pub tools_cache_ready: bool,
+    pub resources_cache_ready: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct McpLongLivedSession {
+    pub server: String,
+    pub transport: McpTransport,
+    pub status: McpSessionStatus,
+    pub reuse_count: usize,
+    pub auth_status: McpAuthStatus,
+    pub last_elicitation: Option<McpElicitationRequest>,
+    pub capabilities: McpCapabilityNegotiation,
+}
+
 impl McpRuntimeSnapshot {
     pub fn register_server(&mut self, config: McpServerConfig) {
         let name = config.name.clone();

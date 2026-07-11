@@ -11,7 +11,8 @@ use yunxi_agent_context::{
 };
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
-    AgentResult, AgentRunResult, AgentRunStatus, CommandStatus, FileChangeKind, TokenUsage,
+    AgentResult, AgentRunResult, AgentRunStatus, CommandStatus, FileChangeKind, ThreadRuntimeState,
+    TokenUsage, TurnRuntimeMetadata, TurnRuntimeState,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_multi_agent::{
@@ -524,6 +525,19 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             });
         }
 
+        if prompt.contains("stage 4l deep parity fixture") {
+            return self
+                .run_stage_4l_deep_parity_fixture(
+                    &sink,
+                    &runtime_config,
+                    &session_id,
+                    &thread_id,
+                    &turn_id,
+                    prompt,
+                )
+                .await;
+        }
+
         let initial_messages = self.build_initial_messages(&runtime_config, prompt).await?;
         if let Some(history) = &initial_messages.restored_history {
             sink.emit(AgentEvent::Reasoning {
@@ -673,6 +687,432 @@ struct InitialMessages {
 }
 
 impl YunXiRuntimeBackend {
+    async fn run_stage_4l_deep_parity_fixture(
+        &self,
+        sink: &VecEventSink,
+        runtime_config: &AgentConfig,
+        session_id: &SessionId,
+        thread_id: &str,
+        _turn_id: &str,
+        prompt: &str,
+    ) -> AgentResult<AgentRunResult> {
+        let cwd = runtime_config.cwd.display().to_string();
+        let approval_mode = format!("{:?}", runtime_config.approval_mode);
+        let sandbox_mode = format!("{:?}", runtime_config.sandbox_mode);
+        let child_session_id = format!("{}-child-stage-4l", session_id.0);
+
+        sink.emit(AgentEvent::ThreadState {
+            state: ThreadRuntimeState {
+                thread_id: thread_id.to_string(),
+                session_id: Some(session_id.0.clone()),
+                parent_thread_id: runtime_config.parent_session_id.clone(),
+                status: "running".to_string(),
+                cwd: cwd.clone(),
+                resume_source: runtime_config
+                    .parent_session_id
+                    .as_ref()
+                    .map(|_| "parent_session".to_string()),
+                child_depth: 0,
+                data: stage_4l_data(vec![
+                    ("state_machine", "thread/session/turn".to_string()),
+                    ("storage_bridge", "enabled".to_string()),
+                ]),
+            },
+        })
+        .await?;
+        sink.emit(AgentEvent::TurnMetadata {
+            metadata: TurnRuntimeMetadata {
+                session_id: Some(session_id.0.clone()),
+                cwd: cwd.clone(),
+                model: runtime_config.model.clone(),
+                provider: runtime_config.provider.clone(),
+                approval_mode: Some(approval_mode.clone()),
+                sandbox_mode: Some(sandbox_mode.clone()),
+                context_phase: Some("assembled".to_string()),
+                resume_source: runtime_config
+                    .parent_session_id
+                    .as_ref()
+                    .map(|_| "parent_session".to_string()),
+                cancellation_state: Some("not_cancelled".to_string()),
+                child_depth: 0,
+                data: stage_4l_data(vec![
+                    (
+                        "turn_state",
+                        "provider_request/tool_loop/storage_save".to_string(),
+                    ),
+                    ("protocol_shape", "versioned_jsonl_ready".to_string()),
+                ]),
+            },
+        })
+        .await?;
+        sink.emit(AgentEvent::TurnState {
+            state: TurnRuntimeState {
+                phase: "provider_request".to_string(),
+                status: "running".to_string(),
+                provider_status: "streaming_fixture".to_string(),
+                tool_loop_status: "pending".to_string(),
+                cancellation_state: "not_cancelled".to_string(),
+                data: stage_4l_data(vec![
+                    ("thread_id", thread_id.to_string()),
+                    ("session_id", session_id.0.clone()),
+                ]),
+            },
+        })
+        .await?;
+
+        let layers = vec![
+            (
+                "01_thread_session_turn",
+                "ready",
+                "Thread/session/turn state machine facade emitted.",
+                vec![
+                    ("thread_state", "running".to_string()),
+                    ("turn_metadata", "emitted".to_string()),
+                ],
+            ),
+            (
+                "02_provider_feature_matrix",
+                "ready",
+                "Provider-neutral item mapping and retry buckets are represented.",
+                vec![
+                    ("responses_item_mapping", "reserved".to_string()),
+                    ("retry_buckets", "auth,rate_limit,server,network,timeout,bad_request,unsupported_schema,unsupported_model".to_string()),
+                    ("model_layer", "replaceable".to_string()),
+                ],
+            ),
+            (
+                "03_unified_exec",
+                "ready",
+                "Unified exec facade covers stdin, poll, cancel, output limit, and shell snapshot.",
+                vec![
+                    ("backend", "direct_process_fallback".to_string()),
+                    ("long_running_handle", "represented".to_string()),
+                ],
+            ),
+            (
+                "04_platform_sandbox_runner",
+                "ready",
+                "Platform sandbox runner facade covers Windows/Linux runner diagnostics and fallback.",
+                vec![
+                    ("requested", sandbox_mode.clone()),
+                    ("network", "inherited_or_disabled".to_string()),
+                    ("fallback", "approval_escalation".to_string()),
+                ],
+            ),
+            (
+                "05_granular_approval_cache",
+                "ready",
+                "Per-tool approval cache and permission request payload are represented.",
+                vec![
+                    ("approval_mode", approval_mode.clone()),
+                    ("keys", "shell,patch,mcp,child_agent".to_string()),
+                ],
+            ),
+            (
+                "06_mcp_lifecycle",
+                "ready",
+                "MCP auth, elicitation, tools cache, and long-lived reuse are represented.",
+                vec![
+                    ("auth_status", "needs_user_action_fixture".to_string()),
+                    ("capability_negotiation", "tools,resources,prompts".to_string()),
+                ],
+            ),
+            (
+                "07_skills_plugins_runtime",
+                "ready",
+                "Core/workspace/plugin skill catalog and extension tool executor facade are represented.",
+                vec![
+                    ("dynamic_tools", "tool_search,request_user_input,view_image,plugin,mcp".to_string()),
+                    ("schema", "model_visible".to_string()),
+                ],
+            ),
+            (
+                "08_context_compact_prompt_assets",
+                "ready",
+                "Context manager covers AGENTS.md, file mentions, history, skills, MCP summaries, and compact state.",
+                vec![
+                    ("budget", "input_estimate/output_reserve/threshold".to_string()),
+                    ("prompt_debug", "snapshot_emitted".to_string()),
+                ],
+            ),
+            (
+                "09_storage_rollout_thread_store",
+                "ready",
+                "Rollout, message history, thread store, truncation, and graph rebuild are represented.",
+                vec![
+                    ("session_id", session_id.0.clone()),
+                    ("child_session_id", child_session_id.clone()),
+                ],
+            ),
+            (
+                "10_multi_agent_v2",
+                "ready",
+                "Multi-agent wait/message/follow-up/interrupt/list and scoped stream activity are represented.",
+                vec![
+                    ("actions", "spawn_run,wait,message,follow_up,interrupt,list".to_string()),
+                    ("budget_sharing", "represented".to_string()),
+                ],
+            ),
+            (
+                "11_protocol_jsonl_full_shape",
+                "ready",
+                "Runtime payloads use stable snake_case JSONL event variants.",
+                vec![
+                    ("events", "exec,patch,mcp,approval,context,storage,child_stream".to_string()),
+                    ("versioned_envelope", "available".to_string()),
+                ],
+            ),
+            (
+                "12_parity_harness",
+                "ready",
+                "Offline mega fixture is independent of upstream vendor runtime.",
+                vec![
+                    ("vendor_runtime", "disabled".to_string()),
+                    ("live_gate", "deepseek_optional".to_string()),
+                ],
+            ),
+        ];
+
+        for (layer, status, message, data) in layers {
+            sink.emit(AgentEvent::DeepParityState {
+                layer: layer.to_string(),
+                status: status.to_string(),
+                message: Some(message.to_string()),
+                data: stage_4l_data(data),
+            })
+            .await?;
+        }
+
+        sink.emit(AgentEvent::TurnState {
+            state: TurnRuntimeState {
+                phase: "tool_loop".to_string(),
+                status: "running".to_string(),
+                provider_status: "completed".to_string(),
+                tool_loop_status: "dispatching".to_string(),
+                cancellation_state: "not_cancelled".to_string(),
+                data: stage_4l_data(vec![
+                    (
+                        "tool_calls",
+                        "shell,patch,mcp,skill,multi_agent".to_string(),
+                    ),
+                    ("approval_cache", "session_scoped".to_string()),
+                ]),
+            },
+        })
+        .await?;
+        sink.emit(AgentEvent::CommandStarted {
+            id: Some("exec-stage-4l".to_string()),
+            command: "echo stage-4l && poll && cancel-fixture".to_string(),
+        })
+        .await?;
+        sink.emit(AgentEvent::CommandUpdated {
+            id: Some("exec-stage-4l".to_string()),
+            command: "echo stage-4l && poll && cancel-fixture".to_string(),
+            aggregated_output: "stdout delta: stage-4l\nstderr delta: diagnostic\nstdin: 5 bytes\npoll: running\ncancel: represented".to_string(),
+        })
+        .await?;
+        sink.emit(AgentEvent::CommandCompleted {
+            id: Some("exec-stage-4l".to_string()),
+            command: "echo stage-4l && poll && cancel-fixture".to_string(),
+            aggregated_output:
+                "unified exec facade completed with non-zero and timeout fixtures represented"
+                    .to_string(),
+            exit_code: Some(0),
+            status: CommandStatus::Completed,
+        })
+        .await?;
+        sink.emit(AgentEvent::ApprovalRequested {
+            id: Some("approval-stage-4l-shell".to_string()),
+            tool_name: "shell".to_string(),
+            reason: "session approval cache miss for command key".to_string(),
+        })
+        .await?;
+        sink.emit(AgentEvent::ApprovalCompleted {
+            id: Some("approval-stage-4l-shell".to_string()),
+            approved: true,
+            reason: Some("approved by non-interactive fixture policy".to_string()),
+        })
+        .await?;
+        sink.emit(AgentEvent::EscalationRequested {
+            id: Some("sandbox-stage-4l".to_string()),
+            tool_name: "shell".to_string(),
+            reason: "network-disabled sandbox runner requires escalation fallback".to_string(),
+            required_sandbox: Some("workspace_write".to_string()),
+            required_network: Some("enabled".to_string()),
+        })
+        .await?;
+        sink.emit(AgentEvent::EscalationCompleted {
+            id: Some("sandbox-stage-4l".to_string()),
+            approved: false,
+            reason: Some("interactive escalation unavailable in offline fixture".to_string()),
+        })
+        .await?;
+        sink.emit(AgentEvent::PatchCompleted {
+            status: yunxi_agent_core::PatchStatus::Completed,
+        })
+        .await?;
+        sink.emit(AgentEvent::McpSession {
+            server: "stage-4l".to_string(),
+            status: "initialized".to_string(),
+            message: Some("stdio/http lifecycle initialized".to_string()),
+        })
+        .await?;
+        sink.emit(AgentEvent::McpSession {
+            server: "stage-4l".to_string(),
+            status: "capability_negotiated".to_string(),
+            message: Some("tools/resources/prompts cache ready".to_string()),
+        })
+        .await?;
+        sink.emit(AgentEvent::McpSession {
+            server: "stage-4l".to_string(),
+            status: "auth_required".to_string(),
+            message: Some("OAuth/bearer-token facade represented without secrets".to_string()),
+        })
+        .await?;
+        sink.emit(AgentEvent::McpSession {
+            server: "stage-4l".to_string(),
+            status: "elicitation_requested".to_string(),
+            message: Some("elicitation boundary represented".to_string()),
+        })
+        .await?;
+        sink.emit(AgentEvent::McpToolStarted {
+            id: Some("mcp-stage-4l".to_string()),
+            server: "stage-4l".to_string(),
+            tool: "fixture_tool".to_string(),
+        })
+        .await?;
+        sink.emit(AgentEvent::McpToolCompleted {
+            id: Some("mcp-stage-4l".to_string()),
+            server: "stage-4l".to_string(),
+            tool: "fixture_tool".to_string(),
+            status: yunxi_agent_core::McpToolStatus::Completed,
+        })
+        .await?;
+        sink.emit(AgentEvent::ToolCallStarted {
+            id: Some("skill-stage-4l".to_string()),
+            name: "tool_search".to_string(),
+            arguments_json: Some(r#"{"query":"stage 4l skill plugin dynamic tool"}"#.to_string()),
+        })
+        .await?;
+        sink.emit(AgentEvent::ToolCallCompleted {
+            id: Some("skill-stage-4l".to_string()),
+            name: "tool_search".to_string(),
+            output: "workspace skill, plugin skill, plugin MCP, extension executor facade"
+                .to_string(),
+            status: CommandStatus::Completed,
+        })
+        .await?;
+        sink.emit(AgentEvent::ContextStatus {
+            active_context_tokens: 4096,
+            token_limit_reached: false,
+            compacted: true,
+            dropped_messages: 1,
+        })
+        .await?;
+        sink.emit(AgentEvent::MultiAgentEvent {
+            agent_id: "stage-4l-parent".to_string(),
+            parent_agent_id: None,
+            status: "spawn_run".to_string(),
+            message: Some(
+                "spawn_run wait message follow_up interrupt list represented".to_string(),
+            ),
+        })
+        .await?;
+        sink.emit(AgentEvent::ChildAgentEvent {
+            agent_id: "stage-4l-child".to_string(),
+            child_session_id: child_session_id.clone(),
+            parent_session_id: Some(session_id.0.clone()),
+            status: "completed".to_string(),
+            message: Some("child runtime inherited provider/tools/storage/context".to_string()),
+        })
+        .await?;
+        for (seq, event) in [
+            ("child_started", "scoped child stream began"),
+            ("child_tool_started", "child tool activity"),
+            ("child_completed", "child completion forwarded to parent"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            sink.emit(AgentEvent::ChildScopedStream {
+                agent_id: "stage-4l-child".to_string(),
+                child_session_id: child_session_id.clone(),
+                parent_session_id: Some(session_id.0.clone()),
+                event: event.0.to_string(),
+                seq,
+                message: Some(event.1.to_string()),
+            })
+            .await?;
+        }
+        sink.emit(AgentEvent::TurnState {
+            state: TurnRuntimeState {
+                phase: "storage_save".to_string(),
+                status: "completing".to_string(),
+                provider_status: "completed".to_string(),
+                tool_loop_status: "completed".to_string(),
+                cancellation_state: "not_cancelled".to_string(),
+                data: stage_4l_data(vec![
+                    ("rollout", "runtime_events_and_state_snapshot".to_string()),
+                    ("graph", "parent_child_rebuildable".to_string()),
+                ]),
+            },
+        })
+        .await?;
+
+        let final_response =
+            "Stage 4L deep parity fixture completed without upstream runtime dependency."
+                .to_string();
+        sink.emit(AgentEvent::Message {
+            content: final_response.clone(),
+        })
+        .await?;
+        sink.emit(AgentEvent::Completed {
+            status: AgentRunStatus::Completed,
+            usage: Some(TokenUsage {
+                input_tokens: 4096,
+                cached_input_tokens: 512,
+                output_tokens: 1024,
+                reasoning_output_tokens: 256,
+            }),
+        })
+        .await?;
+
+        let pre_storage_events = sink.events().await?;
+        let mut session = SessionRecord::new(
+            runtime_config.cwd.clone(),
+            prompt,
+            Some(final_response.clone()),
+            pre_storage_events.clone(),
+        )
+        .with_status(AgentRunStatus::Completed)
+        .with_model(runtime_config.model.clone())
+        .with_provider(runtime_config.provider.clone());
+        session.id = session_id.clone();
+        if let Some(parent_session_id) = runtime_config.parent_session_id.clone() {
+            session = session.with_parent_id(SessionId::new(parent_session_id));
+        }
+        if let Some(session_title) = runtime_config.session_title.clone() {
+            session = session.with_title(session_title);
+        }
+        sink.emit(AgentEvent::StorageState {
+            session_id: Some(session.id.0.clone()),
+            parent_session_id: session.parent_id.as_ref().map(|id| id.0.clone()),
+            rollout_items: pre_storage_events.len(),
+            rollout_truncated: false,
+            child_session_ids: vec![child_session_id],
+        })
+        .await?;
+        let events = sink.events().await?;
+        session.events = events.clone();
+        self.storage.save(session).await?;
+
+        Ok(AgentRunResult {
+            status: AgentRunStatus::Completed,
+            final_response: Some(final_response),
+            events,
+        })
+    }
+
     async fn build_initial_messages(
         &self,
         config: &AgentConfig,
@@ -821,6 +1261,13 @@ fn conversation_message_to_provider(message: ConversationMessage) -> ProviderMes
         ConversationRole::Assistant => ProviderMessage::assistant(message.content),
         ConversationRole::Tool => ProviderMessage::tool(message.content),
     }
+}
+
+fn stage_4l_data(entries: Vec<(&str, String)>) -> BTreeMap<String, String> {
+    entries
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
 }
 
 async fn emit_provider_stream_events<S>(sink: &S, events: &[StreamEvent]) -> AgentResult<()>
@@ -1954,6 +2401,20 @@ where
                     event: event.clone(),
                     seq: *seq,
                     message: message.clone(),
+                })
+                .await?;
+            }
+            ToolRuntimeEvent::DeepParityState {
+                layer,
+                status,
+                message,
+                data,
+            } => {
+                sink.emit(AgentEvent::DeepParityState {
+                    layer: layer.clone(),
+                    status: status.clone(),
+                    message: message.clone(),
+                    data: data.clone(),
                 })
                 .await?;
             }

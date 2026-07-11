@@ -232,6 +232,30 @@ pub struct TurnMetadata {
     pub extra: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ThreadState {
+    pub thread_id: ThreadId,
+    pub session_id: Option<String>,
+    pub parent_thread_id: Option<ThreadId>,
+    pub status: String,
+    pub cwd: String,
+    pub resume_source: Option<String>,
+    pub child_depth: usize,
+    #[serde(default)]
+    pub data: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TurnState {
+    pub phase: String,
+    pub status: String,
+    pub provider_status: String,
+    pub tool_loop_status: String,
+    pub cancellation_state: String,
+    #[serde(default)]
+    pub data: BTreeMap<String, String>,
+}
+
 impl TurnMetadata {
     pub fn new(thread_id: ThreadId, turn_id: TurnId, cwd: impl Into<String>) -> Self {
         Self {
@@ -370,6 +394,10 @@ pub enum RuntimeEvent {
     ThreadStarted {
         thread_id: ThreadId,
     },
+    ThreadState {
+        thread_id: ThreadId,
+        state: ThreadState,
+    },
     TurnMetadata {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -378,6 +406,20 @@ pub enum RuntimeEvent {
     TurnStarted {
         thread_id: ThreadId,
         turn_id: TurnId,
+    },
+    TurnState {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        state: TurnState,
+    },
+    DeepParityState {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        layer: String,
+        status: String,
+        message: Option<String>,
+        #[serde(default)]
+        data: BTreeMap<String, String>,
     },
     Item {
         thread_id: ThreadId,
@@ -692,6 +734,53 @@ mod tests {
         };
 
         for event in [context, storage] {
+            let line = to_jsonl_line(&event).expect("jsonl");
+            let parsed = from_jsonl_line(&line).expect("parsed event");
+            assert_eq!(parsed, event);
+        }
+    }
+
+    #[test]
+    fn stage_4l_state_events_round_trip_jsonl() {
+        let mut data = BTreeMap::new();
+        data.insert("layer".to_string(), "stage_4l".to_string());
+        let thread_id = ThreadId("thread-stage-4l".to_string());
+        let turn_id = TurnId("turn-stage-4l".to_string());
+        let thread_state = RuntimeEvent::ThreadState {
+            thread_id: thread_id.clone(),
+            state: ThreadState {
+                thread_id: thread_id.clone(),
+                session_id: Some("session-stage-4l".to_string()),
+                parent_thread_id: None,
+                status: "running".to_string(),
+                cwd: "D:/YunXi Agent".to_string(),
+                resume_source: None,
+                child_depth: 0,
+                data: data.clone(),
+            },
+        };
+        let turn_state = RuntimeEvent::TurnState {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            state: TurnState {
+                phase: "tool_loop".to_string(),
+                status: "running".to_string(),
+                provider_status: "completed".to_string(),
+                tool_loop_status: "dispatching".to_string(),
+                cancellation_state: "not_cancelled".to_string(),
+                data: data.clone(),
+            },
+        };
+        let deep_parity = RuntimeEvent::DeepParityState {
+            thread_id,
+            turn_id,
+            layer: "03_unified_exec".to_string(),
+            status: "ready".to_string(),
+            message: Some("unified exec facade represented".to_string()),
+            data,
+        };
+
+        for event in [thread_state, turn_state, deep_parity] {
             let line = to_jsonl_line(&event).expect("jsonl");
             let parsed = from_jsonl_line(&line).expect("parsed event");
             assert_eq!(parsed, event);

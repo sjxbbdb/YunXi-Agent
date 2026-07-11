@@ -13,8 +13,9 @@ pub use codex_source::{CodexSource, CodexSourceStatus};
 pub use config::{AgentConfig, ApprovalMode, SandboxMode};
 pub use error::{AgentError, AgentResult};
 pub use event::{
-    AgentEvent, AgentRunResult, AgentRunStatus, CommandStatus, FileChangeKind, McpToolStatus,
-    PatchStatus, TodoStatus, TokenUsage,
+    AgentEvent, AgentRunResult, AgentRunStatus, CommandStatus, DeepParityData, FileChangeKind,
+    McpToolStatus, PatchStatus, ThreadRuntimeState, TodoStatus, TokenUsage, TurnRuntimeMetadata,
+    TurnRuntimeState,
 };
 pub use input::AgentInput;
 pub use runner::Agent;

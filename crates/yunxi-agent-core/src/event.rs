@@ -1,4 +1,7 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+pub type DeepParityData = BTreeMap<String, String>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -10,6 +13,21 @@ pub enum AgentEvent {
         thread_id: String,
     },
     TurnStarted,
+    ThreadState {
+        state: ThreadRuntimeState,
+    },
+    TurnMetadata {
+        metadata: TurnRuntimeMetadata,
+    },
+    TurnState {
+        state: TurnRuntimeState,
+    },
+    DeepParityState {
+        layer: String,
+        status: String,
+        message: Option<String>,
+        data: DeepParityData,
+    },
     Message {
         content: String,
     },
@@ -158,6 +176,46 @@ pub enum AgentRunStatus {
     Completed,
     Failed,
     Cancelled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ThreadRuntimeState {
+    pub thread_id: String,
+    pub session_id: Option<String>,
+    pub parent_thread_id: Option<String>,
+    pub status: String,
+    pub cwd: String,
+    pub resume_source: Option<String>,
+    pub child_depth: usize,
+    #[serde(default)]
+    pub data: DeepParityData,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TurnRuntimeMetadata {
+    pub session_id: Option<String>,
+    pub cwd: String,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub approval_mode: Option<String>,
+    pub sandbox_mode: Option<String>,
+    pub context_phase: Option<String>,
+    pub resume_source: Option<String>,
+    pub cancellation_state: Option<String>,
+    pub child_depth: usize,
+    #[serde(default)]
+    pub data: DeepParityData,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TurnRuntimeState {
+    pub phase: String,
+    pub status: String,
+    pub provider_status: String,
+    pub tool_loop_status: String,
+    pub cancellation_state: String,
+    #[serde(default)]
+    pub data: DeepParityData,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

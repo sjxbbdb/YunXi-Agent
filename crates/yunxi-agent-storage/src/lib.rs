@@ -316,6 +316,30 @@ pub struct RuntimeStateSnapshot {
     pub updated_at_millis: u128,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ThreadStoreParitySnapshot {
+    pub thread_id: String,
+    pub session_id: Option<SessionId>,
+    pub parent_session_id: Option<SessionId>,
+    pub child_session_ids: Vec<SessionId>,
+    pub forked_from_session_id: Option<SessionId>,
+    pub rollout_items: usize,
+    pub message_history_items: usize,
+    pub runtime_events: usize,
+    pub truncated: bool,
+    pub compact_summary: Option<String>,
+    pub lineage: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RolloutParityRecord {
+    pub input_items: usize,
+    pub response_items: usize,
+    pub tool_events: usize,
+    pub runtime_events: usize,
+    pub state_snapshot: RuntimeStateSnapshot,
+}
+
 impl RuntimeStateSnapshot {
     pub fn from_session_and_rollout(
         session: &SessionRecord,

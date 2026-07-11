@@ -7,7 +7,7 @@ use yunxi_agent_core::{
 };
 use yunxi_agent_protocol::{
     FunctionCallOutput, ProtocolRole, ResponseItem, ResponseItemDelta, RuntimeEvent, ThreadId,
-    ToolCall, ToolCallStatus, TurnId, to_jsonl_line,
+    ThreadState, ToolCall, ToolCallStatus, TurnId, TurnMetadata, TurnState, to_jsonl_line,
 };
 use yunxi_agent_storage::{
     FileSessionStore, HistoryLoadOptions, RolloutRecord, SessionGraphView, SessionHistory,
@@ -467,6 +467,112 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     &mut emitted_thread,
                     &mut emitted_turn,
                 );
+            }
+            AgentEvent::ThreadState { state } => {
+                let state_thread_id = ThreadId(state.thread_id.clone());
+                thread_id = state_thread_id.clone();
+                if !emitted_thread {
+                    output.push(RuntimeEvent::ThreadStarted {
+                        thread_id: state_thread_id.clone(),
+                    });
+                    emitted_thread = true;
+                }
+                output.push(RuntimeEvent::ThreadState {
+                    thread_id: state_thread_id.clone(),
+                    state: ThreadState {
+                        thread_id: state_thread_id,
+                        session_id: state.session_id.clone(),
+                        parent_thread_id: state.parent_thread_id.clone().map(ThreadId),
+                        status: state.status.clone(),
+                        cwd: state.cwd.clone(),
+                        resume_source: state.resume_source.clone(),
+                        child_depth: state.child_depth,
+                        data: state.data.clone(),
+                    },
+                });
+            }
+            AgentEvent::TurnMetadata { metadata } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                let mut protocol_metadata =
+                    TurnMetadata::new(thread_id.clone(), turn_id.clone(), metadata.cwd.clone());
+                protocol_metadata.session_id = metadata.session_id.clone();
+                protocol_metadata.model = metadata.model.clone();
+                protocol_metadata.provider = metadata.provider.clone();
+                protocol_metadata.approval_mode = metadata.approval_mode.clone();
+                protocol_metadata.sandbox_mode = metadata.sandbox_mode.clone();
+                protocol_metadata.extra = metadata.data.clone();
+                if let Some(context_phase) = &metadata.context_phase {
+                    protocol_metadata
+                        .extra
+                        .insert("context_phase".to_string(), context_phase.clone());
+                }
+                if let Some(resume_source) = &metadata.resume_source {
+                    protocol_metadata
+                        .extra
+                        .insert("resume_source".to_string(), resume_source.clone());
+                }
+                if let Some(cancellation_state) = &metadata.cancellation_state {
+                    protocol_metadata
+                        .extra
+                        .insert("cancellation_state".to_string(), cancellation_state.clone());
+                }
+                protocol_metadata
+                    .extra
+                    .insert("child_depth".to_string(), metadata.child_depth.to_string());
+                output.push(RuntimeEvent::TurnMetadata {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    metadata: protocol_metadata,
+                });
+            }
+            AgentEvent::TurnState { state } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::TurnState {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    state: TurnState {
+                        phase: state.phase.clone(),
+                        status: state.status.clone(),
+                        provider_status: state.provider_status.clone(),
+                        tool_loop_status: state.tool_loop_status.clone(),
+                        cancellation_state: state.cancellation_state.clone(),
+                        data: state.data.clone(),
+                    },
+                });
+            }
+            AgentEvent::DeepParityState {
+                layer,
+                status,
+                message,
+                data,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::DeepParityState {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    layer: layer.clone(),
+                    status: status.clone(),
+                    message: message.clone(),
+                    data: data.clone(),
+                });
             }
             AgentEvent::Message { content } => output.push(RuntimeEvent::Item {
                 thread_id: thread_id.clone(),

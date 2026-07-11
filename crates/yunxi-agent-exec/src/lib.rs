@@ -122,12 +122,104 @@ pub enum ExecLifecycleEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UnifiedExecRequest {
+    pub id: Option<String>,
+    pub command: String,
+    pub cwd: PathBuf,
+    pub stdin_bytes: usize,
+    pub output_limit_bytes: Option<usize>,
+    pub long_running: bool,
+    pub shell_snapshot: ShellSnapshot,
+}
+
+impl UnifiedExecRequest {
+    pub fn from_command(command: &ExecCommand, output_limit_bytes: Option<usize>) -> Self {
+        Self {
+            id: command.id.clone(),
+            command: command.canonical_command(),
+            cwd: command.cwd.clone(),
+            stdin_bytes: command.stdin.as_ref().map(|stdin| stdin.len()).unwrap_or(0),
+            output_limit_bytes,
+            long_running: command.timeout_millis.is_none(),
+            shell_snapshot: ShellSnapshot::current(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UnifiedExecAttempt {
+    pub request_id: Option<String>,
+    pub attempt: usize,
+    pub backend: ExecBackend,
+    pub status: ExecAttemptStatus,
+    pub pollable: bool,
+    pub cancellable: bool,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecBackend {
+    DirectProcess,
+    ExecServer,
+    PlatformSandboxRunner,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecAttemptStatus {
+    Planned,
+    Started,
+    Polling,
+    Completed,
+    Cancelled,
+    TimedOut,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExecServerSession {
+    pub session_id: String,
+    pub handle_id: String,
+    pub status: ExecAttemptStatus,
+    pub stdin_open: bool,
+    pub last_poll_millis: Option<u128>,
+    pub output_limit_bytes: Option<usize>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ShellSnapshot {
+    pub platform: String,
+    pub shell: String,
+}
+
+impl ShellSnapshot {
+    pub fn current() -> Self {
+        Self {
+            platform: std::env::consts::OS.to_string(),
+            shell: default_shell_name(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExecSummary {
     pub id: Option<String>,
     pub command: String,
     pub aggregated_output: String,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
+}
+
+fn default_shell_name() -> String {
+    #[cfg(windows)]
+    {
+        "powershell".to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        "sh".to_string()
+    }
 }
 
 impl ExecSummary {

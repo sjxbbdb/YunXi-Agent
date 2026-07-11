@@ -1012,6 +1012,27 @@ sandbox attempt records, tools, MCP reuse, skills, child scoped streams,
 storage, protocol JSONL, and 12-layer deep parity summaries while keeping the
 default CLI independent from upstream Codex runtime dependencies.
 
+## YunXi Agent v1.0 CLI Packaging
+
+YunXi Agent v1.0 packages the current verified autonomous runtime as a
+terminal-first CLI product.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.0.0`.
+- `yunxi-agent-cli` now builds the primary `yunxi` binary and keeps
+  `yunxi-agent-cli` as a compatibility binary.
+- CLI metadata now presents the command as `YunXi Agent v1.0 terminal CLI`.
+- `scripts/install/install-yunxi.ps1` installs release binaries into a
+  user-local bin directory and can optionally add that directory to the user
+  PATH.
+- README now documents v1.0 install, source run, installed run, and
+  environment-based live provider usage.
+
+The v1.0 CLI package is still intentionally headless. It does not add TUI,
+desktop, cloud task, updater, doctor, completion, marketplace, or installer
+surfaces beyond the local PowerShell install helper.
+
 ## Stage 3 Verification
 
 Verified on 2026-07-10:

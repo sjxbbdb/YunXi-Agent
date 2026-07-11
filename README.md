@@ -1,6 +1,8 @@
-# YunXi Agent
+# YunXi Agent v1.0
 
-YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library based on the Codex CLI source checkout.
+YunXi Agent v1.0 is a terminal-first Rust Agent CLI and reusable core library
+built from the Codex CLI source extraction work. The default runtime is
+YunXi-owned and does not depend on the upstream Codex runtime.
 
 ## Layout
 
@@ -10,7 +12,8 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: minimal CLI over the core library
+- `crates/yunxi-agent-cli`: v1.0 terminal CLI package that builds `yunxi`
+  and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
 - `docs/superpowers/specs`: design specs
@@ -19,6 +22,7 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 ## Current Capabilities
 
 - Compiles as an independent Rust workspace
+- Builds a terminal command named `yunxi`
 - Provides facade types for Agent configuration, input, events, results, and errors
 - Runs the default `yunxi` backend through YunXi-owned runtime/provider/tools/storage crates
 - Keeps a dry-run Agent path for deterministic smoke checks
@@ -31,6 +35,7 @@ YunXi Agent is an extracted, runnable Rust Agent CLI and reusable core library b
 
 ```powershell
 cargo test
+cargo build -p yunxi-agent-cli --release --bins
 ```
 
 The default CLI path does not require `vendor/codex-rs`.
@@ -39,9 +44,30 @@ The `codex-native` feature reads Codex Rust source from `vendor/codex-rs`.
 `external/codex-rs` is only a local refresh aid and is not required for normal
 YunXi checkouts.
 
-## Run
+## Install On Windows
+
+Build and install the v1.0 CLI into a user-local bin directory:
 
 ```powershell
+Set-Location "D:\YunXi Agent"
+.\scripts\install\install-yunxi.ps1 -AddToPath
+```
+
+Open a new terminal after `-AddToPath`, then run:
+
+```powershell
+yunxi --version
+yunxi "explain this project"
+```
+
+The installer copies both `yunxi.exe` and the compatibility
+`yunxi-agent-cli.exe`.
+
+## Run From Source
+
+```powershell
+cargo run -p yunxi-agent-cli --bin yunxi -- "explain this project"
+cargo run -p yunxi-agent-cli --bin yunxi -- --backend yunxi "explain this project"
 cargo run -p yunxi-agent-cli -- "explain this project"
 cargo run -p yunxi-agent-cli -- --backend yunxi "explain this project"
 cargo run -p yunxi-agent-cli -- --backend dry-run "explain this project"
@@ -49,6 +75,22 @@ cargo run -p yunxi-agent-cli -- --cwd "D:\some\repo" "fix the failing test"
 cargo run -p yunxi-agent-cli -- --json "explain this project"
 cargo check --manifest-path crates/yunxi-agent-codex/Cargo.toml --features codex-native
 ```
+
+## Live Provider Smoke
+
+YunXi Agent keeps provider credentials out of committed source. For a live
+OpenAI-compatible provider, set environment variables in the current shell:
+
+```powershell
+$env:YUNXI_PROVIDER_PROFILE = "deepseek"
+$env:YUNXI_PROVIDER_BASE_URL = "https://api.deepseek.com"
+$env:YUNXI_PROVIDER_API_KEY = "<your-api-key>"
+$env:YUNXI_AGENT_MODEL = "deepseek-v4-flash"
+yunxi --provider-live --model deepseek-v4-flash "Reply with a one-line status"
+```
+
+Do not commit real API keys. The repository also keeps a secret-safe DeepSeek
+smoke helper at `scripts\provider\deepseek-live-smoke.ps1`.
 
 ## Backend Capability Matrix
 

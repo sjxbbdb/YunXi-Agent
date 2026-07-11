@@ -41,8 +41,9 @@ impl CliExitCode {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "yunxi-agent-cli")]
-#[command(about = "Run the extracted YunXi Agent core")]
+#[command(name = "yunxi")]
+#[command(version)]
+#[command(about = "YunXi Agent v1.0 terminal CLI")]
 struct Cli {
     #[arg(
         long,

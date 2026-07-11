@@ -6,6 +6,26 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[test]
+fn yunxi_primary_binary_prints_v1_version() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("yunxi 1.0.0"));
+}
+
+#[test]
+fn compatibility_binary_prints_v1_version() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("yunxi 1.0.0"));
+}
+
+#[test]
 fn cli_prints_dry_run_response() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
     let temp = TempDir::new().expect("temp dir");

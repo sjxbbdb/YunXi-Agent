@@ -3,10 +3,15 @@ name = "yunxi-agent-cli"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
+default-run = "yunxi"
+
+[[bin]]
+name = "yunxi"
+path = "src/main.rs"
 
 [[bin]]
 name = "yunxi-agent-cli"
-path = "src/main.rs"
+path = "src/bin/yunxi-agent-cli.rs"
 
 [features]
 default = []

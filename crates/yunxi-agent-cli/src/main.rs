@@ -14,6 +14,16 @@ use yunxi_agent_storage::{
     SessionId, SessionRecord, SessionStore,
 };
 
+mod commands {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands.rs"));
+}
+mod interactive {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/interactive.rs"));
+}
+mod render {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/render.rs"));
+}
+
 const CODEX_CORE_PARITY_MAP: &str =
     include_str!("../../../docs/extraction-index/codex-core-agent-parity-map.md");
 
@@ -43,7 +53,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.0 terminal CLI")]
+#[command(about = "YunXi Agent v1.1 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -274,6 +284,14 @@ async fn run_cli() -> Result<()> {
 
     let prompt = cli.prompt.join(" ");
     if prompt.trim().is_empty() {
+        if !cli.json && !cli.jsonl {
+            return interactive::run_interactive(interactive::InteractiveOptions {
+                config,
+                backend,
+                provider_live: cli.provider_live,
+            })
+            .await;
+        }
         bail!("a prompt is required");
     }
 
@@ -375,7 +393,7 @@ fn redact_secret_fragments(message: &str) -> String {
         .join(" ")
 }
 
-async fn run_agent_backend(
+pub(crate) async fn run_agent_backend(
     backend: BackendKind,
     config: AgentConfig,
     prompt: String,

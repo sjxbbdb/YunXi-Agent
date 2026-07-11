@@ -1,6 +1,6 @@
-# YunXi Agent v1.0
+# YunXi Agent v1.1
 
-YunXi Agent v1.0 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.1 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -12,7 +12,7 @@ YunXi-owned and does not depend on the upstream Codex runtime.
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: v1.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.1 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -23,6 +23,8 @@ YunXi-owned and does not depend on the upstream Codex runtime.
 
 - Compiles as an independent Rust workspace
 - Builds a terminal command named `yunxi`
+- Starts an interactive terminal session when `yunxi` is run without a prompt
+- Preserves one-shot execution through `yunxi "your task"`
 - Provides facade types for Agent configuration, input, events, results, and errors
 - Runs the default `yunxi` backend through YunXi-owned runtime/provider/tools/storage crates
 - Keeps a dry-run Agent path for deterministic smoke checks
@@ -46,7 +48,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.0 CLI into a user-local bin directory:
+Build and install the v1.1 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -57,11 +59,40 @@ Open a new terminal after `-AddToPath`, then run:
 
 ```powershell
 yunxi --version
+yunxi
 yunxi "explain this project"
 ```
 
 The installer copies both `yunxi.exe` and the compatibility
 `yunxi-agent-cli.exe`.
+
+## Interactive CLI
+
+Run `yunxi` without a prompt to enter interactive mode:
+
+```powershell
+yunxi
+```
+
+Useful interactive commands:
+
+- `/help`: show available commands
+- `/session`: show the active session id, turn count, cwd, model, and provider
+- `/resume <session_id>`: continue from a saved session
+- `/model [name]`: show or switch the model field
+- `/provider [name]`: show or switch the provider field
+- `/cwd`: show the active working directory
+- `/exit` or `/quit`: leave interactive mode
+
+One-shot and automation modes remain available:
+
+```powershell
+yunxi "explain this project"
+yunxi --jsonl "explain this project"
+```
+
+`--json` and `--jsonl` never enter the REPL when a prompt is missing; they keep
+returning structured errors for script safety.
 
 ## Run From Source
 
@@ -91,6 +122,11 @@ yunxi --provider-live --model deepseek-v4-flash "Reply with a one-line status"
 
 Do not commit real API keys. The repository also keeps a secret-safe DeepSeek
 smoke helper at `scripts\provider\deepseek-live-smoke.ps1`.
+
+## Version Tags
+
+Each released version must keep its own Git tag, for example `v1.1.0`. Do not
+delete old version tags; they are the rollback points if a later release breaks.
 
 ## Backend Capability Matrix
 

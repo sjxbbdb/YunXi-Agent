@@ -12,7 +12,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.0.0"));
+        .stdout(predicate::str::contains("yunxi 1.1.0"));
 }
 
 #[test]
@@ -22,7 +22,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.0.0"));
+        .stdout(predicate::str::contains("yunxi 1.1.0"));
 }
 
 #[test]
@@ -98,12 +98,44 @@ fn cli_live_backend_reports_feature_message_without_codex_native_feature() {
 }
 
 #[test]
-fn cli_rejects_missing_prompt() {
+fn cli_enters_interactive_mode_without_prompt() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
 
-    cmd.assert()
+    cmd.write_stdin("/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("YunXi Agent v1.1 interactive CLI"))
+        .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn cli_rejects_missing_prompt_for_jsonl() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.arg("--jsonl")
+        .assert()
         .code(2)
-        .stderr(predicate::str::contains("a prompt is required"));
+        .stdout(predicate::str::contains("\"type\":\"error\""))
+        .stdout(predicate::str::contains("a prompt is required"));
+}
+
+#[test]
+fn yunxi_interactive_mode_runs_prompt_and_session_command() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.args(["--backend", "yunxi", "--cwd", cwd])
+        .write_stdin("hello from repl\n/session\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("YunXi Agent v1.1 interactive CLI"))
+        .stdout(predicate::str::contains(
+            "YunXi autonomous runtime accepted prompt: hello from repl",
+        ))
+        .stdout(predicate::str::contains("session: yunxi-"))
+        .stdout(predicate::str::contains("turns: 1"))
+        .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
 
 #[test]

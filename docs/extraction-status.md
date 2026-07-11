@@ -1063,6 +1063,89 @@ on `vendor/codex-rs`, `codex-*`, or `yunxi-agent-codex`; API keys must never be
 printed or committed; construction should be done as one build slice and the
 full verification gate should run only after the slice is wired.
 
+## Version Tagging Policy
+
+Starting with the v1.1 work, every version change must create a new Git tag and
+must keep all previous version tags. Tags are rollback anchors and must not be
+deleted during normal development or release cleanup.
+
+## YunXi Agent v1.1 Interactive CLI Construction
+
+YunXi Agent v1.1 upgrades the v1.0 headless one-shot CLI into an interactive
+terminal CLI while preserving script-oriented one-shot, JSON, and JSONL
+compatibility.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.1.0`.
+- `yunxi` and `yunxi-agent-cli` now report `yunxi 1.1.0`.
+- `yunxi` without a prompt enters an interactive REPL instead of returning
+  `a prompt is required`.
+- One-shot mode remains available through `yunxi "prompt"`.
+- `--json` and `--jsonl` without a prompt continue to return structured
+  invalid-input errors instead of entering the REPL.
+- `yunxi-agent-cli` owns small CLI-side modules for interactive command parsing,
+  terminal rendering, and REPL/session orchestration.
+- Interactive mode supports `/help`, `/session`, `/resume <session_id>`,
+  `/model`, `/provider`, `/cwd`, `/clear`, `/exit`, and `/quit`.
+- Interactive turns reuse the existing YunXi-owned runtime and session storage
+  path, carrying the active session id forward through parent-linked history.
+- Terminal rendering now shows assistant messages, reasoning, shell/tool/MCP
+  lifecycle events, approval/escalation events, child scoped stream events,
+  context status, storage state, warnings, provider errors, and cancellation
+  status in a readable non-JSON form.
+- Ctrl+C is wired at the CLI host boundary to cancel the active turn future and
+  return control to the REPL.
+- Live provider interactive startup checks that a provider key source exists
+  before entering the REPL, without printing key values.
+- README documents v1.1 interactive usage and the version tag policy.
+- The user-local PATH install was refreshed with the v1.1 release binaries.
+
+Verified on 2026-07-11:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.1.0`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.1.0`
+- `target\release\yunxi.exe --backend yunxi "YunXi Agent v1.1 one-shot smoke"`:
+  pass
+- Piped interactive smoke with `你好`, `/session`, and `/exit`: pass
+- Piped `/help` and `/exit` smoke: pass
+- `target\release\yunxi.exe --jsonl` without prompt: expected invalid-input
+  exit code `2` with structured JSONL error output
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo tree -p yunxi-agent-cli`: pass
+- Default CLI dependency keyword scan: pass; no `vendor/codex-rs`,
+  `codex-*`, or `yunxi-agent-codex` dependency appeared in the default CLI
+  tree
+- Owned-source secret scan excluding generated and reference trees: pass; no
+  API-key-shaped secret, bearer token, or authorization bearer header pattern
+  was found
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `scripts/provider/deepseek-live-smoke.ps1 -Model deepseek-v4-flash`: pass;
+  exit code 0, 49 JSONL lines, `secret_leak_detected=False`
+- `scripts/provider/deepseek-live-smoke.ps1 -Model deepseek-v4-flash -NoStream`:
+  pass; exit code 0, 19 JSONL lines, `secret_leak_detected=False`
+- `scripts/install/install-yunxi.ps1 -AddToPath -SkipBuild`: pass;
+  `path_updated=False`
+- Installed `C:\Users\admin\AppData\Local\YunXi Agent\bin\yunxi.exe --version`:
+  pass; `yunxi 1.1.0`
+- PATH-resolved `yunxi --version`: pass; `yunxi 1.1.0`
+- PATH-resolved piped `/exit` interactive smoke: pass
+- `codegraph sync "D:\YunXi Agent"`: pass; 5 changed files synced
+- `cargo clean`: pass; removed 6934 files and 1.9GiB
+- Root `.yunxi` cleanup: pass
+
+The v1.1 default CLI dependency graph remains independent from upstream Codex
+runtime dependencies. This release adds the interactive terminal host layer on
+top of the already autonomous YunXi runtime; it does not introduce TUI,
+desktop app, cloud tasks, update, doctor, completion, marketplace, or new
+installer surfaces beyond the existing local PowerShell install helper.
+
 ## Stage 3 Verification
 
 Verified on 2026-07-10:

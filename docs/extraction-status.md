@@ -941,6 +941,77 @@ Stage 4M execution should keep the existing hard constraint: build and wire the
 whole slice first, avoid mid-construction verification, then run the final
 verification gate once construction is complete.
 
+## Stage 4M Real Runtime Parity Construction
+
+Stage 4M construction is being implemented against
+`docs/reports/2026-07-11-yunxi-stage-4m-real-runtime-parity-deepening-development-report.md`.
+
+Constructed in this slice:
+
+- `yunxi-agent-runtime` now has small YunXi-owned runtime driver modules for
+  thread state, turn metadata, turn phase state, and session approval-cache
+  probing.
+- Normal YunXi runtime turns now emit `thread_state`, `turn_metadata`, and
+  `turn_state` events from the main path instead of reserving those events for
+  the Stage 4L synthetic fixture.
+- Provider calls now publish feature-matrix driven turn-state data, and
+  `yunxi-agent-provider` uses `ProviderFeatureMatrix` while shaping
+  OpenAI-compatible request JSON.
+- Tool execution now maps sandbox runner diagnostics into a structured
+  `sandbox_attempt` runtime event and maps approval cache decisions into
+  `approval_cache_state`.
+- Context assembly now records a `ContextManagerState` projection for AGENTS.md
+  fragments, file mentions, restored history, token estimates, and compact
+  summary metadata.
+- A new `stage 4m real parity fixture` follows the real runtime chain:
+  provider -> context -> approval cache -> sandbox decision -> shell exec ->
+  patch -> MCP -> skill -> tool search -> multi-agent child -> storage ->
+  JSONL.
+- The Stage 4L synthetic fixture remains available as the protocol-shape
+  fallback, while Stage 4M adds 12 `deep_parity_state` summary layers derived
+  from events observed on the real runtime path.
+
+Stage 4M final unified verification passed on 2026-07-11 after construction
+completed, following the project hard constraint to avoid mid-construction
+test loops.
+
+Verified on 2026-07-11:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4m real parity fixture"`:
+  pass; command exit code 0
+- Stage 4M real fixture pure JSONL count: 131 events
+- Stage 4M real fixture event counts:
+  `deep_parity_state=12`, `turn_state=9`, `sandbox_attempt=7`,
+  `approval_cache_state=8`, `mcp_session=7`, `child_scoped_stream=15`,
+  `tool_started=7`, `tool_completed=5`
+- `cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4l deep parity fixture"`:
+  pass; command exit code 0, 48 pure JSONL events
+- `cargo tree -p yunxi-agent-cli`: pass
+- Default CLI dependency keyword scan: pass; no `vendor/codex-rs`,
+  `codex-*`, or `yunxi-agent-codex` dependency appeared in the default CLI
+  tree
+- Owned-source secret scan excluding `vendor`, `extracted`, `target`, `.git`,
+  and `.codegraph`: pass; no API-key-shaped secret, bearer token, or
+  authorization bearer header pattern was found
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `scripts/provider/deepseek-live-smoke.ps1 -Model deepseek-v4-flash`: pass;
+  exit code 0, 49 JSONL lines, `secret_leak_detected=False`
+- `scripts/provider/deepseek-live-smoke.ps1 -Model deepseek-v4-flash -NoStream`:
+  pass; exit code 0, 19 JSONL lines, `secret_leak_detected=False`
+
+Stage 4M therefore moves the Stage 4L synthetic deep-parity facade into a
+real YunXi runtime parity chain for provider, context, approval cache,
+sandbox attempt records, tools, MCP reuse, skills, child scoped streams,
+storage, protocol JSONL, and 12-layer deep parity summaries while keeping the
+default CLI independent from upstream Codex runtime dependencies.
+
 ## Stage 3 Verification
 
 Verified on 2026-07-10:

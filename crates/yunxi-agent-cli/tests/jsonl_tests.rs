@@ -178,3 +178,51 @@ fn stage_4l_deep_parity_fixture_emits_full_jsonl_shape() {
     }
     assert_eq!(deep_parity_events, 12);
 }
+
+#[test]
+fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
+    let temp = TempDir::new().expect("temp dir");
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    let assert = cmd
+        .args([
+            "--backend",
+            "yunxi",
+            "--cwd",
+            temp.path().to_str().expect("temp path"),
+            "--jsonl",
+            "run stage 4m real parity fixture",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"type\":\"thread_state\""))
+        .stdout(predicate::str::contains("\"type\":\"turn_state\""))
+        .stdout(predicate::str::contains("\"type\":\"sandbox_attempt\""))
+        .stdout(predicate::str::contains(
+            "\"type\":\"approval_cache_state\"",
+        ))
+        .stdout(predicate::str::contains("\"type\":\"mcp_session\""))
+        .stdout(predicate::str::contains("\"type\":\"child_scoped_stream\""))
+        .stdout(predicate::str::contains(
+            "\"layer\":\"12_real_parity_harness\"",
+        ));
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    let mut deep_parity_events = 0usize;
+    let mut reused_approval = false;
+    for line in output.lines() {
+        let value = serde_json::from_str::<serde_json::Value>(line).expect("each line is json");
+        match value.get("type").and_then(serde_json::Value::as_str) {
+            Some("deep_parity_state") => deep_parity_events += 1,
+            Some("approval_cache_state") => {
+                reused_approval |= value
+                    .get("reused")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(deep_parity_events, 12);
+    assert!(reused_approval);
+}

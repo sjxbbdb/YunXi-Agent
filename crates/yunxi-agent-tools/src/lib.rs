@@ -1002,6 +1002,7 @@ impl ToolRuntime for ShellToolRuntime {
 pub struct CompositeToolRuntime {
     shell: ShellToolRuntime,
     mcp: Arc<dyn McpRuntime>,
+    workspace_mcp_runtimes: Arc<Mutex<BTreeMap<PathBuf, InMemoryMcpRuntime>>>,
     workspace_mcp_sessions: Arc<Mutex<BTreeMap<PathBuf, McpSessionManager>>>,
     agents: InMemoryAgentRegistry,
     skill_roots: Vec<PathBuf>,
@@ -1012,6 +1013,14 @@ impl std::fmt::Debug for CompositeToolRuntime {
         formatter
             .debug_struct("CompositeToolRuntime")
             .field("shell", &self.shell)
+            .field(
+                "workspace_mcp_runtimes",
+                &self
+                    .workspace_mcp_runtimes
+                    .lock()
+                    .map(|runtimes| runtimes.len())
+                    .unwrap_or_default(),
+            )
             .field("agents", &self.agents)
             .field("skill_roots", &self.skill_roots)
             .finish_non_exhaustive()
@@ -1023,6 +1032,7 @@ impl Default for CompositeToolRuntime {
         Self {
             shell: ShellToolRuntime,
             mcp: Arc::new(default_fixture_mcp_runtime()),
+            workspace_mcp_runtimes: Arc::default(),
             workspace_mcp_sessions: Arc::default(),
             agents: InMemoryAgentRegistry::default(),
             skill_roots: default_skill_roots(),
@@ -1079,6 +1089,31 @@ impl CompositeToolRuntime {
             .insert(key, manager.clone());
         Ok(Some(manager))
     }
+
+    fn workspace_mcp_runtime_for(&self, cwd: &Path) -> AgentResult<Option<InMemoryMcpRuntime>> {
+        let key = cwd.to_path_buf();
+        if let Some(runtime) = self
+            .workspace_mcp_runtimes
+            .lock()
+            .map_err(|_| AgentError::Execution {
+                message: "workspace MCP runtime cache lock was poisoned".to_string(),
+            })?
+            .get(&key)
+            .cloned()
+        {
+            return Ok(Some(runtime));
+        }
+        let Some(runtime) = load_workspace_mcp_runtime(cwd)? else {
+            return Ok(None);
+        };
+        self.workspace_mcp_runtimes
+            .lock()
+            .map_err(|_| AgentError::Execution {
+                message: "workspace MCP runtime cache lock was poisoned".to_string(),
+            })?
+            .insert(key, runtime.clone());
+        Ok(Some(runtime))
+    }
 }
 
 #[async_trait]
@@ -1097,9 +1132,9 @@ impl ToolRuntime for CompositeToolRuntime {
             } => {
                 run_mcp_tool(
                     Arc::clone(&self.mcp),
+                    self.workspace_mcp_runtime_for(&request.cwd)?,
                     self.workspace_session_for(&request.cwd)?,
                     request.id,
-                    request.cwd,
                     server,
                     tool,
                     arguments_json,
@@ -1283,9 +1318,9 @@ fn run_view_image(id: Option<String>, cwd: PathBuf, path: String) -> AgentResult
 
 async fn run_mcp_tool(
     runtime: Arc<dyn McpRuntime>,
+    workspace_runtime: Option<InMemoryMcpRuntime>,
     workspace_session: Option<McpSessionManager>,
     id: Option<String>,
-    cwd: PathBuf,
     server: String,
     tool: String,
     arguments_json: Option<String>,
@@ -1296,9 +1331,14 @@ async fn run_mcp_tool(
         arguments_json,
     };
     let mut runtime_events = Vec::new();
-    let workspace_runtime = load_workspace_mcp_runtime(&cwd)?;
     let result = match workspace_runtime {
-        Some(workspace_runtime) => workspace_runtime.call_tool(invocation).await,
+        Some(workspace_runtime) => {
+            let result = workspace_runtime.call_tool(invocation).await;
+            runtime_events.extend(mcp_lifecycle_runtime_events(
+                workspace_runtime.events().await?,
+            ));
+            result
+        }
         None => match workspace_session {
             Some(workspace_session) => {
                 runtime_events.extend(

@@ -421,6 +421,26 @@ pub enum RuntimeEvent {
         #[serde(default)]
         data: BTreeMap<String, String>,
     },
+    SandboxAttempt {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        call_id: Option<String>,
+        platform: String,
+        status: String,
+        backend: String,
+        command: Option<String>,
+        cwd: String,
+        message: Option<String>,
+    },
+    ApprovalCacheState {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        session_id: Option<String>,
+        tool_name: String,
+        key: String,
+        decision: String,
+        reused: bool,
+    },
     Item {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -772,15 +792,41 @@ mod tests {
             },
         };
         let deep_parity = RuntimeEvent::DeepParityState {
-            thread_id,
-            turn_id,
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
             layer: "03_unified_exec".to_string(),
             status: "ready".to_string(),
             message: Some("unified exec facade represented".to_string()),
-            data,
+            data: data.clone(),
+        };
+        let sandbox_attempt = RuntimeEvent::SandboxAttempt {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            call_id: Some("call-1".to_string()),
+            platform: "windows".to_string(),
+            status: "ready".to_string(),
+            backend: "direct_process".to_string(),
+            command: Some("echo ok".to_string()),
+            cwd: "D:/YunXi Agent".to_string(),
+            message: None,
+        };
+        let approval_cache = RuntimeEvent::ApprovalCacheState {
+            thread_id,
+            turn_id,
+            session_id: Some("session-stage-4m".to_string()),
+            tool_name: "shell".to_string(),
+            key: "shell:echo ok:D:/YunXi Agent".to_string(),
+            decision: "approved".to_string(),
+            reused: true,
         };
 
-        for event in [thread_state, turn_state, deep_parity] {
+        for event in [
+            thread_state,
+            turn_state,
+            deep_parity,
+            sandbox_attempt,
+            approval_cache,
+        ] {
             let line = to_jsonl_line(&event).expect("jsonl");
             let parsed = from_jsonl_line(&line).expect("parsed event");
             assert_eq!(parsed, event);

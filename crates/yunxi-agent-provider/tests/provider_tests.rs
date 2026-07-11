@@ -51,6 +51,8 @@ fn openai_request_json_uses_yunxi_provider_messages() {
     assert_eq!(json["model"], "yunxi-model");
     assert_eq!(json["messages"][0]["role"], "user");
     assert_eq!(json["messages"][0]["content"], "explain this project");
+    assert_eq!(json["metadata"]["runtime"], "yunxi-agent");
+    assert_eq!(json["metadata"]["provider"], "openai-compatible");
 
     let tools = json["tools"].as_array().expect("tools");
     let tool_names = tools
@@ -187,6 +189,7 @@ fn provider_capabilities_can_disable_tools_and_stream_usage() {
     assert!(json.get("tools").is_none());
     assert!(json.get("parallel_tool_calls").is_none());
     assert!(json.get("stream_options").is_none());
+    assert_eq!(json["metadata"]["tool_schema_strictness"], "besteffort");
     assert_eq!(transport.timeout_millis, Some(5_000));
 }
 

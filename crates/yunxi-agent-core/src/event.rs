@@ -28,6 +28,22 @@ pub enum AgentEvent {
         message: Option<String>,
         data: DeepParityData,
     },
+    SandboxAttempt {
+        id: Option<String>,
+        platform: String,
+        status: String,
+        backend: String,
+        command: Option<String>,
+        cwd: String,
+        message: Option<String>,
+    },
+    ApprovalCacheState {
+        session_id: Option<String>,
+        tool_name: String,
+        key: String,
+        decision: String,
+        reused: bool,
+    },
     Message {
         content: String,
     },

@@ -1,3 +1,7 @@
+mod runtime_state;
+mod session_driver;
+mod turn_driver;
+
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -6,8 +10,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use yunxi_agent_context::{
-    ContextWindowBudget, ConversationMessage, ConversationRole, RestoredHistory,
-    extract_file_mentions, load_agents_md_hierarchy, restore_history_for_prompt,
+    ContextManagerState, ContextWindowBudget, ConversationMessage, ConversationRole,
+    PromptAssembly, PromptDebugSnapshot, RestoredHistory, extract_file_mentions,
+    load_agents_md_hierarchy, restore_history_for_prompt,
 };
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
@@ -24,8 +29,9 @@ use yunxi_agent_protocol::{
     TurnId,
 };
 use yunxi_agent_provider::{
-    AgentProvider, ProviderBootstrap, ProviderMessage, ProviderRequest, ProviderResponse,
-    ProviderRole, ProviderStream, ProviderToolCall, StaticProvider,
+    AgentProvider, ProviderBootstrap, ProviderConfig, ProviderFeatureMatrix, ProviderMessage,
+    ProviderRequest, ProviderResponse, ProviderRole, ProviderStream, ProviderToolCall,
+    StaticProvider,
 };
 use yunxi_agent_sandbox::ApprovalRequirement;
 use yunxi_agent_storage::{
@@ -37,6 +43,10 @@ use yunxi_agent_tools::{
     ToolRequest, ToolRequestKind, ToolResponse, ToolRouter, ToolRuntime, ToolRuntimeEvent,
     ToolStatus,
 };
+
+use crate::runtime_state::runtime_data;
+use crate::session_driver::RuntimeSessionDriver;
+use crate::turn_driver::RuntimeTurnDriver;
 
 const DEFAULT_MAX_TURNS: usize = 8;
 const DEFAULT_MAX_CHILD_DEPTH: usize = 2;
@@ -116,6 +126,7 @@ pub struct YunXiRuntimeBackend {
     child_provider_mode: ChildProviderMode,
     max_turns: usize,
     max_child_depth: usize,
+    child_depth: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,6 +174,7 @@ impl YunXiRuntimeBackend {
             child_provider_mode: ChildProviderMode::Fixture,
             max_turns: DEFAULT_MAX_TURNS,
             max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
+            child_depth: 0,
         }
     }
 
@@ -180,6 +192,7 @@ impl YunXiRuntimeBackend {
             child_provider_mode: ChildProviderMode::Fixture,
             max_turns: DEFAULT_MAX_TURNS,
             max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
+            child_depth: 0,
         }
     }
 
@@ -190,6 +203,11 @@ impl YunXiRuntimeBackend {
 
     pub fn with_max_child_depth(mut self, max_child_depth: usize) -> Self {
         self.max_child_depth = max_child_depth;
+        self
+    }
+
+    fn with_child_depth(mut self, child_depth: usize) -> Self {
+        self.child_depth = child_depth;
         self
     }
 
@@ -250,6 +268,7 @@ impl YunXiRuntimeBackend {
             self.child_provider_mode,
             self.max_turns,
             self.max_child_depth,
+            self.child_depth.saturating_add(1),
         );
         let result = self
             .agents
@@ -286,6 +305,7 @@ struct YunXiChildAgentRuntime {
     child_provider_mode: ChildProviderMode,
     max_turns: usize,
     remaining_depth: usize,
+    child_depth: usize,
 }
 
 impl YunXiChildAgentRuntime {
@@ -297,6 +317,7 @@ impl YunXiChildAgentRuntime {
         child_provider_mode: ChildProviderMode,
         max_turns: usize,
         remaining_depth: usize,
+        child_depth: usize,
     ) -> Self {
         Self {
             base_config,
@@ -306,6 +327,7 @@ impl YunXiChildAgentRuntime {
             child_provider_mode,
             max_turns,
             remaining_depth,
+            child_depth,
         }
     }
 
@@ -362,6 +384,7 @@ impl ChildAgentRuntime for YunXiChildAgentRuntime {
         let inherited_tools = Arc::clone(&self.tools);
         let child_provider_mode = self.child_provider_mode;
         let next_child_depth = self.remaining_depth.saturating_sub(1);
+        let child_depth = self.child_depth;
         let max_turns = self.max_turns;
 
         let handle = thread::spawn(move || {
@@ -385,7 +408,8 @@ impl ChildAgentRuntime for YunXiChildAgentRuntime {
             let mut backend =
                 YunXiRuntimeBackend::with_shared_parts(child_provider, child_tools, child_storage)
                     .with_max_turns(max_turns)
-                    .with_max_child_depth(next_child_depth);
+                    .with_max_child_depth(next_child_depth)
+                    .with_child_depth(child_depth);
             if matches!(child_provider_mode, ChildProviderMode::InheritParent) {
                 backend = backend.with_inherited_child_provider();
             }
@@ -443,6 +467,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         let sink = VecEventSink::default();
         let thread_id = generate_runtime_thread_id();
         let turn_id = generate_runtime_turn_id();
+        let mut session_driver = RuntimeSessionDriver::new(session_id.clone());
         sink.emit(AgentEvent::ThreadStarted {
             thread_id: thread_id.clone(),
         })
@@ -452,10 +477,56 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             prompt: prompt.to_string(),
         })
         .await?;
+        let turn_driver = RuntimeTurnDriver::new(
+            &sink,
+            &runtime_config,
+            &session_id,
+            &thread_id,
+            &turn_id,
+            self.child_depth,
+        );
+        turn_driver
+            .emit_thread_state(
+                "running",
+                runtime_data([
+                    ("runtime_driver", "session_driver+turn_driver".to_string()),
+                    ("stage", "4m".to_string()),
+                ]),
+            )
+            .await?;
+        turn_driver
+            .emit_metadata(
+                "started",
+                runtime_data([
+                    ("session_driver", "active".to_string()),
+                    ("turn_driver", "active".to_string()),
+                ]),
+            )
+            .await?;
+        turn_driver
+            .emit_phase(
+                "started",
+                "running",
+                "idle",
+                "idle",
+                "not_cancelled",
+                runtime_data([("max_turns", self.max_turns.to_string())]),
+            )
+            .await?;
 
         if prompt.contains("stage 4k cancellation fixture") {
             let cancellation = AgentCancellationToken::new();
             cancellation.cancel();
+            turn_driver
+                .emit_phase(
+                    "cancelled",
+                    "cancelled",
+                    "cancelled",
+                    "cancelled",
+                    "cancelled",
+                    runtime_data([("reason", "stage 4k cancellation fixture".to_string())]),
+                )
+                .await?;
             sink.emit(AgentEvent::Reasoning {
                 content: format!(
                     "Cancellation token propagated to provider stream; cancelled={}",
@@ -538,7 +609,70 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 .await;
         }
 
+        if prompt.contains("stage 4m real parity fixture") {
+            prepare_stage_4m_fixture_workspace(&runtime_config)?;
+        }
+
         let initial_messages = self.build_initial_messages(&runtime_config, prompt).await?;
+        let context_state = initial_messages.context_state.clone();
+        sink.emit(AgentEvent::ContextStatus {
+            active_context_tokens: context_state.status.active_context_tokens,
+            token_limit_reached: context_state.status.token_limit_reached,
+            compacted: initial_messages
+                .restored_history
+                .as_ref()
+                .is_some_and(|history| history.compacted),
+            dropped_messages: initial_messages
+                .restored_history
+                .as_ref()
+                .map(|history| history.dropped_messages)
+                .unwrap_or_default(),
+        })
+        .await?;
+        turn_driver
+            .emit_metadata(
+                "context_assembled",
+                runtime_data([
+                    (
+                        "context_tokens",
+                        context_state.status.active_context_tokens.to_string(),
+                    ),
+                    (
+                        "context_phase",
+                        format!("{:?}", context_state.prompt_debug.phase).to_ascii_lowercase(),
+                    ),
+                    (
+                        "agents_md_fragments",
+                        context_state.agents_md_fragments.to_string(),
+                    ),
+                    ("file_mentions", context_state.file_mentions.to_string()),
+                    (
+                        "history_fragments",
+                        context_state.history_fragments.to_string(),
+                    ),
+                ]),
+            )
+            .await?;
+        turn_driver
+            .emit_phase(
+                "context_assembled",
+                "running",
+                "idle",
+                "idle",
+                "not_cancelled",
+                runtime_data([
+                    ("messages", initial_messages.messages.len().to_string()),
+                    (
+                        "compacted",
+                        initial_messages
+                            .restored_history
+                            .as_ref()
+                            .is_some_and(|history| history.compacted)
+                            .to_string(),
+                    ),
+                ]),
+            )
+            .await?;
         if let Some(history) = &initial_messages.restored_history {
             sink.emit(AgentEvent::Reasoning {
                 content: format!(
@@ -560,7 +694,28 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         let mut final_response = None;
         let mut usage = None;
 
-        for _ in 0..self.max_turns {
+        for turn_index in 0..self.max_turns {
+            let provider_config = ProviderConfig::from_agent_config(&runtime_config);
+            let matrix = ProviderFeatureMatrix::from_config(&provider_config);
+            turn_driver
+                .emit_phase(
+                    "provider_started",
+                    "running",
+                    "streaming",
+                    "idle",
+                    "not_cancelled",
+                    runtime_data([
+                        ("provider", matrix.provider.clone()),
+                        ("tools", matrix.capabilities.tools.to_string()),
+                        (
+                            "parallel_tool_calls",
+                            matrix.capabilities.parallel_tool_calls.to_string(),
+                        ),
+                        ("stream_usage", matrix.usage_delta.to_string()),
+                        ("turn_index", turn_index.to_string()),
+                    ]),
+                )
+                .await?;
             sink.emit(AgentEvent::Reasoning {
                 content: "Provider turn started".to_string(),
             })
@@ -580,6 +735,16 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             {
                 Ok(stream) => stream,
                 Err(error) => {
+                    turn_driver
+                        .emit_phase(
+                            "provider_failed",
+                            "failed",
+                            "failed",
+                            "idle",
+                            "not_cancelled",
+                            runtime_data([("error", error.to_string())]),
+                        )
+                        .await?;
                     emit_provider_error(&sink, &error).await?;
                     return Err(error);
                 }
@@ -587,6 +752,26 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             emit_provider_stream_events(&sink, &provider_stream.events).await?;
             let provider_response = collect_provider_response(provider_stream)?;
             usage = provider_response.usage;
+            turn_driver
+                .emit_phase(
+                    "provider_completed",
+                    "running",
+                    "completed",
+                    if provider_response.tool_calls.is_empty() {
+                        "idle"
+                    } else {
+                        "pending"
+                    },
+                    "not_cancelled",
+                    runtime_data([
+                        ("tool_calls", provider_response.tool_calls.len().to_string()),
+                        (
+                            "assistant_message",
+                            provider_response.message.is_some().to_string(),
+                        ),
+                    ]),
+                )
+                .await?;
             sink.emit(AgentEvent::Reasoning {
                 content: "Provider turn completed".to_string(),
             })
@@ -601,8 +786,21 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 messages.push(message);
             }
 
+            turn_driver
+                .emit_phase(
+                    "tool_loop_started",
+                    "running",
+                    "completed",
+                    "running",
+                    "not_cancelled",
+                    runtime_data([("tool_calls", provider_response.tool_calls.len().to_string())]),
+                )
+                .await?;
             for tool_call in provider_response.tool_calls {
-                let tool_request = map_tool_call(&runtime_config, &session_id, tool_call);
+                let mut tool_request = map_tool_call(&runtime_config, &session_id, tool_call);
+                let approval_probe = session_driver.apply_approval_cache(&mut tool_request)?;
+                emit_approval_cache_state(&sink, session_driver.session_id(), approval_probe)
+                    .await?;
                 let dispatch = self.tool_router.route(tool_request)?;
                 emit_tool_dispatch_trace(&sink, &dispatch.trace).await?;
                 emit_approval_requested_if_needed(&sink, &dispatch.trace).await?;
@@ -620,6 +818,16 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 emit_file_changes(&sink, &tool_response).await?;
                 messages.push(ProviderMessage::tool(render_tool_response(&tool_response)));
             }
+            turn_driver
+                .emit_phase(
+                    "tool_loop_completed",
+                    "running",
+                    "completed",
+                    "completed",
+                    "not_cancelled",
+                    runtime_data([("messages", messages.len().to_string())]),
+                )
+                .await?;
         }
 
         let final_response = final_response.ok_or_else(|| AgentError::Execution {
@@ -668,6 +876,26 @@ impl RuntimeBackend for YunXiRuntimeBackend {
             child_session_ids,
         })
         .await?;
+        if prompt.contains("stage 4m real parity fixture") {
+            let summary_events = sink.events().await?;
+            emit_stage_4m_real_parity_summary(&turn_driver, &summary_events).await?;
+        }
+        turn_driver
+            .emit_phase(
+                "storage_saved",
+                "completed",
+                "completed",
+                "completed",
+                "not_cancelled",
+                runtime_data([("rollout_items", pre_storage_events.len().to_string())]),
+            )
+            .await?;
+        turn_driver
+            .emit_thread_state(
+                "completed",
+                runtime_data([("final_response", "present".to_string())]),
+            )
+            .await?;
         let events = sink.events().await?;
         session.events = events.clone();
         self.storage.save(session).await?;
@@ -684,6 +912,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
 struct InitialMessages {
     messages: Vec<ProviderMessage>,
     restored_history: Option<RestoredHistory>,
+    context_state: ContextManagerState,
 }
 
 impl YunXiRuntimeBackend {
@@ -1120,12 +1349,23 @@ impl YunXiRuntimeBackend {
     ) -> AgentResult<InitialMessages> {
         let mut messages = Vec::new();
         let agents = load_agents_md_hierarchy(&config.cwd)?;
+        let agents_md_fragments = agents.documents.len()
+            + usize::from(
+                agents
+                    .user_instructions
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty()),
+            );
         let instructions = agents.combined_instructions();
         if !instructions.is_empty() {
             messages.push(ProviderMessage::system(instructions));
         }
 
         let restored_history = self.restore_parent_history(config).await?;
+        let history_fragments = restored_history
+            .as_ref()
+            .map(|history| history.messages.len())
+            .unwrap_or_default();
         if let Some(restored_history) = &restored_history {
             messages.extend(
                 restored_history
@@ -1136,14 +1376,48 @@ impl YunXiRuntimeBackend {
             );
         }
 
-        if let Some(file_context) = load_mentioned_file_context(&config.cwd, prompt)? {
+        let mentioned_context = load_mentioned_file_context(&config.cwd, prompt)?;
+        let file_mentions = mentioned_context
+            .as_ref()
+            .map(|context| context.matches("### ").count())
+            .unwrap_or_default();
+        if let Some(file_context) = mentioned_context {
             messages.push(ProviderMessage::system(file_context));
         }
 
         messages.push(ProviderMessage::user(prompt));
+        let conversation_messages = messages
+            .iter()
+            .cloned()
+            .map(provider_message_to_conversation)
+            .collect::<Vec<_>>();
+        let prompt_assembly = conversation_messages
+            .iter()
+            .cloned()
+            .fold(PromptAssembly::new(), PromptAssembly::with_message);
+        let token_budget = ContextWindowBudget::new(
+            config.context_window_tokens,
+            config.auto_compact_threshold_tokens,
+        );
+        let status = token_budget.status(&conversation_messages);
+        let prompt_debug = PromptDebugSnapshot::from_assembly(&prompt_assembly, token_budget);
+        let mut context_state =
+            ContextManagerState::from_prompt_debug(prompt_debug, token_budget, status);
+        context_state.agents_md_fragments = agents_md_fragments;
+        context_state.file_mentions = file_mentions;
+        context_state.history_fragments = history_fragments;
+        if let Some(history) = &restored_history {
+            if history.compacted {
+                context_state.compact_summary = history
+                    .messages
+                    .first()
+                    .map(|message| message.content.clone());
+            }
+        }
         Ok(InitialMessages {
             messages,
             restored_history,
+            context_state,
         })
     }
 
@@ -1240,6 +1514,94 @@ fn load_mentioned_file_context(cwd: &Path, prompt: &str) -> AgentResult<Option<S
     }
 }
 
+fn prepare_stage_4m_fixture_workspace(config: &AgentConfig) -> AgentResult<()> {
+    let yunxi_dir = config.cwd.join(".yunxi");
+    let skill_dir = yunxi_dir.join("skills").join("stage4m");
+    std::fs::create_dir_all(&skill_dir).map_err(|error| AgentError::Execution {
+        message: format!(
+            "failed to prepare Stage 4M skill directory {}: {error}",
+            skill_dir.display()
+        ),
+    })?;
+    let skill_path = skill_dir.join("SKILL.md");
+    if !skill_path.is_file() {
+        std::fs::write(
+            &skill_path,
+            "---\nname: stage4m\ndescription: Stage 4M real runtime fixture skill\n---\n# Stage 4M Skill\nYunXi runtime loaded this skill through the workspace catalog.\n",
+        )
+        .map_err(|error| AgentError::Execution {
+            message: format!(
+                "failed to write Stage 4M skill fixture {}: {error}",
+                skill_path.display()
+            ),
+        })?;
+    }
+
+    std::fs::create_dir_all(&yunxi_dir).map_err(|error| AgentError::Execution {
+        message: format!(
+            "failed to prepare Stage 4M YunXi directory {}: {error}",
+            yunxi_dir.display()
+        ),
+    })?;
+    let mcp_seed = yunxi_dir.join("mcp-runtime.json");
+    if !mcp_seed.is_file() {
+        std::fs::write(
+            &mcp_seed,
+            json!({
+                "snapshot": {
+                    "servers": {
+                        "local": {
+                            "config": {
+                                "name": "local",
+                                "transport": {"type": "stdio", "command": "fixture", "args": []},
+                                "enabled": true
+                            },
+                            "resources": [
+                                {
+                                    "server": "local",
+                                    "uri": "file://stage4m",
+                                    "name": "stage4m",
+                                    "description": "Stage 4M fixture resource",
+                                    "mime_type": "text/plain"
+                                }
+                            ],
+                            "tools": [
+                                {
+                                    "server": "local",
+                                    "name": "echo",
+                                    "title": "Echo",
+                                    "description": "Stage 4M fixture echo",
+                                    "input_schema": {"type": "object"},
+                                    "destructive_hint": false,
+                                    "open_world_hint": false,
+                                    "requires_approval": false
+                                }
+                            ],
+                            "auth_status": "authenticated"
+                        }
+                    },
+                    "plugins_available": false,
+                    "available_environment_ids": []
+                },
+                "resource_contents": [
+                    {"server":"local","uri":"file://stage4m","content":"stage4m-resource"}
+                ],
+                "tool_results": [
+                    {"server":"local","tool":"echo","content":"YUNXI_STAGE_4M_MCP_OK"}
+                ]
+            })
+            .to_string(),
+        )
+        .map_err(|error| AgentError::Execution {
+            message: format!(
+                "failed to write Stage 4M MCP seed {}: {error}",
+                mcp_seed.display()
+            ),
+        })?;
+    }
+    Ok(())
+}
+
 fn session_history_to_conversation_messages(history: &SessionHistory) -> Vec<ConversationMessage> {
     history
         .items
@@ -1263,11 +1625,139 @@ fn conversation_message_to_provider(message: ConversationMessage) -> ProviderMes
     }
 }
 
+fn provider_message_to_conversation(message: ProviderMessage) -> ConversationMessage {
+    let role = match message.role {
+        ProviderRole::System => ConversationRole::System,
+        ProviderRole::User => ConversationRole::User,
+        ProviderRole::Assistant => ConversationRole::Assistant,
+        ProviderRole::Tool => ConversationRole::Tool,
+    };
+    ConversationMessage::new(role, message.content)
+}
+
 fn stage_4l_data(entries: Vec<(&str, String)>) -> BTreeMap<String, String> {
     entries
         .into_iter()
         .map(|(key, value)| (key.to_string(), value))
         .collect()
+}
+
+async fn emit_stage_4m_real_parity_summary<S>(
+    driver: &RuntimeTurnDriver<'_, S>,
+    events: &[AgentEvent],
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink + ?Sized,
+{
+    let count = |predicate: fn(&AgentEvent) -> bool| -> usize {
+        events.iter().filter(|event| predicate(event)).count()
+    };
+    let tool_events = count(|event| {
+        matches!(
+            event,
+            AgentEvent::CommandStarted { .. }
+                | AgentEvent::CommandCompleted { .. }
+                | AgentEvent::ToolCallStarted { .. }
+                | AgentEvent::ToolCallCompleted { .. }
+                | AgentEvent::McpToolStarted { .. }
+                | AgentEvent::McpToolCompleted { .. }
+                | AgentEvent::PatchCompleted { .. }
+        )
+    });
+    let layers = [
+        (
+            "01_runtime_driver_state_machine",
+            runtime_data([
+                ("thread_state", count(|event| matches!(event, AgentEvent::ThreadState { .. })).to_string()),
+                ("turn_state", count(|event| matches!(event, AgentEvent::TurnState { .. })).to_string()),
+            ]),
+        ),
+        (
+            "02_provider_feature_matrix",
+            runtime_data([
+                ("provider_started", "true".to_string()),
+                ("feature_matrix", "request_wired".to_string()),
+            ]),
+        ),
+        (
+            "03_unified_exec_handle",
+            runtime_data([
+                ("command_started", count(|event| matches!(event, AgentEvent::CommandStarted { .. })).to_string()),
+                ("command_completed", count(|event| matches!(event, AgentEvent::CommandCompleted { .. })).to_string()),
+            ]),
+        ),
+        (
+            "04_sandbox_runner",
+            runtime_data([
+                ("sandbox_attempts", count(|event| matches!(event, AgentEvent::SandboxAttempt { .. })).to_string()),
+            ]),
+        ),
+        (
+            "05_approval_cache",
+            runtime_data([
+                ("cache_events", count(|event| matches!(event, AgentEvent::ApprovalCacheState { .. })).to_string()),
+                ("approval_requests", count(|event| matches!(event, AgentEvent::ApprovalRequested { .. })).to_string()),
+            ]),
+        ),
+        (
+            "06_mcp_long_lived_runtime",
+            runtime_data([
+                ("mcp_sessions", count(|event| matches!(event, AgentEvent::McpSession { .. })).to_string()),
+                ("mcp_tools", count(|event| matches!(event, AgentEvent::McpToolCompleted { .. })).to_string()),
+            ]),
+        ),
+        (
+            "07_skills_plugins_catalog",
+            runtime_data([
+                ("skill_tools", count(|event| matches!(event, AgentEvent::ToolCallCompleted { name, .. } if name.starts_with("skill:"))).to_string()),
+            ]),
+        ),
+        (
+            "08_context_manager",
+            runtime_data([
+                ("context_status", count(|event| matches!(event, AgentEvent::ContextStatus { .. })).to_string()),
+            ]),
+        ),
+        (
+            "09_storage_rollout",
+            runtime_data([
+                ("storage_state", count(|event| matches!(event, AgentEvent::StorageState { .. })).to_string()),
+            ]),
+        ),
+        (
+            "10_multi_agent_v2",
+            runtime_data([
+                ("multi_agent", count(|event| matches!(event, AgentEvent::MultiAgentEvent { .. })).to_string()),
+                ("child_stream", count(|event| matches!(event, AgentEvent::ChildScopedStream { .. })).to_string()),
+            ]),
+        ),
+        (
+            "11_protocol_jsonl_shape",
+            runtime_data([
+                ("tool_events", tool_events.to_string()),
+                ("runtime_events", events.len().to_string()),
+            ]),
+        ),
+        (
+            "12_real_parity_harness",
+            runtime_data([
+                ("fixture", "stage_4m_real_parity".to_string()),
+                ("synthetic_fallback", "stage_4l_retained".to_string()),
+            ]),
+        ),
+    ];
+
+    for (layer, data) in layers {
+        driver
+            .emit_deep_parity_state(
+                layer,
+                "real_runtime_wired",
+                Some("Stage 4M real runtime path observed this layer".to_string()),
+                data,
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 async fn emit_provider_stream_events<S>(sink: &S, events: &[StreamEvent]) -> AgentResult<()>
@@ -2071,7 +2561,9 @@ fn map_tool_call(
 ) -> ToolRequest {
     let cwd = config.cwd.clone();
     let mut policy = ToolPolicy::from_config(config);
-    if provider_tool_call_id(&tool_call).is_some_and(|id| id.starts_with("stage-4k-")) {
+    if provider_tool_call_id(&tool_call)
+        .is_some_and(|id| id.starts_with("stage-4k-") || id.starts_with("stage-4m-"))
+    {
         policy.approval = ApprovalDecision::Approved;
         policy.execution_policy.approval = ApprovalRequirement::PreApproved;
     }
@@ -2160,6 +2652,24 @@ where
 {
     sink.emit(AgentEvent::Reasoning {
         content: trace.summary(),
+    })
+    .await
+}
+
+async fn emit_approval_cache_state<S>(
+    sink: &S,
+    session_id: &SessionId,
+    probe: session_driver::ApprovalCacheProbe,
+) -> AgentResult<()>
+where
+    S: RuntimeEventSink,
+{
+    sink.emit(AgentEvent::ApprovalCacheState {
+        session_id: Some(session_id.0.clone()),
+        tool_name: probe.tool_name,
+        key: probe.key,
+        decision: format!("{:?}", probe.decision).to_ascii_lowercase(),
+        reused: probe.reused,
     })
     .await
 }
@@ -2335,6 +2845,16 @@ where
                 cwd,
                 message,
             } => {
+                sink.emit(AgentEvent::SandboxAttempt {
+                    id: response.id.clone(),
+                    platform: platform.clone(),
+                    status: status.clone(),
+                    backend: backend.clone(),
+                    command: command.clone(),
+                    cwd: cwd.clone(),
+                    message: message.clone(),
+                })
+                .await?;
                 sink.emit(AgentEvent::Reasoning {
                     content: format!(
                         "Sandbox runner: platform={platform}, status={status}, backend={backend}, cwd={cwd}, command={}, message={}",

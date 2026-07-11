@@ -574,6 +574,58 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     data: data.clone(),
                 });
             }
+            AgentEvent::SandboxAttempt {
+                id,
+                platform,
+                status,
+                backend,
+                command,
+                cwd,
+                message,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::SandboxAttempt {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    call_id: id.clone(),
+                    platform: platform.clone(),
+                    status: status.clone(),
+                    backend: backend.clone(),
+                    command: command.clone(),
+                    cwd: cwd.clone(),
+                    message: message.clone(),
+                });
+            }
+            AgentEvent::ApprovalCacheState {
+                session_id,
+                tool_name,
+                key,
+                decision,
+                reused,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::ApprovalCacheState {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    session_id: session_id.clone(),
+                    tool_name: tool_name.clone(),
+                    key: key.clone(),
+                    decision: decision.clone(),
+                    reused: *reused,
+                });
+            }
             AgentEvent::Message { content } => output.push(RuntimeEvent::Item {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),

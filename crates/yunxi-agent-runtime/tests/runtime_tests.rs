@@ -1285,6 +1285,95 @@ async fn stage_4l_deep_parity_fixture_covers_all_closure_layers() {
     assert_eq!(store.list().await.expect("session list").len(), 1);
 }
 
+#[tokio::test]
+async fn stage_4m_real_parity_fixture_runs_real_runtime_chain() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let backend = YunXiRuntimeBackend::with_parts(
+        StaticProvider::default(),
+        CompositeToolRuntime::default(),
+        store.clone(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(
+            &backend,
+            AgentInput::text("run stage 4m real parity fixture"),
+        )
+        .await
+        .expect("stage 4m fixture");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(matches!(
+        result.final_response.as_deref(),
+        Some(response) if response.contains("Stage 4M real parity fixture completed")
+    ));
+    assert!(temp.path().join("stage4m-runtime.txt").is_file());
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::SandboxAttempt {
+            id: Some(id),
+            ..
+        } if id == "stage-4m-shell-1"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ApprovalCacheState {
+            tool_name,
+            reused: true,
+            ..
+        } if tool_name == "shell"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::McpSession {
+            status,
+            ..
+        } if status == "reused" || status == "tool_started"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallCompleted {
+            name,
+            status: CommandStatus::Completed,
+            ..
+        } if name == "skill:stage4m"
+    )));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ChildScopedStream { .. }))
+    );
+    let layers = result
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::DeepParityState { layer, .. }
+                if layer.starts_with("01_")
+                    || layer.starts_with("02_")
+                    || layer.starts_with("12_") =>
+            {
+                Some(layer.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(layers.contains(&"01_runtime_driver_state_machine"));
+    assert!(layers.contains(&"02_provider_feature_matrix"));
+    assert!(layers.contains(&"12_real_parity_harness"));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::StorageState {
+            session_id: Some(_),
+            child_session_ids,
+            ..
+        } if child_session_ids.iter().any(|id| id == "agent-1-session")
+    )));
+    assert_eq!(store.list().await.expect("session list").len(), 2);
+}
+
 #[test]
 fn protocol_stream_events_map_to_agent_events() {
     let stream = vec![

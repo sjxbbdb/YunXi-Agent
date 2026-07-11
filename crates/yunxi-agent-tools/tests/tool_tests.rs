@@ -238,6 +238,14 @@ async fn shell_tool_runtime_executes_shell_command() {
             ..
         } if chunk.contains("yunxi-shell")
     )));
+    assert!(response.runtime_events.iter().any(|event| matches!(
+        event,
+        ToolRuntimeEvent::SandboxRunner {
+            status,
+            command: Some(command),
+            ..
+        } if status == "ready" && command.contains("yunxi-shell")
+    )));
 }
 
 #[tokio::test]

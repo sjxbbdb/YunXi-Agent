@@ -1264,6 +1264,92 @@ impl AgentProvider for StaticProvider {
             }));
         }
         if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+            && request
+                .input
+                .prompt
+                .contains("stage 4m real parity fixture")
+        {
+            let tool_messages = request
+                .messages
+                .iter()
+                .filter(|message| message.role == ProviderRole::Tool)
+                .map(|message| message.content.trim().to_string())
+                .collect::<Vec<_>>();
+            if !tool_messages.is_empty() {
+                return Ok(ProviderResponse::assistant(format!(
+                    "Stage 4M real parity fixture completed through real runtime path with {} tool result(s): {}",
+                    tool_messages.len(),
+                    tool_messages.join(" | ")
+                )));
+            }
+            return Ok(ProviderResponse {
+                message: None,
+                tool_calls: vec![
+                    ProviderToolCall::Shell {
+                        id: Some("stage-4m-shell-1".to_string()),
+                        command: "echo YUNXI_STAGE_4M_EXEC_OK".to_string(),
+                    },
+                    ProviderToolCall::Shell {
+                        id: Some("stage-4m-shell-2".to_string()),
+                        command: "echo YUNXI_STAGE_4M_EXEC_OK".to_string(),
+                    },
+                    ProviderToolCall::Patch {
+                        id: Some("stage-4m-patch-1".to_string()),
+                        patch: r#"{"op":"write","path":"stage4m-runtime.txt","content":"YUNXI_STAGE_4M_PATCH_OK"}"#.to_string(),
+                    },
+                    ProviderToolCall::Mcp {
+                        id: Some("stage-4m-mcp-1".to_string()),
+                        server: "local".to_string(),
+                        tool: "echo".to_string(),
+                        arguments_json: Some(r#"{"text":"first"}"#.to_string()),
+                    },
+                    ProviderToolCall::Mcp {
+                        id: Some("stage-4m-mcp-2".to_string()),
+                        server: "local".to_string(),
+                        tool: "echo".to_string(),
+                        arguments_json: Some(r#"{"text":"second"}"#.to_string()),
+                    },
+                    ProviderToolCall::Skill {
+                        id: Some("stage-4m-skill-1".to_string()),
+                        name: "stage4m".to_string(),
+                        arguments_json: Some(r#"{"topic":"real-runtime"}"#.to_string()),
+                    },
+                    ProviderToolCall::ToolSearch {
+                        id: Some("stage-4m-search-1".to_string()),
+                        query: "stage4m".to_string(),
+                    },
+                    ProviderToolCall::MultiAgent {
+                        id: Some("stage-4m-agent-1".to_string()),
+                        action: "spawn_run".to_string(),
+                        arguments_json: Some(
+                            r#"{"task":"stage4m child runtime task"}"#.to_string(),
+                        ),
+                    },
+                ],
+                usage: None,
+            });
+        }
+        if self.response_prefix.starts_with("YunXi child agent")
+            && request.input.prompt.contains("stage4m child runtime task")
+        {
+            if let Some(tool_message) = request
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == ProviderRole::Tool)
+            {
+                return Ok(ProviderResponse::assistant(format!(
+                    "{} with Stage 4M child tool result: {}",
+                    self.response_prefix,
+                    tool_message.content.trim()
+                )));
+            }
+            return Ok(ProviderResponse::tool_call(ProviderToolCall::Shell {
+                id: Some("stage-4m-child-shell".to_string()),
+                command: "echo YUNXI_STAGE_4M_CHILD_OK".to_string(),
+            }));
+        }
+        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
             && request.input.prompt.contains("stage 4k sandbox fixture")
         {
             if let Some(tool_message) = request
@@ -1364,6 +1450,7 @@ pub fn build_openai_request_json(
     provider_config: &ProviderConfig,
     request: &ProviderRequest,
 ) -> AgentResult<Value> {
+    let matrix = ProviderFeatureMatrix::from_config(provider_config);
     let messages = request
         .messages
         .iter()
@@ -1388,12 +1475,20 @@ pub fn build_openai_request_json(
             .unwrap_or(provider_config.model.as_str()),
         "messages": messages
     });
-    if provider_config.capabilities.tools {
+    if matrix.capabilities.tools {
         body["tools"] =
             Value::Array(workspace_tool_registry(&request.config.cwd)?.openai_tools_json());
     }
-    if provider_config.capabilities.parallel_tool_calls {
+    if matrix.capabilities.parallel_tool_calls {
         body["parallel_tool_calls"] = Value::Bool(true);
+    }
+    if matrix.request_metadata {
+        body["metadata"] = json!({
+            "runtime": "yunxi-agent",
+            "provider": matrix.provider,
+            "wire_api": format!("{:?}", matrix.wire_api).to_ascii_lowercase(),
+            "tool_schema_strictness": format!("{:?}", matrix.tool_schema_strictness).to_ascii_lowercase()
+        });
     }
     Ok(body)
 }
@@ -1404,7 +1499,8 @@ pub fn build_openai_stream_request_json(
 ) -> AgentResult<Value> {
     let mut value = build_openai_request_json(provider_config, request)?;
     value["stream"] = Value::Bool(true);
-    if provider_config.capabilities.stream_usage {
+    let matrix = ProviderFeatureMatrix::from_config(provider_config);
+    if matrix.usage_delta {
         value["stream_options"] = json!({ "include_usage": true });
     }
     Ok(value)

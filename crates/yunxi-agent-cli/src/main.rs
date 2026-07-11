@@ -20,6 +20,9 @@ mod commands {
 mod interactive {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/interactive.rs"));
 }
+mod provider_mode {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/provider_mode.rs"));
+}
 mod render {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/render.rs"));
 }
@@ -53,7 +56,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.1 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.2 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -77,6 +80,9 @@ struct Cli {
 
     #[arg(long)]
     provider_live: bool,
+
+    #[arg(long, conflicts_with = "provider_live")]
+    offline: bool,
 
     #[arg(long = "codex-home", value_name = "PATH")]
     codex_home: Option<PathBuf>,
@@ -252,6 +258,7 @@ async fn main() {
 
 async fn run_cli() -> Result<()> {
     let cli = Cli::parse();
+    let provider_mode = provider_mode::ProviderMode::from_flags(cli.provider_live, cli.offline);
 
     let backend = if cli.live {
         BackendKind::Codex
@@ -279,7 +286,7 @@ async fn run_cli() -> Result<()> {
     }
 
     if let Some(command) = cli.command {
-        return run_command(command, config, backend, cli.json, cli.jsonl).await;
+        return run_command(command, config, backend, provider_mode, cli.json, cli.jsonl).await;
     }
 
     let prompt = cli.prompt.join(" ");
@@ -288,14 +295,16 @@ async fn run_cli() -> Result<()> {
             return interactive::run_interactive(interactive::InteractiveOptions {
                 config,
                 backend,
-                provider_live: cli.provider_live,
+                provider_mode,
             })
             .await;
         }
         bail!("a prompt is required");
     }
 
-    let result = run_agent_backend(backend, config, prompt, cli.provider_live).await?;
+    let selection = provider_mode.resolve(backend, &config)?;
+    let config = selection.apply_to_config(config);
+    let result = run_agent_backend(backend, config, prompt, selection.live).await?;
     print_run_result(result, cli.json, cli.jsonl)?;
     Ok(())
 }
@@ -1027,12 +1036,13 @@ async fn run_command(
     command: CliCommand,
     config: AgentConfig,
     backend: BackendKind,
+    provider_mode: provider_mode::ProviderMode,
     json: bool,
     jsonl: bool,
 ) -> Result<()> {
     match command {
         CliCommand::Sessions { command } => {
-            run_session_command(command, config, backend, json, jsonl).await
+            run_session_command(command, config, backend, provider_mode, json, jsonl).await
         }
         CliCommand::Parity { command } => run_parity_command(command, json).await,
     }
@@ -1061,6 +1071,7 @@ async fn run_session_command(
     command: SessionCommand,
     config: AgentConfig,
     backend: BackendKind,
+    provider_mode: provider_mode::ProviderMode,
     json: bool,
     jsonl: bool,
 ) -> Result<()> {
@@ -1144,7 +1155,10 @@ async fn run_session_command(
                 }
             }
             let resume_prompt = build_resume_prompt(&prompt.join(" "));
-            let result = run_agent_backend(backend, resume_config, resume_prompt, false).await?;
+            let selection = provider_mode.resolve(backend, &resume_config)?;
+            let resume_config = selection.apply_to_config(resume_config);
+            let result =
+                run_agent_backend(backend, resume_config, resume_prompt, selection.live).await?;
             print_run_result(result, json, jsonl)?;
         }
         SessionCommand::Fork { id } => {

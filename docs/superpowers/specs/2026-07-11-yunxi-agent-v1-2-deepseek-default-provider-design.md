@@ -74,11 +74,11 @@ one-shot 与 interactive 共用同一解析函数，避免两条路径行为漂�
 
 正式二进制不读取桌面文件。仓库内增加一个可审计的 PowerShell 辅助脚本，仅在用户明确运行时：
 
-- 从传入的 API 文件中读取 DeepSeek 凭据到内存。
+- 从传入的 API 文件中读取 DeepSeek 凭据到内存；多候选文件要求显式指定候选序号。
 - 不向 stdout、stderr 或 transcript 输出凭据。
 - 将 `DEEPSEEK_API_KEY`、`YUNXI_PROVIDER_PROFILE=deepseek` 和已确认的默认 model 写入当前用户环境。
 - 只输出是否成功、变量名和是否需要重新打开 PowerShell。
-- 遇到零个或多个无法唯一识别的 DeepSeek 候选时直接失败，不猜测、不覆盖原配置。
+- 遇到零个候选时直接失败；遇到多个候选且未显式指定序号时直接失败，不猜测、不覆盖原配置。
 
 当前任务的 live 验收可直接通过临时进程环境使用 `api.txt`，避免为了测试把凭据复制进仓库。
 

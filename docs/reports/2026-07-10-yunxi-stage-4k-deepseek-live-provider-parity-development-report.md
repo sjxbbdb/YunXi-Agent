@@ -13,7 +13,7 @@ provider stream -> tool loop -> multi-agent child runtime -> storage -> JSONL
 ```
 
 下一版 Stage 4K 的目标不是再证明离线 fixture 能跑，而是把这条自主链路接入真实
-OpenAI-compatible provider，并用 `C:\Users\admin\Desktop\api.txt` 中的 DeepSeek API key
+OpenAI-compatible provider，并用 `<private-api-file>` 中的 DeepSeek API key
 做真实网络 smoke。DeepSeek 官方文档显示 DeepSeek API 兼容 OpenAI/Anthropic 格式，
 OpenAI format base URL 为 `https://api.deepseek.com`，当前模型为 `deepseek-v4-flash`
 和 `deepseek-v4-pro`。
@@ -69,7 +69,7 @@ DeepSeek 标记和疑似 API key。后续执行 Stage 4K 时，密钥只能进�
 - `vendor/codex-rs` 和 `extracted/codex-core-agent-sources` 只能作为行为参考、源码迁移输入
   和 fixture 对照，不能重新进入默认运行时依赖。
 - 模型/provider 层必须继续保持可替换接口，不能把 runtime 绑定死到 OpenAI 或 DeepSeek。
-- DeepSeek API key 只能从 `C:\Users\admin\Desktop\api.txt` 读取到临时环境变量。
+- DeepSeek API key 只能从 `<private-api-file>` 读取到临时环境变量。
 - 任何命令输出、日志、JSONL、错误消息、测试快照、提交和报告都不得包含 API key。
 - 构建阶段先整体接线，不做中途频繁测试；全部构建完成后统一运行最终验证门。
 - 遇到复杂单点时先落 facade、fixture 或兼容层并继续推进，不在单点上消耗过多时间。
@@ -105,7 +105,7 @@ Stage 4K 要把 YunXi Agent 从“离线自主 fixture 可运行”推进到“�
 
 构建内容：
 
-- 新增 PowerShell smoke 脚本，只从 `C:\Users\admin\Desktop\api.txt` 提取 DeepSeek API key。
+- 新增 PowerShell smoke 脚本，只从 `<private-api-file>` 提取 DeepSeek API key。
 - 脚本必须只输出 key 是否存在、模型、base URL、命令退出码、JSONL 行数和事件计数。
 - 脚本不得打印 key、Authorization header、完整请求体或完整响应体。
 - 脚本设置以下临时环境变量：

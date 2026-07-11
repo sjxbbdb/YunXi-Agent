@@ -7,28 +7,26 @@ pub(crate) struct InteractiveBanner {
     pub cwd: String,
     pub backend: String,
     pub provider_live: bool,
-    pub model: Option<String>,
-    pub provider: Option<String>,
+    pub provider_source: String,
+    pub model: String,
+    pub provider: String,
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.1 interactive CLI");
+    println!("YunXi Agent v1.2 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
-        "provider: {}",
+        "provider_mode: {}",
         if banner.provider_live {
             "live"
         } else {
             "offline"
         }
     );
-    if let Some(provider) = &banner.provider {
-        println!("provider_name: {provider}");
-    }
-    if let Some(model) = &banner.model {
-        println!("model: {model}");
-    }
+    println!("provider_source: {}", banner.provider_source);
+    println!("provider: {}", banner.provider);
+    println!("model: {}", banner.model);
     println!("Type /help for commands, /exit to quit.");
 }
 

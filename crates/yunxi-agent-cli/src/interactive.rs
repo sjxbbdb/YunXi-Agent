@@ -1,7 +1,8 @@
 use crate::commands::{InteractiveCommand, help_text, parse_interactive_command};
+use crate::provider_mode::{ProviderMode, ProviderSelection};
 use crate::render::{InteractiveBanner, print_banner, render_agent_result};
 use crate::run_agent_backend;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use std::io::{self, BufRead, IsTerminal, Write};
 use yunxi_agent_core::{AgentConfig, AgentRunResult, BackendKind};
 use yunxi_agent_storage::{FileSessionStore, SessionId, SessionStore};
@@ -10,49 +11,49 @@ use yunxi_agent_storage::{FileSessionStore, SessionId, SessionStore};
 pub(crate) struct InteractiveOptions {
     pub config: AgentConfig,
     pub backend: BackendKind,
-    pub provider_live: bool,
+    pub provider_mode: ProviderMode,
 }
 
 #[derive(Clone, Debug)]
 struct InteractiveSession {
     config: AgentConfig,
     backend: BackendKind,
-    provider_live: bool,
+    provider_mode: ProviderMode,
+    provider_selection: ProviderSelection,
     active_session_id: Option<String>,
     turn_count: usize,
 }
 
 pub(crate) async fn run_interactive(options: InteractiveOptions) -> Result<()> {
-    if options.provider_live && !live_provider_credentials_configured() {
-        bail!(
-            "live provider requires YUNXI_PROVIDER_API_KEY or the environment variable named by YUNXI_PROVIDER_API_KEY_ENV"
-        );
-    }
-
     let stdin_is_terminal = io::stdin().is_terminal();
-    let mut session = InteractiveSession::new(options);
+    let mut session = InteractiveSession::new(options)?;
     session.print_banner();
     session.read_eval_loop(stdin_is_terminal).await
 }
 
 impl InteractiveSession {
-    fn new(options: InteractiveOptions) -> Self {
-        Self {
+    fn new(options: InteractiveOptions) -> Result<Self> {
+        let provider_selection = options
+            .provider_mode
+            .resolve(options.backend, &options.config)?;
+        Ok(Self {
             config: options.config,
             backend: options.backend,
-            provider_live: options.provider_live,
+            provider_mode: options.provider_mode,
+            provider_selection,
             active_session_id: None,
             turn_count: 0,
-        }
+        })
     }
 
     fn print_banner(&self) {
         print_banner(&InteractiveBanner {
             cwd: self.config.cwd.display().to_string(),
             backend: format!("{:?}", self.backend).to_ascii_lowercase(),
-            provider_live: self.provider_live,
-            model: self.config.model.clone(),
-            provider: self.config.provider.clone(),
+            provider_live: self.provider_selection.live,
+            provider_source: self.provider_selection.source.as_str().to_string(),
+            model: self.provider_selection.model.clone(),
+            provider: self.provider_selection.provider.clone(),
         });
     }
 
@@ -102,8 +103,8 @@ impl InteractiveSession {
             InteractiveCommand::Clear => println!("---"),
             InteractiveCommand::Cwd => println!("{}", self.config.cwd.display()),
             InteractiveCommand::Session => self.print_session_summary(),
-            InteractiveCommand::Model(model) => self.handle_model_command(model),
-            InteractiveCommand::Provider(provider) => self.handle_provider_command(provider),
+            InteractiveCommand::Model(model) => self.handle_model_command(model)?,
+            InteractiveCommand::Provider(provider) => self.handle_provider_command(provider)?,
             InteractiveCommand::Resume(session_id) => self.resume_session(session_id).await?,
             InteractiveCommand::Unknown(message) => println!("{message}"),
         }
@@ -119,30 +120,36 @@ impl InteractiveSession {
         println!("cwd: {}", self.config.cwd.display());
         println!(
             "provider_mode: {}",
-            if self.provider_live { "live" } else { "offline" }
+            if self.provider_selection.live {
+                "live"
+            } else {
+                "offline"
+            }
         );
         println!(
-            "provider: {}",
-            self.config.provider.as_deref().unwrap_or("default")
+            "provider_source: {}",
+            self.provider_selection.source.as_str()
         );
-        println!("model: {}", self.config.model.as_deref().unwrap_or("default"));
+        println!("provider: {}", self.provider_selection.provider);
+        println!("model: {}", self.provider_selection.model);
     }
 
-    fn handle_model_command(&mut self, model: Option<String>) {
+    fn handle_model_command(&mut self, model: Option<String>) -> Result<()> {
         if let Some(model) = model {
             self.config.model = Some(model);
         }
-        println!("model: {}", self.config.model.as_deref().unwrap_or("default"));
+        self.refresh_provider_selection()?;
+        println!("model: {}", self.provider_selection.model);
+        Ok(())
     }
 
-    fn handle_provider_command(&mut self, provider: Option<String>) {
+    fn handle_provider_command(&mut self, provider: Option<String>) -> Result<()> {
         if let Some(provider) = provider {
             self.config.provider = Some(provider);
         }
-        println!(
-            "provider: {}",
-            self.config.provider.as_deref().unwrap_or("default")
-        );
+        self.refresh_provider_selection()?;
+        println!("provider: {}", self.provider_selection.provider);
+        Ok(())
     }
 
     async fn resume_session(&mut self, session_id: String) -> Result<()> {
@@ -164,6 +171,7 @@ impl InteractiveSession {
         }
         self.active_session_id = Some(session_id.clone());
         self.turn_count = 0;
+        self.refresh_provider_selection()?;
         println!("resumed session: {session_id}");
         Ok(())
     }
@@ -178,9 +186,10 @@ impl InteractiveSession {
             turn_config = turn_config.with_session_title("YunXi interactive session");
         }
 
-        let provider_live = self.provider_live;
         let backend = self.backend;
-        let turn = run_agent_backend(backend, turn_config, prompt, provider_live);
+        self.provider_selection = self.provider_mode.resolve(backend, &turn_config)?;
+        let turn_config = self.provider_selection.apply_to_config(turn_config);
+        let turn = run_agent_backend(backend, turn_config, prompt, self.provider_selection.live);
 
         tokio::select! {
             result = turn => {
@@ -204,6 +213,11 @@ impl InteractiveSession {
         }
         self.turn_count = self.turn_count.saturating_add(1);
     }
+
+    fn refresh_provider_selection(&mut self) -> Result<()> {
+        self.provider_selection = self.provider_mode.resolve(self.backend, &self.config)?;
+        Ok(())
+    }
 }
 
 fn session_id_from_result(result: &AgentRunResult) -> Option<String> {
@@ -215,19 +229,4 @@ fn session_id_from_result(result: &AgentRunResult) -> Option<String> {
         yunxi_agent_core::AgentEvent::ThreadState { state } => state.session_id.clone(),
         _ => None,
     })
-}
-
-fn live_provider_credentials_configured() -> bool {
-    if std::env::var("YUNXI_PROVIDER_API_KEY")
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
-    {
-        return true;
-    }
-
-    let env_name = std::env::var("YUNXI_PROVIDER_API_KEY_ENV")
-        .unwrap_or_else(|_| "OPENAI_API_KEY".to_string());
-    std::env::var(env_name)
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
 }

@@ -60,7 +60,7 @@ Stage 4K 统一验证口径：
   源码迁移输入和 fixture 对照，不能重新进入默认运行时依赖。
 - 模型/provider 层必须继续保持可替换接口，不能把 runtime 绑定到 OpenAI 或
   DeepSeek。
-- 真实 API key 只能从 `C:\Users\admin\Desktop\api.txt` 读取到临时环境变量。
+- 真实 API key 只能从 `<private-api-file>` 读取到临时环境变量。
 - 任何命令输出、日志、JSONL、错误消息、测试快照、提交和报告都不得包含 API key。
 - 构建阶段先整体接线，不做中途频繁测试；全部构建完成后统一运行最终验证门。
 - 遇到复杂单点时先落 facade、fixture 或兼容层并继续推进，不在单点上消耗过多时间。

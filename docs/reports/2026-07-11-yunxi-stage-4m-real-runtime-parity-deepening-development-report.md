@@ -48,7 +48,7 @@ Stage 4L 仍然留下的关键现实差距：
 - 默认 `yunxi-agent-cli` 不得依赖 `yunxi-agent-codex`。
 - `vendor/codex-rs` 和 `extracted/codex-core-agent-sources` 只能作为参考源和对照输入。
 - 模型/provider 层必须继续保持可替换接口，不得绑定到 OpenAI 或 DeepSeek。
-- 真实 API key 只能从 `C:\Users\admin\Desktop\api.txt` 临时读取到环境变量。
+- 真实 API key 只能从 `<private-api-file>` 临时读取到环境变量。
 - 命令输出、日志、报告、提交和 JSONL 都不得包含 API key 或 bearer token 原文。
 - 构建阶段先整体迁移和接线，中途不运行测试；全部构建完成后统一验证。
 - 遇到复杂单点时先落真实可运行子集、YunXi-owned 兼容层或 deterministic fixture，不在单点消耗过多时间。

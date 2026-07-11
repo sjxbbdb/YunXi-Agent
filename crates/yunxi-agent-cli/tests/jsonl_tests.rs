@@ -11,6 +11,7 @@ fn yunxi_jsonl_prints_one_json_event_per_line() {
         .args([
             "--backend",
             "yunxi",
+            "--offline",
             "--cwd",
             temp.path().to_str().expect("temp path"),
             "--jsonl",
@@ -57,6 +58,7 @@ fn yunxi_jsonl_prints_child_agent_fixture_events() {
         .args([
             "--backend",
             "yunxi",
+            "--offline",
             "--cwd",
             temp.path().to_str().expect("temp path"),
             "--jsonl",
@@ -103,6 +105,7 @@ fn stage_4k_jsonl_fixtures_emit_new_core_events() {
             .args([
                 "--backend",
                 "yunxi",
+                "--offline",
                 "--cwd",
                 temp.path().to_str().expect("temp path"),
                 "--jsonl",
@@ -128,6 +131,7 @@ fn stage_4k_cancellation_fixture_emits_cancelled_jsonl() {
         .args([
             "--backend",
             "yunxi",
+            "--offline",
             "--cwd",
             temp.path().to_str().expect("temp path"),
             "--jsonl",
@@ -153,6 +157,7 @@ fn stage_4l_deep_parity_fixture_emits_full_jsonl_shape() {
         .args([
             "--backend",
             "yunxi",
+            "--offline",
             "--cwd",
             temp.path().to_str().expect("temp path"),
             "--jsonl",
@@ -188,6 +193,7 @@ fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
         .args([
             "--backend",
             "yunxi",
+            "--offline",
             "--cwd",
             temp.path().to_str().expect("temp path"),
             "--jsonl",

@@ -728,9 +728,17 @@ impl ProviderConfig {
     }
 
     pub fn from_agent_config(config: &AgentConfig) -> Self {
-        let profile = std::env::var("YUNXI_PROVIDER_PROFILE")
-            .ok()
-            .or_else(|| config.provider.clone());
+        Self::from_agent_config_with_env(config, |name| std::env::var(name).ok())
+    }
+
+    pub fn from_agent_config_with_env<F>(config: &AgentConfig, env: F) -> Self
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let explicit_profile = non_empty_env(&env, "YUNXI_PROVIDER_PROFILE")
+            .or_else(|| non_empty_string(config.provider.clone()));
+        let profile = explicit_profile
+            .or_else(|| non_empty_env(&env, "DEEPSEEK_API_KEY").map(|_| "deepseek".to_string()));
         let mut provider_config = match profile.as_deref() {
             Some("deepseek") => Self::deepseek(),
             _ => Self::openai_compatible("gpt-4.1"),
@@ -738,13 +746,13 @@ impl ProviderConfig {
         let model = config
             .model
             .clone()
-            .or_else(|| std::env::var("YUNXI_AGENT_MODEL").ok())
+            .and_then(|value| non_empty_string(Some(value)))
+            .or_else(|| non_empty_env(&env, "YUNXI_AGENT_MODEL"))
             .unwrap_or_else(|| provider_config.model.clone());
-        let base_url = std::env::var("YUNXI_PROVIDER_BASE_URL")
-            .or_else(|_| std::env::var("OPENAI_BASE_URL"))
-            .unwrap_or_else(|_| provider_config.base_url.clone());
-        let stream = std::env::var("YUNXI_PROVIDER_STREAM")
-            .ok()
+        let base_url = non_empty_env(&env, "YUNXI_PROVIDER_BASE_URL")
+            .or_else(|| non_empty_env(&env, "OPENAI_BASE_URL"))
+            .unwrap_or_else(|| provider_config.base_url.clone());
+        let stream = non_empty_env(&env, "YUNXI_PROVIDER_STREAM")
             .map(|value| !matches!(value.as_str(), "0" | "false" | "False" | "FALSE"))
             .unwrap_or(provider_config.stream);
         provider_config.model = model;
@@ -769,17 +777,41 @@ pub struct ProviderBootstrap {
 
 impl ProviderBootstrap {
     pub fn from_agent_config(config: &AgentConfig) -> Self {
-        let provider_config = ProviderConfig::from_agent_config(config);
-        let auth = std::env::var("YUNXI_PROVIDER_API_KEY")
-            .map(ProviderAuth::ApiKey)
-            .unwrap_or_else(|_| {
-                let env_name = std::env::var("YUNXI_PROVIDER_API_KEY_ENV")
-                    .unwrap_or_else(|_| "OPENAI_API_KEY".to_string());
-                ProviderAuth::EnvVar(env_name)
-            });
+        Self::from_agent_config_with_env(config, |name| std::env::var(name).ok())
+    }
+
+    pub fn from_agent_config_with_env<F>(config: &AgentConfig, env: F) -> Self
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let provider_config = ProviderConfig::from_agent_config_with_env(config, &env);
+        let auth = if let Some(api_key) = non_empty_env(&env, "YUNXI_PROVIDER_API_KEY") {
+            ProviderAuth::ApiKey(api_key)
+        } else if let Some(env_name) = non_empty_env(&env, "YUNXI_PROVIDER_API_KEY_ENV") {
+            ProviderAuth::EnvVar(env_name)
+        } else if provider_config.profile.as_deref() == Some("deepseek") {
+            ProviderAuth::EnvVar("DEEPSEEK_API_KEY".to_string())
+        } else {
+            ProviderAuth::EnvVar("OPENAI_API_KEY".to_string())
+        };
         Self {
             config: provider_config,
             auth,
+        }
+    }
+
+    pub fn credentials_configured(&self) -> bool {
+        self.credentials_configured_with_env(|name| std::env::var(name).ok())
+    }
+
+    pub fn credentials_configured_with_env<F>(&self, env: F) -> bool
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        match &self.auth {
+            ProviderAuth::None => true,
+            ProviderAuth::ApiKey(value) => !value.trim().is_empty(),
+            ProviderAuth::EnvVar(name) => non_empty_env(&env, name).is_some(),
         }
     }
 
@@ -788,6 +820,17 @@ impl ProviderBootstrap {
     ) -> OpenAiTransportProvider<ReqwestProviderTransport> {
         OpenAiTransportProvider::new(self.config, self.auth, ReqwestProviderTransport::default())
     }
+}
+
+fn non_empty_env<F>(env: &F, name: &str) -> Option<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    non_empty_string(env(name))
+}
+
+fn non_empty_string(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

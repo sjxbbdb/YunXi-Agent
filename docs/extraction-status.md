@@ -574,8 +574,8 @@ Stage 4J construction verification passed on 2026-07-10:
 
 The next stage is DeepSeek live provider and real-world parity validation. Stage
 4J proved the offline autonomous runtime chain; Stage 4K should connect that
-chain to a real OpenAI-compatible provider using the DeepSeek API key stored
-outside the repository at `C:\Users\admin\Desktop\api.txt`.
+chain to a real OpenAI-compatible provider using a DeepSeek API key stored
+outside the repository at `<private-api-file>`.
 
 The Stage 4K development report is recorded in
 `docs/reports/2026-07-10-yunxi-stage-4k-deepseek-live-provider-parity-development-report.md`.
@@ -653,7 +653,7 @@ Final unified verification was run on 2026-07-11:
 - `git diff --check`: pass with Windows LF/CRLF warnings only
 
 DeepSeek live smoke was first attempted against
-`C:\Users\admin\Desktop\api.txt` without printing or persisting any key, but the
+`<private-api-file>` without printing or persisting any key, but the
 available key candidates were rejected by provider authentication. After the
 user added a new key, live smoke was retried on 2026-07-11:
 
@@ -847,6 +847,88 @@ Verified on 2026-07-09:
 
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.
+
+## YunXi Agent v1.2 DeepSeek Default Provider Construction
+
+YunXi Agent v1.2 connects the existing YunXi-owned DeepSeek transport to the
+normal one-shot, interactive, and session-resume CLI paths. Provider selection
+is now designed as an explicit auto/live/offline decision rather than the v1.1
+`provider_live` boolean being interpreted independently by each CLI surface.
+
+Constructed in this slice:
+
+- Workspace-owned crate versions are promoted to `1.2.0`.
+- `yunxi-agent-provider` supports deterministic environment lookup injection,
+  automatic DeepSeek profile inference from `DEEPSEEK_API_KEY`, credential
+  source precedence, and non-secret credential availability probing.
+- `yunxi-agent-cli` owns `provider_mode.rs` and shares one provider decision
+  across one-shot, interactive, and `sessions resume` execution.
+- Default `auto` mode selects a live provider when credentials are configured
+  and otherwise selects the labelled offline provider.
+- `--provider-live` forces live mode and fails before HTTP execution when the
+  selected provider has no credentials.
+- `--offline` forces deterministic offline execution and conflicts with
+  `--provider-live`.
+- Interactive banner and `/session` output show provider mode, resolution
+  source, provider name, and model without showing authentication values.
+- Live selections materialize the resolved provider and model into each turn's
+  `AgentConfig`, so turn metadata, session storage, and resume preserve the
+  actual DeepSeek configuration; offline selections leave config unchanged.
+- Existing deterministic CLI and JSONL tests explicitly select `--offline`, so
+  a developer's user-level API credentials cannot make the suite contact a
+  real model endpoint.
+- `scripts/provider/import-deepseek-credential.ps1` imports one local
+  credential candidate into user environment variables without printing it;
+  multi-candidate files require an explicit one-based candidate index.
+- `scripts/provider/deepseek-live-smoke.ps1` requires an explicit `-ApiFile`;
+  the repository no longer contains a personal credential-file path.
+- README documents automatic DeepSeek selection, explicit overrides, secure
+  import, immutable version tags, and GitHub API-only publication.
+
+Construction followed the project hard constraint: no tests, checks, builds,
+formatters, or live requests were run while the slice was being wired. The
+single unified v1.2 verification gate then completed on 2026-07-11.
+
+Verified on 2026-07-11:
+
+- `cargo fmt` and `cargo fmt -- --check`: pass.
+- `cargo test`: pass; 190 workspace tests completed with zero failures.
+- `cargo check --workspace`: pass without warnings after removing one stale
+  CLI import found by the first unified run.
+- `cargo build -p yunxi-agent-cli --release --bins`: pass.
+- Both release binaries report `yunxi 1.2.0`.
+- Offline one-shot, piped interactive, argument-conflict, missing-prompt JSONL,
+  parity map, and `git diff --check` gates: pass.
+- Default CLI dependency scan: pass; no `vendor/codex-rs`, `codex-*`, or
+  `yunxi-agent-codex` dependency is present.
+- Owned-source scan: 108 release-scope files, zero secret-pattern matches, and zero personal
+  API-file-path matches. Reference-only `vendor` and `extracted` trees were
+  excluded by normalized path segment rather than slash-sensitive regex.
+- DeepSeek stream smoke: pass; 48 JSONL events and no detected secret leak.
+- DeepSeek non-stream smoke: pass; 19 JSONL events and no detected secret leak.
+- Default auto one-shot: pass; returned real DeepSeek assistant content and did
+  not return the offline fixture response.
+- Auto JSONL metadata: pass; 48 valid JSONL events included two turn metadata
+  events with provider `deepseek` and model `deepseek-v4-flash`.
+- Default auto interactive startup: pass; reported `live`, `auto_live`, and
+  `deepseek` without exposing credentials.
+- Multi-candidate credential import: pass; missing explicit index was rejected,
+  index 1 imported successfully, and output leak detection was false.
+- Installed PATH binary verification: pass; its SHA-256 matched the final release
+  build and installed v1.2 used the user-level DeepSeek environment for both
+  interactive startup and a real one-shot turn.
+
+Release closure:
+
+- `v1.2.0` was created from the final release commit only after the unified
+  gate passed; `v1.0.0` and `v1.1.0` remain unchanged.
+- The default CLI remains independent from `vendor/codex-rs`, `codex-*`, and
+  `yunxi-agent-codex`.
+- GitHub master/tree/commit/tag state was published and verified only through
+  the GitHub REST API; Git transport push/fetch commands were not used.
+- The final source index and desktop development log were synchronized, then
+  generated `target`, root `.yunxi`, and temporary smoke artifacts were
+  cleaned.
 
 ## Stage 4L Deep Parity Closure Construction
 

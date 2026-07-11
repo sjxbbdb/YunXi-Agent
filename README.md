@@ -1,8 +1,12 @@
-# YunXi Agent v1.1
+# YunXi Agent v1.2
 
-YunXi Agent v1.1 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.2 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
+
+When DeepSeek credentials are configured, the default `yunxi` command now uses
+the real DeepSeek provider automatically. Without credentials it remains usable
+through the clearly labelled offline provider.
 
 ## Layout
 
@@ -12,7 +16,7 @@ YunXi-owned and does not depend on the upstream Codex runtime.
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: v1.1 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.2 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -25,6 +29,8 @@ YunXi-owned and does not depend on the upstream Codex runtime.
 - Builds a terminal command named `yunxi`
 - Starts an interactive terminal session when `yunxi` is run without a prompt
 - Preserves one-shot execution through `yunxi "your task"`
+- Automatically selects the real DeepSeek provider when credentials are present
+- Supports `--offline` for deterministic local and automation runs
 - Provides facade types for Agent configuration, input, events, results, and errors
 - Runs the default `yunxi` backend through YunXi-owned runtime/provider/tools/storage crates
 - Keeps a dry-run Agent path for deterministic smoke checks
@@ -48,7 +54,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.1 CLI into a user-local bin directory:
+Build and install the v1.2 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -88,6 +94,7 @@ One-shot and automation modes remain available:
 
 ```powershell
 yunxi "explain this project"
+yunxi --offline "run without a model provider"
 yunxi --jsonl "explain this project"
 ```
 
@@ -107,26 +114,58 @@ cargo run -p yunxi-agent-cli -- --json "explain this project"
 cargo check --manifest-path crates/yunxi-agent-codex/Cargo.toml --features codex-native
 ```
 
-## Live Provider Smoke
+## DeepSeek Provider
 
-YunXi Agent keeps provider credentials out of committed source. For a live
-OpenAI-compatible provider, set environment variables in the current shell:
+YunXi Agent keeps provider credentials out of committed source. Import a
+DeepSeek credential from a local private file into the current user's Windows
+environment with the secret-safe helper:
+
+```powershell
+.\scripts\provider\import-deepseek-credential.ps1 `
+    -ApiFile "C:\private\api.txt" `
+    -CredentialIndex 1
+```
+
+The helper automatically uses a file containing exactly one credential
+candidate. When a private file contains several provider credentials,
+`-CredentialIndex` must select one explicitly; the helper never guesses or
+prints a candidate value. It configures `DEEPSEEK_API_KEY`,
+`YUNXI_PROVIDER_PROFILE=deepseek`, and the default model. Open a new PowerShell
+after importing, then run:
+
+```powershell
+yunxi
+yunxi "Reply with a one-line status"
+```
+
+Provider selection precedence is:
+
+1. `--provider-live` forces a real provider and fails early when credentials are missing.
+2. `--offline` forces the deterministic offline provider.
+3. Default auto mode uses configured credentials and otherwise falls back offline.
+
+For temporary process-only configuration:
 
 ```powershell
 $env:YUNXI_PROVIDER_PROFILE = "deepseek"
-$env:YUNXI_PROVIDER_BASE_URL = "https://api.deepseek.com"
-$env:YUNXI_PROVIDER_API_KEY = "<your-api-key>"
+$env:DEEPSEEK_API_KEY = "<your-api-key>"
 $env:YUNXI_AGENT_MODEL = "deepseek-v4-flash"
-yunxi --provider-live --model deepseek-v4-flash "Reply with a one-line status"
+yunxi "Reply with a one-line status"
 ```
 
-Do not commit real API keys. The repository also keeps a secret-safe DeepSeek
-smoke helper at `scripts\provider\deepseek-live-smoke.ps1`.
+Generic OpenAI-compatible providers can continue to use
+`YUNXI_PROVIDER_API_KEY`, `YUNXI_PROVIDER_API_KEY_ENV`,
+`YUNXI_PROVIDER_BASE_URL`, and `OPENAI_API_KEY`. Never commit real API keys.
+The repository also keeps a secret-safe DeepSeek smoke helper at
+`scripts\provider\deepseek-live-smoke.ps1`; it requires an explicit
+`-ApiFile`, requires `-CredentialIndex` for multi-credential files, and never
+stores that path in project configuration.
 
 ## Version Tags
 
-Each released version must keep its own Git tag, for example `v1.1.0`. Do not
-delete old version tags; they are the rollback points if a later release breaks.
+Each released version keeps its own immutable Git tag. v1.2 adds `v1.2.0` and
+preserves `v1.0.0` and `v1.1.0` as rollback points. Do not delete or move old
+version tags.
 
 ## Backend Capability Matrix
 
@@ -158,11 +197,9 @@ default CLI dependency graph. Normal tests do not require credentials.
 
 If `.codegraph/` exists, use CodeGraph first when locating or understanding code in this repository.
 
-## GitHub
+## GitHub Publication
 
-After local work is ready, add your GitHub remote:
-
-```powershell
-git remote add origin <your-repository-url>
-git push -u origin master
-```
+Project automation reads and writes GitHub branch, tree, commit, ref, and tag
+state through the GitHub REST API. GitHub tokens remain local and must never be
+printed, logged, or committed. Normal repository documentation does not embed
+token values or private credential-file paths.

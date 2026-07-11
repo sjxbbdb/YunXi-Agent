@@ -12,7 +12,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.1.0"));
+        .stdout(predicate::str::contains("yunxi 1.2.0"));
 }
 
 #[test]
@@ -22,7 +22,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.1.0"));
+        .stdout(predicate::str::contains("yunxi 1.2.0"));
 }
 
 #[test]
@@ -31,6 +31,7 @@ fn cli_prints_dry_run_response() {
     let temp = TempDir::new().expect("temp dir");
 
     cmd.args([
+        "--offline",
         "--cwd",
         temp.path().to_str().expect("temp path"),
         "explain this project",
@@ -62,6 +63,7 @@ fn cli_accepts_explicit_yunxi_backend() {
     cmd.args([
         "--backend",
         "yunxi",
+        "--offline",
         "--cwd",
         temp.path().to_str().expect("temp path"),
         "explain this project",
@@ -101,11 +103,78 @@ fn cli_live_backend_reports_feature_message_without_codex_native_feature() {
 fn cli_enters_interactive_mode_without_prompt() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
 
-    cmd.write_stdin("/exit\n")
+    cmd.arg("--offline")
+        .write_stdin("/exit\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains("YunXi Agent v1.1 interactive CLI"))
+        .stdout(predicate::str::contains("YunXi Agent v1.2 interactive CLI"))
+        .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn cli_auto_selects_deepseek_when_credentials_are_configured() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("YUNXI_PROVIDER_PROFILE")
+        .env_remove("OPENAI_API_KEY")
+        .env("DEEPSEEK_API_KEY", "fixture-deepseek-secret")
+        .write_stdin("/session\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("provider_mode: live"))
+        .stdout(predicate::str::contains("provider_source: auto_live"))
+        .stdout(predicate::str::contains("provider: deepseek"))
+        .stdout(predicate::str::contains("model: deepseek-v4-flash"));
+}
+
+#[test]
+fn cli_offline_overrides_configured_deepseek_credentials() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("YUNXI_PROVIDER_PROFILE")
+        .env("DEEPSEEK_API_KEY", "fixture-deepseek-secret")
+        .arg("--offline")
+        .write_stdin("/session\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("provider_mode: offline"))
+        .stdout(predicate::str::contains("provider_source: forced_offline"))
+        .stdout(predicate::str::contains("provider: offline"));
+}
+
+#[test]
+fn cli_forced_live_rejects_missing_credentials_before_request() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("YUNXI_PROVIDER_PROFILE")
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .args(["--provider-live", "--provider", "deepseek", "hello"])
+        .assert()
+        .code(10)
+        .stderr(predicate::str::contains(
+            "live provider deepseek credentials are not configured",
+        ))
+        .stderr(predicate::str::contains("fixture-deepseek-secret").not());
+}
+
+#[test]
+fn cli_rejects_provider_live_and_offline_together() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.args(["--provider-live", "--offline", "hello"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"))
+        .stderr(predicate::str::contains("--provider-live"))
+        .stderr(predicate::str::contains("--offline"));
 }
 
 #[test]
@@ -125,11 +194,11 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
     let cwd = temp.path().to_str().expect("temp path");
     let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
 
-    cmd.args(["--backend", "yunxi", "--cwd", cwd])
+    cmd.args(["--backend", "yunxi", "--offline", "--cwd", cwd])
         .write_stdin("hello from repl\n/session\n/exit\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains("YunXi Agent v1.1 interactive CLI"))
+        .stdout(predicate::str::contains("YunXi Agent v1.2 interactive CLI"))
         .stdout(predicate::str::contains(
             "YunXi autonomous runtime accepted prompt: hello from repl",
         ))
@@ -144,7 +213,7 @@ fn cli_lists_and_shows_yunxi_sessions() {
     let cwd = temp.path().to_str().expect("temp path");
 
     let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
-    run.args(["--cwd", cwd, "remember this session"])
+    run.args(["--offline", "--cwd", cwd, "remember this session"])
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -202,7 +271,7 @@ fn cli_manages_yunxi_session_lifecycle() {
     let cwd = temp.path().to_str().expect("temp path");
 
     let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
-    run.args(["--cwd", cwd, "remember this lifecycle"])
+    run.args(["--offline", "--cwd", cwd, "remember this lifecycle"])
         .assert()
         .success()
         .stdout(predicate::str::contains(
@@ -225,6 +294,7 @@ fn cli_manages_yunxi_session_lifecycle() {
     let mut resume = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
     resume
         .args([
+            "--offline",
             "--cwd",
             cwd,
             "sessions",

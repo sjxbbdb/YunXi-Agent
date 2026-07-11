@@ -1,4 +1,8 @@
 param(
+    [Parameter(Mandatory = $true)]
+    [string]$ApiFile,
+    [ValidateRange(0, 2147483647)]
+    [int]$CredentialIndex = 0,
     [string]$Model = "deepseek-v4-flash",
     [switch]$NoStream
 )
@@ -6,7 +10,6 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-$apiFile = "C:\Users\admin\Desktop\api.txt"
 $streamEnabled = if ($NoStream) { "0" } else { "1" }
 $prompt = if ($NoStream) {
     "Reply exactly: YUNXI_DEEPSEEK_OK"
@@ -16,24 +19,45 @@ $prompt = if ($NoStream) {
 $tmp = Join-Path $env:TEMP ("yunxi-deepseek-smoke-{0}.jsonl" -f ([guid]::NewGuid().ToString("N")))
 
 function Get-DeepSeekKey {
-    param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) {
-        return $null
+    param(
+        [string]$Path,
+        [int]$SelectedIndex
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "DeepSeek credential source file was not found"
     }
     $content = Get-Content -LiteralPath $Path -Raw
-    $match = [regex]::Match($content, "sk-[A-Za-z0-9_-]{20,}")
-    if ($match.Success) {
-        return $match.Value
+    $matches = [regex]::Matches(
+        $content,
+        "(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"
+    )
+    $seen = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    $candidates = @(
+        foreach ($match in $matches) {
+            if ($seen.Add($match.Value)) {
+                $match.Value
+            }
+        }
+    )
+    if ($candidates.Count -eq 0) {
+        throw "No DeepSeek credential candidate was found"
     }
-    return $null
+    if ($candidates.Count -eq 1) {
+        return $candidates[0]
+    }
+    if ($SelectedIndex -eq 0) {
+        throw "Multiple credential candidates were found; specify -CredentialIndex explicitly"
+    }
+    if ($SelectedIndex -gt $candidates.Count) {
+        throw "CredentialIndex is outside the available candidate range"
+    }
+    return $candidates[$SelectedIndex - 1]
 }
 
 try {
-    $deepseekKey = Get-DeepSeekKey -Path $apiFile
-    if ([string]::IsNullOrWhiteSpace($deepseekKey)) {
-        Write-Error "DeepSeek API key not found in api.txt"
-        exit 2
-    }
+    $deepseekKey = Get-DeepSeekKey -Path $ApiFile -SelectedIndex $CredentialIndex
 
     $env:YUNXI_PROVIDER_API_KEY = $deepseekKey
     $env:YUNXI_PROVIDER_PROFILE = "deepseek"
@@ -77,6 +101,7 @@ try {
     $leakDetected = $joinedOutput -match "sk-[A-Za-z0-9_-]{20,}|Bearer [A-Za-z0-9._-]{20,}|Authorization"
 
     Write-Output ("deepseek_key_present={0}" -f (-not [string]::IsNullOrWhiteSpace($deepseekKey)))
+    Write-Output ("credential_index={0}" -f $CredentialIndex)
     Write-Output ("model={0}" -f $Model)
     Write-Output ("base_url=https://api.deepseek.com")
     Write-Output ("stream={0}" -f $streamEnabled)

@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentConfig, AgentInput};
@@ -7,10 +8,10 @@ use yunxi_agent_protocol::{
 };
 use yunxi_agent_provider::{
     AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiStreamAccumulator,
-    OpenAiTransportProvider, ProviderAuth, ProviderConfig, ProviderRequest, ProviderRetryPolicy,
-    ProviderRole, ProviderSseDecoder, ProviderToolCall, ProviderTransport, StaticProvider,
-    build_openai_request_json, build_openai_stream_request_json, build_openai_transport_request,
-    parse_openai_response_json, parse_openai_stream_events,
+    OpenAiTransportProvider, ProviderAuth, ProviderBootstrap, ProviderConfig, ProviderRequest,
+    ProviderRetryPolicy, ProviderRole, ProviderSseDecoder, ProviderToolCall, ProviderTransport,
+    StaticProvider, build_openai_request_json, build_openai_stream_request_json,
+    build_openai_transport_request, parse_openai_response_json, parse_openai_stream_events,
 };
 
 #[tokio::test]
@@ -205,6 +206,133 @@ fn deepseek_profile_sets_provider_neutral_defaults() {
     assert!(config.capabilities.tools);
     assert!(!config.capabilities.parallel_tool_calls);
     assert!(!config.capabilities.stream_usage);
+}
+
+#[test]
+fn provider_bootstrap_auto_selects_deepseek_for_deepseek_credentials() {
+    let env = HashMap::from([("DEEPSEEK_API_KEY", "deepseek-secret")]);
+    let bootstrap = ProviderBootstrap::from_agent_config_with_env(
+        &AgentConfig::new(PathBuf::from(".")),
+        |name| env.get(name).map(|value| (*value).to_string()),
+    );
+
+    assert_eq!(bootstrap.config.name, "deepseek");
+    assert_eq!(bootstrap.config.profile.as_deref(), Some("deepseek"));
+    assert_eq!(bootstrap.config.model, "deepseek-v4-flash");
+    assert_eq!(
+        bootstrap.auth,
+        ProviderAuth::EnvVar("DEEPSEEK_API_KEY".to_string())
+    );
+    assert!(bootstrap.credentials_configured_with_env(|name| {
+        env.get(name).map(|value| (*value).to_string())
+    }));
+}
+
+#[test]
+fn provider_bootstrap_prefers_direct_yunxi_api_key() {
+    let env = HashMap::from([
+        ("YUNXI_PROVIDER_API_KEY", "yunxi-secret"),
+        ("DEEPSEEK_API_KEY", "deepseek-secret"),
+    ]);
+    let bootstrap = ProviderBootstrap::from_agent_config_with_env(
+        &AgentConfig::new(PathBuf::from(".")),
+        |name| env.get(name).map(|value| (*value).to_string()),
+    );
+
+    assert_eq!(bootstrap.config.profile.as_deref(), Some("deepseek"));
+    assert_eq!(
+        bootstrap.auth,
+        ProviderAuth::ApiKey("yunxi-secret".to_string())
+    );
+    assert!(bootstrap.credentials_configured_with_env(|name| {
+        env.get(name).map(|value| (*value).to_string())
+    }));
+}
+
+#[test]
+fn provider_bootstrap_honors_named_api_key_environment_variable() {
+    let env = HashMap::from([
+        ("YUNXI_PROVIDER_PROFILE", "deepseek"),
+        ("YUNXI_PROVIDER_API_KEY_ENV", "CUSTOM_PROVIDER_KEY"),
+        ("CUSTOM_PROVIDER_KEY", "custom-secret"),
+        ("DEEPSEEK_API_KEY", "deepseek-secret"),
+    ]);
+    let bootstrap = ProviderBootstrap::from_agent_config_with_env(
+        &AgentConfig::new(PathBuf::from(".")),
+        |name| env.get(name).map(|value| (*value).to_string()),
+    );
+
+    assert_eq!(
+        bootstrap.auth,
+        ProviderAuth::EnvVar("CUSTOM_PROVIDER_KEY".to_string())
+    );
+    assert!(bootstrap.credentials_configured_with_env(|name| {
+        env.get(name).map(|value| (*value).to_string())
+    }));
+}
+
+#[test]
+fn provider_bootstrap_ignores_empty_credentials() {
+    let env = HashMap::from([
+        ("YUNXI_PROVIDER_API_KEY", "   "),
+        ("DEEPSEEK_API_KEY", ""),
+        ("OPENAI_API_KEY", "\t"),
+    ]);
+    let bootstrap = ProviderBootstrap::from_agent_config_with_env(
+        &AgentConfig::new(PathBuf::from(".")),
+        |name| env.get(name).map(|value| (*value).to_string()),
+    );
+
+    assert_eq!(bootstrap.config.profile, None);
+    assert_eq!(
+        bootstrap.auth,
+        ProviderAuth::EnvVar("OPENAI_API_KEY".to_string())
+    );
+    assert!(!bootstrap.credentials_configured_with_env(|name| {
+        env.get(name).map(|value| (*value).to_string())
+    }));
+}
+
+#[test]
+fn explicit_provider_profile_prevents_deepseek_inference() {
+    let env = HashMap::from([
+        ("YUNXI_PROVIDER_PROFILE", "openai-compatible"),
+        ("DEEPSEEK_API_KEY", "deepseek-secret"),
+        ("OPENAI_API_KEY", "openai-secret"),
+    ]);
+    let bootstrap = ProviderBootstrap::from_agent_config_with_env(
+        &AgentConfig::new(PathBuf::from(".")),
+        |name| env.get(name).map(|value| (*value).to_string()),
+    );
+
+    assert_eq!(bootstrap.config.name, "openai-compatible");
+    assert_eq!(
+        bootstrap.config.profile.as_deref(),
+        Some("openai-compatible")
+    );
+    assert_eq!(
+        bootstrap.auth,
+        ProviderAuth::EnvVar("OPENAI_API_KEY".to_string())
+    );
+}
+
+#[test]
+fn provider_bootstrap_uses_openai_key_for_openai_compatible_profile() {
+    let env = HashMap::from([("OPENAI_API_KEY", "openai-secret")]);
+    let bootstrap = ProviderBootstrap::from_agent_config_with_env(
+        &AgentConfig::new(PathBuf::from(".")),
+        |name| env.get(name).map(|value| (*value).to_string()),
+    );
+
+    assert_eq!(bootstrap.config.name, "openai-compatible");
+    assert_eq!(bootstrap.config.profile, None);
+    assert_eq!(
+        bootstrap.auth,
+        ProviderAuth::EnvVar("OPENAI_API_KEY".to_string())
+    );
+    assert!(bootstrap.credentials_configured_with_env(|name| {
+        env.get(name).map(|value| (*value).to_string())
+    }));
 }
 
 #[tokio::test]

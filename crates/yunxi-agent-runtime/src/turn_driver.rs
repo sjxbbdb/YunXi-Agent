@@ -1,1 +1,115 @@
-use yunxi_agent_core::{AgentConfig, AgentEvent, AgentResult, DeepParityData}; use yunxi_agent_storage::SessionId;  use crate::RuntimeEventSink; use crate::runtime_state;  pub(crate) struct RuntimeTurnDriver<'a, S> where     S: RuntimeEventSink + ?Sized, {     sink: &'a S,     config: &'a AgentConfig,     session_id: &'a SessionId,     thread_id: &'a str,     child_depth: usize, }  impl<'a, S> RuntimeTurnDriver<'a, S> where     S: RuntimeEventSink + ?Sized, {     pub(crate) fn new(         sink: &'a S,         config: &'a AgentConfig,         session_id: &'a SessionId,         thread_id: &'a str,         _turn_id: &'a str,         child_depth: usize,     ) -> Self {         Self {             sink,             config,             session_id,             thread_id,             child_depth,         }     }      pub(crate) async fn emit_thread_state(         &self,         status: impl Into<String>,         data: DeepParityData,     ) -> AgentResult<()> {         self.sink             .emit(AgentEvent::ThreadState {                 state: runtime_state::thread_state(                     self.config,                     self.thread_id,                     self.session_id,                     status,                     self.child_depth,                     data,                 ),             })             .await     }      pub(crate) async fn emit_metadata(         &self,         context_phase: impl Into<String>,         data: DeepParityData,     ) -> AgentResult<()> {         self.sink             .emit(AgentEvent::TurnMetadata {                 metadata: runtime_state::turn_metadata(                     self.config,                     self.session_id,                     context_phase,                     self.child_depth,                     data,                 ),             })             .await     }      pub(crate) async fn emit_phase(         &self,         phase: impl Into<String>,         status: impl Into<String>,         provider_status: impl Into<String>,         tool_loop_status: impl Into<String>,         cancellation_state: impl Into<String>,         data: DeepParityData,     ) -> AgentResult<()> {         self.sink             .emit(AgentEvent::TurnState {                 state: runtime_state::turn_state(                     phase,                     status,                     provider_status,                     tool_loop_status,                     cancellation_state,                     data,                 ),             })             .await     }      pub(crate) async fn emit_deep_parity_state(         &self,         layer: impl Into<String>,         status: impl Into<String>,         message: Option<String>,         data: DeepParityData,     ) -> AgentResult<()> {         self.sink             .emit(AgentEvent::DeepParityState {                 layer: layer.into(),                 status: status.into(),                 message,                 data,             })             .await     } }
+use yunxi_agent_core::{AgentConfig, AgentEvent, AgentResult, DeepParityData};
+use yunxi_agent_storage::SessionId;
+
+use crate::RuntimeEventSink;
+use crate::runtime_state;
+
+pub(crate) struct RuntimeTurnDriver<'a, S>
+where
+    S: RuntimeEventSink + ?Sized,
+{
+    sink: &'a S,
+    config: &'a AgentConfig,
+    session_id: &'a SessionId,
+    thread_id: &'a str,
+    child_depth: usize,
+}
+
+impl<'a, S> RuntimeTurnDriver<'a, S>
+where
+    S: RuntimeEventSink + ?Sized,
+{
+    pub(crate) fn new(
+        sink: &'a S,
+        config: &'a AgentConfig,
+        session_id: &'a SessionId,
+        thread_id: &'a str,
+        _turn_id: &'a str,
+        child_depth: usize,
+    ) -> Self {
+        Self {
+            sink,
+            config,
+            session_id,
+            thread_id,
+            child_depth,
+        }
+    }
+
+    pub(crate) async fn emit_thread_state(
+        &self,
+        status: impl Into<String>,
+        data: DeepParityData,
+    ) -> AgentResult<()> {
+        self.sink
+            .emit(AgentEvent::ThreadState {
+                state: runtime_state::thread_state(
+                    self.config,
+                    self.thread_id,
+                    self.session_id,
+                    status,
+                    self.child_depth,
+                    data,
+                ),
+            })
+            .await
+    }
+
+    pub(crate) async fn emit_metadata(
+        &self,
+        context_phase: impl Into<String>,
+        data: DeepParityData,
+    ) -> AgentResult<()> {
+        self.sink
+            .emit(AgentEvent::TurnMetadata {
+                metadata: runtime_state::turn_metadata(
+                    self.config,
+                    self.session_id,
+                    context_phase,
+                    self.child_depth,
+                    data,
+                ),
+            })
+            .await
+    }
+
+    pub(crate) async fn emit_phase(
+        &self,
+        phase: impl Into<String>,
+        status: impl Into<String>,
+        provider_status: impl Into<String>,
+        tool_loop_status: impl Into<String>,
+        cancellation_state: impl Into<String>,
+        data: DeepParityData,
+    ) -> AgentResult<()> {
+        self.sink
+            .emit(AgentEvent::TurnState {
+                state: runtime_state::turn_state(
+                    phase,
+                    status,
+                    provider_status,
+                    tool_loop_status,
+                    cancellation_state,
+                    data,
+                ),
+            })
+            .await
+    }
+
+    pub(crate) async fn emit_deep_parity_state(
+        &self,
+        layer: impl Into<String>,
+        status: impl Into<String>,
+        message: Option<String>,
+        data: DeepParityData,
+    ) -> AgentResult<()> {
+        self.sink
+            .emit(AgentEvent::DeepParityState {
+                layer: layer.into(),
+                status: status.into(),
+                message,
+                data,
+            })
+            .await
+    }
+}

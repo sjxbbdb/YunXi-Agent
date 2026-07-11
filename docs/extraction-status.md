@@ -924,6 +924,23 @@ Verified on 2026-07-11:
 - `cargo clean`: pass; removed 7429 files and 1.6GiB.
 - Root `.yunxi` cleanup: pass.
 
+## Stage 4M Planned Direction
+
+The next stage is real runtime parity deepening. Stage 4L proved the deep
+parity facade, JSONL shape, and synthetic mega fixture. Stage 4M should connect
+those facade surfaces to real YunXi runtime behavior: runtime drivers,
+provider feature matrix request shaping, unified exec handles, sandbox attempt
+records, approval cache, MCP long-lived sessions, skills/plugins runtime
+catalog, context auto-compact, rollout-backed resume, multi-agent v2 routing,
+and a real parity mega fixture.
+
+The Stage 4M development report is recorded in
+`docs/reports/2026-07-11-yunxi-stage-4m-real-runtime-parity-deepening-development-report.md`.
+
+Stage 4M execution should keep the existing hard constraint: build and wire the
+whole slice first, avoid mid-construction verification, then run the final
+verification gate once construction is complete.
+
 ## Stage 3 Verification
 
 Verified on 2026-07-10:

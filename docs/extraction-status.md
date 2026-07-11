@@ -674,6 +674,37 @@ The Stage 4K owned runtime/provider/tool construction is verified offline, and
 the DeepSeek live provider gate has now passed for both streaming and
 non-streaming requests with the updated local credential file.
 
+## Stage 4L Planned Direction
+
+The next stage is Codex Agent deep parity closure. Stage 4K proved the
+autonomous YunXi chain and the real DeepSeek live provider gate; Stage 4L should
+move from runnable autonomy to deeper Codex CLI headless Agent behavior parity.
+
+The Stage 4L development report is recorded in
+`docs/reports/2026-07-11-yunxi-stage-4l-codex-agent-deep-parity-closure-development-report.md`.
+
+Stage 4L focuses on:
+
+- thread/session/turn state machine deepening
+- provider feature matrix and Responses-style item mapping
+- unified exec and exec-server facade
+- platform sandbox enforcement facade
+- interactive approval and granular permission cache
+- MCP auth, elicitation, approval template, capability negotiation, and tools
+  cache
+- skills/plugins runtime deepening and extension tool executor facade
+- context manager, compact, prompt assets, and token budget semantics
+- storage, rollout, thread-store, resume, fork, and truncation parity
+- multi-agent v2 wait/message/follow-up/interrupt/list and sub-agent activity
+  events
+- protocol and JSONL full runtime event shape
+- disabled-vendor parity harness plus DeepSeek live gate separation
+
+Stage 4L must keep the build-first constraint: migrate and wire the full slice
+first, avoid frequent mid-construction validation, then run the final unified
+verification gate. Default YunXi CLI dependencies must remain free of
+`codex-*`, `vendor/codex-rs`, and `yunxi-agent-codex`.
+
 ## Stage 4D History Restore And Compact Entry Slice
 
 Implemented in this slice:

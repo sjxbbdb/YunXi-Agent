@@ -783,6 +783,13 @@ pub enum ToolRuntimeEvent {
         seq: usize,
         message: Option<String>,
     },
+    DeepParityState {
+        layer: String,
+        status: String,
+        message: Option<String>,
+        #[serde(default)]
+        data: BTreeMap<String, String>,
+    },
     PatchDiagnostic {
         kind: String,
         message: String,

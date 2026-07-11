@@ -1180,6 +1180,111 @@ async fn stage_4k_cancellation_fixture_records_cancelled_boundaries() {
     )));
 }
 
+#[tokio::test]
+async fn stage_4l_deep_parity_fixture_covers_all_closure_layers() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let backend = YunXiRuntimeBackend::with_parts(
+        StaticProvider::default(),
+        CompositeToolRuntime::default(),
+        store.clone(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(
+            &backend,
+            AgentInput::text("run stage 4l deep parity fixture"),
+        )
+        .await
+        .expect("stage 4l fixture");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(matches!(
+        result.final_response.as_deref(),
+        Some(response) if response.contains("Stage 4L deep parity fixture completed")
+    ));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ThreadState { .. }))
+    );
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::TurnMetadata { .. }))
+    );
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::TurnState { .. }))
+    );
+    let layers = result
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::DeepParityState { layer, .. } => Some(layer.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(layers.len(), 12);
+    assert!(layers.contains(&"02_provider_feature_matrix"));
+    assert!(layers.contains(&"03_unified_exec"));
+    assert!(layers.contains(&"06_mcp_lifecycle"));
+    assert!(layers.contains(&"10_multi_agent_v2"));
+    assert!(layers.contains(&"12_parity_harness"));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::CommandCompleted { .. }))
+    );
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ApprovalRequested { .. }))
+    );
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::EscalationRequested { .. }))
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::McpSession { status, .. } if status == "capability_negotiated"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ToolCallCompleted { name, .. } if name == "tool_search"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ContextStatus {
+            compacted: true,
+            ..
+        }
+    )));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ChildScopedStream { .. }))
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::StorageState {
+            child_session_ids,
+            ..
+        } if child_session_ids.iter().any(|id| id.contains("stage-4l"))
+    )));
+    assert_eq!(store.list().await.expect("session list").len(), 1);
+}
+
 #[test]
 fn protocol_stream_events_map_to_agent_events() {
     let stream = vec![

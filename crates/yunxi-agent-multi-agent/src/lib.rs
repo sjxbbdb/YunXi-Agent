@@ -202,6 +202,41 @@ pub enum MultiAgentLifecycleEvent {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AgentMailboxMessage {
+    pub from: AgentId,
+    pub to: AgentId,
+    pub kind: AgentCommunicationKind,
+    pub content: String,
+    pub trigger_turn: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCommunicationKind {
+    Message,
+    FollowUp,
+    Result,
+    Interrupt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MultiAgentV2Activity {
+    pub agent_id: AgentId,
+    pub parent_agent_id: Option<AgentId>,
+    pub action: String,
+    pub status: String,
+    pub scoped_stream_seq: usize,
+    pub budget_remaining: Option<usize>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct MultiAgentBudgetShare {
+    pub parent_budget: Option<usize>,
+    pub child_budget: Option<usize>,
+    pub depth_guard_remaining: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MultiAgentCommandResult {
     pub status: AgentStatus,
     pub agents: Vec<AgentMetadata>,

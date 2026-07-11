@@ -819,6 +819,103 @@ impl ProviderCapabilities {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ProviderFeatureMatrix {
+    pub provider: String,
+    pub wire_api: ProviderWireApi,
+    pub capabilities: ProviderCapabilities,
+    pub responses_item_mapping: bool,
+    pub reasoning_delta: bool,
+    pub usage_delta: bool,
+    pub request_metadata: bool,
+    pub request_compression: bool,
+    pub tool_schema_strictness: ToolSchemaStrictness,
+    pub retry_buckets: Vec<ProviderRetryBucket>,
+    pub item_kinds: Vec<ProviderResponseItemKind>,
+}
+
+impl ProviderFeatureMatrix {
+    pub fn from_config(config: &ProviderConfig) -> Self {
+        let wire_api = config.wire_api;
+        let capabilities = config.capabilities.clone();
+        Self {
+            provider: config.name.clone(),
+            wire_api,
+            responses_item_mapping: false,
+            reasoning_delta: capabilities.reasoning,
+            usage_delta: capabilities.stream_usage,
+            request_metadata: true,
+            request_compression: false,
+            tool_schema_strictness: ToolSchemaStrictness::BestEffort,
+            retry_buckets: ProviderRetryBucket::codex_headless_defaults(),
+            item_kinds: ProviderResponseItemKind::codex_headless_defaults(),
+            capabilities,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolSchemaStrictness {
+    BestEffort,
+    Strict,
+    ProviderRejected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderRetryBucket {
+    Auth,
+    RateLimit,
+    Server,
+    Network,
+    Timeout,
+    BadRequest,
+    UnsupportedSchema,
+    UnsupportedModel,
+}
+
+impl ProviderRetryBucket {
+    pub fn codex_headless_defaults() -> Vec<Self> {
+        vec![
+            Self::Auth,
+            Self::RateLimit,
+            Self::Server,
+            Self::Network,
+            Self::Timeout,
+            Self::BadRequest,
+            Self::UnsupportedSchema,
+            Self::UnsupportedModel,
+        ]
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderResponseItemKind {
+    AssistantText,
+    Reasoning,
+    ToolCall,
+    DynamicToolCall,
+    McpToolCall,
+    Error,
+    Usage,
+}
+
+impl ProviderResponseItemKind {
+    pub fn codex_headless_defaults() -> Vec<Self> {
+        vec![
+            Self::AssistantText,
+            Self::Reasoning,
+            Self::ToolCall,
+            Self::DynamicToolCall,
+            Self::McpToolCall,
+            Self::Error,
+            Self::Usage,
+        ]
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ProviderAuth {
     None,
     ApiKey(String),

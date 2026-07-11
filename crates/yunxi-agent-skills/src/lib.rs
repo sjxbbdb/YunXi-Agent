@@ -161,6 +161,34 @@ pub struct DynamicToolMetadata {
     pub source: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SkillRuntimeCatalog {
+    pub core_assets: Vec<SkillMetadata>,
+    pub workspace_skills: Vec<SkillMetadata>,
+    pub plugin_skills: Vec<SkillMetadata>,
+    pub plugin_manifests: Vec<PluginManifest>,
+    pub dynamic_tools: Vec<DynamicToolMetadata>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExtensionToolExecution {
+    pub tool_name: String,
+    pub source: Option<String>,
+    pub model_visible_schema: Value,
+    pub status: ExtensionToolStatus,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionToolStatus {
+    Discovered,
+    Dispatched,
+    Completed,
+    Failed,
+    Missing,
+}
+
 pub fn default_dynamic_tools() -> Vec<DynamicToolMetadata> {
     vec![
         DynamicToolMetadata {

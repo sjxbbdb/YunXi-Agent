@@ -345,6 +345,79 @@ pub struct SandboxRunnerDiagnostic {
     pub message: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SandboxAttemptRecord {
+    pub requested: SandboxRequirement,
+    pub materialized_backend: SandboxBackend,
+    pub cwd: PathBuf,
+    pub workspace_roots: Vec<PathBuf>,
+    pub network: NetworkDecision,
+    pub escalation_reason: Option<String>,
+    pub runner_status: SandboxRunnerStatus,
+    pub fallback_available: bool,
+}
+
+impl SandboxAttemptRecord {
+    pub fn from_diagnostic(
+        requested: SandboxRequirement,
+        network: NetworkDecision,
+        workspace_roots: Vec<PathBuf>,
+        diagnostic: SandboxRunnerDiagnostic,
+    ) -> Self {
+        Self {
+            requested,
+            materialized_backend: diagnostic.backend,
+            cwd: diagnostic.cwd,
+            workspace_roots,
+            network,
+            escalation_reason: diagnostic.message,
+            runner_status: diagnostic.status,
+            fallback_available: matches!(
+                diagnostic.status,
+                SandboxRunnerStatus::RequiresEscalation | SandboxRunnerStatus::Denied
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalCacheEntry {
+    pub key: ApprovalKey,
+    pub decision: CachedApprovalDecision,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ApprovalKey {
+    pub tool_name: String,
+    pub command: Option<String>,
+    pub cwd: Option<PathBuf>,
+    pub target_paths: Vec<PathBuf>,
+    pub sandbox: Option<SandboxRequirement>,
+    pub network: Option<NetworkPolicy>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CachedApprovalDecision {
+    Approved,
+    Declined,
+    AskAgain,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionApprovalCache {
+    pub entries: Vec<ApprovalCacheEntry>,
+}
+
+impl SessionApprovalCache {
+    pub fn remember(&mut self, entry: ApprovalCacheEntry) {
+        self.entries.retain(|candidate| candidate.key != entry.key);
+        self.entries.push(entry);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxRunnerStatus {

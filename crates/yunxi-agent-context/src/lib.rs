@@ -363,6 +363,39 @@ impl PromptDebugSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ContextManagerState {
+    pub agents_md_fragments: usize,
+    pub file_mentions: usize,
+    pub history_fragments: usize,
+    pub skill_injections: usize,
+    pub mcp_tool_summaries: usize,
+    pub compact_summary: Option<String>,
+    pub token_budget: ContextWindowBudget,
+    pub status: ContextWindowStatus,
+    pub prompt_debug: PromptDebugSnapshot,
+}
+
+impl ContextManagerState {
+    pub fn from_prompt_debug(
+        prompt_debug: PromptDebugSnapshot,
+        token_budget: ContextWindowBudget,
+        status: ContextWindowStatus,
+    ) -> Self {
+        Self {
+            agents_md_fragments: 0,
+            file_mentions: 0,
+            history_fragments: 0,
+            skill_injections: 0,
+            mcp_tool_summaries: 0,
+            compact_summary: None,
+            token_budget,
+            status,
+            prompt_debug,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RestoredHistory {
     pub messages: Vec<ConversationMessage>,
     pub status: ContextWindowStatus,

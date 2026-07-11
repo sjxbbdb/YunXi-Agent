@@ -848,6 +848,82 @@ Verified on 2026-07-09:
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.
 
+## Stage 4L Deep Parity Closure Construction
+
+Stage 4L construction has added YunXi-owned facade and runtime fixture coverage
+for the 12 deep Codex CLI headless Agent parity surfaces described in
+`docs/reports/2026-07-11-yunxi-stage-4l-codex-agent-deep-parity-closure-development-report.md`.
+
+Constructed in this slice:
+
+- `yunxi-agent-core` now owns thread state, turn metadata, turn state, and
+  deep parity state event carriers.
+- `yunxi-agent-protocol` now exposes `thread_state`, `turn_state`, and
+  `deep_parity_state` JSONL runtime events alongside the existing stable
+  runtime envelope.
+- `yunxi-agent-cli` maps the new core events into protocol JSONL without
+  changing older event shapes.
+- `yunxi-agent-runtime` now has an offline
+  `stage 4l deep parity fixture` path that emits all 12 closure layers, plus
+  exec, approval, sandbox escalation, MCP lifecycle, skills, context,
+  storage, multi-agent, and child scoped stream events.
+- `yunxi-agent-provider` owns a `ProviderFeatureMatrix` facade for
+  provider-neutral item mapping, capabilities, schema strictness, and retry
+  buckets.
+- `yunxi-agent-exec` owns `UnifiedExecRequest`, `UnifiedExecAttempt`,
+  `ExecServerSession`, and shell snapshot facade types.
+- `yunxi-agent-sandbox` owns sandbox attempt and session approval cache facade
+  types.
+- `yunxi-agent-mcp` owns capability negotiation and long-lived session facade
+  types for auth, elicitation, tools/resources cache, and session reuse.
+- `yunxi-agent-skills` owns runtime catalog and extension tool executor facade
+  types.
+- `yunxi-agent-context` owns `ContextManagerState` for prompt assets, compact
+  state, token budget, and prompt debug snapshots.
+- `yunxi-agent-storage` owns thread-store and rollout parity snapshot facade
+  types.
+- `yunxi-agent-multi-agent` owns mailbox, communication kind, activity, and
+  budget sharing facade types.
+- Runtime, CLI JSONL, and protocol round-trip tests were added for the Stage 4L
+  fixture and new event shapes.
+
+Stage 4L verification was run after construction completed, following the
+project hard constraint to avoid mid-construction test runs.
+
+Verified on 2026-07-11:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli`: pass
+- `cargo run -p yunxi-agent-cli -- parity map`: pass
+- `cargo run -p yunxi-agent-cli -- --backend yunxi --jsonl "run stage 4l deep parity fixture"`:
+  pass
+- Stage 4L fixture JSONL count: 45 lines
+- Stage 4L fixture event counts:
+  `deep_parity_state:12`, `turn_state:3`, `mcp_session:4`,
+  `child_scoped_stream:3`, `tool_started:3`, `tool_completed:2`, plus
+  thread, turn, metadata, approval, escalation, context, storage, multi-agent,
+  child-agent, item, item-delta, and completion events.
+- `cargo tree -p yunxi-agent-cli`: pass
+- Default CLI dependency keyword scan: pass; no `codex-*`, `vendor`, or
+  `yunxi-agent-codex` dependency appeared in the default CLI tree.
+- Owned-source secret scan excluding reference-only `vendor` and `extracted`
+  trees: pass.
+- A broader reference-inclusive scan still reports four pre-existing
+  `extracted/codex-core-agent-sources` files containing bearer-header code
+  literals from upstream reference source. No secret value was printed and no
+  Stage 4L owned source file matched.
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only.
+- `scripts/provider/deepseek-live-smoke.ps1 -Model deepseek-v4-flash`: pass;
+  39 JSONL lines, no secret leak detected.
+- `scripts/provider/deepseek-live-smoke.ps1 -Model deepseek-v4-flash -NoStream`:
+  pass; 9 JSONL lines, no secret leak detected.
+- `codegraph sync "D:\YunXi Agent"`: pass; 19 changed files synced.
+- `cargo clean`: pass; removed 7429 files and 1.6GiB.
+- Root `.yunxi` cleanup: pass.
+
 ## Stage 3 Verification
 
 Verified on 2026-07-10:

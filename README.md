@@ -1,6 +1,6 @@
-# YunXi Agent v1.3.0
+# YunXi Agent v1.4.0
 
-YunXi Agent v1.3.0 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.4.0 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -16,7 +16,7 @@ through the clearly labelled offline provider.
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: v1.3.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.4.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -31,6 +31,7 @@ through the clearly labelled offline provider.
 - Streams runtime events to the terminal while an interactive turn is running
 - Prompts for interactive approval and `request_user_input` tool calls
 - Propagates Ctrl+C cancellation into the runtime and shell exec layer
+- Provides REPL status commands for tools, MCP config, usage, and turn summaries
 - Keeps the interactive session open when one provider or tool turn fails
 - Preserves assistant tool calls and matching tool result ids across provider turns
 - Preserves one-shot execution through `yunxi "your task"`
@@ -59,7 +60,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.3.0 CLI into a user-local bin directory:
+Build and install the v1.4.0 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -89,6 +90,10 @@ Useful interactive commands:
 
 - `/help`: show available commands
 - `/session`: show the active session id, turn count, cwd, model, and provider
+- `/status`: show provider, event, tool, MCP, and usage status
+- `/tools`: list fixed and workspace dynamic tools
+- `/mcp`: show workspace MCP configuration without starting servers
+- `/cost`: show last-turn and session token usage
 - `/resume <session_id>`: continue from a saved session
 - `/model [name]`: show or switch the model field
 - `/provider [name]`: show or switch the provider field
@@ -183,6 +188,12 @@ v1.3.0 adds immutable tag `v1.3.0` without moving earlier tags. It promotes the
 interactive terminal host from batch rendering to streaming runtime events,
 approval/user-input request handling, and Ctrl+C cancellation propagation into
 YunXi-owned runtime/tools/exec code.
+
+v1.4.0 adds immutable tag `v1.4.0` without moving earlier tags. It promotes
+terminal status visibility with `/tools`, `/mcp`, `/cost`, and `/status`, so an
+interactive YunXi session can inspect available tools, workspace MCP config,
+last-turn usage, cumulative usage, and runtime event summaries without leaving
+the REPL.
 
 ## Backend Capability Matrix
 

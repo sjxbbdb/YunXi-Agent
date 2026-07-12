@@ -5,10 +5,13 @@ use crate::{redact_secret_fragments, run_agent_backend_stream};
 use anyhow::{Context, Result};
 use std::io::{self, BufRead, IsTerminal, Write};
 use yunxi_agent_core::{
-    AgentConfig, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunControl,
-    AgentRunResult, AgentRunUserInputRequest, AgentRunUserInputResponse, BackendKind,
+    AgentConfig, AgentEvent, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunControl,
+    AgentRunResult, AgentRunStatus, AgentRunUserInputRequest, AgentRunUserInputResponse,
+    BackendKind, TokenUsage,
 };
+use yunxi_agent_mcp::{McpTransport, load_workspace_mcp_configs};
 use yunxi_agent_storage::{FileSessionStore, SessionId, SessionStore};
+use yunxi_agent_tools::workspace_tool_registry;
 
 #[derive(Clone, Debug)]
 pub(crate) struct InteractiveOptions {
@@ -25,6 +28,7 @@ struct InteractiveSession {
     provider_selection: ProviderSelection,
     active_session_id: Option<String>,
     turn_count: usize,
+    stats: InteractiveStats,
 }
 
 pub(crate) async fn run_interactive(options: InteractiveOptions) -> Result<()> {
@@ -46,6 +50,7 @@ impl InteractiveSession {
             provider_selection,
             active_session_id: None,
             turn_count: 0,
+            stats: InteractiveStats::default(),
         })
     }
 
@@ -117,6 +122,10 @@ impl InteractiveSession {
             }
             InteractiveCommand::Cwd => println!("{}", self.config.cwd.display()),
             InteractiveCommand::Session => self.print_session_summary(),
+            InteractiveCommand::Status => self.print_status()?,
+            InteractiveCommand::Tools => self.print_tools()?,
+            InteractiveCommand::Mcp => self.print_mcp()?,
+            InteractiveCommand::Cost => self.print_cost(),
             InteractiveCommand::Model(model) => self.handle_model_command(model)?,
             InteractiveCommand::Provider(provider) => self.handle_provider_command(provider)?,
             InteractiveCommand::Resume(session_id) => self.resume_session(session_id).await?,
@@ -146,6 +155,115 @@ impl InteractiveSession {
         );
         println!("provider: {}", self.provider_selection.provider);
         println!("model: {}", self.provider_selection.model);
+    }
+
+    fn print_status(&self) -> Result<()> {
+        self.print_session_summary();
+        println!("observed_events: {}", self.stats.observed_events);
+        match &self.stats.last_turn {
+            Some(summary) => {
+                println!("last_turn_status: {}", status_label(summary.status));
+                println!("last_turn_events: {}", summary.events);
+                println!(
+                    "last_turn_activity: messages={} reasoning={} tools={}/{} commands={}/{}/{} mcp={}/{} mcp_sessions={} files={} patches={} todos={} approvals={} escalations={} children={} warnings={} errors={} cancelled={}",
+                    summary.messages,
+                    summary.reasoning,
+                    summary.tool_started,
+                    summary.tool_completed,
+                    summary.command_started,
+                    summary.command_updated,
+                    summary.command_completed,
+                    summary.mcp_started,
+                    summary.mcp_completed,
+                    summary.mcp_sessions,
+                    summary.file_changes,
+                    summary.patch_completed,
+                    summary.todo_updates,
+                    summary.approvals,
+                    summary.escalations,
+                    summary.child_events,
+                    summary.warnings,
+                    summary.errors,
+                    summary.cancelled
+                );
+                println!("last_turn_final_response: {}", summary.final_response);
+            }
+            None => println!("last_turn_status: none"),
+        }
+        let registry = workspace_tool_registry(&self.config.cwd)?;
+        println!(
+            "tools: fixed={} dynamic={}",
+            registry.specs().count(),
+            registry.dynamic_specs().count()
+        );
+        let mcp_servers = load_workspace_mcp_configs(&self.config.cwd)?;
+        println!("mcp_servers: {}", mcp_servers.len());
+        self.print_cost();
+        Ok(())
+    }
+
+    fn print_tools(&self) -> Result<()> {
+        let registry = workspace_tool_registry(&self.config.cwd)?;
+        let fixed = registry.specs().collect::<Vec<_>>();
+        let dynamic = registry.dynamic_specs().collect::<Vec<_>>();
+        println!("tools: fixed={} dynamic={}", fixed.len(), dynamic.len());
+        for spec in fixed {
+            println!(
+                "[tool] {} visible={} - {}",
+                spec.name, spec.model_visible, spec.description
+            );
+        }
+        for spec in dynamic {
+            println!(
+                "[dynamic-tool] {} kind={:?} source={} - {}",
+                spec.name,
+                spec.kind,
+                spec.source.as_deref().unwrap_or("workspace"),
+                spec.description
+            );
+        }
+        Ok(())
+    }
+
+    fn print_mcp(&self) -> Result<()> {
+        let configs = load_workspace_mcp_configs(&self.config.cwd)?;
+        let seed_path = self.config.cwd.join(".yunxi").join("mcp-runtime.json");
+        println!("mcp_servers: {}", configs.len());
+        println!(
+            "mcp_runtime_seed: {}",
+            if seed_path.is_file() {
+                seed_path.display().to_string()
+            } else {
+                "none".to_string()
+            }
+        );
+        if configs.is_empty() {
+            println!("mcp_status: no workspace MCP configured");
+        }
+        for config in configs {
+            println!(
+                "[mcp] {} enabled={} transport={}",
+                config.name,
+                config.enabled,
+                describe_mcp_transport(&config.transport)
+            );
+        }
+        Ok(())
+    }
+
+    fn print_cost(&self) {
+        match &self.stats.last_turn {
+            Some(summary) if !summary.usage.is_zero() => {
+                println!("last_turn_usage: {}", summary.usage);
+            }
+            Some(_) => println!("last_turn_usage: unavailable"),
+            None => println!("last_turn_usage: none"),
+        }
+        if self.stats.total_usage.is_zero() {
+            println!("session_usage: unavailable");
+        } else {
+            println!("session_usage: {}", self.stats.total_usage);
+        }
     }
 
     fn handle_model_command(&mut self, model: Option<String>) -> Result<()> {
@@ -185,6 +303,7 @@ impl InteractiveSession {
         }
         self.active_session_id = Some(session_id.clone());
         self.turn_count = 0;
+        self.stats = InteractiveStats::default();
         self.refresh_provider_selection()?;
         println!("resumed session: {session_id}");
         Ok(())
@@ -275,21 +394,200 @@ impl InteractiveSession {
             {
                 println!("{final_response}");
             }
-            self.update_session_state(&result);
+            self.record_turn_result(&result);
         }
         Ok(())
     }
 
-    fn update_session_state(&mut self, result: &AgentRunResult) {
+    fn record_turn_result(&mut self, result: &AgentRunResult) {
         if let Some(session_id) = session_id_from_result(result) {
             self.active_session_id = Some(session_id);
         }
         self.turn_count = self.turn_count.saturating_add(1);
+        self.stats.record(TurnSummary::from_result(result));
     }
 
     fn refresh_provider_selection(&mut self) -> Result<()> {
         self.provider_selection = self.provider_mode.resolve(self.backend, &self.config)?;
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct InteractiveStats {
+    last_turn: Option<TurnSummary>,
+    total_usage: UsageTotals,
+    observed_events: usize,
+}
+
+impl InteractiveStats {
+    fn record(&mut self, summary: TurnSummary) {
+        self.observed_events = self.observed_events.saturating_add(summary.events);
+        self.total_usage.add_totals(summary.usage);
+        self.last_turn = Some(summary);
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct TurnSummary {
+    status: Option<AgentRunStatus>,
+    final_response: bool,
+    events: usize,
+    messages: usize,
+    reasoning: usize,
+    command_started: usize,
+    command_updated: usize,
+    command_completed: usize,
+    tool_started: usize,
+    tool_completed: usize,
+    mcp_started: usize,
+    mcp_completed: usize,
+    mcp_sessions: usize,
+    file_changes: usize,
+    patch_completed: usize,
+    todo_updates: usize,
+    approvals: usize,
+    escalations: usize,
+    child_events: usize,
+    warnings: usize,
+    errors: usize,
+    cancelled: usize,
+    usage: UsageTotals,
+}
+
+impl TurnSummary {
+    fn from_result(result: &AgentRunResult) -> Self {
+        let mut summary = Self {
+            status: Some(result.status),
+            final_response: result.final_response.is_some(),
+            events: result.events.len(),
+            ..Self::default()
+        };
+        for event in &result.events {
+            match event {
+                AgentEvent::Message { .. } => summary.messages += 1,
+                AgentEvent::Reasoning { .. } => summary.reasoning += 1,
+                AgentEvent::CommandStarted { .. } => summary.command_started += 1,
+                AgentEvent::CommandUpdated { .. } => summary.command_updated += 1,
+                AgentEvent::CommandCompleted { .. } | AgentEvent::CommandFinished { .. } => {
+                    summary.command_completed += 1;
+                }
+                AgentEvent::ToolCallStarted { .. } => summary.tool_started += 1,
+                AgentEvent::ToolCallCompleted { .. } => summary.tool_completed += 1,
+                AgentEvent::McpToolStarted { .. } => summary.mcp_started += 1,
+                AgentEvent::McpToolCompleted { .. } => summary.mcp_completed += 1,
+                AgentEvent::McpSession { .. } => summary.mcp_sessions += 1,
+                AgentEvent::FileChanged { .. } => summary.file_changes += 1,
+                AgentEvent::PatchCompleted { .. } => summary.patch_completed += 1,
+                AgentEvent::TodoUpdated { .. } => summary.todo_updates += 1,
+                AgentEvent::ApprovalRequested { .. } | AgentEvent::ApprovalCompleted { .. } => {
+                    summary.approvals += 1;
+                }
+                AgentEvent::EscalationRequested { .. } | AgentEvent::EscalationCompleted { .. } => {
+                    summary.escalations += 1;
+                }
+                AgentEvent::ChildAgentEvent { .. }
+                | AgentEvent::ChildScopedStream { .. }
+                | AgentEvent::MultiAgentEvent { .. } => summary.child_events += 1,
+                AgentEvent::Warning { .. } => summary.warnings += 1,
+                AgentEvent::Error { .. } | AgentEvent::ProviderError { .. } => {
+                    summary.errors += 1;
+                }
+                AgentEvent::Cancelled { .. } => summary.cancelled += 1,
+                AgentEvent::Completed { status, usage } => {
+                    summary.status = Some(*status);
+                    if let Some(usage) = usage {
+                        summary.usage.add_usage(*usage);
+                    }
+                }
+                AgentEvent::Started { .. }
+                | AgentEvent::ThreadStarted { .. }
+                | AgentEvent::TurnStarted
+                | AgentEvent::ThreadState { .. }
+                | AgentEvent::TurnMetadata { .. }
+                | AgentEvent::TurnState { .. }
+                | AgentEvent::DeepParityState { .. }
+                | AgentEvent::SandboxAttempt { .. }
+                | AgentEvent::ApprovalCacheState { .. }
+                | AgentEvent::ContextStatus { .. }
+                | AgentEvent::StorageState { .. } => {}
+            }
+        }
+        summary
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct UsageTotals {
+    input_tokens: i64,
+    cached_input_tokens: i64,
+    output_tokens: i64,
+    reasoning_output_tokens: i64,
+}
+
+impl UsageTotals {
+    fn add_usage(&mut self, usage: TokenUsage) {
+        self.input_tokens = self.input_tokens.saturating_add(usage.input_tokens);
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(usage.cached_input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(usage.output_tokens);
+        self.reasoning_output_tokens = self
+            .reasoning_output_tokens
+            .saturating_add(usage.reasoning_output_tokens);
+    }
+
+    fn add_totals(&mut self, other: Self) {
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(other.cached_input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.reasoning_output_tokens = self
+            .reasoning_output_tokens
+            .saturating_add(other.reasoning_output_tokens);
+    }
+
+    fn is_zero(self) -> bool {
+        self.input_tokens == 0
+            && self.cached_input_tokens == 0
+            && self.output_tokens == 0
+            && self.reasoning_output_tokens == 0
+    }
+}
+
+impl std::fmt::Display for UsageTotals {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "input={} cached_input={} output={} reasoning_output={}",
+            self.input_tokens,
+            self.cached_input_tokens,
+            self.output_tokens,
+            self.reasoning_output_tokens
+        )
+    }
+}
+
+fn status_label(status: Option<AgentRunStatus>) -> &'static str {
+    match status {
+        Some(AgentRunStatus::Completed) => "completed",
+        Some(AgentRunStatus::Failed) => "failed",
+        Some(AgentRunStatus::Cancelled) => "cancelled",
+        None => "unknown",
+    }
+}
+
+fn describe_mcp_transport(transport: &McpTransport) -> String {
+    match transport {
+        McpTransport::Stdio { command, args } => {
+            if args.is_empty() {
+                format!("stdio:{command}")
+            } else {
+                format!("stdio:{} {}", command, args.join(" "))
+            }
+        }
+        McpTransport::Http { url } => format!("http:{url}"),
     }
 }
 

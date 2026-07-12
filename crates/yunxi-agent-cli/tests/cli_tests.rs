@@ -76,7 +76,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.3.0"));
+        .stdout(predicate::str::contains("yunxi 1.4.0"));
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.3.0"));
+        .stdout(predicate::str::contains("yunxi 1.4.0"));
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.3.0 interactive CLI",
+            "YunXi Agent v1.4.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
@@ -311,7 +311,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.3.0 interactive CLI",
+            "YunXi Agent v1.4.0 interactive CLI",
         ))
         .stdout(predicate::str::contains(
             "YunXi autonomous runtime accepted prompt: hello from repl",
@@ -319,6 +319,27 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .stdout(predicate::str::contains("session: yunxi-"))
         .stdout(predicate::str::contains("turns: 1"))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn yunxi_interactive_reports_tools_mcp_cost_and_status() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.args(["--offline", "--cwd", cwd])
+        .write_stdin("/tools\n/mcp\n/cost\n/status\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("tools: fixed="))
+        .stdout(predicate::str::contains("[tool] shell"))
+        .stdout(predicate::str::contains("mcp_servers: 0"))
+        .stdout(predicate::str::contains(
+            "mcp_status: no workspace MCP configured",
+        ))
+        .stdout(predicate::str::contains("last_turn_usage: none"))
+        .stdout(predicate::str::contains("last_turn_status: none"))
+        .stdout(predicate::str::contains("observed_events: 0"));
 }
 
 #[test]

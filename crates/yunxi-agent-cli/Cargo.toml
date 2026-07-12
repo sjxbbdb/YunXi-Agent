@@ -28,6 +28,8 @@ yunxi-agent-protocol = { path = "../yunxi-agent-protocol" }
 yunxi-agent-provider = { path = "../yunxi-agent-provider" }
 yunxi-agent-runtime = { path = "../yunxi-agent-runtime" }
 yunxi-agent-storage = { path = "../yunxi-agent-storage" }
+yunxi-agent-tools = { path = "../yunxi-agent-tools" }
+yunxi-agent-mcp = { path = "../yunxi-agent-mcp" }
 
 [dev-dependencies]
 assert_cmd.workspace = true

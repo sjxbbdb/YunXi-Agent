@@ -908,6 +908,52 @@ The v1.3 default CLI remains independent from upstream Codex runtime
 dependencies. This release does not add TUI, desktop app, cloud tasks, update,
 doctor, completion, marketplace, or SDK packaging surfaces.
 
+## YunXi Agent v1.4 Terminal Command Surface Construction
+
+YunXi Agent v1.4 extends the v1.3 interactive terminal runtime with Codex-like
+REPL inspection commands. This slice keeps the default CLI independent from
+upstream Codex runtime dependencies and focuses on user-visible operational
+state inside an active terminal session.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.4.0`.
+- `yunxi` and `yunxi-agent-cli` report `yunxi 1.4.0`.
+- Interactive banner reports `YunXi Agent v1.4.0 interactive CLI`.
+- `/tools` lists YunXi fixed tools and workspace dynamic tools.
+- `/mcp` lists workspace MCP configuration and fixture seed presence without
+  starting MCP servers.
+- `/cost` reports last-turn and session token usage.
+- `/status` reports provider/session status, observed runtime events, last-turn
+  event summary, tool counts, MCP server count, and usage.
+- Interactive turns now keep a compact in-memory summary of event counts,
+  usage, final response presence, warnings, errors, approvals, escalations,
+  child streams, file changes, tools, commands, and MCP activity.
+
+Verified on 2026-07-12:
+
+- `cargo fmt`: pass.
+- `cargo fmt -- --check`: pass.
+- `cargo test`: pass after fixing one compile-time event-summary exhaustiveness
+  gap for `CommandUpdated`; workspace tests and doc tests completed with zero
+  failures.
+- `cargo check --workspace`: pass.
+- `cargo build -p yunxi-agent-cli --release --bins`: pass.
+- release dual binaries: pass; both report `yunxi 1.4.0`.
+- offline one-shot, offline interactive command-surface smoke, offline JSONL,
+  and Stage 4M real parity JSONL smoke: pass.
+- DeepSeek streaming, non-streaming, and interactive live smoke: pass with no
+  detected secret leak.
+- default CLI dependency scan: pass; no `codex-*`, `vendor/codex-rs`, or
+  `yunxi-agent-codex` dependency appeared in the default CLI tree.
+- owned-source secret scan excluding generated and reference trees: pass.
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only.
+- release install and PATH `yunxi --version`: pass; installed binary reports
+  `yunxi 1.4.0` and SHA-256 matches the release binary.
+- `codegraph sync "D:\YunXi Agent"`: pass; 5 changed files synced.
+- Stage 4M temporary `.yunxi/` and `stage4m-runtime.txt` artifacts were removed
+  after path-boundary checks.
+
 ## YunXi Agent v1.2 DeepSeek Default Provider Construction
 
 YunXi Agent v1.2 connects the existing YunXi-owned DeepSeek transport to the

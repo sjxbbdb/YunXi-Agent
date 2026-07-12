@@ -76,7 +76,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.5.0"));
+        .stdout(predicate::str::contains("yunxi 1.6.0"));
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.5.0"));
+        .stdout(predicate::str::contains("yunxi 1.6.0"));
 }
 
 #[test]
@@ -106,6 +106,58 @@ fn cli_prints_dry_run_response() {
     .stdout(predicate::str::contains(
         "YunXi autonomous runtime accepted prompt: explain this project",
     ));
+}
+
+#[test]
+fn cli_auto_offline_one_shot_plain_warns_before_offline_output() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+    let temp = TempDir::new().expect("temp dir");
+
+    cmd.env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("YUNXI_PROVIDER_PROFILE")
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .args([
+            "--cwd",
+            temp.path().to_str().expect("temp path"),
+            "auto offline",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "provider auto mode did not find live credentials",
+        ))
+        .stdout(predicate::str::contains("[offline]"));
+}
+
+#[test]
+fn cli_auto_offline_json_keeps_stdout_structured_and_warns_on_stderr() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+    let temp = TempDir::new().expect("temp dir");
+
+    let output = cmd
+        .env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("YUNXI_PROVIDER_PROFILE")
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .args([
+            "--cwd",
+            temp.path().to_str().expect("temp path"),
+            "--json",
+            "auto offline json",
+        ])
+        .output()
+        .expect("json output");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout utf8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr utf8");
+    let value: Value = serde_json::from_str(&stdout).expect("stdout should be JSON");
+    assert_eq!(value["status"].as_str(), Some("completed"));
+    assert!(stderr.contains("provider auto mode did not find live credentials"));
+    assert!(!stdout.contains("[warning]"));
 }
 
 #[test]
@@ -174,7 +226,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.5.0 interactive CLI",
+            "YunXi Agent v1.6.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -333,7 +385,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.5.0 interactive CLI",
+            "YunXi Agent v1.6.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -514,6 +566,33 @@ fn cli_manages_yunxi_session_lifecycle() {
             .as_array()
             .is_some_and(|children| children.len() >= 2)
     );
+}
+
+#[test]
+fn cli_auto_offline_resume_plain_warns_before_offline_output() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
+
+    let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    run.args(["--offline", "--cwd", cwd, "remember auto resume"])
+        .assert()
+        .success();
+    let session_id = first_session_id(&temp);
+
+    let mut resume = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    resume
+        .env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("YUNXI_PROVIDER_PROFILE")
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .args(["--cwd", cwd, "sessions", "resume", &session_id, "continue"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "provider auto mode did not find live credentials",
+        ))
+        .stdout(predicate::str::contains("[offline]"));
 }
 
 #[test]

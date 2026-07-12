@@ -353,6 +353,54 @@ async fn shell_tool_runtime_declines_write_command_in_read_only_sandbox() {
 }
 
 #[tokio::test]
+async fn shell_tool_runtime_declines_workspace_write_escape_target() {
+    let runtime = ShellToolRuntime;
+    let workspace = TempDir::new().expect("workspace");
+    let outside = TempDir::new().expect("outside");
+    let outside_file = outside.path().join("outside.txt");
+    let config = AgentConfig::new(workspace.path())
+        .with_approval_mode(ApprovalMode::Never)
+        .with_sandbox_mode(SandboxMode::WorkspaceWrite);
+    let command = format!("echo denied > {}", outside_file.display());
+
+    let response = runtime
+        .execute(
+            ToolRequest::shell(workspace.path(), command)
+                .with_policy(ToolPolicy::from_config(&config)),
+        )
+        .await
+        .expect("policy response should succeed");
+
+    assert_eq!(response.status, ToolStatus::Declined);
+    assert!(response.error.as_deref().is_some_and(|error| {
+        error.contains("workspace-write target") && error.contains("outside workspace")
+    }));
+    assert!(!outside_file.exists());
+}
+
+#[tokio::test]
+async fn shell_tool_runtime_allows_trusted_danger_full_access_command() {
+    let runtime = ShellToolRuntime;
+    let workspace = TempDir::new().expect("workspace");
+
+    let response = runtime
+        .execute(ToolRequest::shell(
+            workspace.path(),
+            "echo danger-full-access-ok",
+        ))
+        .await
+        .expect("trusted command should execute");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    assert!(
+        response
+            .output
+            .as_deref()
+            .is_some_and(|output| output.contains("danger-full-access-ok"))
+    );
+}
+
+#[tokio::test]
 async fn patch_tool_writes_updates_and_deletes_files() {
     let runtime = ShellToolRuntime;
     let temp = TempDir::new().expect("temp dir");

@@ -1369,6 +1369,32 @@ impl ProviderByteStreamSink for OpenAiNetworkStreamParser<'_> {
     }
 }
 
+struct CountingByteStreamSink<'a> {
+    inner: &'a mut dyn ProviderByteStreamSink,
+    bytes_seen: usize,
+}
+
+impl<'a> CountingByteStreamSink<'a> {
+    fn new(inner: &'a mut dyn ProviderByteStreamSink) -> Self {
+        Self {
+            inner,
+            bytes_seen: 0,
+        }
+    }
+
+    fn bytes_seen(&self) -> usize {
+        self.bytes_seen
+    }
+}
+
+#[async_trait]
+impl ProviderByteStreamSink for CountingByteStreamSink<'_> {
+    async fn push_bytes(&mut self, chunk: &[u8]) -> AgentResult<()> {
+        self.bytes_seen = self.bytes_seen.saturating_add(chunk.len());
+        self.inner.push_bytes(chunk).await
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenAiTransportProvider<T> {
     provider: OpenAiCompatibleProvider,
@@ -1417,9 +1443,11 @@ where
             true,
         )?;
         let mut parser = OpenAiNetworkStreamParser::new(thread_id, turn_id, sink);
-        let response = self
-            .send_streaming_with_schema_fallback(transport_request, &mut parser)
-            .await?;
+        let response = {
+            let mut counting_sink = CountingByteStreamSink::new(&mut parser);
+            self.send_streaming_with_schema_fallback(transport_request, &mut counting_sink)
+                .await?
+        };
         if !response.is_success() {
             return Err(provider_http_error(&self.provider.config, &response));
         }
@@ -1462,15 +1490,16 @@ where
     async fn send_streaming_with_retries(
         &self,
         request: ProviderTransportRequest,
-        sink: &mut dyn ProviderByteStreamSink,
+        sink: &mut CountingByteStreamSink<'_>,
     ) -> AgentResult<ProviderTransportResponse> {
         let mut attempt = 0usize;
         loop {
             match self.transport.send_streaming(request.clone(), sink).await {
                 Ok(response) => {
-                    if !self
-                        .retry_policy
-                        .should_retry_status(response.status, attempt)
+                    if sink.bytes_seen() > 0
+                        || !self
+                            .retry_policy
+                            .should_retry_status(response.status, attempt)
                     {
                         return Ok(response);
                     }
@@ -1479,9 +1508,10 @@ where
                     sleep_retry_delay(delay).await;
                 }
                 Err(error) => {
-                    if !self
-                        .retry_policy
-                        .should_retry_transport_error(&error, attempt)
+                    if sink.bytes_seen() > 0
+                        || !self
+                            .retry_policy
+                            .should_retry_transport_error(&error, attempt)
                     {
                         return Err(error);
                     }
@@ -1518,11 +1548,14 @@ where
     async fn send_streaming_with_schema_fallback(
         &self,
         request: ProviderTransportRequest,
-        sink: &mut dyn ProviderByteStreamSink,
+        sink: &mut CountingByteStreamSink<'_>,
     ) -> AgentResult<ProviderTransportResponse> {
         let response = self
             .send_streaming_with_retries(request.clone(), sink)
             .await?;
+        if sink.bytes_seen() > 0 {
+            return Ok(response);
+        }
         if !matches!(response.status, 400 | 422)
             || self.provider.config.profile.as_deref() != Some("deepseek")
         {

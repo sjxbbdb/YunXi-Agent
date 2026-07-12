@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use yunxi_agent_core::{AgentConfig, ApprovalMode, SandboxMode};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -75,7 +75,7 @@ impl ExecutionPolicy {
             };
         }
 
-        let decision = self.sandbox_decision_for_cwd(cwd, risk);
+        let decision = self.sandbox_decision_for_cwd(cwd, command, risk);
         let escalation_request =
             escalation_request_for_decision(&decision, command, cwd, risk, self.sandbox);
         PolicyEvaluation {
@@ -87,7 +87,12 @@ impl ExecutionPolicy {
         }
     }
 
-    fn sandbox_decision_for_cwd(&self, cwd: &Path, risk: CommandRisk) -> PolicyDecision {
+    fn sandbox_decision_for_cwd(
+        &self,
+        cwd: &Path,
+        command: Option<&str>,
+        risk: CommandRisk,
+    ) -> PolicyDecision {
         match self.sandbox {
             SandboxRequirement::ReadOnly if risk.requires_write_access() => {
                 PolicyDecision::Blocked {
@@ -96,17 +101,23 @@ impl ExecutionPolicy {
             }
             SandboxRequirement::ReadOnly => PolicyDecision::Allowed,
             SandboxRequirement::WorkspaceWrite => {
-                if is_within_workspace(&self.workspace_root, cwd) {
-                    PolicyDecision::Allowed
-                } else {
-                    PolicyDecision::Blocked {
+                if !is_within_workspace(&self.workspace_root, cwd) {
+                    return PolicyDecision::Blocked {
                         reason: format!(
                             "cwd {} is outside workspace {}",
                             cwd.display(),
                             self.workspace_root.display()
                         ),
+                    };
+                }
+                if let Some(command) = command {
+                    if let Some(reason) =
+                        workspace_write_target_denial(&self.workspace_root, cwd, command)
+                    {
+                        return PolicyDecision::Blocked { reason };
                     }
                 }
+                PolicyDecision::Allowed
             }
             SandboxRequirement::DangerFullAccess => PolicyDecision::Allowed,
         }
@@ -173,6 +184,30 @@ pub enum CommandRisk {
 
 impl CommandRisk {
     pub fn classify(command: &str) -> Self {
+        let tokens = shell_tokens(command);
+        let lower_tokens = tokens
+            .iter()
+            .map(|token| token.to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        if tokenized_destructive(&lower_tokens) {
+            return Self::Destructive;
+        }
+        if tokenized_process_control(&lower_tokens) {
+            return Self::ProcessControl;
+        }
+        if tokenized_credential_access(&lower_tokens) {
+            return Self::CredentialAccess;
+        }
+        if tokenized_network(&lower_tokens) {
+            return Self::Network;
+        }
+        if tokenized_write(&lower_tokens) {
+            return Self::WritesWorkspace;
+        }
+        if tokenized_read(&lower_tokens) {
+            return Self::ReadsWorkspace;
+        }
+
         let lower = command.to_ascii_lowercase();
         if contains_any(
             &lower,
@@ -378,6 +413,90 @@ impl SandboxAttemptRecord {
             ),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommandTarget {
+    pub raw: String,
+    pub kind: CommandTargetKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandTargetKind {
+    Read,
+    Write,
+    Delete,
+}
+
+pub fn extract_command_targets(command: &str) -> Vec<CommandTarget> {
+    let tokens = shell_tokens(command);
+    let lower_tokens = tokens
+        .iter()
+        .map(|token| token.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let mut targets = Vec::new();
+
+    for (index, token) in lower_tokens.iter().enumerate() {
+        match token.as_str() {
+            ">" | ">>" => {
+                if let Some(raw) = next_positional_token(&tokens, index + 1) {
+                    targets.push(CommandTarget {
+                        raw,
+                        kind: CommandTargetKind::Write,
+                    });
+                }
+            }
+            "out-file" => push_named_or_positional_target(
+                &tokens,
+                &lower_tokens,
+                index,
+                &["-filepath", "-literalpath", "-path"],
+                CommandTargetKind::Write,
+                &mut targets,
+            ),
+            "set-content" | "add-content" | "new-item" | "touch" | "mkdir" => {
+                push_named_or_positional_target(
+                    &tokens,
+                    &lower_tokens,
+                    index,
+                    &["-path", "-literalpath", "-filepath"],
+                    CommandTargetKind::Write,
+                    &mut targets,
+                );
+            }
+            "copy" | "cp" | "copy-item" | "move" | "mv" | "move-item" => {
+                if let Some(raw) =
+                    named_target_after(&tokens, &lower_tokens, index, &["-destination", "-to"])
+                        .or_else(|| last_positional_after(&tokens, index + 1))
+                {
+                    targets.push(CommandTarget {
+                        raw,
+                        kind: CommandTargetKind::Write,
+                    });
+                }
+            }
+            "remove-item" | "rm" | "del" | "erase" | "rmdir" | "rd" => {
+                if let Some(raw) =
+                    named_target_after(&tokens, &lower_tokens, index, &["-path", "-literalpath"])
+                {
+                    targets.push(CommandTarget {
+                        raw,
+                        kind: CommandTargetKind::Delete,
+                    });
+                } else {
+                    for raw in positional_tokens_after(&tokens, index + 1) {
+                        targets.push(CommandTarget {
+                            raw,
+                            kind: CommandTargetKind::Delete,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    targets
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -620,6 +739,326 @@ fn platform_name() -> &'static str {
     }
 }
 
+fn shell_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if let Some(quote_char) = quote {
+            if ch == quote_char {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '>' | '<' => {
+                push_current_token(&mut tokens, &mut current);
+                let mut redirect = ch.to_string();
+                if chars.peek().copied() == Some(ch) {
+                    redirect.push(chars.next().expect("peeked redirect"));
+                }
+                tokens.push(redirect);
+            }
+            ';' | '|' | '&' | '(' | ')' | '{' | '}' | '\r' | '\n' | '\t' | ' ' => {
+                push_current_token(&mut tokens, &mut current);
+            }
+            _ => current.push(ch),
+        }
+    }
+    push_current_token(&mut tokens, &mut current);
+    tokens
+}
+
+fn push_current_token(tokens: &mut Vec<String>, current: &mut String) {
+    if !current.is_empty() {
+        tokens.push(std::mem::take(current));
+    }
+}
+
+fn tokenized_destructive(tokens: &[String]) -> bool {
+    tokens
+        .iter()
+        .enumerate()
+        .any(|(index, token)| match token.as_str() {
+            "format" | "erase" => true,
+            "remove-item" => {
+                has_any_token(tokens, index + 1, &["-recurse", "-r"])
+                    || has_any_token(tokens, index + 1, &["-force", "-f"])
+                    || next_positional_token(tokens, index + 1).is_some()
+            }
+            "rm" => {
+                has_rm_recursive_force(tokens, index + 1)
+                    || tokens
+                        .iter()
+                        .skip(index + 1)
+                        .any(|candidate| matches!(candidate.as_str(), "-rf" | "-fr"))
+            }
+            "del" | "rmdir" | "rd" => has_any_token(tokens, index + 1, &["/s", "-s"]),
+            _ => false,
+        })
+}
+
+fn tokenized_process_control(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "taskkill" | "kill" | "pkill" | "stop-process" | "shutdown" | "restart-computer"
+        )
+    })
+}
+
+fn tokenized_credential_access(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        token.contains("api_key")
+            || token.contains("apikey")
+            || token.contains("password")
+            || token.contains("passwd")
+            || token.contains("token")
+            || token.contains("credential")
+            || token.contains("secret")
+            || token.ends_with(".env")
+            || token.ends_with("id_rsa")
+            || token.ends_with("credentials")
+    })
+}
+
+fn tokenized_network(tokens: &[String]) -> bool {
+    tokens.iter().enumerate().any(|(index, token)| {
+        matches!(
+            token.as_str(),
+            "curl" | "wget" | "invoke-webrequest" | "invoke-restmethod" | "irm"
+        ) || matches!(token.as_str(), "npm" | "cargo" | "pip")
+            && tokens.get(index + 1).is_some_and(|next| next == "install")
+    })
+}
+
+fn tokenized_write(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            ">" | ">>"
+                | "copy"
+                | "cp"
+                | "mv"
+                | "move"
+                | "copy-item"
+                | "move-item"
+                | "new-item"
+                | "set-content"
+                | "out-file"
+                | "add-content"
+                | "touch"
+                | "mkdir"
+                | "apply_patch"
+        )
+    })
+}
+
+fn tokenized_read(tokens: &[String]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "cat" | "type" | "get-content" | "rg" | "ripgrep" | "findstr"
+        )
+    })
+}
+
+fn has_rm_recursive_force(tokens: &[String], start: usize) -> bool {
+    let mut recursive = false;
+    let mut force = false;
+    for token in tokens.iter().skip(start) {
+        if !token.starts_with('-') {
+            continue;
+        }
+        recursive |= token == "-r" || token == "-R" || token == "--recursive";
+        force |= token == "-f" || token == "--force";
+        if token.starts_with('-') && token.contains('r') && token.contains('f') {
+            recursive = true;
+            force = true;
+        }
+    }
+    recursive && force
+}
+
+fn has_any_token(tokens: &[String], start: usize, needles: &[&str]) -> bool {
+    tokens
+        .iter()
+        .skip(start)
+        .any(|token| needles.iter().any(|needle| token == needle))
+}
+
+fn push_named_or_positional_target(
+    tokens: &[String],
+    lower_tokens: &[String],
+    command_index: usize,
+    names: &[&str],
+    kind: CommandTargetKind,
+    targets: &mut Vec<CommandTarget>,
+) {
+    if let Some(raw) = named_target_after(tokens, lower_tokens, command_index, names)
+        .or_else(|| next_positional_token(tokens, command_index + 1))
+    {
+        targets.push(CommandTarget { raw, kind });
+    }
+}
+
+fn named_target_after(
+    tokens: &[String],
+    lower_tokens: &[String],
+    command_index: usize,
+    names: &[&str],
+) -> Option<String> {
+    lower_tokens
+        .iter()
+        .enumerate()
+        .skip(command_index + 1)
+        .find_map(|(index, token)| {
+            names
+                .iter()
+                .any(|name| token == name)
+                .then(|| next_positional_token(tokens, index + 1))
+                .flatten()
+        })
+}
+
+fn next_positional_token(tokens: &[String], start: usize) -> Option<String> {
+    tokens
+        .iter()
+        .skip(start)
+        .find(|token| !is_option_like(token))
+        .map(|token| clean_target_token(token))
+        .filter(|token| !token.is_empty())
+}
+
+fn last_positional_after(tokens: &[String], start: usize) -> Option<String> {
+    tokens
+        .iter()
+        .skip(start)
+        .filter(|token| !is_option_like(token))
+        .map(|token| clean_target_token(token))
+        .filter(|token| !token.is_empty())
+        .last()
+}
+
+fn positional_tokens_after(tokens: &[String], start: usize) -> Vec<String> {
+    tokens
+        .iter()
+        .skip(start)
+        .filter(|token| !is_option_like(token))
+        .map(|token| clean_target_token(token))
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+fn is_option_like(token: &str) -> bool {
+    token.starts_with('-')
+        || (cfg!(windows)
+            && token.starts_with('/')
+            && !token.contains('\\')
+            && !token.contains(':'))
+}
+
+fn clean_target_token(token: &str) -> String {
+    token
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim_end_matches(';')
+        .to_string()
+}
+
+fn workspace_write_target_denial(root: &Path, cwd: &Path, command: &str) -> Option<String> {
+    extract_command_targets(command)
+        .into_iter()
+        .find(|target| {
+            matches!(
+                target.kind,
+                CommandTargetKind::Write | CommandTargetKind::Delete
+            ) && !target_within_workspace(root, cwd, &target.raw)
+        })
+        .map(|target| {
+            format!(
+                "workspace-write target {} is outside workspace {}",
+                target.raw,
+                root.display()
+            )
+        })
+}
+
+fn target_within_workspace(root: &Path, cwd: &Path, raw: &str) -> bool {
+    let raw = clean_target_token(raw);
+    if raw.is_empty() || raw == "-" {
+        return true;
+    }
+    let root = absolute_normalized(root);
+    let cwd = absolute_normalized(cwd);
+    let target = PathBuf::from(raw);
+    let target = if target.is_absolute() {
+        normalize_components(&target)
+    } else {
+        normalize_components(&cwd.join(target))
+    };
+    path_has_prefix(&target, &root)
+}
+
+fn absolute_normalized(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        };
+        normalize_components(&absolute)
+    })
+}
+
+fn normalize_components(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(part) => normalized.push(part),
+        }
+    }
+    normalized
+}
+
+fn path_has_prefix(path: &Path, root: &Path) -> bool {
+    let path_components = comparable_components(path);
+    let root_components = comparable_components(root);
+    path_components.len() >= root_components.len()
+        && path_components
+            .iter()
+            .zip(root_components.iter())
+            .all(|(left, right)| left == right)
+}
+
+fn comparable_components(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|component| {
+            let value = component.as_os_str().to_string_lossy().to_string();
+            if cfg!(windows) {
+                value.to_ascii_lowercase()
+            } else {
+                value
+            }
+        })
+        .collect()
+}
+
 fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
 }
@@ -701,6 +1140,18 @@ mod tests {
             CommandRisk::Destructive
         );
         assert_eq!(
+            CommandRisk::classify("rm  -rf target"),
+            CommandRisk::Destructive
+        );
+        assert_eq!(
+            CommandRisk::classify("rm -r -f target"),
+            CommandRisk::Destructive
+        );
+        assert_eq!(
+            CommandRisk::classify("Remove-Item -Recurse -Force target"),
+            CommandRisk::Destructive
+        );
+        assert_eq!(
             CommandRisk::classify("curl https://example.test"),
             CommandRisk::Network
         );
@@ -715,6 +1166,32 @@ mod tests {
         assert_eq!(
             CommandRisk::classify("cat .env"),
             CommandRisk::CredentialAccess
+        );
+        assert_eq!(CommandRisk::classify("echo harmless"), CommandRisk::Low);
+    }
+
+    #[test]
+    fn extracts_common_write_and_delete_targets() {
+        assert_eq!(
+            extract_command_targets("echo hi > inside.txt"),
+            vec![CommandTarget {
+                raw: "inside.txt".to_string(),
+                kind: CommandTargetKind::Write
+            }]
+        );
+        assert_eq!(
+            extract_command_targets("Set-Content -Path notes.txt -Value hi"),
+            vec![CommandTarget {
+                raw: "notes.txt".to_string(),
+                kind: CommandTargetKind::Write
+            }]
+        );
+        assert_eq!(
+            extract_command_targets("Remove-Item -Recurse -Force ..\\outside.txt"),
+            vec![CommandTarget {
+                raw: "..\\outside.txt".to_string(),
+                kind: CommandTargetKind::Delete
+            }]
         );
     }
 
@@ -806,6 +1283,45 @@ mod tests {
                 .required_sandbox,
             Some(SandboxRequirement::DangerFullAccess)
         );
+    }
+
+    #[test]
+    fn workspace_write_blocks_obvious_outside_targets() {
+        let workspace = TempDir::new().expect("workspace");
+        let policy = ExecutionPolicy {
+            approval: ApprovalRequirement::PreApproved,
+            sandbox: SandboxRequirement::WorkspaceWrite,
+            network: NetworkPolicy::Inherit,
+            workspace_root: workspace.path().to_path_buf(),
+        };
+
+        let parent_escape = policy.evaluate(workspace.path(), Some("echo hi > ..\\outside.txt"));
+        assert!(matches!(
+            parent_escape.decision,
+            PolicyDecision::Blocked { ref reason }
+                if reason.contains("workspace-write target")
+                    && reason.contains("outside workspace")
+        ));
+
+        let absolute_outside = if cfg!(windows) {
+            "echo hi > C:\\Temp\\outside.txt"
+        } else {
+            "echo hi > /tmp/outside.txt"
+        };
+        let absolute = policy.evaluate(workspace.path(), Some(absolute_outside));
+        assert!(matches!(
+            absolute.decision,
+            PolicyDecision::Blocked { ref reason }
+                if reason.contains("workspace-write target")
+                    && reason.contains("outside workspace")
+        ));
+
+        assert!(matches!(
+            policy
+                .evaluate(workspace.path(), Some("echo hi > inside.txt"))
+                .decision,
+            PolicyDecision::Allowed
+        ));
     }
 
     #[test]

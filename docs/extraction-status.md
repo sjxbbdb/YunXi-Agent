@@ -1276,6 +1276,34 @@ sandbox attempt records, tools, MCP reuse, skills, child scoped streams,
 storage, protocol JSONL, and 12-layer deep parity summaries while keeping the
 default CLI independent from upstream Codex runtime dependencies.
 
+## YunXi Agent v1.6 Policy Guard Hardening Construction
+
+YunXi Agent v1.6 promotes the v1.5 policy-guard honesty work into stronger
+process-internal enforcement. The release still does not claim OS-level sandbox
+isolation, but the default shell tool path no longer bypasses the configured
+`ToolPolicy` with trusted `DangerFullAccess`.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.6.0`.
+- One-shot, JSON, JSONL, and `sessions resume` paths now surface the same auto
+  provider fallback warning as interactive mode when no live credentials are
+  configured.
+- `yunxi-agent-tools` passes the request `ToolPolicy.execution_policy` into
+  `ExecCommand::shell` for default shell execution.
+- `yunxi-agent-sandbox` adds shell-ish tokenization, token-aware command risk
+  classification, command target extraction, and workspace-write target escape
+  blocking for common redirection/copy/move/delete/write forms.
+- `yunxi-agent-provider` prevents streaming retry and DeepSeek schema fallback
+  after body bytes have reached the stream parser, avoiding duplicated stream
+  events after partial output.
+- The unused non-Windows `platform_shell` helper in `yunxi-agent-tools` was
+  removed so cross-target compilation no longer depends on a dead missing
+  import.
+
+Verification for this slice is recorded in the v1.6 development report after
+the unified verification gate completes.
+
 ## YunXi Agent v1.0 CLI Packaging
 
 YunXi Agent v1.0 packages the current verified autonomous runtime as a

@@ -999,12 +999,14 @@ impl ToolRuntime for ShellToolRuntime {
             return Ok(response);
         }
 
+        let policy = request.policy.clone();
         let response = match request.kind {
             ToolRequestKind::Shell { command } => {
                 run_shell(
                     request.id,
                     request.cwd,
                     command,
+                    policy,
                     control.cancellation_token(),
                 )
                 .await
@@ -1205,10 +1207,12 @@ async fn run_shell(
     id: Option<String>,
     cwd: PathBuf,
     command: String,
+    policy: ToolPolicy,
     cancellation_token: yunxi_agent_core::AgentCancellationToken,
 ) -> AgentResult<ToolResponse> {
     let before = WorkspaceSnapshot::capture(&cwd)?;
-    let exec_command = ExecCommand::observed_shell(cwd.clone(), command).with_id(id.clone());
+    let exec_command = ExecCommand::shell(cwd.clone(), command, policy.execution_policy.clone())
+        .with_id(id.clone());
     let exec_trace = ExecManager::default()
         .run_with_cancellation(exec_command, cancellation_token)
         .await?;
@@ -1784,13 +1788,6 @@ fn collect_file_matches(
         }
     }
     Ok(())
-}
-
-#[cfg(not(windows))]
-fn platform_shell(command: &str) -> Command {
-    let mut process = Command::new("sh");
-    process.args(["-c", command]);
-    process
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

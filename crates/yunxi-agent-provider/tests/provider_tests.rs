@@ -11,8 +11,8 @@ use yunxi_agent_provider::{
     AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiStreamAccumulator,
     OpenAiTransportProvider, ProviderAuth, ProviderBootstrap, ProviderByteStreamSink,
     ProviderConfig, ProviderMessage, ProviderRequest, ProviderRetryPolicy, ProviderRole,
-    ProviderSseDecoder, ProviderToolCall, ProviderTransport, ProviderTransportRequest,
-    ProviderTransportResponse, StaticProvider, build_openai_request_json,
+    ProviderSseDecoder, ProviderStreamEventSink, ProviderToolCall, ProviderTransport,
+    ProviderTransportRequest, ProviderTransportResponse, StaticProvider, build_openai_request_json,
     build_openai_stream_request_json, build_openai_transport_request, parse_openai_response_json,
     parse_openai_stream_events, redact_sensitive_text,
 };
@@ -117,6 +117,62 @@ impl ProviderTransport for ChunkedStreamingTransport {
             200,
             String::from_utf8_lossy(&body).into_owned(),
         ))
+    }
+}
+
+#[derive(Clone)]
+struct ErrorAfterFirstStreamingChunkTransport {
+    attempts: Arc<Mutex<usize>>,
+}
+
+impl ErrorAfterFirstStreamingChunkTransport {
+    fn new() -> Self {
+        Self {
+            attempts: Arc::new(Mutex::new(0)),
+        }
+    }
+
+    fn attempts(&self) -> usize {
+        *self.attempts.lock().expect("attempt lock")
+    }
+}
+
+#[async_trait::async_trait]
+impl ProviderTransport for ErrorAfterFirstStreamingChunkTransport {
+    async fn send(
+        &self,
+        _request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse> {
+        Ok(ProviderTransportResponse::new(200, ""))
+    }
+
+    async fn send_streaming(
+        &self,
+        _request: ProviderTransportRequest,
+        sink: &mut dyn ProviderByteStreamSink,
+    ) -> AgentResult<ProviderTransportResponse> {
+        *self.attempts.lock().expect("attempt lock") += 1;
+        sink.push_bytes(b"data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n")
+            .await?;
+        Err(AgentError::Provider {
+            provider: "fixture".to_string(),
+            status: None,
+            classification: "network".to_string(),
+            message: "fixture stream disconnected".to_string(),
+        })
+    }
+}
+
+#[derive(Default)]
+struct CollectingStreamEventSink {
+    events: Vec<StreamEvent>,
+}
+
+#[async_trait::async_trait]
+impl ProviderStreamEventSink for CollectingStreamEventSink {
+    async fn emit(&mut self, event: StreamEvent) -> AgentResult<()> {
+        self.events.push(event);
+        Ok(())
     }
 }
 
@@ -898,6 +954,91 @@ async fn streaming_transport_pushes_network_chunks_incrementally() {
             ..
         }
     )));
+}
+
+#[tokio::test]
+async fn streaming_retries_429_before_body_starts() {
+    let transport = SequenceTransport::new([
+        ProviderTransportResponse::new(429, r#"{"error":"slow down"}"#)
+            .with_header("retry-after", "0"),
+        ProviderTransportResponse::new(
+            200,
+            "data: {\"choices\":[{\"delta\":{\"content\":\"retried\"},\"finish_reason\":\"stop\"}]}\n\n",
+        ),
+    ]);
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model"),
+        ProviderAuth::None,
+        transport.clone(),
+    )
+    .with_retry_policy(ProviderRetryPolicy::new(2).with_base_delay_millis(0));
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("stream retry"),
+    );
+
+    let events = provider
+        .stream_events(request, "thread-retry", "turn-retry")
+        .await
+        .expect("stream retry");
+
+    assert_eq!(transport.requests().len(), 2);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::MessageContent { delta, .. },
+            ..
+        } if delta == "retried"
+    )));
+}
+
+#[tokio::test]
+async fn streaming_does_not_retry_after_body_started() {
+    let transport = ErrorAfterFirstStreamingChunkTransport::new();
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model"),
+        ProviderAuth::None,
+        transport.clone(),
+    )
+    .with_retry_policy(ProviderRetryPolicy::new(3).with_base_delay_millis(0));
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("stream disconnect"),
+    );
+    let mut sink = CollectingStreamEventSink::default();
+
+    let error = provider
+        .stream_events_with_sink(
+            request,
+            "thread-disconnect",
+            "turn-disconnect",
+            Some(&mut sink),
+        )
+        .await
+        .expect_err("stream disconnect should not retry");
+
+    assert!(matches!(
+        error,
+        AgentError::Provider {
+            classification,
+            ..
+        } if classification == "network"
+    ));
+    assert_eq!(transport.attempts(), 1);
+    let first_deltas = sink
+        .events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                StreamEvent::ItemDelta {
+                    delta: ResponseItemDelta::MessageContent { delta, .. },
+                    ..
+                } if delta == "first"
+            )
+        })
+        .count();
+    assert_eq!(first_deltas, 1);
 }
 
 #[test]

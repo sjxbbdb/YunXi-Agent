@@ -56,7 +56,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.5.0 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.6.0 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -305,8 +305,36 @@ async fn run_cli() -> Result<()> {
     let selection = provider_mode.resolve(backend, &config)?;
     let config = selection.apply_to_config(config);
     let offline_label = selection.is_offline_runtime();
+    print_provider_selection_warning(&selection, cli.json, cli.jsonl)?;
     let result = run_agent_backend(backend, config, prompt, selection.live).await?;
     print_run_result(result, cli.json, cli.jsonl, offline_label)?;
+    Ok(())
+}
+
+fn print_provider_selection_warning(
+    selection: &provider_mode::ProviderSelection,
+    json: bool,
+    jsonl: bool,
+) -> Result<()> {
+    let Some(warning) = selection.auto_fallback_warning() else {
+        return Ok(());
+    };
+    let warning = redact_secret_fragments(warning);
+    if jsonl {
+        let message = warning.trim_start_matches("[warning] ").to_string();
+        println!(
+            "{}",
+            to_jsonl_line(&RuntimeEvent::Error {
+                thread_id: Some(ThreadId("cli-thread".to_string())),
+                turn_id: Some(TurnId("cli-turn".to_string())),
+                message,
+            })?
+        );
+    } else if json {
+        eprintln!("{warning}");
+    } else {
+        println!("{warning}");
+    }
     Ok(())
 }
 
@@ -1220,6 +1248,7 @@ async fn run_session_command(
             let resume_prompt = build_resume_prompt(&prompt.join(" "));
             let selection = provider_mode.resolve(backend, &resume_config)?;
             let resume_config = selection.apply_to_config(resume_config);
+            print_provider_selection_warning(&selection, json, jsonl)?;
             let result =
                 run_agent_backend(backend, resume_config, resume_prompt, selection.live).await?;
             print_run_result(result, json, jsonl, selection.is_offline_runtime())?;

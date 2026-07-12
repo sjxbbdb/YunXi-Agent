@@ -1,6 +1,10 @@
+use crate::input::InteractiveInput;
 use anyhow::Result;
 use std::io::{self, Write};
-use yunxi_agent_core::{AgentEvent, AgentRunResult, AgentRunStatus, CommandStatus};
+use yunxi_agent_core::{
+    AgentEvent, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunResult, AgentRunStatus,
+    AgentRunUserInputRequest, AgentRunUserInputResponse, CommandStatus,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct InteractiveBanner {
@@ -15,7 +19,19 @@ pub(crate) struct InteractiveBanner {
 pub(crate) trait InteractiveRenderer {
     fn banner(&mut self, banner: &InteractiveBanner) -> Result<()>;
     fn warning(&mut self, message: &str) -> Result<()>;
+    fn notice(&mut self, label: &str, message: &str) -> Result<()>;
+    fn clear(&mut self) -> Result<()>;
     fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()>;
+    fn approval_request(
+        &mut self,
+        request: AgentRunApprovalRequest,
+        input: &mut dyn InteractiveInput,
+    ) -> Result<()>;
+    fn user_input_request(
+        &mut self,
+        request: AgentRunUserInputRequest,
+        input: &mut dyn InteractiveInput,
+    ) -> Result<()>;
     fn error(&mut self, message: &str) -> Result<()>;
 }
 
@@ -33,8 +49,35 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
         Ok(())
     }
 
+    fn notice(&mut self, _label: &str, message: &str) -> Result<()> {
+        println!("{message}");
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        print!("\x1b[2J\x1b[H");
+        io::stdout().flush()?;
+        Ok(())
+    }
+
     fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()> {
         render_agent_event(event, state)
+    }
+
+    fn approval_request(
+        &mut self,
+        request: AgentRunApprovalRequest,
+        input: &mut dyn InteractiveInput,
+    ) -> Result<()> {
+        respond_to_approval_request(request, input)
+    }
+
+    fn user_input_request(
+        &mut self,
+        request: AgentRunUserInputRequest,
+        input: &mut dyn InteractiveInput,
+    ) -> Result<()> {
+        respond_to_user_input_request(request, input)
     }
 
     fn error(&mut self, message: &str) -> Result<()> {
@@ -44,7 +87,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.7.0 interactive CLI");
+    println!("YunXi Agent v1.7.1 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -91,16 +134,23 @@ impl RenderState {
             content.to_string()
         }
     }
+
+    pub(crate) fn observe_assistant_content(&mut self, content: &str) -> Option<String> {
+        self.saw_assistant_message = true;
+        let rendered = self.render_assistant_content(content);
+        if self.last_assistant_message.as_deref() == Some(rendered.as_str()) {
+            return None;
+        }
+        self.last_assistant_message = Some(rendered.clone());
+        Some(rendered)
+    }
 }
 
 pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) -> Result<()> {
     match event {
         AgentEvent::Message { content } => {
-            state.saw_assistant_message = true;
-            let rendered = state.render_assistant_content(content);
-            if state.last_assistant_message.as_deref() != Some(rendered.as_str()) {
+            if let Some(rendered) = state.observe_assistant_content(content) {
                 println!("{rendered}");
-                state.last_assistant_message = Some(rendered);
             }
         }
         AgentEvent::Reasoning { content } => {
@@ -360,6 +410,49 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
         }
     }
     io::stdout().flush()?;
+    Ok(())
+}
+
+fn respond_to_approval_request(
+    request: AgentRunApprovalRequest,
+    input: &mut dyn InteractiveInput,
+) -> Result<()> {
+    println!(
+        "[approval] {} requires approval in {}",
+        request.tool_name, request.cwd
+    );
+    if let Some(command) = &request.command {
+        println!("[approval] command: {command}");
+    }
+    println!("[approval] reason: {}", request.reason);
+    let line = input
+        .read_response("approve? y/N: ")?
+        .unwrap_or_default();
+    let approved = matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes" | "approve" | "approved"
+    );
+    let reason = if approved {
+        Some("approved by YunXi interactive CLI".to_string())
+    } else {
+        Some("declined by YunXi interactive CLI".to_string())
+    };
+    let _ = request
+        .respond_to
+        .send(AgentRunApprovalDecision { approved, reason });
+    Ok(())
+}
+
+fn respond_to_user_input_request(
+    request: AgentRunUserInputRequest,
+    input: &mut dyn InteractiveInput,
+) -> Result<()> {
+    let value = input
+        .read_response(&format!("{} ", request.prompt))?
+        .unwrap_or_default();
+    let _ = request.respond_to.send(AgentRunUserInputResponse {
+        value: Some(value),
+    });
     Ok(())
 }
 

@@ -23,7 +23,6 @@ anyhow.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
-reedline.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
@@ -33,6 +32,7 @@ yunxi-agent-runtime = { path = "../yunxi-agent-runtime" }
 yunxi-agent-storage = { path = "../yunxi-agent-storage" }
 yunxi-agent-tools = { path = "../yunxi-agent-tools" }
 yunxi-agent-mcp = { path = "../yunxi-agent-mcp" }
+yunxi-agent-tui = { path = "../yunxi-agent-tui" }
 
 [dev-dependencies]
 assert_cmd.workspace = true

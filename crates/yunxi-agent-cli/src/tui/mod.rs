@@ -1,85 +1,151 @@
+use crate::input::InteractiveInput;
 use crate::render::{InteractiveBanner, InteractiveRenderer, RenderState};
-use crate::tui::app::TuiApp;
-use crate::tui::render::render_tui_frame;
 use anyhow::Result;
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+use std::cell::RefCell;
+use std::rc::Rc;
+use yunxi_agent_core::{
+    AgentEvent, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunUserInputRequest,
+    AgentRunUserInputResponse,
 };
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
-use std::io::{self, Stdout};
-use yunxi_agent_core::AgentEvent;
+use yunxi_agent_tui::{ApprovalRequestView, UserInputRequestView, YunxiTui, YunxiTuiBanner};
 
-pub(crate) struct TuiInteractiveRenderer {
-    terminal: Terminal<CrosstermBackend<Stdout>>,
-    app: Option<TuiApp>,
-    _guard: TerminalGuard,
+#[derive(Clone)]
+pub(crate) struct TuiHandle {
+    inner: Rc<RefCell<YunxiTui>>,
 }
 
-impl TuiInteractiveRenderer {
-    pub(crate) fn new() -> Result<Self> {
-        let guard = TerminalGuard::enter()?;
-        let backend = CrosstermBackend::new(io::stdout());
-        let terminal = Terminal::new(backend)?;
+impl TuiHandle {
+    pub(crate) fn enter() -> Result<Self> {
         Ok(Self {
-            terminal,
-            app: None,
-            _guard: guard,
+            inner: Rc::new(RefCell::new(YunxiTui::enter()?)),
         })
     }
 
-    fn draw(&mut self) -> Result<()> {
-        if let Some(app) = &self.app {
-            self.terminal
-                .draw(|frame| render_tui_frame(frame, app))
-                .map(|_| ())?;
-        }
-        Ok(())
+    fn with_mut<T>(&self, f: impl FnOnce(&mut YunxiTui) -> Result<T>) -> Result<T> {
+        let mut tui = self.inner.borrow_mut();
+        f(&mut tui)
+    }
+}
+
+pub(crate) struct TuiInput {
+    handle: TuiHandle,
+}
+
+impl TuiInput {
+    pub(crate) fn new(handle: TuiHandle) -> Self {
+        Self { handle }
+    }
+}
+
+impl InteractiveInput for TuiInput {
+    fn read_prompt(&mut self, prompt: &str) -> Result<Option<String>> {
+        self.handle.with_mut(|tui| tui.read_prompt(prompt))
+    }
+
+    fn read_response(&mut self, prompt: &str) -> Result<Option<String>> {
+        let response = self
+            .handle
+            .with_mut(|tui| {
+                tui.request_user_input(UserInputRequestView {
+                    id: None,
+                    prompt: prompt.trim().to_string(),
+                })
+            })?;
+        Ok(response.value)
+    }
+
+    fn print_eof_message(&self) -> bool {
+        false
+    }
+}
+
+pub(crate) struct TuiInteractiveRenderer {
+    handle: TuiHandle,
+}
+
+impl TuiInteractiveRenderer {
+    pub(crate) fn new(handle: TuiHandle) -> Self {
+        Self { handle }
     }
 }
 
 impl InteractiveRenderer for TuiInteractiveRenderer {
     fn banner(&mut self, banner: &InteractiveBanner) -> Result<()> {
-        self.app = Some(TuiApp::from_banner(banner));
-        self.draw()
+        self.handle.with_mut(|tui| {
+            tui.set_banner(YunxiTuiBanner {
+                cwd: banner.cwd.clone(),
+                backend: banner.backend.clone(),
+                provider_live: banner.provider_live,
+                provider_source: banner.provider_source.clone(),
+                model: banner.model.clone(),
+                provider: banner.provider.clone(),
+            })
+        })
     }
 
     fn warning(&mut self, message: &str) -> Result<()> {
-        if let Some(app) = &mut self.app {
-            app.push_warning(message);
-        }
-        self.draw()
+        self.handle.with_mut(|tui| tui.push_warning(message))
     }
 
-    fn event(&mut self, event: &AgentEvent, _state: &mut RenderState) -> Result<()> {
-        if let Some(app) = &mut self.app {
-            app.push_event(event);
+    fn notice(&mut self, label: &str, message: &str) -> Result<()> {
+        self.handle.with_mut(|tui| tui.push_notice(label, message))
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        self.handle.with_mut(YunxiTui::clear_transcript)
+    }
+
+    fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()> {
+        if let AgentEvent::Message { content } = event {
+            if let Some(rendered) = state.observe_assistant_content(content) {
+                return self
+                    .handle
+                    .with_mut(|tui| tui.push_assistant(&rendered));
+            }
+            return Ok(());
         }
-        self.draw()
+        self.handle.with_mut(|tui| tui.push_agent_event(event))
+    }
+
+    fn approval_request(
+        &mut self,
+        request: AgentRunApprovalRequest,
+        _input: &mut dyn InteractiveInput,
+    ) -> Result<()> {
+        let decision = self.handle.with_mut(|tui| {
+            tui.request_approval(ApprovalRequestView {
+                id: request.id.clone(),
+                tool_name: request.tool_name.clone(),
+                cwd: request.cwd.clone(),
+                command: request.command.clone(),
+                reason: request.reason.clone(),
+            })
+        })?;
+        let _ = request.respond_to.send(AgentRunApprovalDecision {
+            approved: decision.approved,
+            reason: decision.reason,
+        });
+        Ok(())
+    }
+
+    fn user_input_request(
+        &mut self,
+        request: AgentRunUserInputRequest,
+        _input: &mut dyn InteractiveInput,
+    ) -> Result<()> {
+        let response = self.handle.with_mut(|tui| {
+            tui.request_user_input(UserInputRequestView {
+                id: request.id.clone(),
+                prompt: request.prompt.clone(),
+            })
+        })?;
+        let _ = request.respond_to.send(AgentRunUserInputResponse {
+            value: response.value,
+        });
+        Ok(())
     }
 
     fn error(&mut self, message: &str) -> Result<()> {
-        if let Some(app) = &mut self.app {
-            app.push_error(message);
-        }
-        self.draw()
-    }
-}
-
-struct TerminalGuard;
-
-impl TerminalGuard {
-    fn enter() -> Result<Self> {
-        enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen)?;
-        Ok(Self)
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        self.handle.with_mut(|tui| tui.push_error(message))
     }
 }

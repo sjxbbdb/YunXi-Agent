@@ -1,89 +1,120 @@
-use crate::render::InteractiveBanner;
+use crate::streaming::append_fragment;
 use yunxi_agent_core::{AgentEvent, AgentRunStatus, CommandStatus};
 
-const MAX_EVENT_LINES: usize = 500;
+const MAX_HISTORY_CELLS: usize = 800;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TuiEventLine {
-    pub label: String,
-    pub message: String,
+pub(crate) enum HistoryCell {
+    User(String),
+    Assistant { content: String, active: bool },
+    Reasoning { content: String, active: bool },
+    Event { kind: String, message: String },
+    Warning(String),
+    Error(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TuiApp {
-    pub version: String,
-    pub cwd: String,
-    pub backend: String,
-    pub provider_mode: String,
-    pub provider_source: String,
-    pub provider: String,
-    pub model: String,
-    pub input: String,
-    pub events: Vec<TuiEventLine>,
-    pub scroll: u16,
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Transcript {
+    cells: Vec<HistoryCell>,
+    last_assistant_content: Option<String>,
 }
 
-impl TuiApp {
-    pub(crate) fn from_banner(banner: &InteractiveBanner) -> Self {
-        Self {
-            version: "v1.7.0".to_string(),
-            cwd: banner.cwd.clone(),
-            backend: banner.backend.clone(),
-            provider_mode: if banner.provider_live {
-                "live".to_string()
-            } else {
-                "offline".to_string()
-            },
-            provider_source: banner.provider_source.clone(),
-            provider: banner.provider.clone(),
-            model: banner.model.clone(),
-            input: "yunxi> ".to_string(),
-            events: Vec::new(),
-            scroll: 0,
-        }
+impl Transcript {
+    pub(crate) fn clear(&mut self) {
+        self.cells.clear();
+        self.last_assistant_content = None;
     }
 
-    pub(crate) fn push_line(
-        &mut self,
-        label: impl Into<String>,
-        message: impl Into<String>,
-    ) {
-        self.events.push(TuiEventLine {
-            label: label.into(),
+    pub(crate) fn cells(&self) -> &[HistoryCell] {
+        &self.cells
+    }
+
+    pub(crate) fn push_user(&mut self, value: impl Into<String>) {
+        self.finalize_streams();
+        self.push_cell(HistoryCell::User(value.into()));
+    }
+
+    pub(crate) fn push_assistant(&mut self, value: &str) {
+        let value = value.trim_matches('\r');
+        if value.trim().is_empty() {
+            return;
+        }
+        if self.last_assistant_content.as_deref() == Some(value) {
+            return;
+        }
+        if let Some(HistoryCell::Assistant { content, active }) = self.cells.last_mut()
+            && *active
+        {
+            if value.starts_with(content.as_str()) {
+                *content = value.to_string();
+            } else {
+                append_fragment(content, value);
+            }
+            self.last_assistant_content = Some(content.clone());
+            return;
+        }
+        self.finalize_reasoning();
+        self.last_assistant_content = Some(value.to_string());
+        self.push_cell(HistoryCell::Assistant {
+            content: value.to_string(),
+            active: true,
+        });
+    }
+
+    pub(crate) fn push_reasoning(&mut self, value: &str) {
+        let value = value.trim_matches('\r');
+        if value.trim().is_empty() {
+            return;
+        }
+        if let Some(HistoryCell::Reasoning { content, active }) = self.cells.last_mut()
+            && *active
+        {
+            append_fragment(content, value);
+            return;
+        }
+        self.finalize_assistant();
+        self.push_cell(HistoryCell::Reasoning {
+            content: value.to_string(),
+            active: true,
+        });
+    }
+
+    pub(crate) fn push_notice(&mut self, kind: impl Into<String>, message: impl Into<String>) {
+        self.finalize_streams();
+        self.push_cell(HistoryCell::Event {
+            kind: kind.into(),
             message: message.into(),
         });
-        if self.events.len() > MAX_EVENT_LINES {
-            let overflow = self.events.len() - MAX_EVENT_LINES;
-            self.events.drain(0..overflow);
-        }
     }
 
-    pub(crate) fn push_warning(&mut self, message: &str) {
-        self.push_line("warning", message);
+    pub(crate) fn push_warning(&mut self, message: impl Into<String>) {
+        self.finalize_streams();
+        self.push_cell(HistoryCell::Warning(message.into()));
     }
 
-    pub(crate) fn push_error(&mut self, message: &str) {
-        self.push_line("error", message);
+    pub(crate) fn push_error(&mut self, message: impl Into<String>) {
+        self.finalize_streams();
+        self.push_cell(HistoryCell::Error(message.into()));
     }
 
-    pub(crate) fn push_event(&mut self, event: &AgentEvent) {
+    pub(crate) fn push_agent_event(&mut self, event: &AgentEvent) {
         match event {
-            AgentEvent::Message { content } => self.push_line("assistant", content),
-            AgentEvent::Reasoning { content } => self.push_line("reasoning", content),
+            AgentEvent::Message { content } => self.push_assistant(content),
+            AgentEvent::Reasoning { content } => self.push_reasoning(content),
             AgentEvent::CommandStarted { command, .. } => {
-                self.push_line("shell", format!("started: {command}"));
+                self.push_notice("shell", format!("started: {command}"));
             }
             AgentEvent::CommandUpdated {
                 aggregated_output, ..
             } if !aggregated_output.trim().is_empty() => {
-                self.push_line("stdout", aggregated_output.trim());
+                self.push_notice("stdout", aggregated_output.trim());
             }
             AgentEvent::CommandCompleted {
                 command,
                 exit_code,
                 status,
                 ..
-            } => self.push_line(
+            } => self.push_notice(
                 "shell",
                 format!(
                     "{command} -> {}{}",
@@ -94,10 +125,10 @@ impl TuiApp {
                 ),
             ),
             AgentEvent::CommandFinished { command, exit_code } => {
-                self.push_line("shell", format!("{command} exited with {exit_code}"));
+                self.push_notice("shell", format!("{command} exited with {exit_code}"));
             }
             AgentEvent::ToolCallStarted { name, .. } => {
-                self.push_line("tool", format!("started: {name}"));
+                self.push_notice("tool", format!("started: {name}"));
             }
             AgentEvent::ToolCallCompleted {
                 name,
@@ -105,25 +136,25 @@ impl TuiApp {
                 status,
                 ..
             } => {
-                self.push_line("tool", format!("{name} -> {}", command_status_label(*status)));
+                self.push_notice("tool", format!("{name} -> {}", command_status_label(*status)));
                 if !output.trim().is_empty() {
-                    self.push_line("tool-output", output.trim());
+                    self.push_notice("tool-output", output.trim());
                 }
             }
             AgentEvent::McpToolStarted { server, tool, .. } => {
-                self.push_line("mcp", format!("{server}/{tool} started"));
+                self.push_notice("mcp", format!("{server}/{tool} started"));
             }
             AgentEvent::McpToolCompleted {
                 server,
                 tool,
                 status,
                 ..
-            } => self.push_line("mcp", format!("{server}/{tool} -> {status:?}")),
+            } => self.push_notice("mcp", format!("{server}/{tool} -> {status:?}")),
             AgentEvent::McpSession {
                 server,
                 status,
                 message,
-            } => self.push_line(
+            } => self.push_notice(
                 "mcp-session",
                 format!(
                     "{server}: {status}{}",
@@ -140,21 +171,21 @@ impl TuiApp {
                 classification,
                 status,
                 message,
-            } => self.push_line(
-                "provider",
-                format!(
-                    "{provider} {classification}{} - {message}",
-                    status.map(|value| format!(" {value}")).unwrap_or_default()
-                ),
-            ),
-            AgentEvent::Cancelled { reason } => self.push_line(
+            } => self.push_error(format!(
+                "{provider} {classification}{} - {message}",
+                status.map(|value| format!(" {value}")).unwrap_or_default()
+            )),
+            AgentEvent::Cancelled { reason } => self.push_notice(
                 "cancelled",
                 reason.as_deref().unwrap_or("current turn cancelled"),
             ),
             AgentEvent::Completed { status, usage } => {
-                self.push_line("turn", status_label(*status));
+                self.finalize_streams();
+                if *status != AgentRunStatus::Completed {
+                    self.push_notice("turn", status_label(*status));
+                }
                 if let Some(usage) = usage {
-                    self.push_line(
+                    self.push_notice(
                         "usage",
                         format!(
                             "input={} cached_input={} output={} reasoning_output={}",
@@ -167,13 +198,13 @@ impl TuiApp {
                 }
             }
             AgentEvent::FileChanged { path, kind } => {
-                self.push_line("file", format!("{kind:?}: {path}"));
+                self.push_notice("file", format!("{kind:?}: {path}"));
             }
             AgentEvent::PatchCompleted { status } => {
-                self.push_line("patch", format!("{status:?}"));
+                self.push_notice("patch", format!("{status:?}"));
             }
             AgentEvent::TodoUpdated { id, items } => {
-                self.push_line(
+                self.push_notice(
                     "todo",
                     format!(
                         "{} item(s){}",
@@ -186,10 +217,10 @@ impl TuiApp {
             }
             AgentEvent::ApprovalRequested {
                 tool_name, reason, ..
-            } => self.push_line("approval", format!("{tool_name}: {reason}")),
+            } => self.push_notice("approval", format!("{tool_name}: {reason}")),
             AgentEvent::ApprovalCompleted {
                 approved, reason, ..
-            } => self.push_line(
+            } => self.push_notice(
                 "approval",
                 format!(
                     "{}{}",
@@ -202,10 +233,10 @@ impl TuiApp {
             ),
             AgentEvent::EscalationRequested {
                 tool_name, reason, ..
-            } => self.push_line("escalation", format!("{tool_name}: {reason}")),
+            } => self.push_notice("escalation", format!("{tool_name}: {reason}")),
             AgentEvent::EscalationCompleted {
                 approved, reason, ..
-            } => self.push_line(
+            } => self.push_notice(
                 "escalation",
                 format!(
                     "{}{}",
@@ -222,7 +253,7 @@ impl TuiApp {
                 status,
                 message,
                 ..
-            } => self.push_line(
+            } => self.push_notice(
                 "child",
                 format!(
                     "{agent_id} {status} session={child_session_id}{}",
@@ -238,7 +269,7 @@ impl TuiApp {
                 seq,
                 message,
                 ..
-            } => self.push_line(
+            } => self.push_notice(
                 "child-stream",
                 format!(
                     "{agent_id} #{seq} {event}{}",
@@ -254,7 +285,7 @@ impl TuiApp {
                 backend,
                 command,
                 ..
-            } => self.push_line(
+            } => self.push_notice(
                 "policy",
                 format!(
                     "platform={platform} status={status} backend={backend} command={}",
@@ -266,7 +297,7 @@ impl TuiApp {
                 token_limit_reached,
                 compacted,
                 dropped_messages,
-            } => self.push_line(
+            } => self.push_notice(
                 "context",
                 format!(
                     "tokens={active_context_tokens} limit_reached={token_limit_reached} compacted={compacted} dropped={dropped_messages}"
@@ -278,7 +309,7 @@ impl TuiApp {
                 rollout_truncated,
                 child_session_ids,
                 ..
-            } => self.push_line(
+            } => self.push_notice(
                 "session",
                 format!(
                     "{} rollout_items={rollout_items} truncated={rollout_truncated} children={}",
@@ -299,18 +330,29 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn header(&self) -> String {
-        format!(
-            "YunXi Agent {} | {} | provider={} mode={} model={}",
-            self.version, self.cwd, self.provider, self.provider_mode, self.model
-        )
+    fn finalize_streams(&mut self) {
+        self.finalize_reasoning();
+        self.finalize_assistant();
     }
 
-    pub(crate) fn subheader(&self) -> String {
-        format!(
-            "backend={} source={}",
-            self.backend, self.provider_source
-        )
+    fn finalize_reasoning(&mut self) {
+        if let Some(HistoryCell::Reasoning { active, .. }) = self.cells.last_mut() {
+            *active = false;
+        }
+    }
+
+    fn finalize_assistant(&mut self) {
+        if let Some(HistoryCell::Assistant { active, .. }) = self.cells.last_mut() {
+            *active = false;
+        }
+    }
+
+    fn push_cell(&mut self, cell: HistoryCell) {
+        self.cells.push(cell);
+        if self.cells.len() > MAX_HISTORY_CELLS {
+            let overflow = self.cells.len() - MAX_HISTORY_CELLS;
+            self.cells.drain(0..overflow);
+        }
     }
 }
 
@@ -336,30 +378,27 @@ fn status_label(status: AgentRunStatus) -> &'static str {
 mod tests {
     use super::*;
 
-    fn banner() -> InteractiveBanner {
-        InteractiveBanner {
-            cwd: "D:/YunXi Agent".to_string(),
-            backend: "yunxi".to_string(),
-            provider_live: true,
-            provider_source: "auto_live".to_string(),
-            provider: "deepseek".to_string(),
-            model: "deepseek-chat".to_string(),
+    #[test]
+    fn reasoning_deltas_are_merged_into_one_cell() {
+        let mut transcript = Transcript::default();
+        for delta in ["用户", "输入", "了", "\"", "测试", "\""] {
+            transcript.push_reasoning(delta);
         }
+        assert_eq!(transcript.cells().len(), 1);
+        assert_eq!(
+            transcript.cells()[0],
+            HistoryCell::Reasoning {
+                content: "用户输入了\"测试\"".to_string(),
+                active: true
+            }
+        );
     }
 
     #[test]
-    fn app_maps_events_to_compact_lines() {
-        let mut app = TuiApp::from_banner(&banner());
-
-        app.push_event(&AgentEvent::Reasoning {
-            content: "Provider turn started".to_string(),
-        });
-        app.push_event(&AgentEvent::Message {
-            content: "hello".to_string(),
-        });
-
-        assert!(app.header().contains("YunXi Agent v1.7.0"));
-        assert_eq!(app.events[0].label, "reasoning");
-        assert_eq!(app.events[1].label, "assistant");
+    fn duplicate_assistant_messages_are_suppressed() {
+        let mut transcript = Transcript::default();
+        transcript.push_assistant("hello");
+        transcript.push_assistant("hello");
+        assert_eq!(transcript.cells().len(), 1);
     }
 }

@@ -34,12 +34,6 @@ mod terminal_mode {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/terminal_mode.rs"));
 }
 mod tui {
-    pub(crate) mod app {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tui/app.rs"));
-    }
-    pub(crate) mod render {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tui/render.rs"));
-    }
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tui/mod.rs"));
 }
 
@@ -72,7 +66,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.7.0 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.7.1 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,

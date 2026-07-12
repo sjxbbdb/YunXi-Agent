@@ -1,18 +1,17 @@
 use crate::commands::{InteractiveCommand, help_text, parse_interactive_command};
-use crate::input::{InteractiveInput, PlainInput, ReedlineInput};
+use crate::input::{InteractiveInput, PlainInput};
 use crate::provider_mode::{ProviderMode, ProviderSelection};
 use crate::render::{
     InteractiveBanner, InteractiveRenderer, PlainInteractiveRenderer, RenderState,
 };
 use crate::terminal_mode::ResolvedTerminalMode;
-use crate::tui::TuiInteractiveRenderer;
+use crate::tui::{TuiHandle, TuiInput, TuiInteractiveRenderer};
 use crate::{redact_secret_fragments, run_agent_backend_stream};
 use anyhow::{Context, Result};
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use yunxi_agent_core::{
-    AgentConfig, AgentEvent, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunControl,
-    AgentRunResult, AgentRunStatus, AgentRunUserInputRequest, AgentRunUserInputResponse,
-    BackendKind, TokenUsage,
+    AgentConfig, AgentEvent, AgentRunControl, AgentRunResult, AgentRunStatus, BackendKind,
+    TokenUsage,
 };
 use yunxi_agent_mcp::{McpTransport, load_workspace_mcp_configs};
 use yunxi_agent_storage::{FileSessionStore, SessionId, SessionStore};
@@ -40,25 +39,24 @@ struct InteractiveSession {
 pub(crate) async fn run_interactive(options: InteractiveOptions) -> Result<()> {
     let terminal_mode = options.terminal_mode;
     let mut session = InteractiveSession::new(options)?;
-    let mut renderer = interactive_renderer(terminal_mode)?;
-    session.print_banner(renderer.as_mut())?;
 
     match terminal_mode {
         ResolvedTerminalMode::Plain => {
+            let mut renderer = PlainInteractiveRenderer;
+            session.print_banner(&mut renderer)?;
             let prompt_enabled = io::stdin().is_terminal() && io::stdout().is_terminal();
             let stdin = io::stdin();
             let reader = io::BufReader::new(stdin.lock());
             let stdout = io::stdout();
             let mut input = PlainInput::new(reader, stdout, prompt_enabled);
-            session
-                .read_eval_loop(&mut input, renderer.as_mut())
-                .await
+            session.read_eval_loop(&mut input, &mut renderer).await
         }
         ResolvedTerminalMode::Tui => {
-            let mut input = ReedlineInput::new(&session.config.cwd)?;
-            session
-                .read_eval_loop(&mut input, renderer.as_mut())
-                .await
+            let handle = TuiHandle::enter()?;
+            let mut renderer = TuiInteractiveRenderer::new(handle.clone());
+            session.print_banner(&mut renderer)?;
+            let mut input = TuiInput::new(handle);
+            session.read_eval_loop(&mut input, &mut renderer).await
         }
     }
 }
@@ -113,8 +111,8 @@ impl InteractiveSession {
             }
 
             if let Some(command) = parse_interactive_command(input_line) {
-                if !self.handle_command(command).await? {
-                    println!("YunXi interactive session ended.");
+                if !self.handle_command(command, renderer).await? {
+                    renderer.notice("session", "YunXi interactive session ended.")?;
                     return Ok(());
                 }
                 continue;
@@ -129,59 +127,75 @@ impl InteractiveSession {
         }
     }
 
-    async fn handle_command(&mut self, command: InteractiveCommand) -> Result<bool> {
+    async fn handle_command(
+        &mut self,
+        command: InteractiveCommand,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<bool> {
         match command {
             InteractiveCommand::Exit => return Ok(false),
-            InteractiveCommand::Help => println!("{}", help_text()),
-            InteractiveCommand::Clear => {
-                print!("\x1b[2J\x1b[H");
-                io::stdout().flush()?;
+            InteractiveCommand::Help => renderer.notice("help", help_text())?,
+            InteractiveCommand::Clear => renderer.clear()?,
+            InteractiveCommand::Cwd => {
+                renderer.notice("cwd", &self.config.cwd.display().to_string())?;
             }
-            InteractiveCommand::Cwd => println!("{}", self.config.cwd.display()),
-            InteractiveCommand::Session => self.print_session_summary(),
-            InteractiveCommand::Status => self.print_status()?,
-            InteractiveCommand::Tools => self.print_tools()?,
-            InteractiveCommand::Mcp => self.print_mcp()?,
-            InteractiveCommand::Cost => self.print_cost(),
-            InteractiveCommand::Model(model) => self.handle_model_command(model)?,
-            InteractiveCommand::Provider(provider) => self.handle_provider_command(provider)?,
-            InteractiveCommand::Resume(session_id) => self.resume_session(session_id).await?,
-            InteractiveCommand::Unknown(message) => println!("{message}"),
+            InteractiveCommand::Session => {
+                renderer.notice("session", &self.session_summary_text())?;
+            }
+            InteractiveCommand::Status => renderer.notice("status", &self.status_text()?)?,
+            InteractiveCommand::Tools => renderer.notice("tools", &self.tools_text()?)?,
+            InteractiveCommand::Mcp => renderer.notice("mcp", &self.mcp_text()?)?,
+            InteractiveCommand::Cost => renderer.notice("cost", &self.cost_text())?,
+            InteractiveCommand::Model(model) => self.handle_model_command(model, renderer)?,
+            InteractiveCommand::Provider(provider) => {
+                self.handle_provider_command(provider, renderer)?;
+            }
+            InteractiveCommand::Resume(session_id) => {
+                self.resume_session(session_id, renderer).await?;
+            }
+            InteractiveCommand::Unknown(message) => renderer.notice("command", &message)?,
         }
         Ok(true)
     }
 
-    fn print_session_summary(&self) {
-        println!(
-            "session: {}",
-            self.active_session_id.as_deref().unwrap_or("new")
-        );
-        println!("turns: {}", self.turn_count);
-        println!("cwd: {}", self.config.cwd.display());
-        println!(
-            "provider_mode: {}",
-            if self.provider_selection.live {
-                "live"
-            } else {
-                "offline"
-            }
-        );
-        println!(
-            "provider_source: {}",
-            self.provider_selection.source.as_str()
-        );
-        println!("provider: {}", self.provider_selection.provider);
-        println!("model: {}", self.provider_selection.model);
+    fn session_summary_text(&self) -> String {
+        [
+            format!(
+                "session: {}",
+                self.active_session_id.as_deref().unwrap_or("new")
+            ),
+            format!("turns: {}", self.turn_count),
+            format!("cwd: {}", self.config.cwd.display()),
+            format!(
+                "provider_mode: {}",
+                if self.provider_selection.live {
+                    "live"
+                } else {
+                    "offline"
+                }
+            ),
+            format!(
+                "provider_source: {}",
+                self.provider_selection.source.as_str()
+            ),
+            format!("provider: {}", self.provider_selection.provider),
+            format!("model: {}", self.provider_selection.model),
+        ]
+        .join("\n")
     }
 
-    fn print_status(&self) -> Result<()> {
-        self.print_session_summary();
-        println!("observed_events: {}", self.stats.observed_events);
+    fn status_text(&self) -> Result<String> {
+        let mut lines = self
+            .session_summary_text()
+            .lines()
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        lines.push(format!("observed_events: {}", self.stats.observed_events));
         match &self.stats.last_turn {
             Some(summary) => {
-                println!("last_turn_status: {}", status_label(summary.status));
-                println!("last_turn_events: {}", summary.events);
-                println!(
+                lines.push(format!("last_turn_status: {}", status_label(summary.status)));
+                lines.push(format!("last_turn_events: {}", summary.events));
+                lines.push(format!(
                     "last_turn_activity: messages={} reasoning={} tools={}/{} commands={}/{}/{} mcp={}/{} mcp_sessions={} files={} patches={} todos={} approvals={} escalations={} children={} warnings={} errors={} cancelled={}",
                     summary.messages,
                     summary.reasoning,
@@ -202,118 +216,145 @@ impl InteractiveSession {
                     summary.warnings,
                     summary.errors,
                     summary.cancelled
-                );
-                println!("last_turn_final_response: {}", summary.final_response);
+                ));
+                lines.push(format!(
+                    "last_turn_final_response: {}",
+                    summary.final_response
+                ));
             }
-            None => println!("last_turn_status: none"),
+            None => lines.push("last_turn_status: none".to_string()),
         }
         let registry = workspace_tool_registry(&self.config.cwd)?;
-        println!(
+        lines.push(format!(
             "tools: fixed={} dynamic={}",
             registry.specs().count(),
             registry.dynamic_specs().count()
-        );
+        ));
         let mcp_servers = load_workspace_mcp_configs(&self.config.cwd)?;
-        println!("mcp_servers: {}", mcp_servers.len());
-        self.print_cost();
-        Ok(())
+        lines.push(format!("mcp_servers: {}", mcp_servers.len()));
+        lines.extend(self.cost_text().lines().map(ToOwned::to_owned));
+        Ok(lines.join("\n"))
     }
 
-    fn print_tools(&self) -> Result<()> {
+    fn tools_text(&self) -> Result<String> {
         let registry = workspace_tool_registry(&self.config.cwd)?;
         let fixed = registry.specs().collect::<Vec<_>>();
         let dynamic = registry.dynamic_specs().collect::<Vec<_>>();
-        println!("tools: fixed={} dynamic={}", fixed.len(), dynamic.len());
+        let mut lines = vec![format!(
+            "tools: fixed={} dynamic={}",
+            fixed.len(),
+            dynamic.len()
+        )];
         for spec in fixed {
-            println!(
+            lines.push(format!(
                 "[tool] {} visible={} - {}",
                 spec.name, spec.model_visible, spec.description
-            );
+            ));
         }
         for spec in dynamic {
-            println!(
+            lines.push(format!(
                 "[dynamic-tool] {} kind={:?} source={} - {}",
                 spec.name,
                 spec.kind,
                 spec.source.as_deref().unwrap_or("workspace"),
                 spec.description
-            );
+            ));
         }
-        Ok(())
+        Ok(lines.join("\n"))
     }
 
-    fn print_mcp(&self) -> Result<()> {
+    fn mcp_text(&self) -> Result<String> {
         let configs = load_workspace_mcp_configs(&self.config.cwd)?;
         let seed_path = self.config.cwd.join(".yunxi").join("mcp-runtime.json");
-        println!("mcp_servers: {}", configs.len());
-        println!(
+        let mut lines = vec![
+            format!("mcp_servers: {}", configs.len()),
+            format!(
             "mcp_runtime_seed: {}",
             if seed_path.is_file() {
                 seed_path.display().to_string()
             } else {
                 "none".to_string()
             }
-        );
+        )];
         if configs.is_empty() {
-            println!("mcp_status: no workspace MCP configured");
+            lines.push("mcp_status: no workspace MCP configured".to_string());
         }
         for config in configs {
-            println!(
+            lines.push(format!(
                 "[mcp] {} enabled={} transport={}",
                 config.name,
                 config.enabled,
                 describe_mcp_transport(&config.transport)
-            );
+            ));
         }
-        Ok(())
+        Ok(lines.join("\n"))
     }
 
-    fn print_cost(&self) {
+    fn cost_text(&self) -> String {
         if self.provider_selection.is_offline_runtime() {
-            println!("last_turn_usage: n/a - offline, no model call");
-            println!("session_usage: n/a - offline, no model call");
-            return;
+            return [
+                "last_turn_usage: n/a - offline, no model call".to_string(),
+                "session_usage: n/a - offline, no model call".to_string(),
+            ]
+            .join("\n");
         }
-        match &self.stats.last_turn {
+        let mut lines = Vec::new();
+        lines.push(match &self.stats.last_turn {
             Some(summary) if !summary.usage.is_zero() => {
-                println!("last_turn_usage: {}", summary.usage);
+                format!("last_turn_usage: {}", summary.usage)
             }
-            Some(_) => println!("last_turn_usage: unavailable"),
-            None => println!("last_turn_usage: none"),
-        }
+            Some(_) => "last_turn_usage: unavailable".to_string(),
+            None => "last_turn_usage: none".to_string(),
+        });
         if self.stats.total_usage.is_zero() {
-            println!("session_usage: unavailable");
+            lines.push("session_usage: unavailable".to_string());
         } else {
-            println!("session_usage: {}", self.stats.total_usage);
+            lines.push(format!("session_usage: {}", self.stats.total_usage));
         }
+        lines.join("\n")
     }
 
-    fn handle_model_command(&mut self, model: Option<String>) -> Result<()> {
+    fn handle_model_command(
+        &mut self,
+        model: Option<String>,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<()> {
         if let Some(model) = model {
             self.config.model = Some(model);
         }
         self.refresh_provider_selection()?;
-        println!("model: {}", self.provider_selection.model);
+        renderer.notice("model", &format!("model: {}", self.provider_selection.model))?;
         Ok(())
     }
 
-    fn handle_provider_command(&mut self, provider: Option<String>) -> Result<()> {
+    fn handle_provider_command(
+        &mut self,
+        provider: Option<String>,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<()> {
         if let Some(provider) = provider {
             self.config.provider = Some(provider);
         }
         self.refresh_provider_selection()?;
-        println!("provider: {}", self.provider_selection.provider);
+        renderer.notice(
+            "provider",
+            &format!("provider: {}", self.provider_selection.provider),
+        )?;
         Ok(())
     }
 
-    async fn resume_session(&mut self, session_id: String) -> Result<()> {
+    async fn resume_session(
+        &mut self,
+        session_id: String,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<()> {
         let store = FileSessionStore::for_workspace(&self.config.cwd);
         let Some(record) = store
             .load(&SessionId::new(session_id.clone()))
             .await
             .context("failed to load session for interactive resume")?
         else {
-            println!("session not found: {session_id}");
+            renderer.notice("session", &format!("session not found: {session_id}"))?;
             return Ok(());
         };
 
@@ -327,7 +368,7 @@ impl InteractiveSession {
         self.turn_count = 0;
         self.stats = InteractiveStats::default();
         self.refresh_provider_selection()?;
-        println!("resumed session: {session_id}");
+        renderer.notice("session", &format!("resumed session: {session_id}"))?;
         Ok(())
     }
 
@@ -380,13 +421,13 @@ impl InteractiveSession {
                 }
                 request = stream.approvals.recv(), if approvals_open => {
                     match request {
-                        Some(request) => respond_to_approval_request(request, input)?,
+                        Some(request) => renderer.approval_request(request, input)?,
                         None => approvals_open = false,
                     }
                 }
                 request = stream.user_inputs.recv(), if user_inputs_open => {
                     match request {
-                        Some(request) => respond_to_user_input_request(request, input)?,
+                        Some(request) => renderer.user_input_request(request, input)?,
                         None => user_inputs_open = false,
                     }
                 }
@@ -613,58 +654,6 @@ fn describe_mcp_transport(transport: &McpTransport) -> String {
             }
         }
         McpTransport::Http { url } => format!("http:{url}"),
-    }
-}
-
-fn respond_to_approval_request(
-    request: AgentRunApprovalRequest,
-    input: &mut dyn InteractiveInput,
-) -> Result<()> {
-    println!(
-        "[approval] {} requires approval in {}",
-        request.tool_name, request.cwd
-    );
-    if let Some(command) = &request.command {
-        println!("[approval] command: {command}");
-    }
-    println!("[approval] reason: {}", request.reason);
-    let line = input
-        .read_response("approve? y/N: ")?
-        .unwrap_or_default();
-    let approved = matches!(
-        line.trim().to_ascii_lowercase().as_str(),
-        "y" | "yes" | "approve" | "approved"
-    );
-    let reason = if approved {
-        Some("approved by YunXi interactive CLI".to_string())
-    } else {
-        Some("declined by YunXi interactive CLI".to_string())
-    };
-    let _ = request
-        .respond_to
-        .send(AgentRunApprovalDecision { approved, reason });
-    Ok(())
-}
-
-fn respond_to_user_input_request(
-    request: AgentRunUserInputRequest,
-    input: &mut dyn InteractiveInput,
-) -> Result<()> {
-    let value = input
-        .read_response(&format!("{} ", request.prompt))?
-        .unwrap_or_default();
-    let _ = request.respond_to.send(AgentRunUserInputResponse {
-        value: Some(value),
-    });
-    Ok(())
-}
-
-fn interactive_renderer(
-    terminal_mode: ResolvedTerminalMode,
-) -> Result<Box<dyn InteractiveRenderer>> {
-    match terminal_mode {
-        ResolvedTerminalMode::Plain => Ok(Box::new(PlainInteractiveRenderer)),
-        ResolvedTerminalMode::Tui => Ok(Box::new(TuiInteractiveRenderer::new()?)),
     }
 }
 

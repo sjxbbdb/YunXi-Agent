@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-use reedline::{DefaultPrompt, DefaultPromptSegment, Reedline, Signal};
 use std::io::{BufRead, Write};
-use std::path::Path;
 
 pub(crate) trait InteractiveInput {
     fn read_prompt(&mut self, prompt: &str) -> Result<Option<String>>;
@@ -52,55 +50,5 @@ impl<R: BufRead, W: Write> InteractiveInput for PlainInput<R, W> {
 
     fn print_eof_message(&self) -> bool {
         !self.prompt_enabled
-    }
-}
-
-pub(crate) struct ReedlineInput {
-    line_editor: Reedline,
-    prompt: DefaultPrompt,
-}
-
-impl ReedlineInput {
-    pub(crate) fn new(_workspace: &Path) -> Result<Self> {
-        let prompt = DefaultPrompt::new(
-            DefaultPromptSegment::Basic("yunxi".to_string()),
-            DefaultPromptSegment::Empty,
-        );
-        Ok(Self {
-            line_editor: Reedline::create(),
-            prompt,
-        })
-    }
-
-    fn read_reedline(&mut self, prompt: &str) -> Result<Option<String>> {
-        if prompt != "yunxi> " {
-            print!("{prompt}");
-            std::io::stdout().flush()?;
-            let mut line = String::new();
-            std::io::stdin()
-                .read_line(&mut line)
-                .context("failed to read interactive response")?;
-            return Ok(Some(line.trim_end_matches(['\r', '\n']).to_string()));
-        }
-
-        match self.line_editor.read_line(&self.prompt) {
-            Ok(Signal::Success(buffer)) => Ok(Some(buffer)),
-            Ok(Signal::CtrlD) | Ok(Signal::CtrlC) => Ok(None),
-            Err(error) => Err(anyhow::anyhow!("failed to read terminal input: {error}")),
-        }
-    }
-}
-
-impl InteractiveInput for ReedlineInput {
-    fn read_prompt(&mut self, prompt: &str) -> Result<Option<String>> {
-        self.read_reedline(prompt)
-    }
-
-    fn read_response(&mut self, prompt: &str) -> Result<Option<String>> {
-        self.read_reedline(prompt)
-    }
-
-    fn print_eof_message(&self) -> bool {
-        false
     }
 }

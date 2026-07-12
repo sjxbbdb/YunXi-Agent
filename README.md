@@ -1,6 +1,6 @@
-# YunXi Agent v1.7.0
+# YunXi Agent v1.7.1
 
-YunXi Agent v1.7.0 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.7.1 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -17,7 +17,8 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: v1.7.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
+- `crates/yunxi-agent-cli`: v1.7.1 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -29,10 +30,13 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Compiles as an independent Rust workspace
 - Builds a terminal command named `yunxi`
 - Starts an interactive terminal session when `yunxi` is run without a prompt
-- Uses a TUI-capable terminal host by default when stdin/stdout are both real
-  terminals, with `--no-tui` available for the stable plain REPL
-- Uses a line editor for terminal input while keeping piped stdin and scripted
+- Uses a Codex-style TUI terminal host by default when stdin/stdout are both
+  real terminals, with `--no-tui` available for the stable plain REPL
+- Uses a TUI composer for terminal input while keeping piped stdin and scripted
   sessions on the plain line reader
+- Renders approval and `request_user_input` inside the TUI bottom pane instead
+  of leaking line prompts into the alternate screen
+- Merges reasoning deltas into transcript cells instead of rendering one line per token
 - Streams runtime events to the terminal while an interactive turn is running
 - Prompts for interactive approval and `request_user_input` tool calls
 - Propagates Ctrl+C cancellation into the runtime and shell exec layer
@@ -78,7 +82,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.7.0 CLI into a user-local bin directory:
+Build and install the v1.7.1 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -104,8 +108,9 @@ Run `yunxi` without a prompt to enter interactive mode:
 yunxi
 ```
 
-When stdin and stdout are both attached to a terminal, YunXi uses the v1.7 TUI
-host and line editor. Use `--no-tui` to force the stable plain REPL:
+When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.1
+TUI host, transcript, composer, and approval overlay. Use `--no-tui` to force
+the stable plain REPL:
 
 ```powershell
 yunxi --no-tui
@@ -260,6 +265,13 @@ input through `reedline`, `--no-tui` plain fallback, renderer separation for
 plain/structured/TUI paths, and symlink escape regression coverage for the
 workspace-write policy guard. It remains a process-internal guard, not an
 OS-level sandbox.
+
+v1.7.1 adds immutable tag `v1.7.1` without moving earlier tags. It replaces
+the v1.7 prototype TUI renderer with the `yunxi-agent-tui` crate: terminal
+guard, transcript cells, reasoning merge, composer, approval overlay,
+`request_user_input` overlay, and TUI-routed slash command output are now
+YunXi-owned runtime capabilities. Plain, JSON, JSONL, and one-shot paths remain
+compatible.
 
 ## Backend Capability Matrix
 

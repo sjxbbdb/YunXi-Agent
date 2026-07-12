@@ -13,6 +13,7 @@ members = [
     "crates/yunxi-agent-multi-agent",
     "crates/yunxi-agent-storage",
     "crates/yunxi-agent-runtime",
+    "crates/yunxi-agent-tui",
     "crates/yunxi-agent-cli",
 ]
 default-members = [
@@ -29,6 +30,7 @@ default-members = [
     "crates/yunxi-agent-multi-agent",
     "crates/yunxi-agent-storage",
     "crates/yunxi-agent-runtime",
+    "crates/yunxi-agent-tui",
     "crates/yunxi-agent-cli",
 ]
 resolver = "2"
@@ -37,7 +39,7 @@ exclude = ["external/codex-rs", "vendor/codex-rs", "crates/yunxi-agent-codex"]
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "1.7.0"
+version = "1.7.1"
 
 [workspace.dependencies]
 anyhow = "1"

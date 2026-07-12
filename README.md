@@ -1,6 +1,6 @@
-# YunXi Agent v1.7.2
+# YunXi Agent v1.7.3
 
-YunXi Agent v1.7.2 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.7.3 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -18,7 +18,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.7.2 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.7.3 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -41,6 +41,13 @@ with `[offline]` and `/cost` reports that no model call was made.
   without losing new streamed output below
 - Throttles TUI streaming redraws to keep long reasoning/model output readable
 - Merges reasoning deltas into transcript cells instead of rendering one line per token
+- Filters the TUI transcript so raw tool protocol JSON, stdout token noise,
+  context/session bookkeeping, and long skill/tool outputs stay out of the
+  normal view
+- Shows tool work as compact timeline cells with approval, running,
+  completion, output-summary, and details references
+- Provides `/debug events on|off` and `/details [id]` for TUI diagnostics
+  without polluting the default transcript
 - Streams runtime events to the terminal while an interactive turn is running
 - Prompts for interactive approval and `request_user_input` tool calls
 - Propagates Ctrl+C cancellation into the runtime and shell exec layer
@@ -86,7 +93,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.7.2 CLI into a user-local bin directory:
+Build and install the v1.7.3 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -112,7 +119,7 @@ Run `yunxi` without a prompt to enter interactive mode:
 yunxi
 ```
 
-When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.2
+When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.3
 TUI host, scrollable transcript, composer, and approval overlay. Use `--no-tui`
 to force the stable plain REPL:
 
@@ -131,6 +138,8 @@ Useful interactive commands:
 - `/resume <session_id>`: continue from a saved session
 - `/model [name]`: show or switch the model field
 - `/provider [name]`: show or switch the provider field
+- `/debug events on|off`: show or hide raw debug event summaries in the TUI
+- `/details [id]`: show the latest or selected TUI debug detail
 - `/cwd`: show the active working directory
 - `/clear`: clear the terminal
 - `/exit` or `/quit`: leave interactive mode
@@ -282,6 +291,12 @@ TUI reading experience with mouse wheel and PageUp/PageDown/Home/End transcript
 navigation, history/follow-tail state, fixed composer and overlay panes,
 scrollbar/title/footer status, stable/live markdown stream collection, and
 frame-throttled redraws for smoother long streaming turns.
+
+v1.7.3 adds immutable tag `v1.7.3` without moving earlier tags. It cleans the
+TUI transcript by hiding raw tool protocol JSON, stdout token noise, context
+and session bookkeeping, and long skill/tool outputs from the normal view.
+Tool execution is rendered as compact timeline cells, while `/debug events
+on|off` and `/details [id]` retain diagnostic access to redacted raw details.
 
 ## Backend Capability Matrix
 

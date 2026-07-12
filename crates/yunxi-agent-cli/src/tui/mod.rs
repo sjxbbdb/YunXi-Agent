@@ -153,6 +153,14 @@ impl InteractiveRenderer for TuiInteractiveRenderer {
         self.handle.with_mut(YunxiTui::flush)
     }
 
+    fn set_debug_events(&mut self, enabled: bool) -> Result<()> {
+        self.handle.with_mut(|tui| tui.set_debug_events(enabled))
+    }
+
+    fn show_details(&mut self, id: Option<usize>) -> Result<()> {
+        self.handle.with_mut(|tui| tui.show_details(id))
+    }
+
     fn error(&mut self, message: &str) -> Result<()> {
         self.handle.with_mut(|tui| tui.push_error(message))
     }

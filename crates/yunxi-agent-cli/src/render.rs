@@ -38,6 +38,8 @@ pub(crate) trait InteractiveRenderer {
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
+    fn set_debug_events(&mut self, enabled: bool) -> Result<()>;
+    fn show_details(&mut self, id: Option<usize>) -> Result<()>;
     fn error(&mut self, message: &str) -> Result<()>;
 }
 
@@ -90,10 +92,26 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
         eprintln!("[error] {message}");
         Ok(())
     }
+
+    fn set_debug_events(&mut self, enabled: bool) -> Result<()> {
+        println!(
+            "[debug] event debug {} (plain renderer already prints raw event stream)",
+            if enabled { "enabled" } else { "disabled" }
+        );
+        Ok(())
+    }
+
+    fn show_details(&mut self, id: Option<usize>) -> Result<()> {
+        match id {
+            Some(id) => println!("[details] TUI detail #{id} is not available in plain mode"),
+            None => println!("[details] TUI details are not available in plain mode"),
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.7.2 interactive CLI");
+    println!("YunXi Agent v1.7.3 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(

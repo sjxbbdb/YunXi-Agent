@@ -355,3 +355,48 @@ pub(crate) enum ToolPhase {
 - 工具调用链路清楚可追踪，但不刷屏。
 - debug/detail 通道保留完整排障能力。
 - YunXi Agent 继续保持完全自主运行，不依赖上游 Codex CLI 源码。
+
+## 实施结果记录
+
+本轮 v1.7.3 已按报告完成构建：
+
+- 新增 `crates/yunxi-agent-tui/src/event_filter.rs`，把 `AgentEvent` 分类为 assistant、reasoning、tool timeline、notice、warning、error、debug-only 和 suppress。
+- 新增 `crates/yunxi-agent-tui/src/timeline.rs`，将 shell/tool/MCP/approval/escalation 生命周期合并为紧凑工具时间线 cell，保留 approval required、approved、running、completed/failed 等步骤。
+- 新增 `crates/yunxi-agent-tui/src/output_summary.rs`，对工具参数、协议 JSON、长 stdout、skill 文档和疑似密钥内容做摘要、隐藏和脱敏。
+- 新增 `crates/yunxi-agent-tui/src/debug.rs`，保存被隐藏的原始事件和工具输出，提供可按 id 查看且已脱敏的 detail buffer。
+- 更新 `crates/yunxi-agent-tui/src/chat.rs`，`Transcript::push_agent_event` 不再直接打印所有事件，而是消费过滤后的语义事件；`CommandUpdated`、`ContextStatus`、`StorageState` 和成功 advisory sandbox 默认不进入主 transcript。
+- 更新 `crates/yunxi-agent-tui/src/render.rs`，支持 `HistoryCell::Tool` 和 `HistoryCell::Debug` 渲染。
+- 更新 `crates/yunxi-agent-tui/src/app.rs`、`host.rs`，加入 debug 状态、`set_debug_events` 和 `show_details`。
+- 更新 `crates/yunxi-agent-cli/src/commands.rs`、`interactive.rs`、`render.rs`、`tui/mod.rs`，加入 `/debug events on|off` 和 `/details [id]`，plain renderer 保持脚本友好的文本提示，TUI renderer 接入真实 debug/detail buffer。
+- 工作区版本升级到 `1.7.3`，README、CLI about、版本测试和 extraction status 同步更新。
+
+统一验证结果：
+
+- `cargo fmt`：通过。
+- `cargo fmt -- --check`：通过。
+- `cargo test`：通过，workspace unit tests、integration tests、doc tests 全部 0 failure。
+- `cargo check --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- `target\release\yunxi.exe --version`：`yunxi 1.7.3`。
+- `target\release\yunxi-agent-cli.exe --version`：`yunxi 1.7.3`。
+- `target\release\yunxi.exe --offline "v1.7.3 offline smoke"`：通过。
+- plain interactive debug smoke：`/debug events on`、`/details`、`/debug events off`、`/exit` 通过。
+- TUI event filter 专项测试：`cargo test -p yunxi-agent-tui event_filter_hides_protocol_stdout_context_and_long_skill_output` 通过，确认正常 transcript 不出现 `arguments_json`、完整 skill 文档、context tokens，并保留工具 timeline。
+- `cargo tree -p yunxi-agent-cli` 默认依赖扫描：通过，未命中 `codex`、`vendor`、`yunxi-agent-codex`。
+- owned-source secret scan（排除 `vendor/`、`extracted/`、`target/`、`.git/`、`.codegraph/`）：通过，无命中。
+- `git diff --check`：通过，仅有 Windows LF-to-CRLF 提示。
+- DeepSeek live streaming smoke：通过，model=`deepseek-v4-flash`，54 行 JSONL，`secret_leak_detected=False`。
+- DeepSeek live non-stream smoke：通过，model=`deepseek-v4-flash`，19 行 JSONL，`secret_leak_detected=False`。
+- DeepSeek interactive live smoke：通过，banner、assistant marker、normal exit 均检测成功，`secret_leak_detected=False`。
+- `codegraph sync "D:\YunXi Agent"`：通过，同步 15 个 changed files。
+- `codegraph status "D:\YunXi Agent"`：通过，index is up to date。
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`：通过。
+- PATH smoke：`yunxi --version` 和 `yunxi-agent-cli --version` 均输出 `1.7.3`，`yunxi --offline "installed path v1.7.3 smoke"` 通过。
+- 本轮 smoke 生成的 root `.yunxi` 运行产物已清理。
+
+发布策略：
+
+- 后续发布本轮实现时创建 release commit 和新的 annotated tag `v1.7.3`。
+- 旧 tag 不删除、不移动。
+- GitHub 发布继续全部走 REST API。
+- 发布后执行 `cargo clean` 并确认 `target_exists=False`。

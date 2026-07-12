@@ -25,7 +25,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v1.7.2".to_string(),
+            version: "v1.7.3".to_string(),
             banner: None,
             transcript: Transcript::default(),
             viewport: TranscriptViewport::default(),
@@ -87,11 +87,12 @@ impl YunxiTuiApp {
     pub(crate) fn subheader(&self) -> String {
         match &self.banner {
             Some(banner) => format!(
-                "backend={} source={} | transcript cells={} | view={}",
+                "backend={} source={} | transcript cells={} | view={} | {}",
                 banner.backend,
                 banner.provider_source,
                 self.transcript.cells().len(),
-                self.viewport.scroll_status()
+                self.viewport.scroll_status(),
+                self.transcript.debug_status()
             ),
             None => "initializing".to_string(),
         }
@@ -116,6 +117,16 @@ impl YunxiTuiApp {
 
     pub(crate) fn push_agent_event(&mut self, event: &AgentEvent) {
         self.transcript.push_agent_event(event);
+        self.on_transcript_changed();
+    }
+
+    pub(crate) fn set_debug_events(&mut self, enabled: bool) {
+        self.transcript.set_debug_events(enabled);
+        self.on_transcript_changed();
+    }
+
+    pub(crate) fn show_details(&mut self, id: Option<usize>) {
+        self.transcript.push_details(id);
         self.on_transcript_changed();
     }
 

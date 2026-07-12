@@ -900,6 +900,55 @@ Verified on 2026-07-12:
 Release publication is handled through GitHub REST API only. The release must
 create a new annotated tag `v1.7.2` and leave all prior version tags intact.
 
+## YunXi Agent v1.7.3 TUI Event Filtering Construction
+
+YunXi Agent v1.7.3 turns the v1.7.2 scrollable TUI transcript from a raw event
+log into a user-facing conversation and tool timeline.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.7.3`.
+- `yunxi-agent-tui` now owns an event filter that classifies runtime events
+  into user-visible transcript items, debug-only details, tool timeline
+  updates, warnings, and errors.
+- Raw `CommandUpdated` stdout, provider bookkeeping, context status, storage
+  state, and successful advisory sandbox attempts are hidden from the normal
+  transcript.
+- Tool, shell, approval, escalation, and MCP lifecycle events are merged into
+  compact timeline cells with approval/running/completed/failure steps.
+- Long skill/tool outputs, protocol JSON, and tool arguments are redacted,
+  summarized, and stored in a TUI debug/detail buffer instead of being rendered
+  directly in the main transcript.
+- TUI users can enable raw debug event summaries with `/debug events on`, hide
+  them with `/debug events off`, and inspect the latest or selected redacted
+  detail with `/details [id]`.
+- Plain, JSON, JSONL, and one-shot output paths remain outside the TUI filter.
+
+Verification for this slice passed on 2026-07-13 after the unified verification
+gate completed:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.7.3`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.7.3`
+- TUI event filter regression test: pass; normal transcript hides
+  `arguments_json`, full skill documents, and context token status while
+  preserving tool timeline steps
+- DeepSeek streaming, non-streaming, and interactive live smokes: pass with
+  `secret_leak_detected=False`
+- Default CLI dependency scan: pass; no `codex`, `vendor`, or
+  `yunxi-agent-codex` dependency appeared in the default CLI tree
+- Owned-source secret scan: pass after excluding `vendor`, `extracted`,
+  `target`, `.git`, and `.codegraph`
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `codegraph sync "D:\YunXi Agent"` and `codegraph status "D:\YunXi Agent"`:
+  pass; index is up to date
+- Install script and PATH smoke: pass; installed `yunxi` reports `1.7.3`
+
 ## YunXi Agent v1.5 Honesty Streaming Safety Construction
 
 YunXi Agent v1.5 promotes the project from "usable terminal agent with some

@@ -1,22 +1,51 @@
+use crate::debug::DebugBuffer;
+use crate::event_filter::{FilteredEvent, classify};
 use crate::streaming::append_fragment;
-use yunxi_agent_core::{AgentEvent, AgentRunStatus, CommandStatus};
+use crate::timeline::{ToolTimelineEntry, ToolTimelineUpdate};
+use yunxi_agent_core::AgentEvent;
 
 const MAX_HISTORY_CELLS: usize = 800;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum HistoryCell {
     User(String),
-    Assistant { content: String, active: bool },
-    Reasoning { content: String, active: bool },
-    Event { kind: String, message: String },
+    Assistant {
+        content: String,
+        active: bool,
+    },
+    Reasoning {
+        content: String,
+        active: bool,
+    },
+    Tool(ToolTimelineEntry),
+    Event {
+        kind: String,
+        message: String,
+    },
+    Debug {
+        id: usize,
+        label: String,
+        message: String,
+    },
     Warning(String),
     Error(String),
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Transcript {
     cells: Vec<HistoryCell>,
     last_assistant_content: Option<String>,
+    debug: DebugBuffer,
+}
+
+impl Default for Transcript {
+    fn default() -> Self {
+        Self {
+            cells: Vec::new(),
+            last_assistant_content: None,
+            debug: DebugBuffer::default(),
+        }
+    }
 }
 
 impl Transcript {
@@ -27,6 +56,26 @@ impl Transcript {
 
     pub(crate) fn cells(&self) -> &[HistoryCell] {
         &self.cells
+    }
+
+    pub(crate) fn debug_status(&self) -> String {
+        self.debug.status()
+    }
+
+    pub(crate) fn set_debug_events(&mut self, enabled: bool) {
+        self.debug.set_enabled(enabled);
+        self.push_notice(
+            "debug",
+            format!(
+                "event debug {}",
+                if enabled { "enabled" } else { "disabled" }
+            ),
+        );
+    }
+
+    pub(crate) fn push_details(&mut self, id: Option<usize>) {
+        let message = self.debug.detail_text(id);
+        self.push_notice("details", message);
     }
 
     pub(crate) fn render_line_count(&self) -> usize {
@@ -106,235 +155,27 @@ impl Transcript {
     }
 
     pub(crate) fn push_agent_event(&mut self, event: &AgentEvent) {
-        match event {
-            AgentEvent::Message { content } => self.push_assistant(content),
-            AgentEvent::Reasoning { content } => self.push_reasoning(content),
-            AgentEvent::CommandStarted { command, .. } => {
-                self.push_notice("shell", format!("started: {command}"));
-            }
-            AgentEvent::CommandUpdated {
-                aggregated_output, ..
-            } if !aggregated_output.trim().is_empty() => {
-                self.push_notice("stdout", aggregated_output.trim());
-            }
-            AgentEvent::CommandCompleted {
-                command,
-                exit_code,
-                status,
-                ..
-            } => self.push_notice(
-                "shell",
-                format!(
-                    "{command} -> {}{}",
-                    command_status_label(*status),
-                    exit_code
-                        .map(|code| format!(" ({code})"))
-                        .unwrap_or_default()
-                ),
-            ),
-            AgentEvent::CommandFinished { command, exit_code } => {
-                self.push_notice("shell", format!("{command} exited with {exit_code}"));
-            }
-            AgentEvent::ToolCallStarted { name, .. } => {
-                self.push_notice("tool", format!("started: {name}"));
-            }
-            AgentEvent::ToolCallCompleted {
-                name,
-                output,
-                status,
-                ..
+        match classify(event) {
+            FilteredEvent::Assistant(content) => self.push_assistant(&content),
+            FilteredEvent::Reasoning(content) => self.push_reasoning(&content),
+            FilteredEvent::Tool(update) => self.push_tool_update(update),
+            FilteredEvent::ToolOutput {
+                update,
+                label,
+                summary,
             } => {
-                self.push_notice("tool", format!("{name} -> {}", command_status_label(*status)));
-                if !output.trim().is_empty() {
-                    self.push_notice("tool-output", output.trim());
-                }
+                let id = self.debug.add(label, summary.detail);
+                self.push_tool_update(update.output_summary(summary.visible).detail_id(id));
+                self.push_debug_cell_if_enabled(id);
             }
-            AgentEvent::McpToolStarted { server, tool, .. } => {
-                self.push_notice("mcp", format!("{server}/{tool} started"));
+            FilteredEvent::Notice { kind, message } => self.push_notice(kind, message),
+            FilteredEvent::Warning(message) => self.push_warning(message),
+            FilteredEvent::Error(message) => self.push_error(message),
+            FilteredEvent::DebugOnly { label, detail } => {
+                let id = self.debug.add(label, detail);
+                self.push_debug_cell_if_enabled(id);
             }
-            AgentEvent::McpToolCompleted {
-                server,
-                tool,
-                status,
-                ..
-            } => self.push_notice("mcp", format!("{server}/{tool} -> {status:?}")),
-            AgentEvent::McpSession {
-                server,
-                status,
-                message,
-            } => self.push_notice(
-                "mcp-session",
-                format!(
-                    "{server}: {status}{}",
-                    message
-                        .as_ref()
-                        .map(|value| format!(" - {value}"))
-                        .unwrap_or_default()
-                ),
-            ),
-            AgentEvent::Warning { message } => self.push_warning(message),
-            AgentEvent::Error { message } => self.push_error(message),
-            AgentEvent::ProviderError {
-                provider,
-                classification,
-                status,
-                message,
-            } => self.push_error(format!(
-                "{provider} {classification}{} - {message}",
-                status.map(|value| format!(" {value}")).unwrap_or_default()
-            )),
-            AgentEvent::Cancelled { reason } => self.push_notice(
-                "cancelled",
-                reason.as_deref().unwrap_or("current turn cancelled"),
-            ),
-            AgentEvent::Completed { status, usage } => {
-                self.finalize_streams();
-                if *status != AgentRunStatus::Completed {
-                    self.push_notice("turn", status_label(*status));
-                }
-                if let Some(usage) = usage {
-                    self.push_notice(
-                        "usage",
-                        format!(
-                            "input={} cached_input={} output={} reasoning_output={}",
-                            usage.input_tokens,
-                            usage.cached_input_tokens,
-                            usage.output_tokens,
-                            usage.reasoning_output_tokens
-                        ),
-                    );
-                }
-            }
-            AgentEvent::FileChanged { path, kind } => {
-                self.push_notice("file", format!("{kind:?}: {path}"));
-            }
-            AgentEvent::PatchCompleted { status } => {
-                self.push_notice("patch", format!("{status:?}"));
-            }
-            AgentEvent::TodoUpdated { id, items } => {
-                self.push_notice(
-                    "todo",
-                    format!(
-                        "{} item(s){}",
-                        items.len(),
-                        id.as_ref()
-                            .map(|value| format!(" id={value}"))
-                            .unwrap_or_default()
-                    ),
-                );
-            }
-            AgentEvent::ApprovalRequested {
-                tool_name, reason, ..
-            } => self.push_notice("approval", format!("{tool_name}: {reason}")),
-            AgentEvent::ApprovalCompleted {
-                approved, reason, ..
-            } => self.push_notice(
-                "approval",
-                format!(
-                    "{}{}",
-                    if *approved { "approved" } else { "declined" },
-                    reason
-                        .as_ref()
-                        .map(|value| format!(" - {value}"))
-                        .unwrap_or_default()
-                ),
-            ),
-            AgentEvent::EscalationRequested {
-                tool_name, reason, ..
-            } => self.push_notice("escalation", format!("{tool_name}: {reason}")),
-            AgentEvent::EscalationCompleted {
-                approved, reason, ..
-            } => self.push_notice(
-                "escalation",
-                format!(
-                    "{}{}",
-                    if *approved { "approved" } else { "declined" },
-                    reason
-                        .as_ref()
-                        .map(|value| format!(" - {value}"))
-                        .unwrap_or_default()
-                ),
-            ),
-            AgentEvent::ChildAgentEvent {
-                agent_id,
-                child_session_id,
-                status,
-                message,
-                ..
-            } => self.push_notice(
-                "child",
-                format!(
-                    "{agent_id} {status} session={child_session_id}{}",
-                    message
-                        .as_ref()
-                        .map(|value| format!(" - {value}"))
-                        .unwrap_or_default()
-                ),
-            ),
-            AgentEvent::ChildScopedStream {
-                agent_id,
-                event,
-                seq,
-                message,
-                ..
-            } => self.push_notice(
-                "child-stream",
-                format!(
-                    "{agent_id} #{seq} {event}{}",
-                    message
-                        .as_ref()
-                        .map(|value| format!(" - {value}"))
-                        .unwrap_or_default()
-                ),
-            ),
-            AgentEvent::SandboxAttempt {
-                platform,
-                status,
-                backend,
-                command,
-                ..
-            } => self.push_notice(
-                "policy",
-                format!(
-                    "platform={platform} status={status} backend={backend} command={}",
-                    command.as_deref().unwrap_or("none")
-                ),
-            ),
-            AgentEvent::ContextStatus {
-                active_context_tokens,
-                token_limit_reached,
-                compacted,
-                dropped_messages,
-            } => self.push_notice(
-                "context",
-                format!(
-                    "tokens={active_context_tokens} limit_reached={token_limit_reached} compacted={compacted} dropped={dropped_messages}"
-                ),
-            ),
-            AgentEvent::StorageState {
-                session_id,
-                rollout_items,
-                rollout_truncated,
-                child_session_ids,
-                ..
-            } => self.push_notice(
-                "session",
-                format!(
-                    "{} rollout_items={rollout_items} truncated={rollout_truncated} children={}",
-                    session_id.as_deref().unwrap_or("unknown"),
-                    child_session_ids.len()
-                ),
-            ),
-            AgentEvent::CommandUpdated { .. }
-            | AgentEvent::ThreadStarted { .. }
-            | AgentEvent::TurnStarted
-            | AgentEvent::ThreadState { .. }
-            | AgentEvent::TurnMetadata { .. }
-            | AgentEvent::TurnState { .. }
-            | AgentEvent::DeepParityState { .. }
-            | AgentEvent::ApprovalCacheState { .. }
-            | AgentEvent::MultiAgentEvent { .. }
-            | AgentEvent::Started { .. } => {}
+            FilteredEvent::Suppress => {}
         }
     }
 
@@ -362,6 +203,34 @@ impl Transcript {
             self.cells.drain(0..overflow);
         }
     }
+
+    fn push_tool_update(&mut self, update: ToolTimelineUpdate) {
+        self.finalize_streams();
+        if let Some(HistoryCell::Tool(entry)) =
+            self.cells.iter_mut().rev().find(
+                |cell| matches!(cell, HistoryCell::Tool(entry) if entry.is_same_tool(&update)),
+            )
+        {
+            entry.apply(update);
+            return;
+        }
+        self.push_cell(HistoryCell::Tool(ToolTimelineEntry::new(update)));
+    }
+
+    fn push_debug_cell_if_enabled(&mut self, id: usize) {
+        if !self.debug.enabled() {
+            return;
+        }
+        if let Some(message) = self.debug.inline_summary(id) {
+            let label = self
+                .debug
+                .get(id)
+                .map(|entry| entry.label.clone())
+                .unwrap_or_else(|| "debug".to_string());
+            self.finalize_streams();
+            self.push_cell(HistoryCell::Debug { id, label, message });
+        }
+    }
 }
 
 fn history_cell_line_count(cell: &HistoryCell) -> usize {
@@ -371,32 +240,17 @@ fn history_cell_line_count(cell: &HistoryCell) -> usize {
         | HistoryCell::Reasoning { content, .. }
         | HistoryCell::Warning(content)
         | HistoryCell::Error(content) => content,
+        HistoryCell::Tool(entry) => return entry.display_text().lines().count().max(1),
         HistoryCell::Event { message, .. } => message,
+        HistoryCell::Debug { message, .. } => message,
     };
     content.lines().count().max(1)
-}
-
-fn command_status_label(status: CommandStatus) -> &'static str {
-    match status {
-        CommandStatus::InProgress => "in_progress",
-        CommandStatus::Completed => "completed",
-        CommandStatus::Failed => "failed",
-        CommandStatus::Declined => "declined",
-        CommandStatus::Cancelled => "cancelled",
-    }
-}
-
-fn status_label(status: AgentRunStatus) -> &'static str {
-    match status {
-        AgentRunStatus::Completed => "completed",
-        AgentRunStatus::Failed => "failed",
-        AgentRunStatus::Cancelled => "cancelled",
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yunxi_agent_core::CommandStatus;
 
     #[test]
     fn reasoning_deltas_are_merged_into_one_cell() {
@@ -431,5 +285,75 @@ mod tests {
         transcript.push_notice("tool", "three");
 
         assert_eq!(transcript.render_line_count(), 3);
+    }
+
+    #[test]
+    fn event_filter_hides_protocol_stdout_context_and_long_skill_output() {
+        let mut transcript = Transcript::default();
+        transcript.push_agent_event(&AgentEvent::CommandUpdated {
+            id: Some("call_1".to_string()),
+            command: "skill using-superpowers".to_string(),
+            aggregated_output: "{\"arguments_json\":\"{\\\"name\\\":\\\"using-superpowers\\\"}\"}"
+                .to_string(),
+        });
+        transcript.push_agent_event(&AgentEvent::ContextStatus {
+            active_context_tokens: 42,
+            token_limit_reached: false,
+            compacted: false,
+            dropped_messages: 0,
+        });
+        transcript.push_agent_event(&AgentEvent::ApprovalRequested {
+            id: Some("call_1".to_string()),
+            tool_name: "skill: using-superpowers".to_string(),
+            reason: "tool execution requires approval".to_string(),
+        });
+        transcript.push_agent_event(&AgentEvent::ApprovalCompleted {
+            id: Some("call_1".to_string()),
+            approved: true,
+            reason: Some("approved".to_string()),
+        });
+        transcript.push_agent_event(&AgentEvent::ToolCallStarted {
+            id: Some("call_1".to_string()),
+            name: "skill: using-superpowers".to_string(),
+            arguments_json: Some("{\"name\":\"using-superpowers\"}".to_string()),
+        });
+        transcript.push_agent_event(&AgentEvent::ToolCallCompleted {
+            id: Some("call_1".to_string()),
+            name: "skill: using-superpowers".to_string(),
+            output: "name: using-superpowers\n<EXTREMELY-IMPORTANT>\nfull skill body".to_string(),
+            status: CommandStatus::Completed,
+        });
+
+        let visible = transcript
+            .cells()
+            .iter()
+            .map(debug_cell_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!visible.contains("arguments_json"));
+        assert!(!visible.contains("EXTREMELY-IMPORTANT"));
+        assert!(!visible.contains("tokens=42"));
+        assert!(visible.contains("skill using-superpowers"));
+        assert!(visible.contains("approval required"));
+        assert!(visible.contains("approved"));
+        assert!(visible.contains("running"));
+        assert!(visible.contains("completed"));
+        assert!(visible.contains("output hidden"));
+        assert!(visible.contains("details #"));
+    }
+
+    fn debug_cell_text(cell: &HistoryCell) -> String {
+        match cell {
+            HistoryCell::User(value) | HistoryCell::Warning(value) | HistoryCell::Error(value) => {
+                value.clone()
+            }
+            HistoryCell::Assistant { content, .. } | HistoryCell::Reasoning { content, .. } => {
+                content.clone()
+            }
+            HistoryCell::Tool(entry) => entry.display_text(),
+            HistoryCell::Event { kind, message } => format!("{kind}: {message}"),
+            HistoryCell::Debug { message, .. } => message.clone(),
+        }
     }
 }

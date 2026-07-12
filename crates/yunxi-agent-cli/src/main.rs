@@ -66,7 +66,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.7.2 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.7.3 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,

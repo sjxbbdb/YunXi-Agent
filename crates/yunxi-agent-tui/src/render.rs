@@ -219,8 +219,19 @@ fn push_cell_lines(lines: &mut Vec<Line<'static>>, cell: &HistoryCell) {
             let label = if *active { "thinking*" } else { "thinking" };
             push_labeled(lines, label, Color::Blue, content);
         }
+        HistoryCell::Tool(entry) => {
+            push_labeled(lines, "tool", Color::Magenta, &entry.display_text())
+        }
         HistoryCell::Event { kind, message } => {
             push_labeled(lines, kind, label_color(kind), message)
+        }
+        HistoryCell::Debug { id, label, message } => {
+            push_labeled(
+                lines,
+                "debug",
+                Color::DarkGray,
+                &format!("#{id} {label}: {message}"),
+            );
         }
         HistoryCell::Warning(message) => push_labeled(lines, "warning", Color::Yellow, message),
         HistoryCell::Error(message) => push_labeled(lines, "error", Color::Red, message),
@@ -249,7 +260,7 @@ fn label_color(label: &str) -> Color {
     match label {
         "shell" | "tool" | "mcp" => Color::Magenta,
         "approval" | "escalation" => Color::Yellow,
-        "context" | "session" | "usage" => Color::Gray,
+        "context" | "session" | "usage" | "debug" | "details" => Color::Gray,
         "cancelled" | "provider" => Color::Red,
         _ => Color::White,
     }

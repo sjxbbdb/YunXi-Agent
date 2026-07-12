@@ -78,6 +78,16 @@ impl YunxiTui {
         self.request_draw_now()
     }
 
+    pub fn set_debug_events(&mut self, enabled: bool) -> Result<()> {
+        self.app.set_debug_events(enabled);
+        self.request_draw_now()
+    }
+
+    pub fn show_details(&mut self, id: Option<usize>) -> Result<()> {
+        self.app.show_details(id);
+        self.request_draw_now()
+    }
+
     pub fn tick(&mut self) -> Result<()> {
         self.drain_navigation_events()?;
         self.flush_frame(Instant::now())

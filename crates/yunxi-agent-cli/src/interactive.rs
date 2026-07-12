@@ -151,6 +151,8 @@ impl InteractiveSession {
             InteractiveCommand::Provider(provider) => {
                 self.handle_provider_command(provider, renderer)?;
             }
+            InteractiveCommand::Debug(debug) => self.handle_debug_command(debug, renderer)?,
+            InteractiveCommand::Details(id) => renderer.show_details(id)?,
             InteractiveCommand::Resume(session_id) => {
                 self.resume_session(session_id, renderer).await?;
             }
@@ -341,6 +343,23 @@ impl InteractiveSession {
             "provider",
             &format!("provider: {}", self.provider_selection.provider),
         )?;
+        Ok(())
+    }
+
+    fn handle_debug_command(
+        &mut self,
+        debug: Option<String>,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<()> {
+        match debug.as_deref().map(str::trim) {
+            Some("events on") | Some("on") => renderer.set_debug_events(true)?,
+            Some("events off") | Some("off") => renderer.set_debug_events(false)?,
+            Some(other) => renderer.notice(
+                "debug",
+                &format!("unknown debug command: {other}; use /debug events on|off"),
+            )?,
+            None => renderer.notice("debug", "use /debug events on|off")?,
+        }
         Ok(())
     }
 

@@ -1,6 +1,7 @@
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentConfig, AgentInput};
 use yunxi_agent_protocol::{
@@ -8,11 +9,48 @@ use yunxi_agent_protocol::{
 };
 use yunxi_agent_provider::{
     AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiStreamAccumulator,
-    OpenAiTransportProvider, ProviderAuth, ProviderBootstrap, ProviderConfig, ProviderRequest,
-    ProviderRetryPolicy, ProviderRole, ProviderSseDecoder, ProviderToolCall, ProviderTransport,
-    StaticProvider, build_openai_request_json, build_openai_stream_request_json,
-    build_openai_transport_request, parse_openai_response_json, parse_openai_stream_events,
+    OpenAiTransportProvider, ProviderAuth, ProviderBootstrap, ProviderConfig, ProviderMessage,
+    ProviderRequest, ProviderRetryPolicy, ProviderRole, ProviderSseDecoder, ProviderToolCall,
+    ProviderTransport, ProviderTransportRequest, ProviderTransportResponse, StaticProvider,
+    build_openai_request_json, build_openai_stream_request_json, build_openai_transport_request,
+    parse_openai_response_json, parse_openai_stream_events, redact_sensitive_text,
 };
+
+#[derive(Clone)]
+struct SequenceTransport {
+    responses: Arc<Mutex<VecDeque<ProviderTransportResponse>>>,
+    requests: Arc<Mutex<Vec<ProviderTransportRequest>>>,
+}
+
+impl SequenceTransport {
+    fn new(responses: impl IntoIterator<Item = ProviderTransportResponse>) -> Self {
+        Self {
+            responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn requests(&self) -> Vec<ProviderTransportRequest> {
+        self.requests.lock().expect("request lock").clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl ProviderTransport for SequenceTransport {
+    async fn send(
+        &self,
+        request: ProviderTransportRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderTransportResponse> {
+        self.requests.lock().expect("request lock").push(request);
+        self.responses
+            .lock()
+            .expect("response lock")
+            .pop_front()
+            .ok_or_else(|| yunxi_agent_core::AgentError::Execution {
+                message: "sequence transport exhausted".to_string(),
+            })
+    }
+}
 
 #[tokio::test]
 async fn static_provider_returns_yunxi_runtime_message() {
@@ -86,6 +124,42 @@ fn openai_request_json_uses_yunxi_provider_messages() {
         json!(["server", "tool"])
     );
     assert_eq!(json["parallel_tool_calls"], true);
+}
+
+#[test]
+fn openai_request_json_preserves_assistant_tool_calls_and_tool_result_ids() {
+    let request = ProviderRequest::with_messages(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("run a tool"),
+        vec![
+            ProviderMessage::user("run a tool"),
+            ProviderMessage::assistant_with_tool_calls(
+                "",
+                vec![ProviderToolCall::Shell {
+                    id: Some("call-1".to_string()),
+                    command: "echo hello".to_string(),
+                }],
+            ),
+            ProviderMessage::tool_result("call-1", "hello"),
+        ],
+    );
+
+    let json =
+        build_openai_request_json(&ProviderConfig::deepseek(), &request).expect("request json");
+
+    assert_eq!(json["messages"][1]["role"], "assistant");
+    assert_eq!(json["messages"][1]["tool_calls"][0]["id"], "call-1");
+    assert_eq!(
+        json["messages"][1]["tool_calls"][0]["function"]["name"],
+        "shell"
+    );
+    assert_eq!(
+        json["messages"][1]["tool_calls"][0]["function"]["arguments"],
+        r#"{"command":"echo hello"}"#
+    );
+    assert_eq!(json["messages"][2]["role"], "tool");
+    assert_eq!(json["messages"][2]["tool_call_id"], "call-1");
+    assert_eq!(json["messages"][2]["content"], "hello");
 }
 
 #[test]
@@ -362,6 +436,140 @@ async fn provider_http_errors_are_classified_and_redacted() {
     assert!(!rendered.contains("test-secret-value"));
     assert!(!rendered.contains("Authorization"));
     assert!(!rendered.contains("Bearer"));
+}
+
+#[tokio::test]
+async fn deepseek_schema_error_retries_once_without_metadata() {
+    let transport = SequenceTransport::new([
+        ProviderTransportResponse {
+            status: 400,
+            body: r#"{"error":{"message":"unknown field metadata"}}"#.to_string(),
+        },
+        ProviderTransportResponse {
+            status: 200,
+            body: r#"{"choices":[{"message":{"role":"assistant","content":"fallback worked"}}]}"#
+                .to_string(),
+        },
+    ]);
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::deepseek().with_stream(false),
+        ProviderAuth::ApiKey("fixture-key".to_string()),
+        transport.clone(),
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("metadata fallback"),
+    );
+
+    let response = provider.complete(request).await.expect("fallback response");
+    let requests = transport.requests();
+
+    assert_eq!(
+        response.message.map(|message| message.content),
+        Some("fallback worked".to_string())
+    );
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].body.get("metadata").is_some());
+    assert!(requests[1].body.get("metadata").is_none());
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.body.get("tools").is_some())
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request.body.get("messages").is_some())
+    );
+}
+
+#[tokio::test]
+async fn non_deepseek_schema_error_does_not_use_metadata_fallback() {
+    let transport = SequenceTransport::new([ProviderTransportResponse {
+        status: 400,
+        body: r#"{"error":{"message":"invalid request"}}"#.to_string(),
+    }]);
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model").with_stream(false),
+        ProviderAuth::None,
+        transport.clone(),
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("no fallback"),
+    );
+
+    provider.complete(request).await.expect_err("schema error");
+
+    assert_eq!(transport.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn provider_schema_error_includes_only_bounded_redacted_details() {
+    let secret = "sk-fixture";
+    let opaque_secret = "opaque-must-not-leak";
+    let long_tail = "x".repeat(400);
+    let body = json!({
+        "error": {
+            "message": format!(
+                "\u{1b}[31mAuthorization: {} {opaque_secret} api_key={secret} unknown field metadata {long_tail}",
+                "Bearer"
+            ),
+            "type": "invalid_request_error",
+            "code": "unsupported_schema"
+        },
+        "raw_private_field": secret
+    })
+    .to_string();
+    let transport = SequenceTransport::new([
+        ProviderTransportResponse {
+            status: 400,
+            body: body.clone(),
+        },
+        ProviderTransportResponse { status: 400, body },
+    ]);
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::deepseek().with_stream(false),
+        ProviderAuth::ApiKey("fixture-key".to_string()),
+        transport,
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("safe diagnostics"),
+    );
+
+    let error = provider.complete(request).await.expect_err("schema error");
+    let rendered = error.to_string();
+    let detail = rendered.split("; detail=").nth(1).expect("safe detail");
+
+    assert!(rendered.contains("unknown field metadata"));
+    assert!(rendered.contains("type=invalid_request_error"));
+    assert!(rendered.contains("code=unsupported_schema"));
+    assert!(!rendered.contains(secret));
+    assert!(!rendered.contains(opaque_secret));
+    assert!(!rendered.contains("Bearer"));
+    assert!(!rendered.contains("Authorization"));
+    assert!(!rendered.contains('\u{1b}'));
+    assert!(!rendered.contains("raw_private_field"));
+    assert!(detail.chars().count() <= 240);
+}
+
+#[test]
+fn sensitive_text_redaction_removes_authorization_values_and_terminal_controls() {
+    let rendered = redact_sensitive_text(concat!(
+        "\u{1b}[31mAuthori",
+        "zation: Bas",
+        "ic opaque-basic safe-detail ",
+        "api_key: opaque-colon safe-after-colon api_key = opaque-spaced safe-tail",
+    ));
+
+    assert!(!rendered.contains("Authorization"));
+    assert!(!rendered.contains("Basic"));
+    assert!(!rendered.contains("opaque-basic"));
+    assert!(!rendered.contains("opaque-colon"));
+    assert!(!rendered.contains("opaque-spaced"));
+    assert!(!rendered.contains('\u{1b}'));
+    assert!(rendered.contains("safe-tail"));
 }
 
 #[tokio::test]

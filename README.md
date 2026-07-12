@@ -1,6 +1,6 @@
-# YunXi Agent v1.2
+# YunXi Agent v1.2.1
 
-YunXi Agent v1.2 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.2.1 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -16,7 +16,7 @@ through the clearly labelled offline provider.
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: v1.2 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.2.1 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -28,6 +28,8 @@ through the clearly labelled offline provider.
 - Compiles as an independent Rust workspace
 - Builds a terminal command named `yunxi`
 - Starts an interactive terminal session when `yunxi` is run without a prompt
+- Keeps the interactive session open when one provider or tool turn fails
+- Preserves assistant tool calls and matching tool result ids across provider turns
 - Preserves one-shot execution through `yunxi "your task"`
 - Automatically selects the real DeepSeek provider when credentials are present
 - Supports `--offline` for deterministic local and automation runs
@@ -54,7 +56,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.2 CLI into a user-local bin directory:
+Build and install the v1.2.1 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -166,6 +168,12 @@ stores that path in project configuration.
 Each released version keeps its own immutable Git tag. v1.2 adds `v1.2.0` and
 preserves `v1.0.0` and `v1.1.0` as rollback points. Do not delete or move old
 version tags.
+
+v1.2.1 adds immutable tag `v1.2.1` without moving `v1.2.0`. DeepSeek HTTP
+400/422 responses receive one compatibility retry without optional request
+`metadata`; a failed turn is rendered as a redacted error and returns control
+to `yunxi>`. Tool-loop history uses matching assistant `tool_calls` and
+`tool_call_id` fields for OpenAI/DeepSeek-compatible APIs.
 
 ## Backend Capability Matrix
 

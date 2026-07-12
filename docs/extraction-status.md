@@ -930,6 +930,47 @@ Release closure:
   generated `target`, root `.yunxi`, and temporary smoke artifacts were
   cleaned.
 
+## YunXi Agent v1.2.1 Interactive Provider Recovery Construction
+
+YunXi Agent v1.2.1 corrects the interactive turn lifecycle exposed by a
+DeepSeek HTTP 400 response. A failed provider, tool, or network turn is now
+contained at the REPL boundary: the error is rendered safely, the last
+successful session state is preserved, and the next user input can run without
+restarting YunXi.
+
+DeepSeek 400/422 responses receive one compatibility fallback that removes only
+the optional top-level request `metadata`. Tools, messages, model selection,
+and all other provider behavior remain intact. If the fallback also fails,
+YunXi extracts only structured error message/type/code fields, redacts
+token-like content, and bounds the displayed detail to 240 characters.
+
+Tool-loop history now preserves the assistant `tool_calls` message and sends
+each `role=tool` result with its matching `tool_call_id`. This closes the
+protocol defect identified by DeepSeek's structured error detail after the
+initial interactive recovery patch was installed.
+
+The live smoke helper now has a genuine interactive mode that sends an actual
+prompt and requires the expected assistant marker plus explicit `/exit`
+completion. Provider tests cover the fallback and safe diagnostics; a CLI
+integration test covers first-turn 400/400 failure followed by a successful
+second prompt without process termination.
+
+This patch is prepared for immutable tag `v1.2.1`; release must preserve
+`v1.0.0`, `v1.1.0`, and `v1.2.0` unchanged. The default CLI remains
+independent of upstream Codex runtime dependencies.
+
+Verified on 2026-07-12:
+
+- `cargo test`: pass; 196 workspace tests, zero failures.
+- `cargo check --workspace`: pass without warnings.
+- release dual binaries: pass; both report `yunxi 1.2.1`.
+- local sequential HTTP REPL recovery: pass.
+- DeepSeek stream/non-stream/interactive prompt: pass with no detected secret
+  leak.
+- installed PATH binary from `C:\Users\admin`: “你好” produced a completed
+  assistant turn and exited only after `/exit`, with no provider HTTP 400.
+- default CLI dependency tree and owned-source privacy scans: pass.
+
 ## Stage 4L Deep Parity Closure Construction
 
 Stage 4L construction has added YunXi-owned facade and runtime fixture coverage

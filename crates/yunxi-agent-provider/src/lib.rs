@@ -70,6 +70,10 @@ impl ProviderResponse {
 pub struct ProviderMessage {
     pub role: ProviderRole,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ProviderToolCall>,
 }
 
 impl ProviderMessage {
@@ -77,6 +81,8 @@ impl ProviderMessage {
         Self {
             role: ProviderRole::System,
             content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
         }
     }
 
@@ -84,6 +90,8 @@ impl ProviderMessage {
         Self {
             role: ProviderRole::User,
             content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
         }
     }
 
@@ -91,6 +99,20 @@ impl ProviderMessage {
         Self {
             role: ProviderRole::Assistant,
             content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }
+    }
+
+    pub fn assistant_with_tool_calls(
+        content: impl Into<String>,
+        tool_calls: Vec<ProviderToolCall>,
+    ) -> Self {
+        Self {
+            role: ProviderRole::Assistant,
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls,
         }
     }
 
@@ -98,6 +120,17 @@ impl ProviderMessage {
         Self {
             role: ProviderRole::Tool,
             content: content.into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        }
+    }
+
+    pub fn tool_result(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: ProviderRole::Tool,
+            content: content.into(),
+            tool_call_id: Some(call_id.into()),
+            tool_calls: Vec::new(),
         }
     }
 }
@@ -1119,9 +1152,9 @@ where
             &request,
             true,
         )?;
-        let response = self.send_with_retries(transport_request).await?;
+        let response = self.send_with_schema_fallback(transport_request).await?;
         if !response.is_success() {
-            return Err(provider_http_error(&self.provider.config, response.status));
+            return Err(provider_http_error(&self.provider.config, &response));
         }
         self.provider
             .parse_stream_events(thread_id, turn_id, &response.body)
@@ -1143,6 +1176,28 @@ where
             attempt += 1;
         }
     }
+
+    async fn send_with_schema_fallback(
+        &self,
+        request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse> {
+        let response = self.send_with_retries(request.clone()).await?;
+        if !matches!(response.status, 400 | 422)
+            || self.provider.config.profile.as_deref() != Some("deepseek")
+        {
+            return Ok(response);
+        }
+
+        let mut fallback = request;
+        let Some(body) = fallback.body.as_object_mut() else {
+            return Ok(response);
+        };
+        if body.remove("metadata").is_none() {
+            return Ok(response);
+        }
+
+        self.send_with_retries(fallback).await
+    }
 }
 
 #[async_trait]
@@ -1157,9 +1212,9 @@ where
             &request,
             false,
         )?;
-        let response = self.send_with_retries(transport_request).await?;
+        let response = self.send_with_schema_fallback(transport_request).await?;
         if !response.is_success() {
-            return Err(provider_http_error(&self.provider.config, response.status));
+            return Err(provider_http_error(&self.provider.config, &response));
         }
         self.provider.parse_response_json(&response.body)
     }
@@ -1182,9 +1237,18 @@ where
     }
 }
 
-fn provider_http_error(config: &ProviderConfig, status: u16) -> AgentError {
+fn provider_http_error(
+    config: &ProviderConfig,
+    response: &ProviderTransportResponse,
+) -> AgentError {
+    let status = response.status;
     let kind = classify_provider_status(status);
     let classification = kind.classification();
+    let detail = provider_error_detail(&response.body);
+    let detail_suffix = detail
+        .as_deref()
+        .map(|detail| format!("; detail={detail}"))
+        .unwrap_or_default();
     AgentError::Provider {
         provider: config
             .profile
@@ -1193,11 +1257,126 @@ fn provider_http_error(config: &ProviderConfig, status: u16) -> AgentError {
         status: Some(status),
         classification: classification.to_string(),
         message: format!(
-            "provider returned HTTP {status} ({classification}); provider={}, host={}, model={}",
+            "provider returned HTTP {status} ({classification}); provider={}, host={}, model={}{}",
             config.profile.as_deref().unwrap_or(config.name.as_str()),
             base_url_host(&config.base_url),
-            config.model
+            config.model,
+            detail_suffix
         ),
+    }
+}
+
+fn provider_error_detail(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let error = value.get("error").unwrap_or(&value);
+    let mut parts = Vec::new();
+    for field in ["type", "code"] {
+        if let Some(value) = error.get(field).and_then(provider_detail_scalar) {
+            let value = redact_sensitive_text(&value);
+            if !value.is_empty() {
+                parts.push(format!("{field}={value}"));
+            }
+        }
+    }
+    if let Some(message) = error.get("message").and_then(Value::as_str) {
+        let message = redact_sensitive_text(message);
+        if !message.is_empty() {
+            parts.push(message);
+        }
+    }
+    let detail = truncate_chars(&parts.join("; "), 240);
+    (!detail.is_empty()).then_some(detail)
+}
+
+fn provider_detail_scalar(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+pub fn redact_sensitive_text(value: &str) -> String {
+    let normalized = strip_terminal_control_sequences(value);
+    let mut redact_following = 0usize;
+    normalized
+        .split_whitespace()
+        .map(|part| {
+            let trimmed = part
+                .trim_matches(|character: char| matches!(character, ',' | ';' | ':' | '"' | '\''));
+            let lowered = trimmed.to_ascii_lowercase();
+            let authorization = lowered.starts_with("authorization");
+            let credential_scheme = matches!(lowered.as_str(), "bearer" | "basic" | "digest");
+            let credential_label = matches!(
+                lowered.as_str(),
+                "api_key"
+                    | "api_key="
+                    | "apikey"
+                    | "apikey="
+                    | "access_token"
+                    | "access_token="
+                    | "token"
+                    | "token="
+            );
+            let token_shaped = lowered.contains("sk-")
+                || lowered.contains("ghp_")
+                || lowered.contains("github_pat_")
+                || lowered.starts_with("api_key=")
+                || lowered.starts_with("apikey=")
+                || lowered.starts_with("access_token=")
+                || lowered.starts_with("token=");
+            if redact_following > 0 {
+                redact_following -= 1;
+                return "[redacted]";
+            }
+            if authorization {
+                redact_following = 2;
+                return "[redacted]";
+            }
+            if credential_scheme {
+                redact_following = 1;
+                return "[redacted]";
+            }
+            if credential_label {
+                redact_following = 2;
+                return "[redacted]";
+            }
+            if token_shaped { "[redacted]" } else { part }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn strip_terminal_control_sequences(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '\u{1b}' {
+            if chars.next_if_eq(&'[').is_some() {
+                for sequence_character in chars.by_ref() {
+                    if ('@'..='~').contains(&sequence_character) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if character.is_control() {
+            output.push(' ');
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        truncated.trim_end().to_string()
+    } else {
+        truncated
     }
 }
 
@@ -1497,17 +1676,7 @@ pub fn build_openai_request_json(
     let messages = request
         .messages
         .iter()
-        .map(|message| {
-            json!({
-                "role": match message.role {
-                    ProviderRole::System => "system",
-                    ProviderRole::User => "user",
-                    ProviderRole::Assistant => "assistant",
-                    ProviderRole::Tool => "tool",
-                },
-                "content": message.content,
-            })
-        })
+        .map(provider_message_request_json)
         .collect::<Vec<_>>();
 
     let mut body = json!({
@@ -1534,6 +1703,108 @@ pub fn build_openai_request_json(
         });
     }
     Ok(body)
+}
+
+fn provider_message_request_json(message: &ProviderMessage) -> Value {
+    let mut value = json!({
+        "role": match message.role {
+            ProviderRole::System => "system",
+            ProviderRole::User => "user",
+            ProviderRole::Assistant => "assistant",
+            ProviderRole::Tool => "tool",
+        },
+        "content": message.content,
+    });
+    if let Some(tool_call_id) = &message.tool_call_id {
+        value["tool_call_id"] = Value::String(tool_call_id.clone());
+    }
+    if !message.tool_calls.is_empty() {
+        if message.content.is_empty() {
+            value["content"] = Value::Null;
+        }
+        value["tool_calls"] = Value::Array(
+            message
+                .tool_calls
+                .iter()
+                .enumerate()
+                .map(|(index, tool_call)| provider_tool_call_request_json(tool_call, index))
+                .collect(),
+        );
+    }
+    value
+}
+
+fn provider_tool_call_request_json(tool_call: &ProviderToolCall, index: usize) -> Value {
+    let (id, name, arguments) = match tool_call {
+        ProviderToolCall::Shell { id, command } => (
+            id.as_deref(),
+            "shell",
+            json!({"command": command}).to_string(),
+        ),
+        ProviderToolCall::Patch { id, patch } => (
+            id.as_deref(),
+            "patch",
+            serde_json::from_str::<Value>(patch)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|_| json!({"patch": patch}).to_string()),
+        ),
+        ProviderToolCall::Mcp {
+            id,
+            server,
+            tool,
+            arguments_json,
+        } => (
+            id.as_deref(),
+            "mcp",
+            json!({
+                "server": server,
+                "tool": tool,
+                "arguments_json": arguments_json,
+            })
+            .to_string(),
+        ),
+        ProviderToolCall::Skill {
+            id,
+            name,
+            arguments_json,
+        } => (
+            id.as_deref(),
+            "skill",
+            json!({"name": name, "arguments_json": arguments_json}).to_string(),
+        ),
+        ProviderToolCall::MultiAgent {
+            id,
+            action,
+            arguments_json,
+        } => (
+            id.as_deref(),
+            "multi_agent",
+            json!({"action": action, "arguments_json": arguments_json}).to_string(),
+        ),
+        ProviderToolCall::ToolSearch { id, query } => (
+            id.as_deref(),
+            "tool_search",
+            json!({"query": query}).to_string(),
+        ),
+        ProviderToolCall::RequestUserInput { id, prompt } => (
+            id.as_deref(),
+            "request_user_input",
+            json!({"prompt": prompt}).to_string(),
+        ),
+        ProviderToolCall::ViewImage { id, path } => (
+            id.as_deref(),
+            "view_image",
+            json!({"path": path}).to_string(),
+        ),
+    };
+    json!({
+        "id": id.map(ToString::to_string).unwrap_or_else(|| format!("yunxi-call-{index}")),
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments,
+        }
+    })
 }
 
 pub fn build_openai_stream_request_json(

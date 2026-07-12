@@ -2,8 +2,72 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use serde_json::Value;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
+use std::thread;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
+
+fn spawn_sequence_http_server(responses: Vec<(u16, String)>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
+    listener
+        .set_nonblocking(true)
+        .expect("set fixture nonblocking");
+    let address = listener.local_addr().expect("fixture address");
+    thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        for (status, body) in responses {
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "fixture request timed out");
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("fixture accept failed: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .expect("fixture read timeout");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let count = stream.read(&mut buffer).expect("read fixture request");
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                let Some(header_end) = request.windows(4).position(|part| part == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let headers = String::from_utf8_lossy(&request[..header_end]);
+                let content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().expect("content length"))
+                    })
+                    .unwrap_or_default();
+                if request.len() >= header_end + 4 + content_length {
+                    break;
+                }
+            }
+            let reason = if status == 200 { "OK" } else { "Bad Request" };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write fixture response");
+        }
+    });
+    format!("http://{address}")
+}
 
 #[test]
 fn yunxi_primary_binary_prints_v1_version() {
@@ -12,7 +76,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.2.0"));
+        .stdout(predicate::str::contains("yunxi 1.2.1"));
 }
 
 #[test]
@@ -22,7 +86,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.2.0"));
+        .stdout(predicate::str::contains("yunxi 1.2.1"));
 }
 
 #[test]
@@ -107,9 +171,57 @@ fn cli_enters_interactive_mode_without_prompt() {
         .write_stdin("/exit\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains("YunXi Agent v1.2 interactive CLI"))
+        .stdout(predicate::str::contains(
+            "YunXi Agent v1.2.1 interactive CLI",
+        ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn interactive_provider_error_returns_to_repl_for_the_next_prompt() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
+    let base_url = spawn_sequence_http_server(vec![
+        (
+            400,
+            r#"{"error":{"message":"unknown field metadata"}}"#.to_string(),
+        ),
+        (
+            400,
+            r#"{"error":{"message":"request still rejected"}}"#.to_string(),
+        ),
+        (
+            200,
+            r#"{"choices":[{"message":{"role":"assistant","content":"SECOND_TURN_OK"}}]}"#
+                .to_string(),
+        ),
+    ]);
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("OPENAI_API_KEY")
+        .env("YUNXI_PROVIDER_PROFILE", "deepseek")
+        .env("DEEPSEEK_API_KEY", "fixture-interactive-secret")
+        .env("YUNXI_PROVIDER_BASE_URL", base_url)
+        .env("YUNXI_PROVIDER_STREAM", "false")
+        .args(["--cwd", cwd])
+        .write_stdin("first prompt\n/session\nsecond prompt\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("session: new"))
+        .stdout(predicate::str::contains("turns: 0"))
+        .stdout(predicate::str::contains("SECOND_TURN_OK"))
+        .stdout(predicate::str::contains("YunXi interactive session ended."))
+        .stderr(predicate::str::contains("provider returned HTTP 400"))
+        .stderr(predicate::str::contains("request still rejected"))
+        .stdout(predicate::str::contains("fixture-interactive-secret").not())
+        .stderr(predicate::str::contains("fixture-interactive-secret").not());
+
+    let sessions = session_values(&temp);
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["prompt"].as_str(), Some("second prompt"));
 }
 
 #[test]
@@ -198,7 +310,9 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .write_stdin("hello from repl\n/session\n/exit\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains("YunXi Agent v1.2 interactive CLI"))
+        .stdout(predicate::str::contains(
+            "YunXi Agent v1.2.1 interactive CLI",
+        ))
         .stdout(predicate::str::contains(
             "YunXi autonomous runtime accepted prompt: hello from repl",
         ))

@@ -56,7 +56,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.2 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.2.1 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -248,7 +248,7 @@ async fn main() {
             if jsonl_requested {
                 print_cli_error_jsonl(&error);
             } else {
-                eprintln!("{error:#}");
+                eprintln!("{}", redact_secret_fragments(&format!("{error:#}")));
             }
             classify_cli_error(&error)
         }
@@ -359,7 +359,7 @@ fn print_cli_error_jsonl(error: &anyhow::Error) {
             provider: provider.clone(),
             status: *status,
             classification: classification.clone(),
-            message: message.clone(),
+            message: redact_secret_fragments(message),
         }
     } else if format!("{error:#}")
         .to_ascii_lowercase()
@@ -388,18 +388,8 @@ fn find_agent_error(error: &anyhow::Error) -> Option<&AgentError> {
         .find_map(|cause| cause.downcast_ref::<AgentError>())
 }
 
-fn redact_secret_fragments(message: &str) -> String {
-    message
-        .split_whitespace()
-        .map(|part| {
-            if part.starts_with("sk-") || part.starts_with("Bearer") {
-                "[redacted]"
-            } else {
-                part
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+pub(crate) fn redact_secret_fragments(message: &str) -> String {
+    yunxi_agent_provider::redact_sensitive_text(message)
 }
 
 pub(crate) async fn run_agent_backend(

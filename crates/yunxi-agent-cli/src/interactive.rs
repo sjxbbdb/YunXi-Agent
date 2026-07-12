@@ -1,7 +1,7 @@
 use crate::commands::{InteractiveCommand, help_text, parse_interactive_command};
 use crate::provider_mode::{ProviderMode, ProviderSelection};
 use crate::render::{InteractiveBanner, print_banner, render_agent_result};
-use crate::run_agent_backend;
+use crate::{redact_secret_fragments, run_agent_backend};
 use anyhow::{Context, Result};
 use std::io::{self, BufRead, IsTerminal, Write};
 use yunxi_agent_core::{AgentConfig, AgentRunResult, BackendKind};
@@ -92,7 +92,12 @@ impl InteractiveSession {
                 continue;
             }
 
-            self.run_turn(input.to_string()).await?;
+            if let Err(error) = self.run_turn(input.to_string()).await {
+                eprintln!(
+                    "[error] {}",
+                    redact_secret_fragments(&format!("{error:#}"))
+                );
+            }
         }
     }
 

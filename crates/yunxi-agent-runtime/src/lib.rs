@@ -782,9 +782,20 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 break;
             }
 
-            if let Some(message) = provider_response.message {
-                messages.push(message);
+            let mut tool_calls = provider_response.tool_calls;
+            for (tool_index, tool_call) in tool_calls.iter_mut().enumerate() {
+                ensure_provider_tool_call_id(
+                    tool_call,
+                    format!("yunxi-{turn_id}-{turn_index}-{tool_index}"),
+                );
             }
+            messages.push(ProviderMessage::assistant_with_tool_calls(
+                provider_response
+                    .message
+                    .map(|message| message.content)
+                    .unwrap_or_default(),
+                tool_calls.clone(),
+            ));
 
             turn_driver
                 .emit_phase(
@@ -793,10 +804,13 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                     "completed",
                     "running",
                     "not_cancelled",
-                    runtime_data([("tool_calls", provider_response.tool_calls.len().to_string())]),
+                    runtime_data([("tool_calls", tool_calls.len().to_string())]),
                 )
                 .await?;
-            for tool_call in provider_response.tool_calls {
+            for tool_call in tool_calls {
+                let tool_call_id = provider_tool_call_id(&tool_call)
+                    .expect("tool call id is assigned before dispatch")
+                    .to_string();
                 let mut tool_request = map_tool_call(&runtime_config, &session_id, tool_call);
                 let approval_probe = session_driver.apply_approval_cache(&mut tool_request)?;
                 emit_approval_cache_state(&sink, session_driver.session_id(), approval_probe)
@@ -816,7 +830,10 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 emit_escalation_completed_if_needed(&sink, &dispatch.trace, &tool_response).await?;
                 emit_tool_warning(&sink, &tool_response).await?;
                 emit_file_changes(&sink, &tool_response).await?;
-                messages.push(ProviderMessage::tool(render_tool_response(&tool_response)));
+                messages.push(ProviderMessage::tool_result(
+                    tool_call_id,
+                    render_tool_response(&tool_response),
+                ));
             }
             turn_driver
                 .emit_phase(
@@ -1867,10 +1884,7 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResp
     let message = if message_content.is_empty() {
         None
     } else {
-        Some(ProviderMessage {
-            role: ProviderRole::Assistant,
-            content: message_content,
-        })
+        Some(ProviderMessage::assistant(message_content))
     };
     Ok(ProviderResponse {
         message,
@@ -2309,6 +2323,20 @@ fn provider_tool_call_id(call: &ProviderToolCall) -> Option<&str> {
         | ProviderToolCall::RequestUserInput { id, .. }
         | ProviderToolCall::ViewImage { id, .. } => id.as_deref(),
     }
+}
+
+fn ensure_provider_tool_call_id(call: &mut ProviderToolCall, fallback: String) -> String {
+    let id = match call {
+        ProviderToolCall::Shell { id, .. }
+        | ProviderToolCall::Patch { id, .. }
+        | ProviderToolCall::Mcp { id, .. }
+        | ProviderToolCall::Skill { id, .. }
+        | ProviderToolCall::MultiAgent { id, .. }
+        | ProviderToolCall::ToolSearch { id, .. }
+        | ProviderToolCall::RequestUserInput { id, .. }
+        | ProviderToolCall::ViewImage { id, .. } => id,
+    };
+    id.get_or_insert(fallback).clone()
 }
 
 fn required_json_string(value: &serde_json::Value, key: &str) -> AgentResult<String> {

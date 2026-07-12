@@ -13,7 +13,7 @@ pub(crate) struct InteractiveBanner {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.2 interactive CLI");
+    println!("YunXi Agent v1.2.1 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(

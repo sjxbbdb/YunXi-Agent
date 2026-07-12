@@ -14,7 +14,7 @@ use yunxi_agent_protocol::{
 };
 use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
-    ProviderStream, ProviderToolCall, StaticProvider,
+    ProviderStream, ProviderStreamEventSink, ProviderToolCall, StaticProvider,
 };
 use yunxi_agent_runtime::{YunXiRuntimeBackend, protocol_stream_events_to_agent_events};
 use yunxi_agent_storage::{InMemorySessionStore, SessionId, SessionRecord, SessionStore};
@@ -486,6 +486,59 @@ impl AgentProvider for SlowStreamingProvider {
 }
 
 #[derive(Clone, Default)]
+struct IncrementalStreamingProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for IncrementalStreamingProvider {
+    async fn complete(
+        &self,
+        _request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        Ok(ProviderResponse::assistant("incremental complete fallback"))
+    }
+
+    async fn stream_with_sink(
+        &self,
+        _request: ProviderRequest,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        mut sink: Option<&mut dyn ProviderStreamEventSink>,
+    ) -> yunxi_agent_core::AgentResult<ProviderStream> {
+        let mut events = vec![StreamEvent::ResponseStarted {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            metadata: None,
+        }];
+        let first = StreamEvent::ItemDelta {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            delta: yunxi_agent_protocol::response_text_delta("hel"),
+        };
+        if let Some(sink) = sink.as_mut() {
+            sink.emit(first.clone()).await?;
+        }
+        events.push(first);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        events.push(StreamEvent::ItemDelta {
+            thread_id: thread_id.clone(),
+            turn_id: turn_id.clone(),
+            delta: yunxi_agent_protocol::response_text_delta("lo"),
+        });
+        events.push(StreamEvent::ResponseCompleted {
+            thread_id,
+            turn_id,
+            status: ResponseStatus::Completed,
+        });
+        if let Some(sink) = sink.as_mut() {
+            for event in events.iter().skip(2) {
+                sink.emit(event.clone()).await?;
+            }
+        }
+        Ok(ProviderStream::from_events(events))
+    }
+}
+
+#[derive(Clone, Default)]
 struct RequestUserInputProvider;
 
 #[async_trait::async_trait]
@@ -687,6 +740,41 @@ async fn run_stream_emits_events_before_slow_provider_completes() {
         result.final_response.as_deref(),
         Some("slow streamed response")
     );
+}
+
+#[tokio::test]
+async fn run_stream_emits_provider_delta_before_provider_completes() {
+    let backend = YunXiRuntimeBackend::with_parts(
+        IncrementalStreamingProvider,
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let agent =
+        Agent::new(AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::Never));
+    let (control, mut stream) = AgentRunControl::streaming();
+    let run_control = control.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run_with_backend_stream(
+                &backend,
+                AgentInput::text("incremental stream"),
+                run_control,
+            )
+            .await
+    });
+
+    let mut saw_first_delta = false;
+    while let Some(event) = stream.events.recv().await {
+        if matches!(event, AgentEvent::Message { content } if content == "hel") {
+            saw_first_delta = true;
+            break;
+        }
+    }
+
+    assert!(saw_first_delta);
+    assert!(!handle.is_finished());
+    let result = handle.await.expect("join stream run").expect("stream run");
+    assert_eq!(result.final_response.as_deref(), Some("hello"));
 }
 
 #[tokio::test]
@@ -1423,9 +1511,40 @@ async fn yunxi_runtime_executes_provider_requested_mcp_tool_from_workspace_seed(
 }
 
 #[tokio::test]
+async fn stage_fixture_prompt_does_not_trigger_fixture_by_default() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let backend =
+        YunXiRuntimeBackend::with_parts(StaticProvider::default(), NoopToolRuntime, store.clone());
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(
+            &backend,
+            AgentInput::text("run stage 4m real parity fixture"),
+        )
+        .await
+        .expect("default runtime should handle prompt normally");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert_eq!(
+        result.final_response.as_deref(),
+        Some("YunXi autonomous runtime accepted prompt: run stage 4m real parity fixture")
+    );
+    assert!(!temp.path().join("stage4m-runtime.txt").exists());
+    assert!(
+        !result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::DeepParityState { .. }))
+    );
+    assert_eq!(store.list().await.expect("session list").len(), 1);
+}
+
+#[tokio::test]
 async fn stage_4k_child_scoped_stream_fixture_emits_granular_child_events() {
     let temp = TempDir::new().expect("temp dir");
-    let backend = YunXiRuntimeBackend::for_workspace(temp.path());
+    let backend = YunXiRuntimeBackend::for_workspace_with_runtime_fixtures(temp.path());
     let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
 
     let result = agent
@@ -1466,7 +1585,7 @@ async fn stage_4k_child_scoped_stream_fixture_emits_granular_child_events() {
 #[tokio::test]
 async fn stage_4k_cancellation_fixture_records_cancelled_boundaries() {
     let temp = TempDir::new().expect("temp dir");
-    let backend = YunXiRuntimeBackend::for_workspace(temp.path());
+    let backend = YunXiRuntimeBackend::for_workspace_with_runtime_fixtures(temp.path());
     let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
 
     let result = agent
@@ -1502,10 +1621,11 @@ async fn stage_4l_deep_parity_fixture_covers_all_closure_layers() {
     let temp = TempDir::new().expect("temp dir");
     let store = InMemorySessionStore::default();
     let backend = YunXiRuntimeBackend::with_parts(
-        StaticProvider::default(),
+        StaticProvider::default().with_fixtures_enabled(),
         CompositeToolRuntime::default(),
         store.clone(),
-    );
+    )
+    .with_runtime_fixtures_enabled();
     let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
 
     let result = agent
@@ -1607,10 +1727,11 @@ async fn stage_4m_real_parity_fixture_runs_real_runtime_chain() {
     let temp = TempDir::new().expect("temp dir");
     let store = InMemorySessionStore::default();
     let backend = YunXiRuntimeBackend::with_parts(
-        StaticProvider::default(),
+        StaticProvider::default().with_fixtures_enabled(),
         CompositeToolRuntime::default(),
         store.clone(),
-    );
+    )
+    .with_runtime_fixtures_enabled();
     let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
 
     let result = agent

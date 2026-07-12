@@ -56,7 +56,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.4.0 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.5.0 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -304,8 +304,9 @@ async fn run_cli() -> Result<()> {
 
     let selection = provider_mode.resolve(backend, &config)?;
     let config = selection.apply_to_config(config);
+    let offline_label = selection.is_offline_runtime();
     let result = run_agent_backend(backend, config, prompt, selection.live).await?;
-    print_run_result(result, cli.json, cli.jsonl)?;
+    print_run_result(result, cli.json, cli.jsonl, offline_label)?;
     Ok(())
 }
 
@@ -408,7 +409,7 @@ pub(crate) async fn run_agent_backend(
                     agent.config(),
                 )
             } else {
-                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace(cwd)
+                build_offline_yunxi_runtime(cwd)
             };
             agent
                 .run_with_backend(&backend, AgentInput::text(prompt))
@@ -447,7 +448,7 @@ pub(crate) async fn run_agent_backend_stream(
                     agent.config(),
                 )
             } else {
-                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace(cwd)
+                build_offline_yunxi_runtime(cwd)
             };
             agent
                 .run_with_backend_stream(&backend, AgentInput::text(prompt), control)
@@ -473,7 +474,12 @@ pub(crate) async fn run_agent_backend_stream(
     Ok(result)
 }
 
-fn print_run_result(result: AgentRunResult, json: bool, jsonl: bool) -> Result<()> {
+fn print_run_result(
+    result: AgentRunResult,
+    json: bool,
+    jsonl: bool,
+    offline_label: bool,
+) -> Result<()> {
     if jsonl {
         for event in protocol_events_from_agent_events(&result.events) {
             println!("{}", to_jsonl_line(&event)?);
@@ -481,10 +487,34 @@ fn print_run_result(result: AgentRunResult, json: bool, jsonl: bool) -> Result<(
     } else if json {
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else if let Some(final_response) = result.final_response {
-        println!("{final_response}");
+        if offline_label {
+            println!("[offline] {final_response}");
+        } else {
+            println!("{final_response}");
+        }
     }
 
     Ok(())
+}
+
+fn build_offline_yunxi_runtime(cwd: PathBuf) -> yunxi_agent_runtime::YunXiRuntimeBackend {
+    if runtime_fixtures_enabled() {
+        yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace_with_runtime_fixtures(cwd)
+    } else {
+        yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace(cwd)
+    }
+}
+
+fn runtime_fixtures_enabled() -> bool {
+    std::env::var("YUNXI_RUNTIME_FIXTURES")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "explicit"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent> {
@@ -1192,7 +1222,7 @@ async fn run_session_command(
             let resume_config = selection.apply_to_config(resume_config);
             let result =
                 run_agent_backend(backend, resume_config, resume_prompt, selection.live).await?;
-            print_run_result(result, json, jsonl)?;
+            print_run_result(result, json, jsonl, selection.is_offline_runtime())?;
         }
         SessionCommand::Fork { id } => {
             let forked = store

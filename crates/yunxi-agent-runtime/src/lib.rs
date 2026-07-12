@@ -31,8 +31,8 @@ use yunxi_agent_protocol::{
 };
 use yunxi_agent_provider::{
     AgentProvider, ProviderBootstrap, ProviderConfig, ProviderFeatureMatrix, ProviderMessage,
-    ProviderRequest, ProviderResponse, ProviderRole, ProviderStream, ProviderToolCall,
-    StaticProvider,
+    ProviderRequest, ProviderResponse, ProviderRole, ProviderStream, ProviderStreamEventSink,
+    ProviderToolCall, StaticProvider,
 };
 use yunxi_agent_sandbox::{ApprovalRequirement, SandboxRequirement};
 use yunxi_agent_storage::{
@@ -136,6 +136,7 @@ pub struct YunXiRuntimeBackend {
     storage: Arc<dyn SessionStore>,
     agents: InMemoryAgentRegistry,
     child_provider_mode: ChildProviderMode,
+    fixture_policy: RuntimeFixturePolicy,
     max_turns: usize,
     max_child_depth: usize,
     child_depth: usize,
@@ -145,6 +146,18 @@ pub struct YunXiRuntimeBackend {
 enum ChildProviderMode {
     Fixture,
     InheritParent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RuntimeFixturePolicy {
+    Disabled,
+    Explicit,
+}
+
+impl RuntimeFixturePolicy {
+    fn enabled(self) -> bool {
+        matches!(self, Self::Explicit)
+    }
 }
 
 impl YunXiRuntimeBackend {
@@ -158,6 +171,15 @@ impl YunXiRuntimeBackend {
             CompositeToolRuntime::default(),
             FileSessionStore::for_workspace(cwd),
         )
+    }
+
+    pub fn for_workspace_with_runtime_fixtures(cwd: impl AsRef<Path>) -> Self {
+        Self::with_parts(
+            StaticProvider::default().with_fixtures_enabled(),
+            CompositeToolRuntime::default(),
+            FileSessionStore::for_workspace(cwd),
+        )
+        .with_runtime_fixtures_enabled()
     }
 
     pub fn for_workspace_with_live_provider(cwd: impl AsRef<Path>, config: &AgentConfig) -> Self {
@@ -184,6 +206,7 @@ impl YunXiRuntimeBackend {
             storage: Arc::new(storage),
             agents: InMemoryAgentRegistry::default(),
             child_provider_mode: ChildProviderMode::Fixture,
+            fixture_policy: RuntimeFixturePolicy::Disabled,
             max_turns: DEFAULT_MAX_TURNS,
             max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
             child_depth: 0,
@@ -202,6 +225,7 @@ impl YunXiRuntimeBackend {
             storage,
             agents: InMemoryAgentRegistry::default(),
             child_provider_mode: ChildProviderMode::Fixture,
+            fixture_policy: RuntimeFixturePolicy::Disabled,
             max_turns: DEFAULT_MAX_TURNS,
             max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
             child_depth: 0,
@@ -225,6 +249,11 @@ impl YunXiRuntimeBackend {
 
     pub fn with_inherited_child_provider(mut self) -> Self {
         self.child_provider_mode = ChildProviderMode::InheritParent;
+        self
+    }
+
+    pub fn with_runtime_fixtures_enabled(mut self) -> Self {
+        self.fixture_policy = RuntimeFixturePolicy::Explicit;
         self
     }
 
@@ -358,6 +387,7 @@ impl YunXiRuntimeBackend {
             self.max_turns,
             self.max_child_depth,
             self.child_depth.saturating_add(1),
+            self.fixture_policy,
         );
         let result = self
             .agents
@@ -392,6 +422,7 @@ struct YunXiChildAgentRuntime {
     tools: Arc<dyn ToolRuntime>,
     storage: Arc<dyn SessionStore>,
     child_provider_mode: ChildProviderMode,
+    fixture_policy: RuntimeFixturePolicy,
     max_turns: usize,
     remaining_depth: usize,
     child_depth: usize,
@@ -407,6 +438,7 @@ impl YunXiChildAgentRuntime {
         max_turns: usize,
         remaining_depth: usize,
         child_depth: usize,
+        fixture_policy: RuntimeFixturePolicy,
     ) -> Self {
         Self {
             base_config,
@@ -414,6 +446,7 @@ impl YunXiChildAgentRuntime {
             tools,
             storage,
             child_provider_mode,
+            fixture_policy,
             max_turns,
             remaining_depth,
             child_depth,
@@ -472,6 +505,7 @@ impl ChildAgentRuntime for YunXiChildAgentRuntime {
         let inherited_provider = Arc::clone(&self.provider);
         let inherited_tools = Arc::clone(&self.tools);
         let child_provider_mode = self.child_provider_mode;
+        let fixture_policy = self.fixture_policy;
         let next_child_depth = self.remaining_depth.saturating_sub(1);
         let child_depth = self.child_depth;
         let max_turns = self.max_turns;
@@ -484,10 +518,17 @@ impl ChildAgentRuntime for YunXiChildAgentRuntime {
                     message: format!("failed to build child runtime executor: {error}"),
                 })?;
             let child_provider: Arc<dyn AgentProvider> = match child_provider_mode {
-                ChildProviderMode::Fixture => Arc::new(StaticProvider::new(format!(
-                    "YunXi child agent {} completed task",
-                    child_agent_id_for_provider.0
-                ))),
+                ChildProviderMode::Fixture => {
+                    let provider = StaticProvider::new(format!(
+                        "YunXi child agent {} completed task",
+                        child_agent_id_for_provider.0
+                    ));
+                    if fixture_policy.enabled() {
+                        Arc::new(provider.with_fixtures_enabled())
+                    } else {
+                        Arc::new(provider)
+                    }
+                }
                 ChildProviderMode::InheritParent => inherited_provider,
             };
             let child_tools: Arc<dyn ToolRuntime> = match child_provider_mode {
@@ -499,6 +540,9 @@ impl ChildAgentRuntime for YunXiChildAgentRuntime {
                     .with_max_turns(max_turns)
                     .with_max_child_depth(next_child_depth)
                     .with_child_depth(child_depth);
+            if fixture_policy.enabled() {
+                backend = backend.with_runtime_fixtures_enabled();
+            }
             if matches!(child_provider_mode, ChildProviderMode::InheritParent) {
                 backend = backend.with_inherited_child_provider();
             }
@@ -614,9 +658,20 @@ impl YunXiRuntimeBackend {
             )
             .await?;
 
-        if prompt.contains("stage 4k cancellation fixture") {
+        let runtime_fixtures_enabled = self.fixture_policy.enabled();
+
+        if runtime_fixtures_enabled && prompt.contains("stage 4k cancellation fixture") {
             let cancellation = AgentCancellationToken::new();
             cancellation.cancel();
+            turn_driver
+                .emit_metadata(
+                    "fixture_mode",
+                    runtime_data([
+                        ("fixture_mode", "true".to_string()),
+                        ("fixture", "stage_4k_cancellation".to_string()),
+                    ]),
+                )
+                .await?;
             turn_driver
                 .emit_phase(
                     "cancelled",
@@ -696,7 +751,7 @@ impl YunXiRuntimeBackend {
             });
         }
 
-        if prompt.contains("stage 4l deep parity fixture") {
+        if runtime_fixtures_enabled && prompt.contains("stage 4l deep parity fixture") {
             return self
                 .run_stage_4l_deep_parity_fixture(
                     &sink,
@@ -709,7 +764,16 @@ impl YunXiRuntimeBackend {
                 .await;
         }
 
-        if prompt.contains("stage 4m real parity fixture") {
+        if runtime_fixtures_enabled && prompt.contains("stage 4m real parity fixture") {
+            turn_driver
+                .emit_metadata(
+                    "fixture_mode",
+                    runtime_data([
+                        ("fixture_mode", "true".to_string()),
+                        ("fixture", "stage_4m_real_parity".to_string()),
+                    ]),
+                )
+                .await?;
             prepare_stage_4m_fixture_workspace(&runtime_config)?;
         }
 
@@ -823,9 +887,10 @@ impl YunXiRuntimeBackend {
                 content: "Provider turn started".to_string(),
             })
             .await?;
+            let mut provider_event_sink = RuntimeProviderStreamSink { sink: &sink };
             let provider_stream = match self
                 .provider
-                .stream(
+                .stream_with_sink(
                     ProviderRequest::with_messages(
                         runtime_config.clone(),
                         AgentInput::text(prompt),
@@ -833,6 +898,7 @@ impl YunXiRuntimeBackend {
                     ),
                     ThreadId(thread_id.clone()),
                     TurnId(turn_id.clone()),
+                    Some(&mut provider_event_sink),
                 )
                 .await
             {
@@ -852,7 +918,6 @@ impl YunXiRuntimeBackend {
                     return Err(error);
                 }
             };
-            emit_provider_stream_events(&sink, &provider_stream.events).await?;
             if control.is_cancelled() {
                 return cancelled_turn_result(&sink, "current turn cancelled").await;
             }
@@ -920,7 +985,12 @@ impl YunXiRuntimeBackend {
                 let tool_call_id = provider_tool_call_id(&tool_call)
                     .expect("tool call id is assigned before dispatch")
                     .to_string();
-                let mut tool_request = map_tool_call(&runtime_config, &session_id, tool_call);
+                let mut tool_request = map_tool_call(
+                    &runtime_config,
+                    &session_id,
+                    tool_call,
+                    runtime_fixtures_enabled,
+                );
                 let approval_probe = session_driver.apply_approval_cache(&mut tool_request)?;
                 emit_approval_cache_state(&sink, session_driver.session_id(), approval_probe)
                     .await?;
@@ -1014,7 +1084,7 @@ impl YunXiRuntimeBackend {
             child_session_ids,
         })
         .await?;
-        if prompt.contains("stage 4m real parity fixture") {
+        if runtime_fixtures_enabled && prompt.contains("stage 4m real parity fixture") {
             let summary_events = sink.events().await?;
             emit_stage_4m_real_parity_summary(&turn_driver, &summary_events).await?;
         }
@@ -1068,6 +1138,25 @@ impl YunXiRuntimeBackend {
         let sandbox_mode = format!("{:?}", runtime_config.sandbox_mode);
         let child_session_id = format!("{}-child-stage-4l", session_id.0);
 
+        sink.emit(AgentEvent::TurnMetadata {
+            metadata: TurnRuntimeMetadata {
+                session_id: Some(session_id.0.clone()),
+                model: runtime_config.model.clone(),
+                provider: runtime_config.provider.clone(),
+                approval_mode: Some(approval_mode.clone()),
+                sandbox_mode: Some(sandbox_mode.clone()),
+                cwd: cwd.clone(),
+                context_phase: Some("fixture_mode".to_string()),
+                resume_source: None,
+                cancellation_state: Some("not_cancelled".to_string()),
+                child_depth: 0,
+                data: runtime_data([
+                    ("fixture_mode", "true".to_string()),
+                    ("fixture", "stage_4l_deep_parity".to_string()),
+                ]),
+            },
+        })
+        .await?;
         sink.emit(AgentEvent::ThreadState {
             state: ThreadRuntimeState {
                 thread_id: thread_id.to_string(),
@@ -1917,6 +2006,17 @@ where
     Ok(())
 }
 
+struct RuntimeProviderStreamSink<'a> {
+    sink: &'a VecEventSink,
+}
+
+#[async_trait]
+impl ProviderStreamEventSink for RuntimeProviderStreamSink<'_> {
+    async fn emit(&mut self, event: StreamEvent) -> AgentResult<()> {
+        emit_provider_stream_events(self.sink, std::slice::from_ref(&event)).await
+    }
+}
+
 fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResponse> {
     if let Some(response) = stream.final_response {
         return Ok(response);
@@ -2707,11 +2807,13 @@ fn map_tool_call(
     config: &AgentConfig,
     current_session_id: &SessionId,
     tool_call: ProviderToolCall,
+    runtime_fixtures_enabled: bool,
 ) -> ToolRequest {
     let cwd = config.cwd.clone();
     let mut policy = ToolPolicy::from_config(config);
-    if provider_tool_call_id(&tool_call)
-        .is_some_and(|id| id.starts_with("stage-4k-") || id.starts_with("stage-4m-"))
+    if runtime_fixtures_enabled
+        && provider_tool_call_id(&tool_call)
+            .is_some_and(|id| id.starts_with("stage-4k-") || id.starts_with("stage-4m-"))
     {
         policy.approval = ApprovalDecision::Approved;
         policy.execution_policy.approval = ApprovalRequirement::PreApproved;

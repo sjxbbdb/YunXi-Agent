@@ -547,6 +547,18 @@ pub enum SandboxBackend {
     DangerFullAccess,
 }
 
+impl SandboxBackend {
+    pub fn user_facing_label(self) -> &'static str {
+        match self {
+            Self::None => "no policy guard",
+            Self::DangerFullAccess => "policy bypass: danger-full-access",
+            Self::WorkspaceGuard | Self::WindowsRestrictedToken | Self::LinuxLandlock => {
+                "policy guard: advisory only, no OS isolation"
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SandboxBackendSelection {
     pub backend: SandboxBackend,

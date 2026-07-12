@@ -1,9 +1,10 @@
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use yunxi_agent_core::{AgentConfig, AgentError, AgentInput, AgentResult, TokenUsage};
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
@@ -258,6 +259,27 @@ pub trait AgentProvider: Send + Sync {
         let response = self.complete(request).await?;
         Ok(ProviderStream::from_response(thread_id, turn_id, response))
     }
+
+    async fn stream_with_sink(
+        &self,
+        request: ProviderRequest,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        mut sink: Option<&mut dyn ProviderStreamEventSink>,
+    ) -> AgentResult<ProviderStream> {
+        let stream = self.stream(request, thread_id, turn_id).await?;
+        if let Some(sink) = sink.as_mut() {
+            for event in &stream.events {
+                sink.emit(event.clone()).await?;
+            }
+        }
+        Ok(stream)
+    }
+}
+
+#[async_trait]
+pub trait ProviderStreamEventSink: Send {
+    async fn emit(&mut self, event: StreamEvent) -> AgentResult<()>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -443,13 +465,26 @@ impl OpenAiStreamAccumulator {
     }
 
     pub fn finish(mut self, decoder: &mut ProviderSseDecoder) -> AgentResult<Vec<StreamEvent>> {
+        self.finish_incremental(decoder)?;
+        Ok(self.events)
+    }
+
+    pub fn finish_incremental(
+        &mut self,
+        decoder: &mut ProviderSseDecoder,
+    ) -> AgentResult<Vec<StreamEvent>> {
+        let before = self.events.len();
         for decoded in decoder.finish()? {
             self.push_sse_chunk(decoded)?;
         }
         if !self.completed {
             self.complete_response();
         }
-        Ok(self.events)
+        Ok(self.events[before..].to_vec())
+    }
+
+    pub fn events(&self) -> Vec<StreamEvent> {
+        self.events.clone()
     }
 
     fn complete_response(&mut self) {
@@ -510,13 +545,34 @@ impl ProviderTransportRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProviderTransportResponse {
     pub status: u16,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
     pub body: String,
 }
 
 impl ProviderTransportResponse {
+    pub fn new(status: u16, body: impl Into<String>) -> Self {
+        Self {
+            status,
+            headers: BTreeMap::new(),
+            body: body.into(),
+        }
+    }
+
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers
+            .insert(name.into().to_ascii_lowercase(), value.into());
+        self
+    }
+
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
     }
+}
+
+#[async_trait]
+pub trait ProviderByteStreamSink: Send {
+    async fn push_bytes(&mut self, chunk: &[u8]) -> AgentResult<()>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -568,6 +624,18 @@ pub trait ProviderTransport: Send + Sync {
         &self,
         request: ProviderTransportRequest,
     ) -> AgentResult<ProviderTransportResponse>;
+
+    async fn send_streaming(
+        &self,
+        request: ProviderTransportRequest,
+        sink: &mut dyn ProviderByteStreamSink,
+    ) -> AgentResult<ProviderTransportResponse> {
+        let response = self.send(request).await?;
+        if response.is_success() {
+            sink.push_bytes(response.body.as_bytes()).await?;
+        }
+        Ok(response)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -578,10 +646,7 @@ pub struct FixtureTransport {
 impl FixtureTransport {
     pub fn new(status: u16, body: impl Into<String>) -> Self {
         Self {
-            response: ProviderTransportResponse {
-                status,
-                body: body.into(),
-            },
+            response: ProviderTransportResponse::new(status, body),
         }
     }
 }
@@ -607,20 +672,11 @@ impl ReqwestProviderTransport {
             client: reqwest::Client::new(),
         }
     }
-}
 
-impl Default for ReqwestProviderTransport {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl ProviderTransport for ReqwestProviderTransport {
-    async fn send(
+    fn request_builder(
         &self,
-        request: ProviderTransportRequest,
-    ) -> AgentResult<ProviderTransportResponse> {
+        request: &ProviderTransportRequest,
+    ) -> AgentResult<reqwest::RequestBuilder> {
         if request.method != "POST" {
             return Err(AgentError::Execution {
                 message: format!("unsupported provider transport method {}", request.method),
@@ -645,11 +701,80 @@ impl ProviderTransport for ReqwestProviderTransport {
         if let Some(timeout_millis) = request.timeout_millis {
             builder = builder.timeout(Duration::from_millis(timeout_millis));
         }
+        Ok(builder)
+    }
+}
+
+impl Default for ReqwestProviderTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ProviderTransport for ReqwestProviderTransport {
+    async fn send(
+        &self,
+        request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse> {
+        let builder = self.request_builder(&request)?;
         let response = builder.send().await.map_err(provider_transport_error)?;
         let status = response.status().as_u16();
+        let headers = response_headers(response.headers());
         let body = response.text().await.map_err(provider_transport_error)?;
-        Ok(ProviderTransportResponse { status, body })
+        Ok(ProviderTransportResponse {
+            status,
+            headers,
+            body,
+        })
     }
+
+    async fn send_streaming(
+        &self,
+        request: ProviderTransportRequest,
+        sink: &mut dyn ProviderByteStreamSink,
+    ) -> AgentResult<ProviderTransportResponse> {
+        let response = self
+            .request_builder(&request)?
+            .send()
+            .await
+            .map_err(provider_transport_error)?;
+        let status = response.status().as_u16();
+        let headers = response_headers(response.headers());
+        if !(200..300).contains(&status) {
+            let body = response.text().await.map_err(provider_transport_error)?;
+            return Ok(ProviderTransportResponse {
+                status,
+                headers,
+                body,
+            });
+        }
+
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(provider_transport_error)?;
+            sink.push_bytes(&chunk).await?;
+            body.extend_from_slice(&chunk);
+        }
+        Ok(ProviderTransportResponse {
+            status,
+            headers,
+            body: String::from_utf8_lossy(&body).into_owned(),
+        })
+    }
+}
+
+fn response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_ascii_lowercase(), value.to_string()))
+        })
+        .collect()
 }
 
 fn provider_transport_error(error: reqwest::Error) -> AgentError {
@@ -674,6 +799,8 @@ fn provider_transport_error(error: reqwest::Error) -> AgentError {
 pub struct ProviderRetryPolicy {
     pub max_attempts: usize,
     pub retry_statuses: Vec<u16>,
+    pub base_delay_millis: u64,
+    pub max_delay_millis: u64,
 }
 
 impl ProviderRetryPolicy {
@@ -681,17 +808,84 @@ impl ProviderRetryPolicy {
         Self {
             max_attempts: max_attempts.max(1),
             retry_statuses: vec![408, 409, 429, 500, 502, 503, 504],
+            base_delay_millis: 100,
+            max_delay_millis: 2_000,
         }
     }
 
     pub fn should_retry_status(&self, status: u16, attempt: usize) -> bool {
         attempt + 1 < self.max_attempts && self.retry_statuses.contains(&status)
     }
+
+    pub fn should_retry_transport_error(&self, error: &AgentError, attempt: usize) -> bool {
+        attempt + 1 < self.max_attempts
+            && matches!(
+                error,
+                AgentError::Provider {
+                    classification,
+                    ..
+                } if classification == "network" || classification == "timeout"
+            )
+    }
+
+    pub fn with_base_delay_millis(mut self, millis: u64) -> Self {
+        self.base_delay_millis = millis;
+        self
+    }
+
+    pub fn with_max_delay_millis(mut self, millis: u64) -> Self {
+        self.max_delay_millis = millis;
+        self
+    }
 }
 
 impl Default for ProviderRetryPolicy {
     fn default() -> Self {
         Self::new(3)
+    }
+}
+
+fn retry_delay_for_response(
+    policy: &ProviderRetryPolicy,
+    response: &ProviderTransportResponse,
+    attempt: usize,
+) -> Duration {
+    response
+        .headers
+        .get("retry-after")
+        .and_then(|value| retry_after_seconds(value))
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| retry_backoff_delay(policy, attempt))
+}
+
+fn retry_after_seconds(value: &str) -> Option<u64> {
+    let value = value.trim();
+    value.parse::<u64>().ok().or_else(|| {
+        let retry_at = httpdate::parse_http_date(value).ok()?;
+        retry_at
+            .duration_since(SystemTime::now())
+            .ok()
+            .map(|duration| duration.as_secs())
+    })
+}
+
+fn retry_backoff_delay(policy: &ProviderRetryPolicy, attempt: usize) -> Duration {
+    if policy.base_delay_millis == 0 {
+        return Duration::ZERO;
+    }
+    let shift = attempt.min(16) as u32;
+    let multiplier = 1_u64.checked_shl(shift).unwrap_or(u64::MAX);
+    Duration::from_millis(
+        policy
+            .base_delay_millis
+            .saturating_mul(multiplier)
+            .min(policy.max_delay_millis),
+    )
+}
+
+async fn sleep_retry_delay(delay: Duration) {
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
     }
 }
 
@@ -1116,6 +1310,65 @@ impl AgentProvider for OpenAiCompatibleProvider {
     }
 }
 
+struct OpenAiNetworkStreamParser<'a> {
+    decoder: ProviderSseDecoder,
+    accumulator: OpenAiStreamAccumulator,
+    sink: Option<&'a mut dyn ProviderStreamEventSink>,
+    initial_emitted: bool,
+}
+
+impl<'a> OpenAiNetworkStreamParser<'a> {
+    fn new(
+        thread_id: impl Into<String>,
+        turn_id: impl Into<String>,
+        sink: Option<&'a mut dyn ProviderStreamEventSink>,
+    ) -> Self {
+        Self {
+            decoder: ProviderSseDecoder::default(),
+            accumulator: OpenAiStreamAccumulator::new(thread_id, turn_id),
+            sink,
+            initial_emitted: false,
+        }
+    }
+
+    async fn emit_initial_if_needed(&mut self) -> AgentResult<()> {
+        if self.initial_emitted {
+            return Ok(());
+        }
+        self.initial_emitted = true;
+        let initial_events = self.accumulator.events();
+        self.emit_events(&initial_events).await
+    }
+
+    async fn emit_events(&mut self, events: &[StreamEvent]) -> AgentResult<()> {
+        if let Some(sink) = self.sink.as_mut() {
+            for event in events {
+                sink.emit(event.clone()).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn finish(mut self) -> AgentResult<Vec<StreamEvent>> {
+        self.emit_initial_if_needed().await?;
+        let events = self.accumulator.finish_incremental(&mut self.decoder)?;
+        self.emit_events(&events).await?;
+        Ok(self.accumulator.events())
+    }
+}
+
+#[async_trait]
+impl ProviderByteStreamSink for OpenAiNetworkStreamParser<'_> {
+    async fn push_bytes(&mut self, chunk: &[u8]) -> AgentResult<()> {
+        self.emit_initial_if_needed().await?;
+        let text = std::str::from_utf8(chunk).map_err(|error| AgentError::Execution {
+            message: format!("provider stream chunk was not valid UTF-8: {error}"),
+        })?;
+        let events = self.accumulator.push_raw_chunk(&mut self.decoder, text)?;
+        self.emit_events(&events).await
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OpenAiTransportProvider<T> {
     provider: OpenAiCompatibleProvider,
@@ -1146,18 +1399,31 @@ where
         thread_id: impl Into<String>,
         turn_id: impl Into<String>,
     ) -> AgentResult<Vec<StreamEvent>> {
+        self.stream_events_with_sink(request, thread_id, turn_id, None)
+            .await
+    }
+
+    pub async fn stream_events_with_sink(
+        &self,
+        request: ProviderRequest,
+        thread_id: impl Into<String>,
+        turn_id: impl Into<String>,
+        sink: Option<&mut dyn ProviderStreamEventSink>,
+    ) -> AgentResult<Vec<StreamEvent>> {
         let transport_request = build_openai_transport_request(
             &self.provider.config,
             self.provider.auth(),
             &request,
             true,
         )?;
-        let response = self.send_with_schema_fallback(transport_request).await?;
+        let mut parser = OpenAiNetworkStreamParser::new(thread_id, turn_id, sink);
+        let response = self
+            .send_streaming_with_schema_fallback(transport_request, &mut parser)
+            .await?;
         if !response.is_success() {
             return Err(provider_http_error(&self.provider.config, &response));
         }
-        self.provider
-            .parse_stream_events(thread_id, turn_id, &response.body)
+        parser.finish().await
     }
 
     async fn send_with_retries(
@@ -1166,14 +1432,64 @@ where
     ) -> AgentResult<ProviderTransportResponse> {
         let mut attempt = 0usize;
         loop {
-            let response = self.transport.send(request.clone()).await?;
-            if !self
-                .retry_policy
-                .should_retry_status(response.status, attempt)
-            {
-                return Ok(response);
+            match self.transport.send(request.clone()).await {
+                Ok(response) => {
+                    if !self
+                        .retry_policy
+                        .should_retry_status(response.status, attempt)
+                    {
+                        return Ok(response);
+                    }
+                    let delay = retry_delay_for_response(&self.retry_policy, &response, attempt);
+                    attempt += 1;
+                    sleep_retry_delay(delay).await;
+                }
+                Err(error) => {
+                    if !self
+                        .retry_policy
+                        .should_retry_transport_error(&error, attempt)
+                    {
+                        return Err(error);
+                    }
+                    let delay = retry_backoff_delay(&self.retry_policy, attempt);
+                    attempt += 1;
+                    sleep_retry_delay(delay).await;
+                }
             }
-            attempt += 1;
+        }
+    }
+
+    async fn send_streaming_with_retries(
+        &self,
+        request: ProviderTransportRequest,
+        sink: &mut dyn ProviderByteStreamSink,
+    ) -> AgentResult<ProviderTransportResponse> {
+        let mut attempt = 0usize;
+        loop {
+            match self.transport.send_streaming(request.clone(), sink).await {
+                Ok(response) => {
+                    if !self
+                        .retry_policy
+                        .should_retry_status(response.status, attempt)
+                    {
+                        return Ok(response);
+                    }
+                    let delay = retry_delay_for_response(&self.retry_policy, &response, attempt);
+                    attempt += 1;
+                    sleep_retry_delay(delay).await;
+                }
+                Err(error) => {
+                    if !self
+                        .retry_policy
+                        .should_retry_transport_error(&error, attempt)
+                    {
+                        return Err(error);
+                    }
+                    let delay = retry_backoff_delay(&self.retry_policy, attempt);
+                    attempt += 1;
+                    sleep_retry_delay(delay).await;
+                }
+            }
         }
     }
 
@@ -1197,6 +1513,31 @@ where
         }
 
         self.send_with_retries(fallback).await
+    }
+
+    async fn send_streaming_with_schema_fallback(
+        &self,
+        request: ProviderTransportRequest,
+        sink: &mut dyn ProviderByteStreamSink,
+    ) -> AgentResult<ProviderTransportResponse> {
+        let response = self
+            .send_streaming_with_retries(request.clone(), sink)
+            .await?;
+        if !matches!(response.status, 400 | 422)
+            || self.provider.config.profile.as_deref() != Some("deepseek")
+        {
+            return Ok(response);
+        }
+
+        let mut fallback = request;
+        let Some(body) = fallback.body.as_object_mut() else {
+            return Ok(response);
+        };
+        if body.remove("metadata").is_none() {
+            return Ok(response);
+        }
+
+        self.send_streaming_with_retries(fallback, sink).await
     }
 }
 
@@ -1233,6 +1574,29 @@ where
             ));
         }
         let events = self.stream_events(request, thread_id.0, turn_id.0).await?;
+        Ok(ProviderStream::from_events(events))
+    }
+
+    async fn stream_with_sink(
+        &self,
+        request: ProviderRequest,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        sink: Option<&mut dyn ProviderStreamEventSink>,
+    ) -> AgentResult<ProviderStream> {
+        if !self.provider.config.stream {
+            let stream =
+                ProviderStream::from_response(thread_id, turn_id, self.complete(request).await?);
+            if let Some(sink) = sink {
+                for event in &stream.events {
+                    sink.emit(event.clone()).await?;
+                }
+            }
+            return Ok(stream);
+        }
+        let events = self
+            .stream_events_with_sink(request, thread_id.0, turn_id.0, sink)
+            .await?;
         Ok(ProviderStream::from_events(events))
     }
 }
@@ -1391,13 +1755,20 @@ fn base_url_host(base_url: &str) -> &str {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StaticProvider {
     response_prefix: String,
+    fixtures_enabled: bool,
 }
 
 impl StaticProvider {
     pub fn new(response_prefix: impl Into<String>) -> Self {
         Self {
             response_prefix: response_prefix.into(),
+            fixtures_enabled: false,
         }
+    }
+
+    pub fn with_fixtures_enabled(mut self) -> Self {
+        self.fixtures_enabled = true;
+        self
     }
 }
 
@@ -1410,7 +1781,8 @@ impl Default for StaticProvider {
 #[async_trait]
 impl AgentProvider for StaticProvider {
     async fn complete(&self, request: ProviderRequest) -> AgentResult<ProviderResponse> {
-        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+        if self.fixtures_enabled
+            && self.response_prefix == "YunXi autonomous runtime accepted prompt"
             && request
                 .input
                 .prompt
@@ -1435,7 +1807,8 @@ impl AgentProvider for StaticProvider {
                 ),
             }));
         }
-        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+        if self.fixtures_enabled
+            && self.response_prefix == "YunXi autonomous runtime accepted prompt"
             && request
                 .input
                 .prompt
@@ -1460,7 +1833,8 @@ impl AgentProvider for StaticProvider {
                 ),
             }));
         }
-        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+        if self.fixtures_enabled
+            && self.response_prefix == "YunXi autonomous runtime accepted prompt"
             && request
                 .input
                 .prompt
@@ -1485,7 +1859,8 @@ impl AgentProvider for StaticProvider {
                 ),
             }));
         }
-        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+        if self.fixtures_enabled
+            && self.response_prefix == "YunXi autonomous runtime accepted prompt"
             && request
                 .input
                 .prompt
@@ -1551,7 +1926,8 @@ impl AgentProvider for StaticProvider {
                 usage: None,
             });
         }
-        if self.response_prefix.starts_with("YunXi child agent")
+        if self.fixtures_enabled
+            && self.response_prefix.starts_with("YunXi child agent")
             && request.input.prompt.contains("stage4m child runtime task")
         {
             if let Some(tool_message) = request
@@ -1571,7 +1947,8 @@ impl AgentProvider for StaticProvider {
                 command: "echo YUNXI_STAGE_4M_CHILD_OK".to_string(),
             }));
         }
-        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+        if self.fixtures_enabled
+            && self.response_prefix == "YunXi autonomous runtime accepted prompt"
             && request.input.prompt.contains("stage 4k sandbox fixture")
         {
             if let Some(tool_message) = request
@@ -1590,7 +1967,8 @@ impl AgentProvider for StaticProvider {
                 command: "echo YUNXI_SANDBOX_OK".to_string(),
             }));
         }
-        if self.response_prefix == "YunXi autonomous runtime accepted prompt"
+        if self.fixtures_enabled
+            && self.response_prefix == "YunXi autonomous runtime accepted prompt"
             && request.input.prompt.contains("stage 4k mcp reuse fixture")
         {
             let tool_messages = request
@@ -1625,7 +2003,8 @@ impl AgentProvider for StaticProvider {
                 usage: None,
             });
         }
-        if self.response_prefix.starts_with("YunXi child agent")
+        if self.fixtures_enabled
+            && self.response_prefix.starts_with("YunXi child agent")
             && request
                 .input
                 .prompt
@@ -1648,7 +2027,8 @@ impl AgentProvider for StaticProvider {
                 command: "echo YUNXI_CHILD_TOOL_DELTA".to_string(),
             }));
         }
-        if self.response_prefix.starts_with("YunXi child agent")
+        if self.fixtures_enabled
+            && self.response_prefix.starts_with("YunXi child agent")
             && request
                 .input
                 .prompt

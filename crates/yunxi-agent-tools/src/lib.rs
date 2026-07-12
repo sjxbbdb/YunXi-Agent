@@ -585,7 +585,11 @@ impl ToolDispatchTrace {
             ToolPolicyDecision::Approved => "approved".to_string(),
             ToolPolicyDecision::Declined { reason } => format!("declined:{reason}"),
         };
-        let sandbox = &self.policy_evaluation.sandbox_backend.backend;
+        let sandbox = self
+            .policy_evaluation
+            .sandbox_backend
+            .backend
+            .user_facing_label();
         let network = &self.policy_evaluation.network_decision;
         let escalation = self
             .policy_evaluation
@@ -599,7 +603,7 @@ impl ToolDispatchTrace {
             })
             .unwrap_or_default();
         format!(
-            "Tool dispatch routed {} (id={id}, route={:?}, policy={policy}, sandbox={sandbox:?}, network={network:?}{escalation})",
+            "Tool dispatch routed {} (id={id}, route={:?}, policy={policy}, sandbox={sandbox}, network={network:?}{escalation})",
             self.tool_name, self.route_status
         )
     }
@@ -909,7 +913,7 @@ fn policy_runtime_events(request: &ToolRequest) -> Vec<ToolRuntimeEvent> {
     vec![
         ToolRuntimeEvent::SandboxDecision {
             allowed: plan.allowed,
-            backend: format!("{:?}", plan.backend),
+            backend: plan.backend.user_facing_label().to_string(),
             network: format!("{:?}", plan.network),
             escalation_required: plan.escalation_required,
             denial_reason: plan.denial_reason,
@@ -917,7 +921,7 @@ fn policy_runtime_events(request: &ToolRequest) -> Vec<ToolRuntimeEvent> {
         ToolRuntimeEvent::SandboxRunner {
             platform: runner_diagnostic.platform,
             status: format!("{:?}", runner_diagnostic.status).to_ascii_lowercase(),
-            backend: format!("{:?}", runner_diagnostic.backend),
+            backend: runner_diagnostic.backend.user_facing_label().to_string(),
             command: runner_diagnostic.command,
             cwd: runner_diagnostic.cwd.display().to_string(),
             message: runner_diagnostic.message,

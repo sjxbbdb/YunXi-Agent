@@ -1,12 +1,13 @@
-# YunXi Agent v1.4.0
+# YunXi Agent v1.5.0
 
-YunXi Agent v1.4.0 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.5.0 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
 When DeepSeek credentials are configured, the default `yunxi` command now uses
 the real DeepSeek provider automatically. Without credentials it remains usable
-through the clearly labelled offline provider.
+through the inline-labelled offline provider; offline assistant output is marked
+with `[offline]` and `/cost` reports that no model call was made.
 
 ## Layout
 
@@ -16,7 +17,7 @@ through the clearly labelled offline provider.
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: v1.4.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.5.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -37,6 +38,13 @@ through the clearly labelled offline provider.
 - Preserves one-shot execution through `yunxi "your task"`
 - Automatically selects the real DeepSeek provider when credentials are present
 - Supports `--offline` for deterministic local and automation runs
+- Marks offline assistant output inline with `[offline]`
+- Warns when auto provider mode falls back to the offline static runtime
+- Shows offline runtime as a static provider with stage fixtures disabled by default
+- Uses policy-guard wording for sandbox decisions; v1.5 does not claim OS-level sandbox isolation
+- Keeps stage fixture prompts disabled by default unless `YUNXI_RUNTIME_FIXTURES=1` is set
+- Streams live provider SSE data from reqwest network chunks instead of replaying a completed response body
+- Retries provider 429/5xx/network/timeout failures with bounded backoff and `Retry-After` support
 - Provides facade types for Agent configuration, input, events, results, and errors
 - Runs the default `yunxi` backend through YunXi-owned runtime/provider/tools/storage crates
 - Keeps a dry-run Agent path for deterministic smoke checks
@@ -60,7 +68,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.4.0 CLI into a user-local bin directory:
+Build and install the v1.5.0 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -111,6 +119,23 @@ yunxi --jsonl "explain this project"
 
 `--json` and `--jsonl` never enter the REPL when a prompt is missing; they keep
 returning structured errors for script safety.
+
+## Honesty And Safety Boundaries
+
+Offline mode is deterministic and useful for smoke checks, but it is not a
+model. Plain terminal output marks offline assistant text with `[offline]`, and
+auto mode prints a warning when no live credentials are found.
+
+The current sandbox layer is a policy guard/advisor. It classifies commands,
+routes approvals, and can block or request escalation, but v1.5 does not provide
+OS-enforced Windows restricted tokens, Linux Landlock/seccomp, namespaces, or
+macOS seatbelt isolation. Approved commands still execute with the YunXi process
+permissions.
+
+Historical `stage 4x` fixture prompts are disabled in the default product path.
+They remain available only for explicit compatibility smoke runs with
+`YUNXI_RUNTIME_FIXTURES=1`, and fixture metadata is marked with
+`fixture_mode=true`.
 
 ## Run From Source
 
@@ -194,6 +219,13 @@ terminal status visibility with `/tools`, `/mcp`, `/cost`, and `/status`, so an
 interactive YunXi session can inspect available tools, workspace MCP config,
 last-turn usage, cumulative usage, and runtime event summaries without leaving
 the REPL.
+
+v1.5.0 adds immutable tag `v1.5.0` without moving earlier tags. It focuses on
+honesty and runtime correctness: offline output is marked inline, auto fallback
+warns when no live provider credential is available, sandbox text is corrected
+to policy-guard/advisory wording, stage fixtures are opt-in, live SSE streaming
+uses network byte chunks, and provider retry honors `Retry-After` with bounded
+backoff for transient HTTP/transport failures.
 
 ## Backend Capability Matrix
 

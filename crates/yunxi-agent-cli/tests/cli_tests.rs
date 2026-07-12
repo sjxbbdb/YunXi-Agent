@@ -76,7 +76,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.4.0"));
+        .stdout(predicate::str::contains("yunxi 1.5.0"));
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.4.0"));
+        .stdout(predicate::str::contains("yunxi 1.5.0"));
 }
 
 #[test]
@@ -102,6 +102,7 @@ fn cli_prints_dry_run_response() {
     ])
     .assert()
     .success()
+    .stdout(predicate::str::contains("[offline]"))
     .stdout(predicate::str::contains(
         "YunXi autonomous runtime accepted prompt: explain this project",
     ));
@@ -134,6 +135,7 @@ fn cli_accepts_explicit_yunxi_backend() {
     ])
     .assert()
     .success()
+    .stdout(predicate::str::contains("[offline]"))
     .stdout(predicate::str::contains(
         "YunXi autonomous runtime accepted prompt: explain this project",
     ));
@@ -172,10 +174,30 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.4.0 interactive CLI",
+            "YunXi Agent v1.5.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
+        .stdout(predicate::str::contains(
+            "offline_runtime: static_provider (stage fixtures disabled by default)",
+        ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn cli_auto_fallback_warns_when_credentials_are_missing() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("YUNXI_PROVIDER_PROFILE")
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .write_stdin("/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("provider_source: auto_offline"))
+        .stdout(predicate::str::contains("offline static runtime"))
+        .stdout(predicate::str::contains("no model call"));
 }
 
 #[test]
@@ -311,8 +333,9 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.4.0 interactive CLI",
+            "YunXi Agent v1.5.0 interactive CLI",
         ))
+        .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
             "YunXi autonomous runtime accepted prompt: hello from repl",
         ))
@@ -337,7 +360,12 @@ fn yunxi_interactive_reports_tools_mcp_cost_and_status() {
         .stdout(predicate::str::contains(
             "mcp_status: no workspace MCP configured",
         ))
-        .stdout(predicate::str::contains("last_turn_usage: none"))
+        .stdout(predicate::str::contains(
+            "last_turn_usage: n/a - offline, no model call",
+        ))
+        .stdout(predicate::str::contains(
+            "session_usage: n/a - offline, no model call",
+        ))
         .stdout(predicate::str::contains("last_turn_status: none"))
         .stdout(predicate::str::contains("observed_events: 0"));
 }

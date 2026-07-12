@@ -13,7 +13,7 @@ pub(crate) struct InteractiveBanner {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.4.0 interactive CLI");
+    println!("YunXi Agent v1.5.0 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -28,7 +28,7 @@ pub(crate) fn print_banner(banner: &InteractiveBanner) {
     println!("provider: {}", banner.provider);
     println!("model: {}", banner.model);
     if !banner.provider_live {
-        println!("offline_runtime: static_provider + fixture_mcp");
+        println!("offline_runtime: static_provider (stage fixtures disabled by default)");
     }
     println!("Type /help for commands, /exit to quit.");
 }
@@ -38,11 +38,27 @@ pub(crate) struct RenderState {
     saw_assistant_message: bool,
     last_assistant_message: Option<String>,
     last_command_output: Option<String>,
+    offline_label: bool,
 }
 
 impl RenderState {
+    pub(crate) fn with_offline_label(offline_label: bool) -> Self {
+        Self {
+            offline_label,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn saw_assistant_message(&self) -> bool {
         self.saw_assistant_message
+    }
+
+    pub(crate) fn render_assistant_content(&self, content: &str) -> String {
+        if self.offline_label {
+            format!("[offline] {content}")
+        } else {
+            content.to_string()
+        }
     }
 }
 
@@ -50,9 +66,10 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
     match event {
         AgentEvent::Message { content } => {
             state.saw_assistant_message = true;
-            if state.last_assistant_message.as_deref() != Some(content) {
-                println!("{content}");
-                state.last_assistant_message = Some(content.clone());
+            let rendered = state.render_assistant_content(content);
+            if state.last_assistant_message.as_deref() != Some(rendered.as_str()) {
+                println!("{rendered}");
+                state.last_assistant_message = Some(rendered);
             }
         }
         AgentEvent::Reasoning { content } => {
@@ -292,10 +309,24 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
         | AgentEvent::TurnMetadata { .. }
         | AgentEvent::TurnState { .. }
         | AgentEvent::DeepParityState { .. }
-        | AgentEvent::SandboxAttempt { .. }
         | AgentEvent::ApprovalCacheState { .. }
         | AgentEvent::MultiAgentEvent { .. }
         | AgentEvent::Started { .. } => {}
+        AgentEvent::SandboxAttempt {
+            platform,
+            status,
+            backend,
+            command,
+            cwd,
+            message,
+            ..
+        } => {
+            println!(
+                "[policy-guard] platform={platform} status={status} backend={backend} cwd={cwd} command={} message={} (advisory only, no OS isolation)",
+                command.as_deref().unwrap_or("none"),
+                message.as_deref().unwrap_or("none")
+            );
+        }
     }
     io::stdout().flush()?;
     Ok(())
@@ -311,7 +342,7 @@ pub(crate) fn render_agent_result(result: &AgentRunResult) -> Result<()> {
 
     if !state.saw_assistant_message() {
         if let Some(final_response) = &result.final_response {
-            println!("{final_response}");
+            println!("{}", state.render_assistant_content(final_response));
         }
     }
     io::stdout().flush()?;

@@ -63,6 +63,9 @@ impl InteractiveSession {
             model: self.provider_selection.model.clone(),
             provider: self.provider_selection.provider.clone(),
         });
+        if let Some(warning) = self.provider_selection.auto_fallback_warning() {
+            println!("{warning}");
+        }
     }
 
     async fn read_eval_loop(&mut self, stdin_is_terminal: bool) -> Result<()> {
@@ -252,6 +255,11 @@ impl InteractiveSession {
     }
 
     fn print_cost(&self) {
+        if self.provider_selection.is_offline_runtime() {
+            println!("last_turn_usage: n/a - offline, no model call");
+            println!("session_usage: n/a - offline, no model call");
+            return;
+        }
         match &self.stats.last_turn {
             Some(summary) if !summary.usage.is_zero() => {
                 println!("last_turn_usage: {}", summary.usage);
@@ -340,7 +348,8 @@ impl InteractiveSession {
             self.provider_selection.live,
             run_control,
         ));
-        let mut render_state = RenderState::default();
+        let mut render_state =
+            RenderState::with_offline_label(self.provider_selection.is_offline_runtime());
         let mut result: Option<AgentRunResult> = None;
         let mut events_open = true;
         let mut approvals_open = true;
@@ -392,7 +401,7 @@ impl InteractiveSession {
             if !render_state.saw_assistant_message()
                 && let Some(final_response) = &result.final_response
             {
-                println!("{final_response}");
+                println!("{}", render_state.render_assistant_content(final_response));
             }
             self.record_turn_result(&result);
         }

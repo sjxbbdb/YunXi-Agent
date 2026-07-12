@@ -848,6 +848,41 @@ Verified on 2026-07-09:
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.
 
+## YunXi Agent v1.5 Honesty Streaming Safety Construction
+
+YunXi Agent v1.5 promotes the project from "usable terminal agent with some
+fixture-heavy parity scaffolding" toward a more honest autonomous CLI runtime.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.5.0`.
+- `yunxi` and `yunxi-agent-cli` report `yunxi 1.5.0`.
+- Interactive banner reports `YunXi Agent v1.5.0 interactive CLI`.
+- Offline plain-text assistant output is marked with `[offline]`.
+- Auto provider fallback prints an explicit warning when no live credentials are
+  configured.
+- Offline runtime banner now says the default static provider has stage
+  fixtures disabled by default.
+- `/cost` reports `n/a - offline, no model call` in offline mode.
+- Sandbox/runner display text now uses policy guard/advisory wording and says
+  there is no OS isolation in the current v1.5 implementation.
+- `StaticProvider` stage fixture branches are disabled by default.
+- Runtime `stage 4k/4l/4m` fixture branches are disabled by default.
+- Explicit fixture mode is available through `YUNXI_RUNTIME_FIXTURES=1` and
+  runtime test builders; fixture metadata includes `fixture_mode=true`.
+- Provider transport responses now retain response headers for retry decisions.
+- Provider retry uses bounded exponential backoff, honors `Retry-After`, and
+  retries timeout/network transport failures within the retry budget.
+- Live OpenAI-compatible streaming can consume `reqwest::Response::bytes_stream`
+  chunks and push parsed SSE events into the runtime event sink as chunks
+  arrive.
+- Default CLI dependency boundaries remain YunXi-owned and do not require
+  `vendor/codex-rs`, `codex-*`, or `yunxi-agent-codex`.
+
+Verification for v1.5 is intentionally deferred until the full construction
+slice is complete, following the project hard constraint to avoid repeated
+single-point testing during the build phase.
+
 ## YunXi Agent v1.3 Terminal Streaming Approval Cancellation
 
 YunXi Agent v1.3 upgrades the interactive terminal host from batch replay to a

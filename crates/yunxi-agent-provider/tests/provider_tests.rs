@@ -3,17 +3,18 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
-use yunxi_agent_core::{AgentConfig, AgentInput};
+use yunxi_agent_core::{AgentConfig, AgentError, AgentInput, AgentResult};
 use yunxi_agent_protocol::{
     ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId,
 };
 use yunxi_agent_provider::{
     AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiStreamAccumulator,
-    OpenAiTransportProvider, ProviderAuth, ProviderBootstrap, ProviderConfig, ProviderMessage,
-    ProviderRequest, ProviderRetryPolicy, ProviderRole, ProviderSseDecoder, ProviderToolCall,
-    ProviderTransport, ProviderTransportRequest, ProviderTransportResponse, StaticProvider,
-    build_openai_request_json, build_openai_stream_request_json, build_openai_transport_request,
-    parse_openai_response_json, parse_openai_stream_events, redact_sensitive_text,
+    OpenAiTransportProvider, ProviderAuth, ProviderBootstrap, ProviderByteStreamSink,
+    ProviderConfig, ProviderMessage, ProviderRequest, ProviderRetryPolicy, ProviderRole,
+    ProviderSseDecoder, ProviderToolCall, ProviderTransport, ProviderTransportRequest,
+    ProviderTransportResponse, StaticProvider, build_openai_request_json,
+    build_openai_stream_request_json, build_openai_transport_request, parse_openai_response_json,
+    parse_openai_stream_events, redact_sensitive_text,
 };
 
 #[derive(Clone)]
@@ -49,6 +50,73 @@ impl ProviderTransport for SequenceTransport {
             .ok_or_else(|| yunxi_agent_core::AgentError::Execution {
                 message: "sequence transport exhausted".to_string(),
             })
+    }
+}
+
+#[derive(Clone)]
+struct ResultSequenceTransport {
+    responses: Arc<Mutex<VecDeque<AgentResult<ProviderTransportResponse>>>>,
+    requests: Arc<Mutex<Vec<ProviderTransportRequest>>>,
+}
+
+impl ResultSequenceTransport {
+    fn new(responses: impl IntoIterator<Item = AgentResult<ProviderTransportResponse>>) -> Self {
+        Self {
+            responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn requests(&self) -> Vec<ProviderTransportRequest> {
+        self.requests.lock().expect("request lock").clone()
+    }
+}
+
+#[async_trait::async_trait]
+impl ProviderTransport for ResultSequenceTransport {
+    async fn send(
+        &self,
+        request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse> {
+        self.requests.lock().expect("request lock").push(request);
+        self.responses
+            .lock()
+            .expect("response lock")
+            .pop_front()
+            .ok_or_else(|| AgentError::Execution {
+                message: "result sequence transport exhausted".to_string(),
+            })?
+    }
+}
+
+#[derive(Clone)]
+struct ChunkedStreamingTransport {
+    chunks: Arc<Vec<&'static [u8]>>,
+}
+
+#[async_trait::async_trait]
+impl ProviderTransport for ChunkedStreamingTransport {
+    async fn send(
+        &self,
+        _request: ProviderTransportRequest,
+    ) -> AgentResult<ProviderTransportResponse> {
+        Ok(ProviderTransportResponse::new(200, ""))
+    }
+
+    async fn send_streaming(
+        &self,
+        _request: ProviderTransportRequest,
+        sink: &mut dyn ProviderByteStreamSink,
+    ) -> AgentResult<ProviderTransportResponse> {
+        let mut body = Vec::new();
+        for chunk in self.chunks.iter() {
+            sink.push_bytes(chunk).await?;
+            body.extend_from_slice(chunk);
+        }
+        Ok(ProviderTransportResponse::new(
+            200,
+            String::from_utf8_lossy(&body).into_owned(),
+        ))
     }
 }
 
@@ -441,15 +509,11 @@ async fn provider_http_errors_are_classified_and_redacted() {
 #[tokio::test]
 async fn deepseek_schema_error_retries_once_without_metadata() {
     let transport = SequenceTransport::new([
-        ProviderTransportResponse {
-            status: 400,
-            body: r#"{"error":{"message":"unknown field metadata"}}"#.to_string(),
-        },
-        ProviderTransportResponse {
-            status: 200,
-            body: r#"{"choices":[{"message":{"role":"assistant","content":"fallback worked"}}]}"#
-                .to_string(),
-        },
+        ProviderTransportResponse::new(400, r#"{"error":{"message":"unknown field metadata"}}"#),
+        ProviderTransportResponse::new(
+            200,
+            r#"{"choices":[{"message":{"role":"assistant","content":"fallback worked"}}]}"#,
+        ),
     ]);
     let provider = OpenAiTransportProvider::new(
         ProviderConfig::deepseek().with_stream(false),
@@ -485,10 +549,10 @@ async fn deepseek_schema_error_retries_once_without_metadata() {
 
 #[tokio::test]
 async fn non_deepseek_schema_error_does_not_use_metadata_fallback() {
-    let transport = SequenceTransport::new([ProviderTransportResponse {
-        status: 400,
-        body: r#"{"error":{"message":"invalid request"}}"#.to_string(),
-    }]);
+    let transport = SequenceTransport::new([ProviderTransportResponse::new(
+        400,
+        r#"{"error":{"message":"invalid request"}}"#,
+    )]);
     let provider = OpenAiTransportProvider::new(
         ProviderConfig::openai_compatible("fixture-model").with_stream(false),
         ProviderAuth::None,
@@ -522,11 +586,8 @@ async fn provider_schema_error_includes_only_bounded_redacted_details() {
     })
     .to_string();
     let transport = SequenceTransport::new([
-        ProviderTransportResponse {
-            status: 400,
-            body: body.clone(),
-        },
-        ProviderTransportResponse { status: 400, body },
+        ProviderTransportResponse::new(400, body.clone()),
+        ProviderTransportResponse::new(400, body),
     ]);
     let provider = OpenAiTransportProvider::new(
         ProviderConfig::deepseek().with_stream(false),
@@ -705,6 +766,138 @@ fn retry_policy_retries_transient_statuses_until_attempt_budget_is_exhausted() {
     assert!(policy.should_retry_status(503, 1));
     assert!(!policy.should_retry_status(503, 2));
     assert!(!policy.should_retry_status(400, 0));
+}
+
+#[tokio::test]
+async fn retries_429_after_retry_after_header() {
+    let transport = SequenceTransport::new([
+        ProviderTransportResponse::new(429, r#"{"error":"slow down"}"#)
+            .with_header("retry-after", "0"),
+        ProviderTransportResponse::new(
+            200,
+            r#"{"choices":[{"message":{"role":"assistant","content":"retried"}}]}"#,
+        ),
+    ]);
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model").with_stream(false),
+        ProviderAuth::None,
+        transport.clone(),
+    )
+    .with_retry_policy(ProviderRetryPolicy::new(3).with_base_delay_millis(0));
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("retry status"),
+    );
+
+    let response = provider.complete(request).await.expect("retry response");
+
+    assert_eq!(
+        response.message.map(|message| message.content),
+        Some("retried".to_string())
+    );
+    assert_eq!(transport.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn retries_timeout_transport_error() {
+    let transport = ResultSequenceTransport::new([
+        Err(AgentError::Provider {
+            provider: "fixture".to_string(),
+            status: None,
+            classification: "timeout".to_string(),
+            message: "fixture timeout".to_string(),
+        }),
+        Ok(ProviderTransportResponse::new(
+            200,
+            r#"{"choices":[{"message":{"role":"assistant","content":"timeout retried"}}]}"#,
+        )),
+    ]);
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model").with_stream(false),
+        ProviderAuth::None,
+        transport.clone(),
+    )
+    .with_retry_policy(ProviderRetryPolicy::new(2).with_base_delay_millis(0));
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("retry timeout"),
+    );
+
+    let response = provider.complete(request).await.expect("retry response");
+
+    assert_eq!(
+        response.message.map(|message| message.content),
+        Some("timeout retried".to_string())
+    );
+    assert_eq!(transport.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn does_not_retry_non_retryable_400() {
+    let transport = SequenceTransport::new([ProviderTransportResponse::new(
+        400,
+        r#"{"error":{"message":"bad request"}}"#,
+    )]);
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model").with_stream(false),
+        ProviderAuth::None,
+        transport.clone(),
+    )
+    .with_retry_policy(ProviderRetryPolicy::new(3).with_base_delay_millis(0));
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("no retry"),
+    );
+
+    provider.complete(request).await.expect_err("bad request");
+
+    assert_eq!(transport.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn streaming_transport_pushes_network_chunks_incrementally() {
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model"),
+        ProviderAuth::None,
+        ChunkedStreamingTransport {
+            chunks: Arc::new(vec![
+                b"data: {\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n".as_slice(),
+                b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n"
+                    .as_slice(),
+            ]),
+        },
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("chunked stream"),
+    );
+
+    let events = provider
+        .stream_events(request, "thread-chunked", "turn-chunked")
+        .await
+        .expect("chunked stream");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::MessageContent { delta, .. },
+            ..
+        } if delta == "hel"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::MessageContent { delta, .. },
+            ..
+        } if delta == "lo"
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ResponseCompleted {
+            status: ResponseStatus::Completed,
+            ..
+        }
+    )));
 }
 
 #[test]

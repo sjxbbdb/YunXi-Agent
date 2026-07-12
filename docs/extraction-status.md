@@ -1304,6 +1304,41 @@ Constructed in this slice:
 Verification for this slice is recorded in the v1.6 development report after
 the unified verification gate completes.
 
+## YunXi Agent v1.7 Terminal TUI Foundation Construction
+
+YunXi Agent v1.7 promotes the terminal host from a plain `read_line` REPL into
+a TUI-capable interactive shell while preserving script-oriented output. This
+release also adds symlink escape regression coverage for the v1.6
+process-internal workspace-write guard.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.7.0`.
+- `yunxi-agent-cli` gains terminal dependencies for `ratatui`, `crossterm`, and
+  `reedline`.
+- Interactive startup resolves a terminal mode: real terminal stdin/stdout use
+  the TUI-capable host by default, while pipes, JSON, JSONL, and `--no-tui`
+  remain on the stable plain path.
+- CLI input is split behind an `InteractiveInput` abstraction with a plain
+  line reader and a Reedline-backed terminal reader.
+- Interactive rendering is split behind an `InteractiveRenderer` abstraction
+  with the existing plain renderer and a basic TUI renderer.
+- The TUI app state renders a compact header, event log, and input area and is
+  covered by `ratatui::backend::TestBackend` tests.
+- `yunxi-agent-sandbox` now resolves the nearest existing path prefix before
+  falling back to component normalization, allowing symlink parent directories
+  to be detected even when the final target file does not exist yet.
+- Sandbox and tools tests include symlink escape regressions where the platform
+  allows symlink creation.
+
+Verification for this slice is recorded in the v1.7 development report. The
+2026-07-12 gate passed `cargo fmt`, `cargo fmt -- --check`, `cargo test`,
+`cargo check --workspace`, release build, version checks, plain interactive
+smoke, auto fallback smoke, DeepSeek live JSON/JSONL smoke, dependency scan,
+secret scan, `git diff --check`, CodeGraph sync, release install, and PATH
+smoke. Linux cross-target check is recorded as environment-blocked because the
+configured rustup mirror returned 404 for `x86_64-unknown-linux-gnu` std.
+
 ## YunXi Agent v1.0 CLI Packaging
 
 YunXi Agent v1.0 packages the current verified autonomous runtime as a

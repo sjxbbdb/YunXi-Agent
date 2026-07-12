@@ -34,7 +34,15 @@ fn spawn_sequence_http_server(responses: Vec<(u16, String)>) -> String {
             let mut request = Vec::new();
             let mut buffer = [0_u8; 4096];
             loop {
-                let count = stream.read(&mut buffer).expect("read fixture request");
+                let count = match stream.read(&mut buffer) {
+                    Ok(count) => count,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "fixture request body timed out");
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(error) => panic!("read fixture request: {error}"),
+                };
                 if count == 0 {
                     break;
                 }
@@ -76,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.6.0"));
+        .stdout(predicate::str::contains("yunxi 1.7.0"));
 }
 
 #[test]
@@ -86,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.6.0"));
+        .stdout(predicate::str::contains("yunxi 1.7.0"));
 }
 
 #[test]
@@ -226,7 +234,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.6.0 interactive CLI",
+            "YunXi Agent v1.7.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -385,7 +393,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.6.0 interactive CLI",
+            "YunXi Agent v1.7.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -393,6 +401,20 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         ))
         .stdout(predicate::str::contains("session: yunxi-"))
         .stdout(predicate::str::contains("turns: 1"))
+        .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn yunxi_no_tui_keeps_plain_interactive_mode() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.args(["--offline", "--no-tui"])
+        .write_stdin("/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "YunXi Agent v1.7.0 interactive CLI",
+        ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
 

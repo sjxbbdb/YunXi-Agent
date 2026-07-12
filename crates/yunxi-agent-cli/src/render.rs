@@ -12,8 +12,39 @@ pub(crate) struct InteractiveBanner {
     pub provider: String,
 }
 
+pub(crate) trait InteractiveRenderer {
+    fn banner(&mut self, banner: &InteractiveBanner) -> Result<()>;
+    fn warning(&mut self, message: &str) -> Result<()>;
+    fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()>;
+    fn error(&mut self, message: &str) -> Result<()>;
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct PlainInteractiveRenderer;
+
+impl InteractiveRenderer for PlainInteractiveRenderer {
+    fn banner(&mut self, banner: &InteractiveBanner) -> Result<()> {
+        print_banner(banner);
+        Ok(())
+    }
+
+    fn warning(&mut self, message: &str) -> Result<()> {
+        println!("{message}");
+        Ok(())
+    }
+
+    fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()> {
+        render_agent_event(event, state)
+    }
+
+    fn error(&mut self, message: &str) -> Result<()> {
+        eprintln!("[error] {message}");
+        Ok(())
+    }
+}
+
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.6.0 interactive CLI");
+    println!("YunXi Agent v1.7.0 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(

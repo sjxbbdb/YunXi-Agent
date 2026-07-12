@@ -1,6 +1,6 @@
-# YunXi Agent v1.6.0
+# YunXi Agent v1.7.0
 
-YunXi Agent v1.6.0 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.7.0 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -17,7 +17,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: v1.6.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.7.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -29,6 +29,10 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Compiles as an independent Rust workspace
 - Builds a terminal command named `yunxi`
 - Starts an interactive terminal session when `yunxi` is run without a prompt
+- Uses a TUI-capable terminal host by default when stdin/stdout are both real
+  terminals, with `--no-tui` available for the stable plain REPL
+- Uses a line editor for terminal input while keeping piped stdin and scripted
+  sessions on the plain line reader
 - Streams runtime events to the terminal while an interactive turn is running
 - Prompts for interactive approval and `request_user_input` tool calls
 - Propagates Ctrl+C cancellation into the runtime and shell exec layer
@@ -42,11 +46,12 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Warns in interactive, one-shot, JSON, JSONL, and resume paths when auto
   provider mode falls back to the offline static runtime
 - Shows offline runtime as a static provider with stage fixtures disabled by default
-- Uses policy-guard wording for sandbox decisions; v1.6 does not claim OS-level sandbox isolation
+- Uses policy-guard wording for sandbox decisions; v1.7 does not claim OS-level sandbox isolation
 - Enforces the configured process-internal policy guard on the default shell
   tool path instead of bypassing it with trusted `DangerFullAccess`
 - Blocks obvious `workspace-write` shell targets that escape the workspace by
-  absolute path or parent traversal
+  absolute path, parent traversal, or resolvable symlink targets outside the
+  workspace
 - Keeps stage fixture prompts disabled by default unless `YUNXI_RUNTIME_FIXTURES=1` is set
 - Streams live provider SSE data from reqwest network chunks instead of replaying a completed response body
 - Retries provider 429/5xx/network/timeout failures with bounded backoff and `Retry-After` support
@@ -73,7 +78,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.6.0 CLI into a user-local bin directory:
+Build and install the v1.7.0 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -97,6 +102,13 @@ Run `yunxi` without a prompt to enter interactive mode:
 
 ```powershell
 yunxi
+```
+
+When stdin and stdout are both attached to a terminal, YunXi uses the v1.7 TUI
+host and line editor. Use `--no-tui` to force the stable plain REPL:
+
+```powershell
+yunxi --no-tui
 ```
 
 Useful interactive commands:
@@ -133,7 +145,8 @@ auto mode prints a warning when no live credentials are found.
 
 The current sandbox layer is a process-internal policy guard/advisor. It
 classifies commands, routes approvals, blocks common workspace-write target
-escapes, and can request escalation, but v1.6 does not provide
+escapes, including resolvable symlink escapes, and can request escalation, but
+v1.7 does not provide
 OS-enforced Windows restricted tokens, Linux Landlock/seccomp, namespaces, or
 macOS seatbelt isolation. Approved commands still execute with the YunXi process
 permissions.
@@ -240,6 +253,13 @@ shell-ish tokens instead of substring-only checks, preventing streaming retries
 after body bytes have reached the parser, and extending auto fallback warnings
 to one-shot, JSON, JSONL, and resume paths. It remains a process-internal guard,
 not an OS-level sandbox.
+
+v1.7.0 adds immutable tag `v1.7.0` without moving earlier tags. It introduces
+the terminal TUI foundation with `ratatui`/`crossterm`, line-edited terminal
+input through `reedline`, `--no-tui` plain fallback, renderer separation for
+plain/structured/TUI paths, and symlink escape regression coverage for the
+workspace-write policy guard. It remains a process-internal guard, not an
+OS-level sandbox.
 
 ## Backend Capability Matrix
 

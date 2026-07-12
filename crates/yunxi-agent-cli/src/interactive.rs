@@ -1,9 +1,14 @@
 use crate::commands::{InteractiveCommand, help_text, parse_interactive_command};
+use crate::input::{InteractiveInput, PlainInput, ReedlineInput};
 use crate::provider_mode::{ProviderMode, ProviderSelection};
-use crate::render::{InteractiveBanner, RenderState, print_banner, render_agent_event};
+use crate::render::{
+    InteractiveBanner, InteractiveRenderer, PlainInteractiveRenderer, RenderState,
+};
+use crate::terminal_mode::ResolvedTerminalMode;
+use crate::tui::TuiInteractiveRenderer;
 use crate::{redact_secret_fragments, run_agent_backend_stream};
 use anyhow::{Context, Result};
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, IsTerminal, Write};
 use yunxi_agent_core::{
     AgentConfig, AgentEvent, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunControl,
     AgentRunResult, AgentRunStatus, AgentRunUserInputRequest, AgentRunUserInputResponse,
@@ -18,6 +23,7 @@ pub(crate) struct InteractiveOptions {
     pub config: AgentConfig,
     pub backend: BackendKind,
     pub provider_mode: ProviderMode,
+    pub terminal_mode: ResolvedTerminalMode,
 }
 
 #[derive(Clone, Debug)]
@@ -32,10 +38,29 @@ struct InteractiveSession {
 }
 
 pub(crate) async fn run_interactive(options: InteractiveOptions) -> Result<()> {
-    let stdin_is_terminal = io::stdin().is_terminal();
+    let terminal_mode = options.terminal_mode;
     let mut session = InteractiveSession::new(options)?;
-    session.print_banner();
-    session.read_eval_loop(stdin_is_terminal).await
+    let mut renderer = interactive_renderer(terminal_mode)?;
+    session.print_banner(renderer.as_mut())?;
+
+    match terminal_mode {
+        ResolvedTerminalMode::Plain => {
+            let prompt_enabled = io::stdin().is_terminal() && io::stdout().is_terminal();
+            let stdin = io::stdin();
+            let reader = io::BufReader::new(stdin.lock());
+            let stdout = io::stdout();
+            let mut input = PlainInput::new(reader, stdout, prompt_enabled);
+            session
+                .read_eval_loop(&mut input, renderer.as_mut())
+                .await
+        }
+        ResolvedTerminalMode::Tui => {
+            let mut input = ReedlineInput::new(&session.config.cwd)?;
+            session
+                .read_eval_loop(&mut input, renderer.as_mut())
+                .await
+        }
+    }
 }
 
 impl InteractiveSession {
@@ -54,48 +79,40 @@ impl InteractiveSession {
         })
     }
 
-    fn print_banner(&self) {
-        print_banner(&InteractiveBanner {
+    fn print_banner(&self, renderer: &mut dyn InteractiveRenderer) -> Result<()> {
+        renderer.banner(&InteractiveBanner {
             cwd: self.config.cwd.display().to_string(),
             backend: format!("{:?}", self.backend).to_ascii_lowercase(),
             provider_live: self.provider_selection.live,
             provider_source: self.provider_selection.source.as_str().to_string(),
             model: self.provider_selection.model.clone(),
             provider: self.provider_selection.provider.clone(),
-        });
+        })?;
         if let Some(warning) = self.provider_selection.auto_fallback_warning() {
-            println!("{warning}");
+            renderer.warning(warning)?;
         }
+        Ok(())
     }
 
-    async fn read_eval_loop(&mut self, stdin_is_terminal: bool) -> Result<()> {
-        let stdin = io::stdin();
-        let mut reader = io::BufReader::new(stdin.lock());
-        let mut stdout = io::stdout();
-
+    async fn read_eval_loop(
+        &mut self,
+        input: &mut dyn InteractiveInput,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<()> {
         loop {
-            if stdin_is_terminal {
-                print!("yunxi> ");
-                stdout.flush()?;
-            }
-
-            let mut input = String::new();
-            let bytes = reader
-                .read_line(&mut input)
-                .context("failed to read interactive input")?;
-            if bytes == 0 {
-                if !stdin_is_terminal {
+            let Some(input_line) = input.read_prompt("yunxi> ")? else {
+                if input.print_eof_message() {
                     println!("YunXi interactive session ended.");
                 }
                 return Ok(());
-            }
+            };
 
-            let input = input.trim();
-            if input.is_empty() {
+            let input_line = input_line.trim();
+            if input_line.is_empty() {
                 continue;
             }
 
-            if let Some(command) = parse_interactive_command(input) {
+            if let Some(command) = parse_interactive_command(input_line) {
                 if !self.handle_command(command).await? {
                     println!("YunXi interactive session ended.");
                     return Ok(());
@@ -104,13 +121,10 @@ impl InteractiveSession {
             }
 
             if let Err(error) = self
-                .run_turn(input.to_string(), &mut reader, &mut stdout)
+                .run_turn(input_line.to_string(), input, renderer)
                 .await
             {
-                eprintln!(
-                    "[error] {}",
-                    redact_secret_fragments(&format!("{error:#}"))
-                );
+                renderer.error(&redact_secret_fragments(&format!("{error:#}")))?;
             }
         }
     }
@@ -317,15 +331,12 @@ impl InteractiveSession {
         Ok(())
     }
 
-    async fn run_turn<R>(
+    async fn run_turn(
         &mut self,
         prompt: String,
-        reader: &mut R,
-        stdout: &mut io::Stdout,
-    ) -> Result<()>
-    where
-        R: BufRead,
-    {
+        input: &mut dyn InteractiveInput,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<()> {
         let mut turn_config = self.config.clone();
         if let Some(parent_session_id) = &self.active_session_id {
             turn_config = turn_config
@@ -363,19 +374,19 @@ impl InteractiveSession {
             tokio::select! {
                 event = stream.events.recv(), if events_open => {
                     match event {
-                        Some(event) => render_agent_event(&event, &mut render_state)?,
+                        Some(event) => renderer.event(&event, &mut render_state)?,
                         None => events_open = false,
                     }
                 }
                 request = stream.approvals.recv(), if approvals_open => {
                     match request {
-                        Some(request) => respond_to_approval_request(request, reader, stdout)?,
+                        Some(request) => respond_to_approval_request(request, input)?,
                         None => approvals_open = false,
                     }
                 }
                 request = stream.user_inputs.recv(), if user_inputs_open => {
                     match request {
-                        Some(request) => respond_to_user_input_request(request, reader, stdout)?,
+                        Some(request) => respond_to_user_input_request(request, input)?,
                         None => user_inputs_open = false,
                     }
                 }
@@ -385,9 +396,9 @@ impl InteractiveSession {
                             if let Some(control) = &control_slot {
                                 control.cancel();
                             }
-                            println!("[cancelled] cancellation requested");
+                            renderer.warning("[cancelled] cancellation requested")?;
                         }
-                        Err(error) => println!("[cancelled] cancellation requested; signal error: {error}"),
+                        Err(error) => renderer.warning(&format!("[cancelled] cancellation requested; signal error: {error}"))?,
                     }
                 }
                 turn_result = &mut turn, if result.is_none() => {
@@ -401,7 +412,12 @@ impl InteractiveSession {
             if !render_state.saw_assistant_message()
                 && let Some(final_response) = &result.final_response
             {
-                println!("{}", render_state.render_assistant_content(final_response));
+                renderer.event(
+                    &AgentEvent::Message {
+                        content: final_response.clone(),
+                    },
+                    &mut render_state,
+                )?;
             }
             self.record_turn_result(&result);
         }
@@ -600,14 +616,10 @@ fn describe_mcp_transport(transport: &McpTransport) -> String {
     }
 }
 
-fn respond_to_approval_request<R>(
+fn respond_to_approval_request(
     request: AgentRunApprovalRequest,
-    reader: &mut R,
-    stdout: &mut io::Stdout,
-) -> Result<()>
-where
-    R: BufRead,
-{
+    input: &mut dyn InteractiveInput,
+) -> Result<()> {
     println!(
         "[approval] {} requires approval in {}",
         request.tool_name, request.cwd
@@ -616,12 +628,9 @@ where
         println!("[approval] command: {command}");
     }
     println!("[approval] reason: {}", request.reason);
-    print!("approve? y/N: ");
-    stdout.flush()?;
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .context("failed to read approval response")?;
+    let line = input
+        .read_response("approve? y/N: ")?
+        .unwrap_or_default();
     let approved = matches!(
         line.trim().to_ascii_lowercase().as_str(),
         "y" | "yes" | "approve" | "approved"
@@ -637,25 +646,26 @@ where
     Ok(())
 }
 
-fn respond_to_user_input_request<R>(
+fn respond_to_user_input_request(
     request: AgentRunUserInputRequest,
-    reader: &mut R,
-    stdout: &mut io::Stdout,
-) -> Result<()>
-where
-    R: BufRead,
-{
-    print!("{} ", request.prompt);
-    stdout.flush()?;
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .context("failed to read requested user input")?;
-    let value = line.trim_end_matches(['\r', '\n']).to_string();
+    input: &mut dyn InteractiveInput,
+) -> Result<()> {
+    let value = input
+        .read_response(&format!("{} ", request.prompt))?
+        .unwrap_or_default();
     let _ = request.respond_to.send(AgentRunUserInputResponse {
         value: Some(value),
     });
     Ok(())
+}
+
+fn interactive_renderer(
+    terminal_mode: ResolvedTerminalMode,
+) -> Result<Box<dyn InteractiveRenderer>> {
+    match terminal_mode {
+        ResolvedTerminalMode::Plain => Ok(Box::new(PlainInteractiveRenderer)),
+        ResolvedTerminalMode::Tui => Ok(Box::new(TuiInteractiveRenderer::new()?)),
+    }
 }
 
 fn session_id_from_result(result: &AgentRunResult) -> Option<String> {

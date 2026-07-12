@@ -1008,16 +1008,38 @@ fn target_within_workspace(root: &Path, cwd: &Path, raw: &str) -> bool {
 }
 
 fn absolute_normalized(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| {
-        let absolute = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(path)
-        };
-        normalize_components(&absolute)
-    })
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return normalize_components(&canonical);
+    }
+
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+
+    canonicalize_existing_prefix(&absolute).unwrap_or_else(|| normalize_components(&absolute))
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> Option<PathBuf> {
+    let mut existing = path.to_path_buf();
+    let mut missing = Vec::new();
+
+    while !existing.exists() {
+        let name = existing.file_name()?.to_os_string();
+        missing.push(name);
+        if !existing.pop() {
+            return None;
+        }
+    }
+
+    let mut resolved = std::fs::canonicalize(existing).ok()?;
+    for component in missing.iter().rev() {
+        resolved.push(component);
+    }
+    Some(normalize_components(&resolved))
 }
 
 fn normalize_components(path: &Path) -> PathBuf {
@@ -1110,6 +1132,16 @@ fn is_within_workspace(root: &Path, cwd: &Path) -> bool {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[cfg(windows)]
+    fn create_dir_symlink(src: &Path, dst: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(src, dst)
+    }
+
+    #[cfg(unix)]
+    fn create_dir_symlink(src: &Path, dst: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(src, dst)
+    }
 
     #[test]
     fn evaluation_creates_approval_request_when_prompt_is_required() {
@@ -1322,6 +1354,38 @@ mod tests {
                 .decision,
             PolicyDecision::Allowed
         ));
+    }
+
+    #[test]
+    fn workspace_write_blocks_symlink_targets_outside_workspace() {
+        let workspace = TempDir::new().expect("workspace");
+        let outside = TempDir::new().expect("outside");
+        let link = workspace.path().join("outside-link");
+        if let Err(error) = create_dir_symlink(outside.path(), &link) {
+            eprintln!("skipping symlink escape test; symlink unavailable: {error}");
+            return;
+        }
+        let policy = ExecutionPolicy {
+            approval: ApprovalRequirement::PreApproved,
+            sandbox: SandboxRequirement::WorkspaceWrite,
+            network: NetworkPolicy::Inherit,
+            workspace_root: workspace.path().to_path_buf(),
+        };
+        let command = if cfg!(windows) {
+            "echo hi > outside-link\\leak.txt"
+        } else {
+            "echo hi > outside-link/leak.txt"
+        };
+
+        let evaluation = policy.evaluate(workspace.path(), Some(command));
+
+        assert!(matches!(
+            evaluation.decision,
+            PolicyDecision::Blocked { ref reason }
+                if reason.contains("workspace-write target")
+                    && reason.contains("outside workspace")
+        ));
+        assert!(!outside.path().join("leak.txt").exists());
     }
 
     #[test]

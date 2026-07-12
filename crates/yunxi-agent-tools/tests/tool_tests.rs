@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentConfig, ApprovalMode, SandboxMode};
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
@@ -12,6 +12,16 @@ use yunxi_agent_tools::{
     ToolRouter, ToolRuntime, ToolRuntimeEvent, ToolStatus, default_tool_registry,
     workspace_tool_registry,
 };
+
+#[cfg(windows)]
+fn create_dir_symlink(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(src, dst)
+}
+
+#[cfg(unix)]
+fn create_dir_symlink(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(src, dst)
+}
 
 #[test]
 fn default_tool_registry_exposes_model_visible_specs() {
@@ -362,6 +372,42 @@ async fn shell_tool_runtime_declines_workspace_write_escape_target() {
         .with_approval_mode(ApprovalMode::Never)
         .with_sandbox_mode(SandboxMode::WorkspaceWrite);
     let command = format!("echo denied > {}", outside_file.display());
+
+    let response = runtime
+        .execute(
+            ToolRequest::shell(workspace.path(), command)
+                .with_policy(ToolPolicy::from_config(&config)),
+        )
+        .await
+        .expect("policy response should succeed");
+
+    assert_eq!(response.status, ToolStatus::Declined);
+    assert!(response.error.as_deref().is_some_and(|error| {
+        error.contains("workspace-write target") && error.contains("outside workspace")
+    }));
+    assert!(!outside_file.exists());
+}
+
+#[tokio::test]
+async fn shell_tool_runtime_declines_workspace_write_symlink_escape_target() {
+    let runtime = ShellToolRuntime;
+    let workspace = TempDir::new().expect("workspace");
+    let outside = TempDir::new().expect("outside");
+    let link = workspace.path().join("outside-link");
+    if let Err(error) = create_dir_symlink(outside.path(), &link) {
+        eprintln!("skipping symlink escape test; symlink unavailable: {error}");
+        return;
+    }
+    let outside_file = outside.path().join("leak.txt");
+    let config = AgentConfig::new(workspace.path())
+        .with_approval_mode(ApprovalMode::Never)
+        .with_sandbox_mode(SandboxMode::WorkspaceWrite);
+    let target = if cfg!(windows) {
+        "outside-link\\leak.txt"
+    } else {
+        "outside-link/leak.txt"
+    };
+    let command = format!("echo denied > {target}");
 
     let response = runtime
         .execute(

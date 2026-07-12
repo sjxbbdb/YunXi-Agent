@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunControl, AgentRunResult,
@@ -17,6 +18,9 @@ use yunxi_agent_storage::{
 mod commands {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands.rs"));
 }
+mod input {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/input.rs"));
+}
 mod interactive {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/interactive.rs"));
 }
@@ -25,6 +29,18 @@ mod provider_mode {
 }
 mod render {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/render.rs"));
+}
+mod terminal_mode {
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/terminal_mode.rs"));
+}
+mod tui {
+    pub(crate) mod app {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tui/app.rs"));
+    }
+    pub(crate) mod render {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tui/render.rs"));
+    }
+    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tui/mod.rs"));
 }
 
 const CODEX_CORE_PARITY_MAP: &str =
@@ -56,7 +72,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.6.0 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.7.0 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -114,6 +130,12 @@ struct Cli {
 
     #[arg(long, global = true)]
     jsonl: bool,
+
+    #[arg(long, global = true, conflicts_with = "no_tui")]
+    tui: bool,
+
+    #[arg(long = "no-tui", global = true)]
+    no_tui: bool,
 
     #[command(subcommand)]
     command: Option<CliCommand>,
@@ -292,10 +314,18 @@ async fn run_cli() -> Result<()> {
     let prompt = cli.prompt.join(" ");
     if prompt.trim().is_empty() {
         if !cli.json && !cli.jsonl {
+            let terminal_mode = terminal_mode::TerminalModeRequest {
+                tui: cli.tui,
+                no_tui: cli.no_tui,
+                stdin_is_terminal: std::io::stdin().is_terminal(),
+                stdout_is_terminal: std::io::stdout().is_terminal(),
+            }
+            .resolve();
             return interactive::run_interactive(interactive::InteractiveOptions {
                 config,
                 backend,
                 provider_mode,
+                terminal_mode,
             })
             .await;
         }

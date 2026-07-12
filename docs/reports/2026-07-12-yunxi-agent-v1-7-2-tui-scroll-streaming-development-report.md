@@ -335,3 +335,41 @@ v1.7.2 继续沿用 v1.7.1 的独立 crate 边界，不把 TUI 状态塞回 CLI�
 - 流式文本像截图中的 Codex CLI 一样在稳定块中自然增长。
 - 输入区和 bottom pane 始终稳定。
 - `yunxi` 继续保持完全自主运行，不依赖上游 Codex CLI 源码。
+
+## 实施结果记录
+
+本轮 v1.7.2 已按报告完成构建：
+
+- 新增 `crates/yunxi-agent-tui/src/viewport.rs`，以“距离底部的 offset”管理 transcript 视口、history/tail/new-output-below 状态、PageUp/PageDown/Home/End 跳转语义。
+- 新增 `crates/yunxi-agent-tui/src/frame.rs`，提供 33ms 默认帧节流和 force redraw 通道。
+- 更新 `crates/yunxi-agent-tui/src/host.rs`，启用 mouse capture，运行中 turn 通过 `tick()` drain 滚轮/翻页/resize 事件，关键路径可强制 flush。
+- 更新 `crates/yunxi-agent-tui/src/render.rs`，由 viewport 选择 transcript 窗口，显示行号、状态标题、右侧 scrollbar，并保持 composer/approval/user_input 底部 pane 固定。
+- 更新 `crates/yunxi-agent-tui/src/streaming.rs`，增加 stable/live markdown stream controller，为后续 table holdback 预留接口。
+- 更新 `crates/yunxi-agent-cli/src/render.rs`、`interactive.rs`、`tui/mod.rs`，为 renderer 增加 `tick()` 和 `flush()`，plain renderer 保持 no-op，TUI renderer 转发到 TUI host。
+- 工作区版本升级到 `1.7.2`，README、CLI about、版本测试同步更新。
+- `.gitignore` 新增 `/.yunxi/`，避免本地会话 smoke 产物误提交。
+
+统一验证结果：
+
+- `cargo fmt`：通过。
+- `cargo fmt -- --check`：通过。
+- `cargo test`：通过；workspace unit tests、integration tests、doc tests 全部 0 failure。
+- `cargo check --workspace`：通过。
+- `cargo check --workspace --target x86_64-unknown-linux-gnu`：环境限制未通过，本机未安装 `x86_64-unknown-linux-gnu` target 标准库。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- `target\release\yunxi.exe --version`：`yunxi 1.7.2`。
+- `target\release\yunxi-agent-cli.exe --version`：`yunxi 1.7.2`。
+- `target\release\yunxi.exe --offline "v1.7.2 offline smoke"`：通过。
+- `@("你好","/status","/exit") | target\release\yunxi.exe --no-tui --offline`：通过。
+- DeepSeek non-stream live smoke：通过，model=`deepseek-chat`，credential_index=1，`secret_leak_detected=False`。
+- DeepSeek stream live smoke：通过，model=`deepseek-chat`，credential_index=1，`secret_leak_detected=False`。
+- DeepSeek interactive live smoke：通过，banner/assistant marker/normal exit 均检测成功，`secret_leak_detected=False`。
+- default CLI dependency scan：通过，`yunxi-agent-codex` / `codex-rs` 命中 0。
+- 项目源码 secret scan（排除 `vendor/`、`extracted/`、`target/`）：通过，命中 0。
+- 广域 secret scan 命中均来自 `vendor/` / `extracted/` 的上游测试或示例源码，不是本轮项目源码泄露。
+- `git diff --check`：通过，仅有 Windows LF-to-CRLF 提示。
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`：通过，安装目录为 `C:\Users\admin\AppData\Local\YunXi Agent\bin`。
+- PATH smoke：`yunxi --version`、`yunxi-agent-cli --version` 均输出 `1.7.2`，`yunxi --offline` smoke 通过。
+- `codegraph sync .`：通过，13 个变更文件同步，`codegraph status .` 显示 index up to date。
+
+发布仍按策略执行：创建 release commit 和新的 annotated tag `v1.7.2`，旧 tag 不删除、不移动；GitHub 发布走 REST API；发布后执行 `cargo clean` 并确认 `target_exists=False`。

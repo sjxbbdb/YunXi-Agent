@@ -4,6 +4,55 @@ pub struct MarkdownStreamCollector {
     committed_source_len: usize,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MarkdownStreamController {
+    collector: MarkdownStreamCollector,
+    stable_source: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MarkdownStreamFrame {
+    pub stable_source: String,
+    pub live_tail: String,
+    pub committed: bool,
+}
+
+impl MarkdownStreamController {
+    pub fn push_delta(&mut self, delta: &str) -> MarkdownStreamFrame {
+        self.collector.push_delta(delta);
+        let committed = self
+            .collector
+            .commit_complete_source()
+            .map(|source| {
+                self.stable_source.push_str(&source);
+            })
+            .is_some();
+        self.frame(committed)
+    }
+
+    pub fn finalize(&mut self) -> Option<String> {
+        let tail = self.collector.finalize_and_drain_source();
+        if tail.is_empty() && self.stable_source.is_empty() {
+            return None;
+        }
+        self.stable_source.push_str(&tail);
+        Some(std::mem::take(&mut self.stable_source))
+    }
+
+    pub fn clear(&mut self) {
+        self.collector.clear();
+        self.stable_source.clear();
+    }
+
+    fn frame(&self, committed: bool) -> MarkdownStreamFrame {
+        MarkdownStreamFrame {
+            stable_source: self.stable_source.clone(),
+            live_tail: self.collector.live_tail().to_string(),
+            committed,
+        }
+    }
+}
+
 impl MarkdownStreamCollector {
     pub fn push_delta(&mut self, delta: &str) {
         self.buffer.push_str(delta);
@@ -125,5 +174,31 @@ mod tests {
             append_fragment(&mut english, delta);
         }
         assert_eq!(english, "Provider turn started");
+    }
+
+    #[test]
+    fn controller_keeps_stable_source_separate_from_live_tail() {
+        let mut controller = MarkdownStreamController::default();
+
+        let first = controller.push_delta("hello");
+        assert_eq!(
+            first,
+            MarkdownStreamFrame {
+                stable_source: String::new(),
+                live_tail: "hello".to_string(),
+                committed: false,
+            }
+        );
+
+        let second = controller.push_delta("\nworld");
+        assert_eq!(
+            second,
+            MarkdownStreamFrame {
+                stable_source: "hello\n".to_string(),
+                live_tail: "world".to_string(),
+                committed: true,
+            }
+        );
+        assert_eq!(controller.finalize(), Some("hello\nworld\n".to_string()));
     }
 }

@@ -29,6 +29,14 @@ impl Transcript {
         &self.cells
     }
 
+    pub(crate) fn render_line_count(&self) -> usize {
+        self.cells
+            .iter()
+            .map(history_cell_line_count)
+            .sum::<usize>()
+            .max(1)
+    }
+
     pub(crate) fn push_user(&mut self, value: impl Into<String>) {
         self.finalize_streams();
         self.push_cell(HistoryCell::User(value.into()));
@@ -356,6 +364,18 @@ impl Transcript {
     }
 }
 
+fn history_cell_line_count(cell: &HistoryCell) -> usize {
+    let content = match cell {
+        HistoryCell::User(content)
+        | HistoryCell::Assistant { content, .. }
+        | HistoryCell::Reasoning { content, .. }
+        | HistoryCell::Warning(content)
+        | HistoryCell::Error(content) => content,
+        HistoryCell::Event { message, .. } => message,
+    };
+    content.lines().count().max(1)
+}
+
 fn command_status_label(status: CommandStatus) -> &'static str {
     match status {
         CommandStatus::InProgress => "in_progress",
@@ -400,5 +420,16 @@ mod tests {
         transcript.push_assistant("hello");
         transcript.push_assistant("hello");
         assert_eq!(transcript.cells().len(), 1);
+    }
+
+    #[test]
+    fn render_line_count_tracks_multiline_cells() {
+        let mut transcript = Transcript::default();
+        assert_eq!(transcript.render_line_count(), 1);
+
+        transcript.push_user("one\ntwo");
+        transcript.push_notice("tool", "three");
+
+        assert_eq!(transcript.render_line_count(), 3);
     }
 }

@@ -848,6 +848,58 @@ Verified on 2026-07-09:
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.
 
+## YunXi Agent v1.7.2 TUI Scroll And Streaming Construction
+
+YunXi Agent v1.7.2 deepens the v1.7.1 TUI host without changing the autonomous
+runtime/provider/tool/storage boundary. The default CLI remains independent
+from upstream Codex runtime source dependencies.
+
+Implemented on 2026-07-12:
+
+- Workspace package version is promoted to `1.7.2`.
+- `yunxi-agent-tui` now has a transcript viewport state that supports mouse
+  wheel scrolling, PageUp/PageDown/Home/End navigation, follow-tail behavior,
+  and a `new output below` status when model/tool output arrives while the user
+  is reading history.
+- The TUI host enables mouse capture, drains navigation events during active
+  streaming turns, handles resize redraws, and throttles non-critical redraws
+  through a frame scheduler.
+- Transcript rendering now shows a scroll window selected by the viewport,
+  a scrollbar, line range/title status, and a footer that reflects tail/history
+  state while keeping composer, approval, and user-input panes fixed.
+- Markdown streaming has an explicit stable/live controller for newline-gated
+  commit behavior and future table holdback work.
+- CLI renderer plumbing adds `tick()` and `flush()` hooks. Plain, one-shot,
+  JSON, JSONL, and sessions paths keep their existing behavior.
+- `.gitignore` now excludes local `.yunxi/` session runtime output.
+
+Verified on 2026-07-12:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo check --workspace --target x86_64-unknown-linux-gnu`: blocked by
+  missing local Rust target `x86_64-unknown-linux-gnu`
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.7.2`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.7.2`
+- Offline one-shot smoke: pass
+- Plain interactive `/status` smoke: pass
+- DeepSeek live non-stream, stream, and interactive smoke: pass with
+  `deepseek-chat`; no secret leak detected
+- Default CLI dependency scan: pass; no `yunxi-agent-codex` or `codex-rs`
+  dependency in the default CLI tree
+- Owned project source secret scan excluding vendor/reference/generated trees:
+  pass; zero hits
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- Install script and PATH smoke: pass; installed `yunxi` reports `1.7.2`
+- `codegraph sync .` and `codegraph status .`: pass; index is up to date
+
+Release publication is handled through GitHub REST API only. The release must
+create a new annotated tag `v1.7.2` and leave all prior version tags intact.
+
 ## YunXi Agent v1.5 Honesty Streaming Safety Construction
 
 YunXi Agent v1.5 promotes the project from "usable terminal agent with some

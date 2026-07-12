@@ -1,4 +1,5 @@
 /target/
+/.yunxi/
 /external/
 /.worktrees/
 /.codegraph/

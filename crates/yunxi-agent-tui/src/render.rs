@@ -2,10 +2,12 @@ use crate::app::YunxiTuiApp;
 use crate::bottom_pane::BottomPaneMode;
 use crate::chat::HistoryCell;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
 
 pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     let area = frame.area();
@@ -45,22 +47,32 @@ fn render_header(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
 }
 
 fn render_transcript(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
-    let mut lines = Vec::new();
-    for cell in app.transcript().cells() {
-        push_cell_lines(&mut lines, cell);
-    }
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "Ready.",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
+    let lines = transcript_lines(app);
     let visible = area.height.saturating_sub(2) as usize;
-    let start = lines.len().saturating_sub(visible.max(1));
-    let transcript = Paragraph::new(lines[start..].to_vec())
-        .block(Block::default().title("Transcript").borders(Borders::ALL))
+    let start = app.viewport().view_start(lines.len(), visible);
+    let end = start.saturating_add(visible.max(1)).min(lines.len());
+    let title = transcript_title(app, start, end, lines.len(), visible);
+    let transcript = Paragraph::new(lines[start..end].to_vec())
+        .block(Block::default().title(title).borders(Borders::ALL))
         .wrap(Wrap { trim: false });
     frame.render_widget(transcript, area);
+
+    if lines.len() > visible.max(1) {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("^"))
+            .end_symbol(Some("v"));
+        let mut scrollbar_state = ScrollbarState::new(lines.len())
+            .position(start)
+            .viewport_content_length(visible.max(1));
+        frame.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
 }
 
 fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
@@ -112,7 +124,7 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
             render_composer(
                 frame,
                 area,
-                "Enter submit | Esc cancel",
+                "Enter submit | Esc cancel".to_string(),
                 &prompt,
                 buffer,
                 *cursor,
@@ -124,7 +136,7 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
 fn render_composer(
     frame: &mut Frame<'_>,
     area: Rect,
-    footer: &str,
+    footer: String,
     prompt: &str,
     buffer: &str,
     cursor: usize,
@@ -152,7 +164,7 @@ fn render_composer(
         )));
     }
     lines.push(Line::from(Span::styled(
-        footer.to_string(),
+        footer,
         Style::default().fg(Color::DarkGray),
     )));
     let pane = Paragraph::new(lines)
@@ -243,6 +255,39 @@ fn label_color(label: &str) -> Color {
     }
 }
 
+fn transcript_lines(app: &YunxiTuiApp) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for cell in app.transcript().cells() {
+        push_cell_lines(&mut lines, cell);
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "Ready.",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines
+}
+
+fn transcript_title(
+    app: &YunxiTuiApp,
+    start: usize,
+    end: usize,
+    total: usize,
+    visible: usize,
+) -> String {
+    if total <= visible.max(1) {
+        return format!("Transcript | {}", app.viewport().scroll_status());
+    }
+    format!(
+        "Transcript {}-{} / {} | {}",
+        start.saturating_add(1),
+        end,
+        total,
+        app.viewport().scroll_status()
+    )
+}
+
 fn clamp_to_boundary(value: &str, cursor: usize) -> usize {
     let mut cursor = cursor.min(value.len());
     while cursor > 0 && !value.is_char_boundary(cursor) {
@@ -287,5 +332,46 @@ mod tests {
         assert!(rendered.contains("Approval"));
         assert!(rendered.contains("Approve"));
         assert!(!rendered.contains("approve? y/N"));
+    }
+
+    #[test]
+    fn transcript_scroll_renders_history_window_and_scrollbar_title() {
+        let mut app = YunxiTuiApp::default();
+        for idx in 0..30 {
+            app.push_notice("event", &format!("line-{idx:02}"));
+        }
+        app.jump_top(8);
+
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| render_tui_frame(frame, &app))
+            .expect("draw");
+        let rendered = format!("{:?}", terminal.backend().buffer());
+
+        assert!(rendered.contains("Transcript"));
+        assert!(rendered.contains("history"));
+        assert!(rendered.contains("line-00"));
+        assert!(!rendered.contains("line-29"));
+    }
+
+    #[test]
+    fn transcript_reports_new_output_below_when_scrolled_history_changes() {
+        let mut app = YunxiTuiApp::default();
+        for idx in 0..30 {
+            app.push_notice("event", &format!("line-{idx:02}"));
+        }
+        app.scroll_up(8, 10);
+        app.push_notice("event", "fresh-line");
+
+        let backend = TestBackend::new(100, 18);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| render_tui_frame(frame, &app))
+            .expect("draw");
+        let rendered = format!("{:?}", terminal.backend().buffer());
+
+        assert!(rendered.contains("new output below"));
+        assert!(!rendered.contains("fresh-line"));
     }
 }

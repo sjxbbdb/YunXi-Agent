@@ -32,6 +32,12 @@ pub(crate) trait InteractiveRenderer {
         request: AgentRunUserInputRequest,
         input: &mut dyn InteractiveInput,
     ) -> Result<()>;
+    fn tick(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
     fn error(&mut self, message: &str) -> Result<()>;
 }
 
@@ -87,7 +93,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.7.1 interactive CLI");
+    println!("YunXi Agent v1.7.2 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(

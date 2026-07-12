@@ -145,6 +145,14 @@ impl InteractiveRenderer for TuiInteractiveRenderer {
         Ok(())
     }
 
+    fn tick(&mut self) -> Result<()> {
+        self.handle.with_mut(YunxiTui::tick)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.handle.with_mut(YunxiTui::flush)
+    }
+
     fn error(&mut self, message: &str) -> Result<()> {
         self.handle.with_mut(|tui| tui.push_error(message))
     }

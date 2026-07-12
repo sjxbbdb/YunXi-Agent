@@ -9,6 +9,7 @@ use crate::tui::{TuiHandle, TuiInput, TuiInteractiveRenderer};
 use crate::{redact_secret_fragments, run_agent_backend_stream};
 use anyhow::{Context, Result};
 use std::io::{self, IsTerminal};
+use std::time::Duration;
 use yunxi_agent_core::{
     AgentConfig, AgentEvent, AgentRunControl, AgentRunResult, AgentRunStatus, BackendKind,
     TokenUsage,
@@ -406,6 +407,8 @@ impl InteractiveSession {
         let mut events_open = true;
         let mut approvals_open = true;
         let mut user_inputs_open = true;
+        let mut ui_tick = tokio::time::interval(Duration::from_millis(33));
+        ui_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             if result.is_some() && !events_open && !approvals_open && !user_inputs_open {
@@ -430,6 +433,9 @@ impl InteractiveSession {
                         Some(request) => renderer.user_input_request(request, input)?,
                         None => user_inputs_open = false,
                     }
+                }
+                _ = ui_tick.tick() => {
+                    renderer.tick()?;
                 }
                 signal = tokio::signal::ctrl_c(), if control_slot.is_some() => {
                     match signal {
@@ -462,6 +468,7 @@ impl InteractiveSession {
             }
             self.record_turn_result(&result);
         }
+        renderer.flush()?;
         Ok(())
     }
 

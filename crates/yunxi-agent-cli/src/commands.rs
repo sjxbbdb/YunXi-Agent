@@ -45,6 +45,6 @@ pub(crate) fn help_text() -> &'static str {
      /model [name]         Show or switch the model field\n\
      /provider [name]      Show or switch the provider field\n\
      /cwd                  Show the active working directory\n\
-     /clear                Print a visual separator\n\
+     /clear                Clear the terminal\n\
      /exit, /quit          Leave YunXi interactive mode"
 }

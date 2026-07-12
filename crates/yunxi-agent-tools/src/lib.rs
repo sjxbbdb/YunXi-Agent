@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::UNIX_EPOCH;
-use yunxi_agent_core::{AgentConfig, AgentError, AgentResult, ApprovalMode, SandboxMode};
+use yunxi_agent_core::{
+    AgentConfig, AgentError, AgentResult, AgentRunControl, ApprovalMode, SandboxMode,
+};
 use yunxi_agent_exec::{ExecCommand, ExecLifecycleEvent, ExecManager};
 use yunxi_agent_mcp::{
     InMemoryMcpRuntime, McpAuthStatus, McpRuntime, McpRuntimeSnapshot, McpServerConfig,
@@ -950,6 +952,14 @@ pub enum SandboxPolicy {
 #[async_trait]
 pub trait ToolRuntime: Send + Sync {
     async fn execute(&self, request: ToolRequest) -> AgentResult<ToolResponse>;
+
+    async fn execute_with_control(
+        &self,
+        request: ToolRequest,
+        _control: &AgentRunControl,
+    ) -> AgentResult<ToolResponse> {
+        self.execute(request).await
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -971,13 +981,30 @@ pub struct ShellToolRuntime;
 #[async_trait]
 impl ToolRuntime for ShellToolRuntime {
     async fn execute(&self, request: ToolRequest) -> AgentResult<ToolResponse> {
+        self.execute_with_control(request, &AgentRunControl::detached())
+            .await
+    }
+
+    async fn execute_with_control(
+        &self,
+        request: ToolRequest,
+        control: &AgentRunControl,
+    ) -> AgentResult<ToolResponse> {
         let runtime_events = policy_runtime_events(&request);
         if let Some(response) = declined_by_policy(&request) {
             return Ok(response);
         }
 
         let response = match request.kind {
-            ToolRequestKind::Shell { command } => run_shell(request.id, request.cwd, command).await,
+            ToolRequestKind::Shell { command } => {
+                run_shell(
+                    request.id,
+                    request.cwd,
+                    command,
+                    control.cancellation_token(),
+                )
+                .await
+            }
             ToolRequestKind::Patch { patch } => run_patch(request.id, request.cwd, patch),
             ToolRequestKind::ToolSearch { query } => {
                 run_tool_search(request.id, request.cwd, query)
@@ -1119,6 +1146,15 @@ impl CompositeToolRuntime {
 #[async_trait]
 impl ToolRuntime for CompositeToolRuntime {
     async fn execute(&self, request: ToolRequest) -> AgentResult<ToolResponse> {
+        self.execute_with_control(request, &AgentRunControl::detached())
+            .await
+    }
+
+    async fn execute_with_control(
+        &self,
+        request: ToolRequest,
+        control: &AgentRunControl,
+    ) -> AgentResult<ToolResponse> {
         let runtime_events = policy_runtime_events(&request);
         if let Some(response) = declined_by_policy(&request) {
             return Ok(response);
@@ -1155,16 +1191,23 @@ impl ToolRuntime for CompositeToolRuntime {
                 action,
                 arguments_json,
             } => run_multi_agent(request.id, &self.agents, action, arguments_json),
-            _ => return self.shell.execute(request).await,
+            _ => return self.shell.execute_with_control(request, control).await,
         }?;
         Ok(response.with_runtime_events(runtime_events))
     }
 }
 
-async fn run_shell(id: Option<String>, cwd: PathBuf, command: String) -> AgentResult<ToolResponse> {
+async fn run_shell(
+    id: Option<String>,
+    cwd: PathBuf,
+    command: String,
+    cancellation_token: yunxi_agent_core::AgentCancellationToken,
+) -> AgentResult<ToolResponse> {
     let before = WorkspaceSnapshot::capture(&cwd)?;
     let exec_command = ExecCommand::observed_shell(cwd.clone(), command).with_id(id.clone());
-    let exec_trace = ExecManager::default().run(exec_command).await?;
+    let exec_trace = ExecManager::default()
+        .run_with_cancellation(exec_command, cancellation_token)
+        .await?;
 
     let changed_files = before.diff(&WorkspaceSnapshot::capture(&cwd)?);
     let combined = exec_trace.summary.aggregated_output.clone();

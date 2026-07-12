@@ -2,12 +2,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use tempfile::TempDir;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunStatus, ApprovalMode,
-    CommandStatus, FileChangeKind, PatchStatus, SandboxMode,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunApprovalDecision,
+    AgentRunControl, AgentRunStatus, AgentRunUserInputResponse, ApprovalMode, CommandStatus,
+    FileChangeKind, PatchStatus, SandboxMode,
 };
-use yunxi_agent_protocol::{ResponseItem, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId};
+use yunxi_agent_protocol::{
+    ProtocolRole, ResponseItem, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId,
+};
 use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
     ProviderStream, ProviderToolCall, StaticProvider,
@@ -15,6 +19,16 @@ use yunxi_agent_provider::{
 use yunxi_agent_runtime::{YunXiRuntimeBackend, protocol_stream_events_to_agent_events};
 use yunxi_agent_storage::{InMemorySessionStore, SessionId, SessionRecord, SessionStore};
 use yunxi_agent_tools::{CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime};
+
+#[cfg(windows)]
+fn long_running_shell_command() -> &'static str {
+    "ping -n 6 127.0.0.1 > nul"
+}
+
+#[cfg(not(windows))]
+fn long_running_shell_command() -> &'static str {
+    "sleep 5"
+}
 
 #[tokio::test]
 async fn yunxi_runtime_runs_without_codex_backend() {
@@ -430,6 +444,114 @@ impl AgentProvider for StreamingShellCallingProvider {
 }
 
 #[derive(Clone, Default)]
+struct SlowStreamingProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for SlowStreamingProvider {
+    async fn complete(
+        &self,
+        _request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        Ok(ProviderResponse::assistant("slow complete fallback"))
+    }
+
+    async fn stream(
+        &self,
+        _request: ProviderRequest,
+        thread_id: ThreadId,
+        turn_id: TurnId,
+    ) -> yunxi_agent_core::AgentResult<ProviderStream> {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        Ok(ProviderStream::from_events(vec![
+            StreamEvent::ResponseStarted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                metadata: None,
+            },
+            StreamEvent::ItemCompleted {
+                thread_id: thread_id.clone(),
+                turn_id: turn_id.clone(),
+                item: ResponseItem::Message {
+                    role: ProtocolRole::Assistant,
+                    content: "slow streamed response".to_string(),
+                },
+            },
+            StreamEvent::ResponseCompleted {
+                thread_id,
+                turn_id,
+                status: ResponseStatus::Completed,
+            },
+        ]))
+    }
+}
+
+#[derive(Clone, Default)]
+struct RequestUserInputProvider;
+
+#[async_trait::async_trait]
+impl AgentProvider for RequestUserInputProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "user input was {}",
+                tool_message.content.trim()
+            )));
+        }
+        Ok(ProviderResponse::tool_call(
+            ProviderToolCall::RequestUserInput {
+                id: Some("input-1".to_string()),
+                prompt: "enter value:".to_string(),
+            },
+        ))
+    }
+}
+
+#[derive(Clone)]
+struct ApprovalShellProvider {
+    command: String,
+}
+
+impl ApprovalShellProvider {
+    fn new(command: impl Into<String>) -> Self {
+        Self {
+            command: command.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentProvider for ApprovalShellProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if let Some(tool_message) = request
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == ProviderRole::Tool)
+        {
+            return Ok(ProviderResponse::assistant(format!(
+                "approval tool result: {}",
+                tool_message.content.trim()
+            )));
+        }
+        Ok(ProviderResponse::tool_call(ProviderToolCall::Shell {
+            id: Some("approval-shell-1".to_string()),
+            command: self.command.clone(),
+        }))
+    }
+}
+
+#[derive(Clone, Default)]
 struct FailingShellProvider;
 
 #[async_trait::async_trait]
@@ -533,6 +655,201 @@ async fn yunxi_runtime_executes_provider_requested_shell_tool() {
         } if id == "shell-1" && aggregated_output.contains("yunxi-tool")
     )));
     assert_eq!(store.list().await.expect("session list").len(), 1);
+}
+
+#[tokio::test]
+async fn run_stream_emits_events_before_slow_provider_completes() {
+    let backend = YunXiRuntimeBackend::with_parts(
+        SlowStreamingProvider,
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let agent =
+        Agent::new(AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::Never));
+    let (control, mut stream) = AgentRunControl::streaming();
+    let run_control = control.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run_with_backend_stream(&backend, AgentInput::text("slow stream"), run_control)
+            .await
+    });
+
+    let first_event = stream.events.recv().await.expect("streamed event");
+    assert!(matches!(
+        first_event,
+        AgentEvent::ThreadStarted { .. } | AgentEvent::TurnStarted | AgentEvent::Started { .. }
+    ));
+    assert!(!handle.is_finished());
+
+    let result = handle.await.expect("join stream run").expect("stream run");
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert_eq!(
+        result.final_response.as_deref(),
+        Some("slow streamed response")
+    );
+}
+
+#[tokio::test]
+async fn run_stream_routes_interactive_approval_to_tool_execution() {
+    let temp = TempDir::new().expect("temp dir");
+    let backend = YunXiRuntimeBackend::with_parts(
+        ApprovalShellProvider::new("echo approval-ok"),
+        ShellToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let agent =
+        Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::OnRequest));
+    let (control, mut stream) = AgentRunControl::streaming();
+    let run_control = control.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run_with_backend_stream(&backend, AgentInput::text("approval run"), run_control)
+            .await
+    });
+
+    let request = stream.approvals.recv().await.expect("approval request");
+    assert_eq!(request.tool_name, "shell");
+    let _ = request.respond_to.send(AgentRunApprovalDecision {
+        approved: true,
+        reason: Some("approved by test".to_string()),
+    });
+
+    let result = handle
+        .await
+        .expect("join approval run")
+        .expect("approval run");
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(matches!(
+        result.final_response.as_deref(),
+        Some(response) if response.contains("approval-ok")
+    ));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ApprovalCompleted { approved: true, .. }))
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::CommandCompleted {
+            status: CommandStatus::Completed,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn run_stream_routes_interactive_approval_denial_to_declined_tool_result() {
+    let temp = TempDir::new().expect("temp dir");
+    let backend = YunXiRuntimeBackend::with_parts(
+        ApprovalShellProvider::new("echo should-not-run"),
+        ShellToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let agent =
+        Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::OnRequest));
+    let (control, mut stream) = AgentRunControl::streaming();
+    let run_control = control.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run_with_backend_stream(&backend, AgentInput::text("approval deny"), run_control)
+            .await
+    });
+
+    let request = stream.approvals.recv().await.expect("approval request");
+    let _ = request.respond_to.send(AgentRunApprovalDecision {
+        approved: false,
+        reason: Some("declined by test".to_string()),
+    });
+
+    let result = handle.await.expect("join denial run").expect("denial run");
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(matches!(
+        result.final_response.as_deref(),
+        Some(response) if response.contains("declined by test")
+    ));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ApprovalCompleted {
+            approved: false,
+            reason: Some(reason),
+            ..
+        } if reason.contains("declined by test")
+    )));
+}
+
+#[tokio::test]
+async fn run_stream_routes_request_user_input_to_provider_tool_result() {
+    let temp = TempDir::new().expect("temp dir");
+    let backend = YunXiRuntimeBackend::with_parts(
+        RequestUserInputProvider,
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+    let (control, mut stream) = AgentRunControl::streaming();
+    let run_control = control.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run_with_backend_stream(&backend, AgentInput::text("need input"), run_control)
+            .await
+    });
+
+    let request = stream.user_inputs.recv().await.expect("user input request");
+    assert_eq!(request.prompt, "enter value:");
+    let _ = request.respond_to.send(AgentRunUserInputResponse {
+        value: Some("yunxi-user-value".to_string()),
+    });
+
+    let result = handle
+        .await
+        .expect("join user input run")
+        .expect("user input run");
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert_eq!(
+        result.final_response.as_deref(),
+        Some("user input was yunxi-user-value")
+    );
+}
+
+#[tokio::test]
+async fn run_stream_cancellation_reaches_running_shell_exec() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let backend = YunXiRuntimeBackend::with_parts(
+        ApprovalShellProvider::new(long_running_shell_command()),
+        ShellToolRuntime,
+        store.clone(),
+    );
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+    let (control, mut stream) = AgentRunControl::streaming();
+    let run_control = control.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run_with_backend_stream(&backend, AgentInput::text("cancel shell"), run_control)
+            .await
+    });
+
+    loop {
+        match stream.events.recv().await.expect("stream event") {
+            AgentEvent::CommandStarted { .. } => break,
+            _ => {}
+        }
+    }
+    control.cancel();
+
+    let result = handle
+        .await
+        .expect("join cancellation run")
+        .expect("cancellation run");
+    assert_eq!(result.status, AgentRunStatus::Cancelled);
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Cancelled { .. }))
+    );
+    assert_eq!(store.list().await.expect("session list").len(), 0);
 }
 
 #[tokio::test]

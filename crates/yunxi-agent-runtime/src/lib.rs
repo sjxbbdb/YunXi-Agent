@@ -16,8 +16,9 @@ use yunxi_agent_context::{
 };
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
-    AgentResult, AgentRunResult, AgentRunStatus, CommandStatus, FileChangeKind, ThreadRuntimeState,
-    TokenUsage, TurnRuntimeMetadata, TurnRuntimeState,
+    AgentResult, AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus,
+    CommandStatus, FileChangeKind, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata,
+    TurnRuntimeState,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_multi_agent::{
@@ -33,15 +34,15 @@ use yunxi_agent_provider::{
     ProviderRequest, ProviderResponse, ProviderRole, ProviderStream, ProviderToolCall,
     StaticProvider,
 };
-use yunxi_agent_sandbox::ApprovalRequirement;
+use yunxi_agent_sandbox::{ApprovalRequirement, SandboxRequirement};
 use yunxi_agent_storage::{
     FileSessionStore, HistoryItemKind, HistoryLoadOptions, InMemorySessionStore, SessionHistory,
     SessionId, SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
-    ApprovalDecision, CompositeToolRuntime, ToolDispatchTrace, ToolFileChangeKind, ToolPolicy,
-    ToolRequest, ToolRequestKind, ToolResponse, ToolRouter, ToolRuntime, ToolRuntimeEvent,
-    ToolStatus,
+    ApprovalDecision, CompositeToolRuntime, SandboxPolicy, ToolDispatch, ToolDispatchTrace,
+    ToolFileChangeKind, ToolPolicy, ToolRequest, ToolRequestKind, ToolResponse, ToolRouter,
+    ToolRuntime, ToolRuntimeEvent, ToolStatus,
 };
 
 use crate::runtime_state::runtime_data;
@@ -94,9 +95,17 @@ pub trait RuntimeEventSink: Send + Sync {
 #[derive(Clone, Debug, Default)]
 pub struct VecEventSink {
     events: Arc<Mutex<Vec<AgentEvent>>>,
+    control: Option<AgentRunControl>,
 }
 
 impl VecEventSink {
+    fn with_control(control: AgentRunControl) -> Self {
+        Self {
+            events: Arc::default(),
+            control: Some(control),
+        }
+    }
+
     fn lock_events(&self) -> AgentResult<std::sync::MutexGuard<'_, Vec<AgentEvent>>> {
         self.events.lock().map_err(|_| AgentError::Execution {
             message: "runtime event sink lock was poisoned".to_string(),
@@ -107,6 +116,9 @@ impl VecEventSink {
 #[async_trait]
 impl RuntimeEventSink for VecEventSink {
     async fn emit(&self, event: AgentEvent) -> AgentResult<()> {
+        if let Some(control) = &self.control {
+            control.emit_event(event.clone());
+        }
         self.lock_events()?.push(event);
         Ok(())
     }
@@ -242,13 +254,90 @@ impl YunXiRuntimeBackend {
         &self,
         config: &AgentConfig,
         request: ToolRequest,
+        control: &AgentRunControl,
     ) -> AgentResult<ToolResponse> {
         match &request.kind {
             ToolRequestKind::MultiAgent {
                 action,
                 arguments_json,
             } => self.execute_multi_agent_tool(config, request.id.clone(), action, arguments_json),
-            _ => self.tools.execute(request).await,
+            _ => self.tools.execute_with_control(request, control).await,
+        }
+    }
+
+    async fn handle_interactive_tool_request(
+        &self,
+        session_driver: &mut RuntimeSessionDriver,
+        dispatch: &mut ToolDispatch,
+        control: &AgentRunControl,
+    ) -> AgentResult<Option<ToolResponse>> {
+        if let ToolRequestKind::RequestUserInput { prompt } = &dispatch.request.kind
+            && control.has_interactive_user_input()
+        {
+            let response = control
+                .request_user_input(dispatch.request.id.clone(), prompt.clone())
+                .await?;
+            return Ok(Some(match response.and_then(|response| response.value) {
+                Some(value) => {
+                    ToolResponse::completed(dispatch.request.id.clone(), value, Some(0), Vec::new())
+                }
+                None => ToolResponse::declined(
+                    dispatch.request.id.clone(),
+                    "interactive user input was not provided",
+                ),
+            }));
+        }
+
+        let approval_request = dispatch.trace.policy_evaluation.approval_request.as_ref();
+        let escalation_request = dispatch.trace.policy_evaluation.escalation_request.as_ref();
+        if !control.has_interactive_approval()
+            || (approval_request.is_none() && escalation_request.is_none())
+        {
+            return Ok(None);
+        }
+
+        let reason = approval_request
+            .map(|request| request.reason.clone())
+            .or_else(|| escalation_request.map(|request| request.reason.clone()))
+            .unwrap_or_else(|| "tool execution requires approval".to_string());
+        let command = approval_request
+            .and_then(|request| request.command.clone())
+            .or_else(|| escalation_request.and_then(|request| request.command.clone()))
+            .or_else(|| tool_request_command(&dispatch.request));
+        let cwd = approval_request
+            .map(|request| request.cwd.display().to_string())
+            .or_else(|| escalation_request.map(|request| request.cwd.display().to_string()))
+            .unwrap_or_else(|| dispatch.request.cwd.display().to_string());
+        let decision = control
+            .request_approval(
+                dispatch.request.id.clone(),
+                dispatch.request.kind.tool_name().to_string(),
+                reason.clone(),
+                command,
+                cwd,
+            )
+            .await?;
+
+        match decision {
+            Some(AgentRunApprovalDecision {
+                approved: true,
+                reason,
+            }) => {
+                session_driver.remember_interactive_approval(&mut dispatch.request, reason);
+                apply_interactive_escalation_requirements(&mut dispatch.request, &dispatch.trace);
+                Ok(None)
+            }
+            Some(AgentRunApprovalDecision {
+                approved: false,
+                reason,
+            }) => Ok(Some(ToolResponse::declined(
+                dispatch.request.id.clone(),
+                reason.unwrap_or_else(|| "approval declined by interactive host".to_string()),
+            ))),
+            None => Ok(Some(ToolResponse::declined(
+                dispatch.request.id.clone(),
+                "approval requires an interactive host",
+            ))),
         }
     }
 
@@ -450,6 +539,17 @@ impl ChildAgentRuntime for YunXiChildAgentRuntime {
 #[async_trait]
 impl RuntimeBackend for YunXiRuntimeBackend {
     async fn run_turn(&self, turn: AgentTurn) -> AgentResult<AgentRunResult> {
+        self.run_turn_with_control(turn, AgentRunControl::detached())
+            .await
+    }
+}
+
+impl YunXiRuntimeBackend {
+    async fn run_turn_with_control(
+        &self,
+        turn: AgentTurn,
+        control: AgentRunControl,
+    ) -> AgentResult<AgentRunResult> {
         let prompt = turn.input.prompt.trim();
         if prompt.is_empty() {
             return Err(AgentError::EmptyPrompt);
@@ -464,7 +564,7 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         let mut runtime_config = turn.config.clone();
         runtime_config.session_id = Some(session_id.0.clone());
 
-        let sink = VecEventSink::default();
+        let sink = VecEventSink::with_control(control.clone());
         let thread_id = generate_runtime_thread_id();
         let turn_id = generate_runtime_turn_id();
         let mut session_driver = RuntimeSessionDriver::new(session_id.clone());
@@ -695,6 +795,9 @@ impl RuntimeBackend for YunXiRuntimeBackend {
         let mut usage = None;
 
         for turn_index in 0..self.max_turns {
+            if control.is_cancelled() {
+                return cancelled_turn_result(&sink, "current turn cancelled").await;
+            }
             let provider_config = ProviderConfig::from_agent_config(&runtime_config);
             let matrix = ProviderFeatureMatrix::from_config(&provider_config);
             turn_driver
@@ -750,6 +853,9 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 }
             };
             emit_provider_stream_events(&sink, &provider_stream.events).await?;
+            if control.is_cancelled() {
+                return cancelled_turn_result(&sink, "current turn cancelled").await;
+            }
             let provider_response = collect_provider_response(provider_stream)?;
             usage = provider_response.usage;
             turn_driver
@@ -808,6 +914,9 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 )
                 .await?;
             for tool_call in tool_calls {
+                if control.is_cancelled() {
+                    return cancelled_turn_result(&sink, "current turn cancelled").await;
+                }
                 let tool_call_id = provider_tool_call_id(&tool_call)
                     .expect("tool call id is assigned before dispatch")
                     .to_string();
@@ -815,14 +924,22 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 let approval_probe = session_driver.apply_approval_cache(&mut tool_request)?;
                 emit_approval_cache_state(&sink, session_driver.session_id(), approval_probe)
                     .await?;
-                let dispatch = self.tool_router.route(tool_request)?;
+                let mut dispatch = self.tool_router.route(tool_request)?;
                 emit_tool_dispatch_trace(&sink, &dispatch.trace).await?;
                 emit_approval_requested_if_needed(&sink, &dispatch.trace).await?;
                 emit_escalation_requested_if_needed(&sink, &dispatch.trace).await?;
                 emit_tool_started(&sink, &dispatch.request).await?;
-                let tool_response = self
-                    .execute_tool_request(&runtime_config, dispatch.request.clone())
-                    .await?;
+                let tool_response = if control.is_cancelled() {
+                    ToolResponse::declined(dispatch.request.id.clone(), "tool execution cancelled")
+                } else if let Some(response) = self
+                    .handle_interactive_tool_request(&mut session_driver, &mut dispatch, &control)
+                    .await?
+                {
+                    response
+                } else {
+                    self.execute_tool_request(&runtime_config, dispatch.request.clone(), &control)
+                        .await?
+                };
                 emit_tool_lifecycle_events(&sink, &tool_response).await?;
                 emit_tool_runtime_events(&sink, &tool_response).await?;
                 emit_tool_completed(&sink, &dispatch.request, &tool_response).await?;
@@ -853,6 +970,10 @@ impl RuntimeBackend for YunXiRuntimeBackend {
                 self.max_turns
             ),
         })?;
+
+        if control.is_cancelled() {
+            return cancelled_turn_result(&sink, "current turn cancelled").await;
+        }
 
         sink.emit(AgentEvent::Message {
             content: final_response.clone(),
@@ -2674,6 +2795,43 @@ fn map_tool_call(
     }
 }
 
+fn apply_interactive_escalation_requirements(request: &mut ToolRequest, trace: &ToolDispatchTrace) {
+    let Some(escalation) = &trace.policy_evaluation.escalation_request else {
+        return;
+    };
+    if let Some(required_sandbox) = escalation.required_sandbox {
+        request.policy.execution_policy.sandbox = required_sandbox;
+        request.policy.sandbox = sandbox_policy_from_requirement(required_sandbox);
+    }
+    if let Some(required_network) = escalation.required_network {
+        request.policy.execution_policy.network = required_network;
+        request.policy.network = required_network;
+    }
+}
+
+fn sandbox_policy_from_requirement(requirement: SandboxRequirement) -> SandboxPolicy {
+    match requirement {
+        SandboxRequirement::ReadOnly => SandboxPolicy::ReadOnly,
+        SandboxRequirement::WorkspaceWrite => SandboxPolicy::WorkspaceWrite,
+        SandboxRequirement::DangerFullAccess => SandboxPolicy::DangerFullAccess,
+    }
+}
+
+fn tool_request_command(request: &ToolRequest) -> Option<String> {
+    match &request.kind {
+        ToolRequestKind::Shell { command } => Some(command.clone()),
+        ToolRequestKind::Patch { .. } => Some("apply_patch".to_string()),
+        ToolRequestKind::Mcp { server, tool, .. } => Some(format!("mcp {server} {tool}")),
+        ToolRequestKind::Skill { name, .. } => Some(format!("skill {name}")),
+        ToolRequestKind::MultiAgent { action, .. } => Some(format!("multi_agent {action}")),
+        ToolRequestKind::ToolSearch { query } => Some(format!("tool_search {query}")),
+        ToolRequestKind::RequestUserInput { prompt } => {
+            Some(format!("request_user_input {prompt}"))
+        }
+        ToolRequestKind::ViewImage { path } => Some(format!("view_image {path}")),
+    }
+}
+
 async fn emit_tool_dispatch_trace<S>(sink: &S, trace: &ToolDispatchTrace) -> AgentResult<()>
 where
     S: RuntimeEventSink,
@@ -2729,13 +2887,14 @@ where
     S: RuntimeEventSink,
 {
     if let Some(request) = &trace.policy_evaluation.approval_request {
+        let approved = !matches!(response.status, ToolStatus::Declined);
         sink.emit(AgentEvent::ApprovalCompleted {
             id: response.id.clone().or_else(|| trace.request_id.clone()),
-            approved: false,
+            approved,
             reason: response
                 .error
                 .clone()
-                .or_else(|| Some(request.reason.clone())),
+                .or_else(|| (!approved).then(|| request.reason.clone())),
         })
         .await?;
     }
@@ -2777,13 +2936,14 @@ where
     S: RuntimeEventSink,
 {
     if let Some(request) = &trace.policy_evaluation.escalation_request {
+        let approved = !matches!(response.status, ToolStatus::Declined);
         sink.emit(AgentEvent::EscalationCompleted {
             id: response.id.clone().or_else(|| trace.request_id.clone()),
-            approved: false,
+            approved,
             reason: response
                 .error
                 .clone()
-                .or_else(|| Some(request.reason.clone())),
+                .or_else(|| (!approved).then(|| request.reason.clone())),
         })
         .await?;
     }
@@ -3016,6 +3176,29 @@ where
     }
 }
 
+async fn cancelled_turn_result<S>(
+    sink: &S,
+    reason: impl Into<String>,
+) -> AgentResult<AgentRunResult>
+where
+    S: RuntimeEventSink,
+{
+    sink.emit(AgentEvent::Cancelled {
+        reason: Some(reason.into()),
+    })
+    .await?;
+    sink.emit(AgentEvent::Completed {
+        status: AgentRunStatus::Cancelled,
+        usage: None,
+    })
+    .await?;
+    Ok(AgentRunResult {
+        status: AgentRunStatus::Cancelled,
+        final_response: None,
+        events: sink.events().await?,
+    })
+}
+
 async fn emit_tool_started<S>(sink: &S, request: &ToolRequest) -> AgentResult<()>
 where
     S: RuntimeEventSink,
@@ -3107,7 +3290,7 @@ where
                 command: command.clone(),
                 aggregated_output: response.output.clone().unwrap_or_default(),
                 exit_code: response.exit_code,
-                status: map_tool_status(response.status),
+                status: map_tool_response_status(response),
             })
             .await
         }
@@ -3170,7 +3353,7 @@ where
                 id: response.id.clone(),
                 name: "request_user_input".to_string(),
                 output: render_tool_response(response),
-                status: map_tool_status(response.status),
+                status: map_tool_response_status(response),
             })
             .await
         }
@@ -3179,10 +3362,22 @@ where
                 id: response.id.clone(),
                 name: "view_image".to_string(),
                 output: render_tool_response(response),
-                status: map_tool_status(response.status),
+                status: map_tool_response_status(response),
             })
             .await
         }
+    }
+}
+
+fn map_tool_response_status(response: &ToolResponse) -> CommandStatus {
+    if response
+        .lifecycle_events
+        .iter()
+        .any(|event| matches!(event, ExecLifecycleEvent::Cancelled { .. }))
+    {
+        CommandStatus::Cancelled
+    } else {
+        map_tool_status(response.status)
     }
 }
 
@@ -3327,5 +3522,15 @@ fn generate_runtime_turn_id() -> String {
 impl AgentBackend for YunXiRuntimeBackend {
     async fn run(&self, config: AgentConfig, input: AgentInput) -> AgentResult<AgentRunResult> {
         self.run_turn(AgentTurn::new(config, input)).await
+    }
+
+    async fn run_stream(
+        &self,
+        config: AgentConfig,
+        input: AgentInput,
+        control: AgentRunControl,
+    ) -> AgentResult<AgentRunResult> {
+        self.run_turn_with_control(AgentTurn::new(config, input), control)
+            .await
     }
 }

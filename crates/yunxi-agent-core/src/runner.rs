@@ -1,6 +1,6 @@
 use crate::{
-    AgentBackend, AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunResult,
-    AgentRunStatus, DryRunBackend,
+    AgentBackend, AgentConfig, AgentError, AgentEvent, AgentInput, AgentResult, AgentRunControl,
+    AgentRunResult, AgentRunStatus, DryRunBackend,
 };
 
 #[derive(Clone, Debug)]
@@ -30,6 +30,20 @@ impl Agent {
         B: AgentBackend,
     {
         backend.run(self.config.clone(), input).await
+    }
+
+    pub async fn run_with_backend_stream<B>(
+        &self,
+        backend: &B,
+        input: AgentInput,
+        control: AgentRunControl,
+    ) -> AgentResult<AgentRunResult>
+    where
+        B: AgentBackend,
+    {
+        backend
+            .run_stream(self.config.clone(), input, control)
+            .await
     }
 }
 

@@ -2,8 +2,8 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunResult, ApprovalMode,
-    BackendKind, CommandStatus, SandboxMode,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunControl, AgentRunResult,
+    ApprovalMode, BackendKind, CommandStatus, SandboxMode,
 };
 use yunxi_agent_protocol::{
     FunctionCallOutput, ProtocolRole, ResponseItem, ResponseItemDelta, RuntimeEvent, ThreadId,
@@ -56,7 +56,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.2.1 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.3.0 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -419,6 +419,49 @@ pub(crate) async fn run_agent_backend(
             let agent = Agent::new(config);
             agent
                 .run_dry(AgentInput::text(prompt))
+                .await
+                .context("agent run failed")?
+        }
+        BackendKind::Codex => run_codex_backend(config, prompt)
+            .await
+            .context("codex agent run failed")?,
+    };
+
+    Ok(result)
+}
+
+pub(crate) async fn run_agent_backend_stream(
+    backend: BackendKind,
+    config: AgentConfig,
+    prompt: String,
+    provider_live: bool,
+    control: AgentRunControl,
+) -> Result<AgentRunResult> {
+    let result = match backend {
+        BackendKind::Yunxi => {
+            let cwd = config.cwd.clone();
+            let agent = Agent::new(config);
+            let backend = if provider_live {
+                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace_with_live_provider(
+                    cwd,
+                    agent.config(),
+                )
+            } else {
+                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace(cwd)
+            };
+            agent
+                .run_with_backend_stream(&backend, AgentInput::text(prompt), control)
+                .await
+                .context("yunxi agent run failed")?
+        }
+        BackendKind::DryRun => {
+            let agent = Agent::new(config);
+            agent
+                .run_with_backend_stream(
+                    &yunxi_agent_core::DryRunBackend,
+                    AgentInput::text(prompt),
+                    control,
+                )
                 .await
                 .context("agent run failed")?
         }

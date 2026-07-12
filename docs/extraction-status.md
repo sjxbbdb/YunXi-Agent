@@ -848,6 +848,66 @@ Verified on 2026-07-09:
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.
 
+## YunXi Agent v1.3 Terminal Streaming Approval Cancellation
+
+YunXi Agent v1.3 upgrades the interactive terminal host from batch replay to a
+streaming control boundary while preserving the existing one-shot, JSON, JSONL,
+storage, and offline fixture paths.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.3.0`.
+- `yunxi-agent-core` owns `AgentRunControl`,
+  `AgentRunStreamReceiver`, interactive approval request/decision types, and
+  interactive user-input request/response types.
+- `AgentBackend::run_stream` and `Agent::run_with_backend_stream` expose a
+  YunXi-owned streaming run boundary while preserving the old batch `run`
+  surface.
+- `yunxi-agent-runtime` writes every emitted event to both the returned
+  `AgentRunResult` event list and the live event channel.
+- Interactive approval and escalation decisions now flow from runtime to the
+  CLI and back into the current tool request before execution.
+- Interactive `request_user_input` now returns CLI input to the provider tool
+  result channel instead of always declining.
+- Ctrl+C sets the shared cancellation token; runtime checks it at provider/tool
+  loop boundaries, and `yunxi-agent-exec` can kill a running shell child through
+  `run_with_cancellation`.
+- `yunxi-agent-tools` keeps the old `execute` API and adds
+  `execute_with_control` for cancellation-aware tool execution.
+- `yunxi-agent-cli` interactive mode renders events live, prompts for approval
+  and user input, keeps the REPL alive across failed turns, and reports
+  `YunXi Agent v1.3.0 interactive CLI`.
+- Terminal rendering now includes file changes, patch status, todo updates,
+  completion usage, and a real `/clear`.
+- Runtime and exec tests cover streaming-before-completion, approval approve
+  and deny, request_user_input, and cancellation propagation to shell exec.
+
+Verified on 2026-07-12:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures.
+- `cargo check --workspace`: pass without warnings.
+- `cargo build -p yunxi-agent-cli --release --bins`: pass.
+- release dual binaries: pass; both report `yunxi 1.3.0`.
+- offline one-shot, offline interactive, offline JSONL, and Stage 4M real
+  parity JSONL smoke: pass.
+- DeepSeek streaming, non-stream, and interactive live smoke: pass with no
+  detected secret leak.
+- PATH installed `yunxi 1.3.0`: pass; installed binary SHA-256 matched the
+  release build.
+- PATH installed DeepSeek live JSONL smoke: pass with no detected secret leak.
+- default CLI dependency scan: pass; no `codex-*`, `vendor/codex-rs`, or
+  `yunxi-agent-codex` dependency appeared in the default CLI tree.
+- owned-source secret scan excluding generated and reference trees: pass.
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only.
+- `codegraph sync "D:\YunXi Agent"`: pass; 14 changed files synced.
+
+The v1.3 default CLI remains independent from upstream Codex runtime
+dependencies. This release does not add TUI, desktop app, cloud tasks, update,
+doctor, completion, marketplace, or SDK packaging surfaces.
+
 ## YunXi Agent v1.2 DeepSeek Default Provider Construction
 
 YunXi Agent v1.2 connects the existing YunXi-owned DeepSeek transport to the

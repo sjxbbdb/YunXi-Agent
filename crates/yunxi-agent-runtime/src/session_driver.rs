@@ -80,9 +80,23 @@ impl RuntimeSessionDriver {
             reused: false,
         })
     }
+
+    pub(crate) fn remember_interactive_approval(
+        &mut self,
+        request: &mut ToolRequest,
+        reason: Option<String>,
+    ) {
+        mark_preapproved(request);
+        let key = approval_key_for_request(request);
+        self.approval_cache.remember(ApprovalCacheEntry {
+            key,
+            decision: CachedApprovalDecision::Approved,
+            reason: reason.or_else(|| Some("approved by interactive host".to_string())),
+        });
+    }
 }
 
-fn mark_preapproved(request: &mut ToolRequest) {
+pub(crate) fn mark_preapproved(request: &mut ToolRequest) {
     request.policy.approval = yunxi_agent_tools::ApprovalDecision::Approved;
     request.policy.execution_policy.approval = ApprovalRequirement::PreApproved;
 }

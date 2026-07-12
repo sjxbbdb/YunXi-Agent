@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
-use tokio::time::timeout;
-use yunxi_agent_core::{AgentError, AgentResult};
+use tokio::time::sleep;
+use yunxi_agent_core::{AgentCancellationToken, AgentError, AgentResult};
 use yunxi_agent_sandbox::{
     ApprovalRequirement, ExecutionPolicy, NetworkPolicy, SandboxRequirement,
 };
@@ -294,6 +294,15 @@ impl Default for ExecManager {
 
 impl ExecManager {
     pub async fn run(&self, command: ExecCommand) -> AgentResult<ExecTrace> {
+        self.run_with_cancellation(command, AgentCancellationToken::new())
+            .await
+    }
+
+    pub async fn run_with_cancellation(
+        &self,
+        command: ExecCommand,
+        cancellation_token: AgentCancellationToken,
+    ) -> AgentResult<ExecTrace> {
         if command.argv.is_empty() {
             return Err(AgentError::Execution {
                 message: "exec command argv is empty".to_string(),
@@ -306,6 +315,27 @@ impl ExecManager {
             command: command.canonical_command(),
             cwd: command.cwd.clone(),
         }];
+
+        if cancellation_token.is_cancelled() {
+            events.push(ExecLifecycleEvent::Cancelled {
+                id: command.id.clone(),
+            });
+            let output = ExecOutput {
+                stdout: String::new(),
+                stderr: "exec command cancelled before spawn".to_string(),
+                exit_code: None,
+            };
+            events.push(ExecLifecycleEvent::Completed {
+                id: command.id.clone(),
+                output: output.clone(),
+                duration_millis: Some(started_at.elapsed().as_millis() as u64),
+                timed_out: false,
+            });
+            return Ok(ExecTrace {
+                summary: ExecSummary::from_output(&command, output, false),
+                events,
+            });
+        }
 
         let mut process = Command::new(&command.argv[0]);
         process
@@ -352,26 +382,52 @@ impl ExecManager {
         let stderr_task = tokio::spawn(read_pipe(stderr));
 
         let mut timed_out = false;
-        let status = if let Some(timeout_millis) = command.timeout_millis {
-            match timeout(Duration::from_millis(timeout_millis), child.wait()).await {
-                Ok(result) => result.map_err(|error| AgentError::Execution {
-                    message: format!("failed while waiting for exec command: {error}"),
-                })?,
-                Err(_) => {
-                    timed_out = true;
-                    let _ = child.kill().await;
-                    events.push(ExecLifecycleEvent::Cancelled {
-                        id: command.id.clone(),
-                    });
-                    child.wait().await.map_err(|error| AgentError::Execution {
-                        message: format!("failed while waiting after exec timeout: {error}"),
-                    })?
+        let mut cancelled = false;
+        let status = match command.timeout_millis {
+            Some(timeout_millis) => {
+                tokio::select! {
+                    result = child.wait() => result.map_err(|error| AgentError::Execution {
+                        message: format!("failed while waiting for exec command: {error}"),
+                    })?,
+                    _ = sleep(Duration::from_millis(timeout_millis)) => {
+                        timed_out = true;
+                        let _ = child.kill().await;
+                        events.push(ExecLifecycleEvent::Cancelled {
+                            id: command.id.clone(),
+                        });
+                        child.wait().await.map_err(|error| AgentError::Execution {
+                            message: format!("failed while waiting after exec timeout: {error}"),
+                        })?
+                    },
+                    _ = wait_for_cancellation(cancellation_token.clone()) => {
+                        cancelled = true;
+                        let _ = child.kill().await;
+                        events.push(ExecLifecycleEvent::Cancelled {
+                            id: command.id.clone(),
+                        });
+                        child.wait().await.map_err(|error| AgentError::Execution {
+                            message: format!("failed while waiting after exec cancellation: {error}"),
+                        })?
+                    }
                 }
             }
-        } else {
-            child.wait().await.map_err(|error| AgentError::Execution {
-                message: format!("failed while waiting for exec command: {error}"),
-            })?
+            None => {
+                tokio::select! {
+                    result = child.wait() => result.map_err(|error| AgentError::Execution {
+                        message: format!("failed while waiting for exec command: {error}"),
+                    })?,
+                    _ = wait_for_cancellation(cancellation_token.clone()) => {
+                        cancelled = true;
+                        let _ = child.kill().await;
+                        events.push(ExecLifecycleEvent::Cancelled {
+                            id: command.id.clone(),
+                        });
+                        child.wait().await.map_err(|error| AgentError::Execution {
+                            message: format!("failed while waiting after exec cancellation: {error}"),
+                        })?
+                    }
+                }
+            }
         };
 
         let stdout = join_pipe(stdout_task).await?;
@@ -402,10 +458,10 @@ impl ExecManager {
             id: command.id.clone(),
             output: output.clone(),
             duration_millis: Some(started_at.elapsed().as_millis() as u64),
-            timed_out,
+            timed_out: timed_out || cancelled,
         });
         Ok(ExecTrace {
-            summary: ExecSummary::from_output(&command, output, timed_out),
+            summary: ExecSummary::from_output(&command, output, timed_out || cancelled),
             events,
         })
     }
@@ -625,6 +681,12 @@ async fn join_pipe(
         })
 }
 
+async fn wait_for_cancellation(token: AgentCancellationToken) {
+    while !token.is_cancelled() {
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,6 +709,16 @@ mod tests {
     #[cfg(not(windows))]
     fn sleep_command() -> &'static str {
         "sleep 2"
+    }
+
+    #[cfg(windows)]
+    fn cancellable_sleep_command() -> &'static str {
+        "ping -n 6 127.0.0.1 > nul"
+    }
+
+    #[cfg(not(windows))]
+    fn cancellable_sleep_command() -> &'static str {
+        "sleep 5"
     }
 
     #[test]
@@ -822,6 +894,37 @@ mod tests {
                 timed_out: true,
                 ..
             }
+        )));
+    }
+
+    #[tokio::test]
+    async fn exec_manager_cancellation_token_kills_running_command() {
+        let policy = ExecutionPolicy {
+            approval: yunxi_agent_sandbox::ApprovalRequirement::PreApproved,
+            sandbox: yunxi_agent_sandbox::SandboxRequirement::DangerFullAccess,
+            network: yunxi_agent_sandbox::NetworkPolicy::Inherit,
+            workspace_root: PathBuf::from("."),
+        };
+        let mut command = ExecCommand::shell(".", cancellable_sleep_command(), policy)
+            .with_id(Some("exec-cancel".to_string()));
+        command.timeout_millis = Some(10_000);
+        let token = AgentCancellationToken::new();
+        let cancel_token = token.clone();
+        let cancel_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel_token.cancel();
+        });
+
+        let trace = ExecManager::default()
+            .run_with_cancellation(command, token)
+            .await
+            .expect("exec trace");
+        cancel_task.await.expect("cancel task");
+
+        assert!(trace.summary.timed_out);
+        assert!(trace.events.iter().any(|event| matches!(
+            event,
+            ExecLifecycleEvent::Cancelled { id: Some(id) } if id == "exec-cancel"
         )));
     }
 }

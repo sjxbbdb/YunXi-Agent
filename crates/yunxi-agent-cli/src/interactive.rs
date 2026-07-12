@@ -1,10 +1,13 @@
 use crate::commands::{InteractiveCommand, help_text, parse_interactive_command};
 use crate::provider_mode::{ProviderMode, ProviderSelection};
-use crate::render::{InteractiveBanner, print_banner, render_agent_result};
-use crate::{redact_secret_fragments, run_agent_backend};
+use crate::render::{InteractiveBanner, RenderState, print_banner, render_agent_event};
+use crate::{redact_secret_fragments, run_agent_backend_stream};
 use anyhow::{Context, Result};
 use std::io::{self, BufRead, IsTerminal, Write};
-use yunxi_agent_core::{AgentConfig, AgentRunResult, BackendKind};
+use yunxi_agent_core::{
+    AgentConfig, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunControl,
+    AgentRunResult, AgentRunUserInputRequest, AgentRunUserInputResponse, BackendKind,
+};
 use yunxi_agent_storage::{FileSessionStore, SessionId, SessionStore};
 
 #[derive(Clone, Debug)]
@@ -92,7 +95,10 @@ impl InteractiveSession {
                 continue;
             }
 
-            if let Err(error) = self.run_turn(input.to_string()).await {
+            if let Err(error) = self
+                .run_turn(input.to_string(), &mut reader, &mut stdout)
+                .await
+            {
                 eprintln!(
                     "[error] {}",
                     redact_secret_fragments(&format!("{error:#}"))
@@ -105,7 +111,10 @@ impl InteractiveSession {
         match command {
             InteractiveCommand::Exit => return Ok(false),
             InteractiveCommand::Help => println!("{}", help_text()),
-            InteractiveCommand::Clear => println!("---"),
+            InteractiveCommand::Clear => {
+                print!("\x1b[2J\x1b[H");
+                io::stdout().flush()?;
+            }
             InteractiveCommand::Cwd => println!("{}", self.config.cwd.display()),
             InteractiveCommand::Session => self.print_session_summary(),
             InteractiveCommand::Model(model) => self.handle_model_command(model)?,
@@ -181,7 +190,15 @@ impl InteractiveSession {
         Ok(())
     }
 
-    async fn run_turn(&mut self, prompt: String) -> Result<()> {
+    async fn run_turn<R>(
+        &mut self,
+        prompt: String,
+        reader: &mut R,
+        stdout: &mut io::Stdout,
+    ) -> Result<()>
+    where
+        R: BufRead,
+    {
         let mut turn_config = self.config.clone();
         if let Some(parent_session_id) = &self.active_session_id {
             turn_config = turn_config
@@ -194,20 +211,71 @@ impl InteractiveSession {
         let backend = self.backend;
         self.provider_selection = self.provider_mode.resolve(backend, &turn_config)?;
         let turn_config = self.provider_selection.apply_to_config(turn_config);
-        let turn = run_agent_backend(backend, turn_config, prompt, self.provider_selection.live);
+        let (control, mut stream) = AgentRunControl::streaming();
+        let run_control = control.clone();
+        let mut control_slot = Some(control);
+        let mut turn = Box::pin(run_agent_backend_stream(
+            backend,
+            turn_config,
+            prompt,
+            self.provider_selection.live,
+            run_control,
+        ));
+        let mut render_state = RenderState::default();
+        let mut result: Option<AgentRunResult> = None;
+        let mut events_open = true;
+        let mut approvals_open = true;
+        let mut user_inputs_open = true;
 
-        tokio::select! {
-            result = turn => {
-                let result = result?;
-                render_agent_result(&result)?;
-                self.update_session_state(&result);
+        loop {
+            if result.is_some() && !events_open && !approvals_open && !user_inputs_open {
+                break;
             }
-            signal = tokio::signal::ctrl_c() => {
-                match signal {
-                    Ok(()) => println!("[cancelled] current turn cancelled"),
-                    Err(error) => println!("[cancelled] current turn cancelled; signal error: {error}"),
+
+            tokio::select! {
+                event = stream.events.recv(), if events_open => {
+                    match event {
+                        Some(event) => render_agent_event(&event, &mut render_state)?,
+                        None => events_open = false,
+                    }
+                }
+                request = stream.approvals.recv(), if approvals_open => {
+                    match request {
+                        Some(request) => respond_to_approval_request(request, reader, stdout)?,
+                        None => approvals_open = false,
+                    }
+                }
+                request = stream.user_inputs.recv(), if user_inputs_open => {
+                    match request {
+                        Some(request) => respond_to_user_input_request(request, reader, stdout)?,
+                        None => user_inputs_open = false,
+                    }
+                }
+                signal = tokio::signal::ctrl_c(), if control_slot.is_some() => {
+                    match signal {
+                        Ok(()) => {
+                            if let Some(control) = &control_slot {
+                                control.cancel();
+                            }
+                            println!("[cancelled] cancellation requested");
+                        }
+                        Err(error) => println!("[cancelled] cancellation requested; signal error: {error}"),
+                    }
+                }
+                turn_result = &mut turn, if result.is_none() => {
+                    let completed = turn_result.context("interactive turn failed")?;
+                    result = Some(completed);
+                    control_slot = None;
                 }
             }
+        }
+        if let Some(result) = result {
+            if !render_state.saw_assistant_message()
+                && let Some(final_response) = &result.final_response
+            {
+                println!("{final_response}");
+            }
+            self.update_session_state(&result);
         }
         Ok(())
     }
@@ -223,6 +291,64 @@ impl InteractiveSession {
         self.provider_selection = self.provider_mode.resolve(self.backend, &self.config)?;
         Ok(())
     }
+}
+
+fn respond_to_approval_request<R>(
+    request: AgentRunApprovalRequest,
+    reader: &mut R,
+    stdout: &mut io::Stdout,
+) -> Result<()>
+where
+    R: BufRead,
+{
+    println!(
+        "[approval] {} requires approval in {}",
+        request.tool_name, request.cwd
+    );
+    if let Some(command) = &request.command {
+        println!("[approval] command: {command}");
+    }
+    println!("[approval] reason: {}", request.reason);
+    print!("approve? y/N: ");
+    stdout.flush()?;
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .context("failed to read approval response")?;
+    let approved = matches!(
+        line.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes" | "approve" | "approved"
+    );
+    let reason = if approved {
+        Some("approved by YunXi interactive CLI".to_string())
+    } else {
+        Some("declined by YunXi interactive CLI".to_string())
+    };
+    let _ = request
+        .respond_to
+        .send(AgentRunApprovalDecision { approved, reason });
+    Ok(())
+}
+
+fn respond_to_user_input_request<R>(
+    request: AgentRunUserInputRequest,
+    reader: &mut R,
+    stdout: &mut io::Stdout,
+) -> Result<()>
+where
+    R: BufRead,
+{
+    print!("{} ", request.prompt);
+    stdout.flush()?;
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .context("failed to read requested user input")?;
+    let value = line.trim_end_matches(['\r', '\n']).to_string();
+    let _ = request.respond_to.send(AgentRunUserInputResponse {
+        value: Some(value),
+    });
+    Ok(())
 }
 
 fn session_id_from_result(result: &AgentRunResult) -> Option<String> {

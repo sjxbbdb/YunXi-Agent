@@ -1,6 +1,6 @@
-# YunXi Agent v1.2.1
+# YunXi Agent v1.3.0
 
-YunXi Agent v1.2.1 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.3.0 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -16,7 +16,7 @@ through the clearly labelled offline provider.
 - `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-cli`: v1.2.1 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.3.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -28,6 +28,9 @@ through the clearly labelled offline provider.
 - Compiles as an independent Rust workspace
 - Builds a terminal command named `yunxi`
 - Starts an interactive terminal session when `yunxi` is run without a prompt
+- Streams runtime events to the terminal while an interactive turn is running
+- Prompts for interactive approval and `request_user_input` tool calls
+- Propagates Ctrl+C cancellation into the runtime and shell exec layer
 - Keeps the interactive session open when one provider or tool turn fails
 - Preserves assistant tool calls and matching tool result ids across provider turns
 - Preserves one-shot execution through `yunxi "your task"`
@@ -56,7 +59,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.2.1 CLI into a user-local bin directory:
+Build and install the v1.3.0 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -90,6 +93,7 @@ Useful interactive commands:
 - `/model [name]`: show or switch the model field
 - `/provider [name]`: show or switch the provider field
 - `/cwd`: show the active working directory
+- `/clear`: clear the terminal
 - `/exit` or `/quit`: leave interactive mode
 
 One-shot and automation modes remain available:
@@ -174,6 +178,11 @@ v1.2.1 adds immutable tag `v1.2.1` without moving `v1.2.0`. DeepSeek HTTP
 `metadata`; a failed turn is rendered as a redacted error and returns control
 to `yunxi>`. Tool-loop history uses matching assistant `tool_calls` and
 `tool_call_id` fields for OpenAI/DeepSeek-compatible APIs.
+
+v1.3.0 adds immutable tag `v1.3.0` without moving earlier tags. It promotes the
+interactive terminal host from batch rendering to streaming runtime events,
+approval/user-input request handling, and Ctrl+C cancellation propagation into
+YunXi-owned runtime/tools/exec code.
 
 ## Backend Capability Matrix
 

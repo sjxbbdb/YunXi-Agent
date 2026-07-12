@@ -76,7 +76,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.2.1"));
+        .stdout(predicate::str::contains("yunxi 1.3.0"));
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.2.1"));
+        .stdout(predicate::str::contains("yunxi 1.3.0"));
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.2.1 interactive CLI",
+            "YunXi Agent v1.3.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
@@ -311,7 +311,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.2.1 interactive CLI",
+            "YunXi Agent v1.3.0 interactive CLI",
         ))
         .stdout(predicate::str::contains(
             "YunXi autonomous runtime accepted prompt: hello from repl",

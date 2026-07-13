@@ -19,6 +19,34 @@ The repository currently contains:
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
 
+## YunXi Agent v1.8.0 Planned Direction
+
+The next product stage is YunXi Agent v1.8.0 persona and transparent memory
+foundation. The project baseline is v1.7.8, which already has the autonomous
+terminal runtime, provider/tool/storage/session chain, TUI, sandbox policy
+honesty, JSON/JSONL surfaces, and REST API release/tag workflow.
+
+v1.8.0 should introduce a YunXi-owned `yunxi-agent-persona` crate and wire it
+into runtime, context, storage, and CLI with a conservative local-first design:
+
+- built-in `yunxi_companion_strong` persona profile
+- persona prompt compiler with clear priority below AGENTS.md and user hard
+  constraints
+- global and workspace JSONL memory records
+- pending/approve/reject/delete/off/on memory controls
+- turn-start recall with prompt budget limits
+- turn-end memory candidate extraction with rule fallback
+- privacy-first write policy where sensitive or long-term profile facts require
+  confirmation
+
+v1.8.0 should not add SQLite, vector search, graph memory, complex relationship
+state machines, proactive triggers, or a TUI memory inspector. Those remain
+future v1.8.1/v1.9/v2.0 topics after the transparent memory foundation is
+stable.
+
+The development report is recorded in
+`docs/reports/2026-07-13-yunxi-agent-v1-8-0-persona-memory-foundation-development-report.md`.
+
 ## YunXi Agent v1.7.8 Sandbox Schema And Policy Hardening Construction
 
 YunXi Agent v1.7.8 keeps the 1.7 series focused on terminal Agent stability and

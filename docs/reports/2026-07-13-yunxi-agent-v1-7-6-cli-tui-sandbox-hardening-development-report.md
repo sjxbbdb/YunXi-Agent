@@ -461,3 +461,38 @@ YunXi Agent v1.7.6 的核心目标是修复 1.7.5 审核报告中的高优先级
 - Approval 面板开始具备风险识别和更稳定的命令展示。
 - sandbox 进入真实 platform runner 深化阶段，并继续保持安全边界表述诚实。
 - 默认运行路径继续保持 YunXi 自主化，不依赖上游 Codex CLI 源码。
+
+## v1.7.6 构建与统一验证记录
+
+记录时间：2026-07-13 12:12:12 +08:00
+
+本轮已按报告完成源码构建，并在源码构建结束后统一验证。实现摘要：
+
+- `Cargo.toml`、`Cargo.lock`、README、CLI/TUI banner 版本推进到 `1.7.6`。
+- 默认 CLI 隐藏 detached `codex` backend；`--live` 改为 live provider mode，不再映射到 Codex compatibility backend。
+- CLI integration tests 的 reserved prompt / `run` 路径改为显式临时 `--cwd`，避免 crate 目录 `.yunxi/` 污染。
+- TUI header/subheader/footer 改为宽度感知分档；transcript wrapping 改为 word-aware；composer 空状态压缩到 4 行。
+- Approval 面板增加 command risk label；TUI 渲染测试覆盖 risk label、58 列窄屏 header、word-aware/CJK wrapping。
+- sandbox diagnostic 增加 `runner` 和 `unsupported_reason`，并贯通 core event、protocol JSONL、plain render、TUI event filter、tool runtime event。
+- exec 层增加 `PlatformSandboxRunner` trait 与 `DirectProcessRunner` 入口，当前平台 runner 仍诚实报告 `os_isolation=false` 和 `policy_guard`。
+
+统一验证结果：
+
+- `cargo fmt`：通过。
+- `cargo fmt -- --check`：通过。
+- `cargo test -p yunxi-agent-cli -p yunxi-agent-tui -p yunxi-agent-exec -p yunxi-agent-sandbox`：通过。
+- `cargo test`：通过。
+- `cargo check --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- release smoke：`yunxi.exe --version` 和 `yunxi-agent-cli.exe --version` 均输出 `yunxi 1.7.6`；offline、JSON、JSONL smoke 通过。
+- `--backend codex "hello codex"`：按预期 exit code `2`，默认 help 不再把 Codex backend 列为普通可用值。
+- `--cwd <temp> --offline run sessions` 与 `--cwd <temp> --offline -- sessions`：通过；`crates/yunxi-agent-cli/.yunxi` 不存在。
+- Stage 4M fixture JSONL：通过，包含 sandbox attempt 与 tool lifecycle 事件。
+- DeepSeek live stream 与 JSON smoke：通过；密钥仅从 `C:\Users\admin\Desktop\api.txt` 读取，`secret_leak_detected=False`。
+- dependency scan：默认 CLI 依赖树不含 `codex-*`、`vendor/codex-rs`、`yunxi-agent-codex`。
+- owned-source secret scan：通过。
+- `git diff --check`：通过，仅有 Windows LF-to-CRLF 提示。
+- `codegraph sync "D:\YunXi Agent"`：通过，同步 15 个变更文件。
+- `codegraph status "D:\YunXi Agent"`：通过，索引 up to date。
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`：通过。
+- PATH smoke：`yunxi --version`、`yunxi-agent-cli --version`、`yunxi --offline "installed path v1.7.6 smoke"` 均通过。

@@ -111,7 +111,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.7.5 interactive CLI");
+    println!("YunXi Agent v1.7.6 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -423,13 +423,16 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
             backend,
             os_isolation,
             enforcement,
+            runner,
+            unsupported_reason,
             command,
             cwd,
             message,
             ..
         } => {
             println!(
-                "[policy-guard] platform={platform} status={status} backend={backend} os_isolation={os_isolation} enforcement={enforcement} cwd={cwd} command={} message={} (advisory only, no OS isolation)",
+                "[policy-guard] platform={platform} status={status} backend={backend} os_isolation={os_isolation} enforcement={enforcement} runner={runner} unsupported_reason={} cwd={cwd} command={} message={} (advisory only, no OS isolation)",
+                unsupported_reason.as_deref().unwrap_or("none"),
                 command.as_deref().unwrap_or("none"),
                 message.as_deref().unwrap_or("none")
             );

@@ -377,6 +377,10 @@ pub struct SandboxRunnerDiagnostic {
     pub backend: SandboxBackend,
     pub os_isolation: bool,
     pub enforcement: String,
+    #[serde(default)]
+    pub runner: String,
+    #[serde(default)]
+    pub unsupported_reason: Option<String>,
     pub command: Option<String>,
     pub cwd: PathBuf,
     pub message: Option<String>,
@@ -636,6 +640,8 @@ impl SandboxRunner {
             backend: plan.backend,
             os_isolation: plan.backend.os_isolation(),
             enforcement: plan.backend.enforcement_label().to_string(),
+            runner: plan.backend.runner_label().to_string(),
+            unsupported_reason: plan.backend.unsupported_reason().map(ToString::to_string),
             command: command.map(ToString::to_string),
             cwd: cwd.to_path_buf(),
             message: plan.denial_reason,
@@ -692,6 +698,31 @@ impl SandboxBackend {
             Self::WorkspaceGuard | Self::WindowsRestrictedToken | Self::LinuxLandlock => {
                 "policy_guard"
             }
+        }
+    }
+
+    pub fn runner_label(self) -> &'static str {
+        match self {
+            Self::None => "direct_process",
+            Self::DangerFullAccess => "direct_process_policy_bypass",
+            Self::WorkspaceGuard => "workspace_policy_guard",
+            Self::WindowsRestrictedToken => "windows_process_lifecycle",
+            Self::LinuxLandlock => "linux_landlock_entrypoint",
+        }
+    }
+
+    pub fn unsupported_reason(self) -> Option<&'static str> {
+        match self {
+            Self::WorkspaceGuard => {
+                Some("workspace guard is advisory policy only; no OS isolation is active")
+            }
+            Self::WindowsRestrictedToken => Some(
+                "Windows restricted-token filesystem isolation is not enabled; runner provides policy guard and child process lifecycle only",
+            ),
+            Self::LinuxLandlock => Some(
+                "Linux Landlock runner entrypoint is present but not verified in this build; policy guard remains authoritative",
+            ),
+            Self::None | Self::DangerFullAccess => None,
         }
     }
 }
@@ -1424,6 +1455,32 @@ mod tests {
         assert_eq!(
             decision.plan.denial_reason.as_deref(),
             Some("sandbox is read-only")
+        );
+    }
+
+    #[test]
+    fn sandbox_runner_diagnostic_is_honest_about_platform_runner() {
+        let workspace = TempDir::new().expect("workspace");
+        let policy = ExecutionPolicy {
+            approval: ApprovalRequirement::PreApproved,
+            sandbox: SandboxRequirement::WorkspaceWrite,
+            network: NetworkPolicy::Inherit,
+            workspace_root: workspace.path().to_path_buf(),
+        };
+
+        let diagnostic = SandboxRunner.diagnostic(&policy, workspace.path(), Some("echo yunxi"));
+
+        assert_eq!(diagnostic.status, SandboxRunnerStatus::Ready);
+        assert!(!diagnostic.os_isolation);
+        assert_eq!(diagnostic.enforcement, "policy_guard");
+        assert!(!diagnostic.runner.is_empty());
+        assert!(
+            diagnostic
+                .unsupported_reason
+                .as_deref()
+                .is_some_and(|reason| {
+                    reason.contains("policy guard") || reason.contains("not verified")
+                })
         );
     }
 }

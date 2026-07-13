@@ -7,6 +7,7 @@ pub struct ApprovalRequestView {
     pub cwd: String,
     pub command: Option<String>,
     pub reason: String,
+    pub risk_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -276,18 +277,89 @@ impl BottomPane {
     }
 
     pub(crate) fn desired_height(&self) -> u16 {
+        self.desired_height_for_width(usize::MAX)
+    }
+
+    pub(crate) fn desired_height_for_width(&self, _width: usize) -> u16 {
         match &self.mode {
             BottomPaneMode::Composer { buffer, .. } => {
                 let lines = buffer.lines().count().max(1) as u16;
-                4u16.saturating_add(lines.min(4))
+                3u16.saturating_add(lines.min(4))
             }
             BottomPaneMode::Approval { request, .. } => {
                 let command_lines = request.command.as_ref().map(|_| 1).unwrap_or(0);
-                8 + command_lines
+                9 + command_lines
             }
             BottomPaneMode::UserInput { .. } => 5,
         }
     }
+}
+
+impl ApprovalRequestView {
+    pub(crate) fn risk_label(&self) -> String {
+        if let Some(label) = self
+            .risk_label
+            .as_ref()
+            .filter(|label| !label.trim().is_empty())
+        {
+            return label.clone();
+        }
+        let command = self
+            .command
+            .as_deref()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if contains_any(
+            &command,
+            &[
+                "remove-item",
+                "rm -rf",
+                "del ",
+                "rmdir",
+                "rd /s",
+                "format ",
+                "shutdown",
+            ],
+        ) {
+            "risk: destructive".to_string()
+        } else if contains_any(
+            &command,
+            &[
+                "curl ",
+                "wget ",
+                "invoke-webrequest",
+                "invoke-restmethod",
+                "irm ",
+            ],
+        ) {
+            "risk: network".to_string()
+        } else if contains_any(
+            &command,
+            &[
+                ">",
+                "set-content",
+                "add-content",
+                "out-file",
+                "new-item",
+                "copy ",
+                "move ",
+                "apply_patch",
+            ],
+        ) {
+            "risk: writes workspace".to_string()
+        } else if contains_any(
+            &command,
+            &["get-content", "type ", "cat ", "rg ", "findstr "],
+        ) {
+            "risk: reads workspace".to_string()
+        } else {
+            "risk: low".to_string()
+        }
+    }
+}
+
+fn contains_any(value: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| value.contains(needle))
 }
 
 fn insert_at_cursor(buffer: &mut String, cursor: &mut usize, value: &str) {
@@ -352,6 +424,7 @@ mod tests {
             cwd: ".".to_string(),
             command: Some("echo hi".to_string()),
             reason: "needs approval".to_string(),
+            risk_label: None,
         });
 
         let action =
@@ -363,5 +436,37 @@ mod tests {
                 reason: Some("approved by YunXi TUI".to_string())
             })
         );
+    }
+
+    #[test]
+    fn empty_composer_uses_compact_height() {
+        let pane = BottomPane::default();
+
+        assert_eq!(pane.desired_height_for_width(58), 4);
+    }
+
+    #[test]
+    fn approval_risk_label_classifies_common_commands() {
+        let destructive = ApprovalRequestView {
+            id: None,
+            tool_name: "shell".to_string(),
+            cwd: ".".to_string(),
+            command: Some("Remove-Item -Recurse -Force target".to_string()),
+            reason: "needs approval".to_string(),
+            risk_label: None,
+        };
+        let network = ApprovalRequestView {
+            command: Some("curl https://example.test".to_string()),
+            ..destructive.clone()
+        };
+        let explicit = ApprovalRequestView {
+            command: Some("echo hi".to_string()),
+            risk_label: Some("risk: custom".to_string()),
+            ..destructive.clone()
+        };
+
+        assert_eq!(destructive.risk_label(), "risk: destructive");
+        assert_eq!(network.risk_label(), "risk: network");
+        assert_eq!(explicit.risk_label(), "risk: custom");
     }
 }

@@ -7,7 +7,8 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- A minimal `yunxi-agent-cli`
+- The v1.7.6 `yunxi-agent-cli` terminal product, including one-shot, plain
+  interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
   - `yunxi-agent-runtime`
@@ -27,12 +28,15 @@ Implemented in this slice:
 - `yunxi-agent-runtime` owns the first YunXi runtime backend implementation.
 - `yunxi-agent-provider` owns provider request/response interfaces and a
   deterministic `StaticProvider`.
-- `yunxi-agent-tools` owns tool request/response interfaces and a placeholder
-  `NoopToolRuntime`.
+- `yunxi-agent-tools` owns tool request/response interfaces, shell/patch/MCP
+  runtime plumbing, approval decisions, and sandbox diagnostic runtime events.
 - `yunxi-agent-storage` owns session records and an in-memory session store.
 - `yunxi-agent-cli` defaults to `--backend yunxi`.
-- `--backend dry-run`, `--backend codex`, and `--live` remain available for
-  smoke checks and compatibility.
+- `--backend dry-run` remains available for deterministic smoke checks.
+  `--backend codex` is no longer exposed as a default CLI backend; the detached
+  Codex compatibility path lives in `yunxi-agent-codex`.
+- `--live` selects live provider mode and no longer implies the detached Codex
+  backend.
 
 The `yunxi` backend emits YunXi `AgentEvent` values directly and does not depend
 on `vendor/codex-rs`. The Codex backend remains as an explicit compatibility
@@ -953,6 +957,79 @@ Verified in this slice:
   pass; index is up to date
 - Install script and PATH smoke: pass; installed `yunxi` and
   `yunxi-agent-cli` report `1.7.5`
+
+## YunXi Agent v1.7.6 CLI/TUI Sandbox Hardening Construction
+
+YunXi Agent v1.7.6 addresses the 2026-07-13 CLI/TUI audit findings while
+preserving the autonomous default runtime boundary and avoiding new upstream
+Codex CLI runtime dependencies.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.7.6`.
+- The default CLI hides the detached `codex` backend from the normal backend
+  value list. `--live` now selects live provider mode instead of implying a
+  Codex compatibility backend.
+- CLI integration tests that exercise reserved prompt words and `run` prompts
+  use explicit temporary `--cwd` paths to avoid leaving `.yunxi/` session
+  output under crate source directories.
+- The TUI banner, subheader, and footer render width-aware status strings so
+  narrow terminals keep complete status tokens instead of dangling separators
+  or half fields.
+- TUI transcript wrapping is word-aware for ASCII text, keeps CJK/English mixed
+  output together without injected spaces, and uses a quieter continuation
+  gutter.
+- The bottom pane uses a compact empty composer height and approval views show
+  a command risk label derived from explicit metadata or command heuristics.
+- Sandbox diagnostics now include `runner` and `unsupported_reason` fields in
+  core events, protocol JSONL events, plain output, TUI debug details, and tool
+  runtime events.
+- The exec layer now routes process spawning through a first platform runner
+  trait entrypoint while keeping current policy-only paths honest with
+  `os_isolation=false` and `policy_guard` enforcement.
+
+Unified verification passed on 2026-07-13 after source construction completed,
+following the project hard constraint to avoid repeated mid-construction test
+loops.
+
+Verified in this slice:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test -p yunxi-agent-cli -p yunxi-agent-tui -p yunxi-agent-exec -p yunxi-agent-sandbox`:
+  pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.7.6`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.7.6`
+- Offline, JSON, and JSONL release smoke: pass
+- `--backend codex "hello codex"`: pass; rejected with exit code `2`
+  and invalid `codex` value
+- Default help backend list: pass; detached Codex backend is not presented as
+  a normal available runtime
+- Reserved prompt smoke with temporary `--cwd`: pass; no
+  `crates/yunxi-agent-cli\.yunxi` pollution
+- TUI tests: pass; covered 58-column header/subheader/footer status,
+  word-aware wrapping, CJK/English mixed output, compact composer height, and
+  approval risk label rendering
+- Sandbox diagnostic tests: pass; policy-only path reports
+  `os_isolation=false`, `enforcement=policy_guard`, runner label, and
+  unsupported reason
+- Stage 4M fixture JSONL: pass; sandbox attempt and tool lifecycle events are
+  present
+- DeepSeek live stream and JSON smoke with `deepseek-chat`: pass;
+  `secret_leak_detected=False`
+- Default CLI dependency scan: pass; no `codex-*`, `vendor/codex-rs`, or
+  `yunxi-agent-codex` dependency
+- Owned-source secret scan excluding `.git`, `.codegraph`, `target`,
+  `vendor`, and `extracted`: pass
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `codegraph sync "D:\YunXi Agent"`: pass; 15 changed files synced
+- `codegraph status "D:\YunXi Agent"`: pass; index is up to date
+- Install script and PATH smoke: pass; installed `yunxi` and
+  `yunxi-agent-cli` report `1.7.6`
 
 ## YunXi Agent v1.7.2 TUI Scroll And Streaming Construction
 

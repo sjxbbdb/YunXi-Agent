@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.7.5"));
+        .stdout(predicate::str::contains("yunxi 1.7.6"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.7.5"));
+        .stdout(predicate::str::contains("yunxi 1.7.6"));
 }
 
 #[test]
@@ -215,15 +215,32 @@ fn cli_rejects_live_and_backend_flags_together() {
 }
 
 #[test]
-fn cli_live_backend_reports_feature_message_without_codex_native_feature() {
+fn cli_live_flag_selects_live_provider_without_codex_backend() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
 
-    cmd.args(["--live", "explain this project"])
+    cmd.env_remove("YUNXI_PROVIDER_API_KEY")
+        .env_remove("YUNXI_PROVIDER_API_KEY_ENV")
+        .env_remove("YUNXI_PROVIDER_PROFILE")
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .args(["--live", "explain this project"])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "codex compatibility backend is detached from the default CLI",
-        ));
+        .code(10)
+        .stderr(predicate::str::contains("live provider"))
+        .stderr(predicate::str::contains("credentials are not configured"))
+        .stderr(predicate::str::contains("codex compatibility backend").not());
+}
+
+#[test]
+fn cli_rejects_detached_codex_backend_at_parse_time() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.args(["--backend", "codex", "hello codex"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("invalid value"))
+        .stderr(predicate::str::contains("codex"))
+        .stderr(predicate::str::contains("provider auto mode").not());
 }
 
 #[test]
@@ -235,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.5 interactive CLI",
+            "YunXi Agent v1.7.6 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -394,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.5 interactive CLI",
+            "YunXi Agent v1.7.6 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -414,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.5 interactive CLI",
+            "YunXi Agent v1.7.6 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -452,20 +469,29 @@ fn cli_rejects_jsonl_for_metadata_subcommands() {
 #[test]
 fn cli_run_subcommand_accepts_reserved_prompt_words() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    let temp = TempDir::new().expect("temp dir");
 
-    cmd.args(["--offline", "run", "sessions"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "YunXi autonomous runtime accepted prompt: sessions",
-        ));
+    cmd.args([
+        "--cwd",
+        temp.path().to_str().expect("temp path"),
+        "--offline",
+        "run",
+        "sessions",
+    ])
+    .assert()
+    .success()
+    .stdout(predicate::str::contains(
+        "YunXi autonomous runtime accepted prompt: sessions",
+    ));
 }
 
 #[test]
 fn cli_reserved_subcommand_prompt_error_suggests_escape() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
 
-    cmd.args(["--offline", "sessions"])
+    cmd.args(["--cwd", cwd, "--offline", "sessions"])
         .assert()
         .code(2)
         .stderr(predicate::str::contains("yunxi -- sessions"))
@@ -473,7 +499,7 @@ fn cli_reserved_subcommand_prompt_error_suggests_escape() {
 
     let mut escaped = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
     escaped
-        .args(["--offline", "--", "sessions"])
+        .args(["--cwd", cwd, "--offline", "--", "sessions"])
         .assert()
         .success()
         .stdout(predicate::str::contains(

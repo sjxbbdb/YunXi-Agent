@@ -12,7 +12,11 @@ use ratatui::widgets::{
 
 pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     let area = frame.area();
-    let layout = compute_layout(area, app.bottom_pane().desired_height());
+    let layout = compute_layout(
+        area,
+        app.bottom_pane()
+            .desired_height_for_width(area.width as usize),
+    );
 
     render_header(frame, app, layout.header);
     render_transcript(
@@ -28,13 +32,13 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
 fn render_header(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
     let header = Paragraph::new(vec![
         Line::from(Span::styled(
-            app.header(),
+            app.header_for_width(area.width as usize),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            app.subheader(),
+            app.subheader_for_width(area.width as usize),
             Style::default().fg(Color::Gray),
         )),
     ])
@@ -75,7 +79,14 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
             prompt,
             buffer,
             cursor,
-        } => render_composer(frame, area, app.footer(), prompt, buffer, *cursor),
+        } => render_composer(
+            frame,
+            area,
+            app.footer_for_width(area.width as usize),
+            prompt,
+            buffer,
+            *cursor,
+        ),
         BottomPaneMode::Approval { request, selected } => {
             let mut lines = vec![
                 Line::from(vec![
@@ -89,6 +100,10 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
                 Line::from(vec![
                     Span::styled("reason   ", Style::default().fg(Color::Gray)),
                     Span::raw(request.reason.clone()),
+                ]),
+                Line::from(vec![
+                    Span::styled("risk     ", Style::default().fg(Color::Yellow)),
+                    Span::raw(request.risk_label()),
                 ]),
             ];
             if let Some(command) = &request.command {
@@ -253,6 +268,7 @@ mod tests {
             cwd: ".".to_string(),
             command: Some("echo hi".to_string()),
             reason: "requires approval".to_string(),
+            risk_label: None,
         });
 
         let backend = TestBackend::new(100, 18);
@@ -264,7 +280,33 @@ mod tests {
 
         assert!(rendered.contains("Approval"));
         assert!(rendered.contains("Approve"));
+        assert!(rendered.contains("risk"));
+        assert!(rendered.contains("risk: low"));
         assert!(!rendered.contains("approve? y/N"));
+    }
+
+    #[test]
+    fn narrow_tui_header_does_not_render_dangling_separator() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(YunxiTuiBanner {
+            cwd: "D:/YunXi Agent/crates/yunxi-agent-cli".to_string(),
+            backend: "yunxi".to_string(),
+            provider_live: false,
+            provider_source: "offline_static".to_string(),
+            provider: "static".to_string(),
+            model: "deepseek-chat".to_string(),
+        });
+
+        let backend = TestBackend::new(58, 20);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| render_tui_frame(frame, &app))
+            .expect("draw");
+        let rendered = format!("{:?}", terminal.backend().buffer());
+
+        assert!(rendered.contains("YunXi v1.7.6"));
+        assert!(rendered.contains("debug off"));
+        assert!(!rendered.contains("|,"));
     }
 
     #[test]

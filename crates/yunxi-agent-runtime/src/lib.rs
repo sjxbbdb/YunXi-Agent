@@ -3172,6 +3172,7 @@ where
                 })
                 .await?;
             }
+            ExecLifecycleEvent::RunnerDiagnostic { .. } => {}
             ExecLifecycleEvent::Started { .. } | ExecLifecycleEvent::Completed { .. } => {}
         }
     }
@@ -3208,6 +3209,8 @@ where
                 backend,
                 os_isolation,
                 enforcement,
+                runner,
+                unsupported_reason,
                 command,
                 cwd,
                 message,
@@ -3219,6 +3222,8 @@ where
                     backend: backend.clone(),
                     os_isolation: *os_isolation,
                     enforcement: enforcement.clone(),
+                    runner: runner.clone(),
+                    unsupported_reason: unsupported_reason.clone(),
                     command: command.clone(),
                     cwd: cwd.clone(),
                     message: message.clone(),
@@ -3226,7 +3231,8 @@ where
                 .await?;
                 sink.emit(AgentEvent::Reasoning {
                     content: format!(
-                        "Sandbox runner: platform={platform}, status={status}, backend={backend}, os_isolation={os_isolation}, enforcement={enforcement}, cwd={cwd}, command={}, message={}",
+                        "Sandbox runner: platform={platform}, status={status}, backend={backend}, os_isolation={os_isolation}, enforcement={enforcement}, runner={runner}, unsupported_reason={}, cwd={cwd}, command={}, message={}",
+                        unsupported_reason.as_deref().unwrap_or("none"),
                         command.as_deref().unwrap_or("none"),
                         message.as_deref().unwrap_or("none")
                     ),

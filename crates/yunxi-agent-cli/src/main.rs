@@ -66,7 +66,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.7.5 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.7.6 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -208,7 +208,8 @@ enum ParityCommand {
 enum CliBackend {
     DryRun,
     Yunxi,
-    #[value(help = "detached compatibility backend; rejected by the default CLI")]
+    #[allow(dead_code)]
+    #[value(skip)]
     Codex,
 }
 
@@ -281,13 +282,10 @@ async fn run_cli() -> Result<()> {
     let Some(cli) = parse_cli()? else {
         return Ok(());
     };
-    let provider_mode = provider_mode::ProviderMode::from_flags(cli.provider_live, cli.offline);
+    let provider_mode =
+        provider_mode::ProviderMode::from_flags(cli.provider_live || cli.live, cli.offline);
 
-    let backend = if cli.live {
-        BackendKind::Codex
-    } else {
-        cli.backend.into()
-    };
+    let backend = cli.backend.into();
 
     let mut config = AgentConfig::new(cli.cwd.clone())
         .with_approval_mode(cli.approval.into())
@@ -792,6 +790,8 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 backend,
                 os_isolation,
                 enforcement,
+                runner,
+                unsupported_reason,
                 command,
                 cwd,
                 message,
@@ -812,6 +812,8 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     backend: backend.clone(),
                     os_isolation: *os_isolation,
                     enforcement: enforcement.clone(),
+                    runner: runner.clone(),
+                    unsupported_reason: unsupported_reason.clone(),
                     command: command.clone(),
                     cwd: cwd.clone(),
                     message: message.clone(),
@@ -1268,10 +1270,10 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.7.5; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.7.6; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.7.5; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.7.6; use --json for parity commands"
         ),
     }
 }

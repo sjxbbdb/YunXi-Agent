@@ -3,7 +3,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-const CONTINUATION_GUTTER: &str = "  | ";
+const CONTINUATION_GUTTER: &str = "    ";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WrappedTranscript {
@@ -133,13 +133,89 @@ fn content_capacity(width: usize, prefix: &str) -> usize {
 fn split_display_width(text: &str, first_width: usize, rest_width: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
-    let mut current_width: usize = 0;
+    let mut capacity = first_width.max(1);
+    let mut pending_space = false;
+
+    for token in word_tokens(text) {
+        if token.chars().all(char::is_whitespace) {
+            pending_space |= !current.is_empty();
+            continue;
+        }
+
+        let separator_width = usize::from(pending_space && !current.is_empty());
+        let token_width = UnicodeWidthStr::width(token);
+        let current_width = UnicodeWidthStr::width(current.as_str());
+        if !current.is_empty()
+            && current_width
+                .saturating_add(separator_width)
+                .saturating_add(token_width)
+                <= capacity
+        {
+            if pending_space {
+                current.push(' ');
+            }
+            current.push_str(token);
+            pending_space = false;
+            continue;
+        }
+
+        if !current.is_empty() {
+            chunks.push(std::mem::take(&mut current));
+            capacity = rest_width.max(1);
+        }
+        pending_space = false;
+
+        if token_width <= capacity {
+            current.push_str(token);
+            continue;
+        }
+
+        let mut pieces = split_long_token(token, capacity, rest_width.max(1));
+        if pieces.len() > 1 {
+            chunks.extend(pieces.drain(..pieces.len() - 1));
+            capacity = rest_width.max(1);
+        }
+        if let Some(last) = pieces.pop() {
+            current = last;
+        }
+    }
+
+    if current.is_empty() && chunks.is_empty() {
+        chunks.push(String::new());
+    } else if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+fn word_tokens(text: &str) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    let mut start = 0usize;
+    let mut last_whitespace: Option<bool> = None;
+    for (idx, ch) in text.char_indices() {
+        let whitespace = ch.is_whitespace();
+        if last_whitespace.is_some_and(|last| last != whitespace) {
+            tokens.push(&text[start..idx]);
+            start = idx;
+        }
+        last_whitespace = Some(whitespace);
+    }
+    if start < text.len() {
+        tokens.push(&text[start..]);
+    }
+    tokens
+}
+
+fn split_long_token(token: &str, first_width: usize, rest_width: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
     let mut capacity = first_width.max(1);
 
-    for ch in text.chars() {
+    for ch in token.chars() {
         let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
         if !current.is_empty() && current_width.saturating_add(ch_width) > capacity {
-            chunks.push(current);
+            chunks.push(std::mem::take(&mut current));
             current = String::new();
             current_width = 0;
             capacity = rest_width.max(1);
@@ -147,10 +223,7 @@ fn split_display_width(text: &str, first_width: usize, rest_width: usize) -> Vec
         current.push(ch);
         current_width = current_width.saturating_add(ch_width);
     }
-
-    if current.is_empty() && chunks.is_empty() {
-        chunks.push(String::new());
-    } else if !current.is_empty() {
+    if !current.is_empty() {
         chunks.push(current);
     }
     chunks
@@ -212,6 +285,37 @@ mod tests {
         let wrapped = build_wrapped_transcript(&cells, 80);
 
         assert_eq!(row_text(&wrapped.rows[0]), "[thinking*] first");
-        assert_eq!(row_text(&wrapped.rows[1]), "  | second");
+        assert_eq!(row_text(&wrapped.rows[1]), "    second");
+    }
+
+    #[test]
+    fn wraps_ascii_on_word_boundaries_when_possible() {
+        let cells = vec![HistoryCell::Assistant {
+            content: "Tool output summaries stay readable".to_string(),
+            active: false,
+        }];
+
+        let wrapped = build_wrapped_transcript(&cells, 28);
+        let rendered = wrapped.rows.iter().map(row_text).collect::<Vec<_>>();
+
+        assert!(rendered.iter().any(|row| row.contains("Tool output")));
+        assert!(
+            !rendered
+                .iter()
+                .any(|row| row.trim_start().starts_with("ol output"))
+        );
+    }
+
+    #[test]
+    fn preserves_cjk_english_without_inserting_spaces() {
+        let cells = vec![HistoryCell::User(
+            "Summarize this 中文 and English mixed terminal output.".to_string(),
+        )];
+
+        let wrapped = build_wrapped_transcript(&cells, 44);
+        let rendered = wrapped.rows.iter().map(row_text).collect::<Vec<_>>();
+
+        assert!(rendered.iter().any(|row| row.contains("中文 and")));
+        assert!(!rendered.iter().any(|row| row.contains("中 文")));
     }
 }

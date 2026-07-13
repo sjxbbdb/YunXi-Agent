@@ -10,6 +10,7 @@ use tokio::time::sleep;
 use yunxi_agent_core::{AgentCancellationToken, AgentError, AgentResult};
 use yunxi_agent_sandbox::{
     ApprovalRequirement, ExecutionPolicy, NetworkPolicy, SandboxRequirement,
+    SandboxRunnerDiagnostic,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -92,6 +93,10 @@ pub enum ExecOutputStream {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExecLifecycleEvent {
+    RunnerDiagnostic {
+        id: Option<String>,
+        diagnostic: SandboxRunnerDiagnostic,
+    },
     Started {
         id: Option<String>,
         command: String,
@@ -309,12 +314,21 @@ impl ExecManager {
             });
         }
 
+        let runner = DirectProcessRunner;
+        let runner_diagnostic = runner.diagnostic(&command);
+
         let started_at = std::time::Instant::now();
-        let mut events = vec![ExecLifecycleEvent::Started {
-            id: command.id.clone(),
-            command: command.canonical_command(),
-            cwd: command.cwd.clone(),
-        }];
+        let mut events = vec![
+            ExecLifecycleEvent::RunnerDiagnostic {
+                id: command.id.clone(),
+                diagnostic: runner_diagnostic,
+            },
+            ExecLifecycleEvent::Started {
+                id: command.id.clone(),
+                command: command.canonical_command(),
+                cwd: command.cwd.clone(),
+            },
+        ];
 
         if cancellation_token.is_cancelled() {
             events.push(ExecLifecycleEvent::Cancelled {
@@ -337,22 +351,7 @@ impl ExecManager {
             });
         }
 
-        let mut process = Command::new(&command.argv[0]);
-        process
-            .args(&command.argv[1..])
-            .current_dir(&command.cwd)
-            .envs(&command.env)
-            .stdin(if command.stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let mut child = process.spawn().map_err(|error| AgentError::Execution {
-            message: format!("failed to spawn exec command {}: {error}", command.command),
-        })?;
+        let mut child = runner.spawn(&command)?;
 
         if let Some(stdin) = command.stdin.as_ref() {
             let mut child_stdin = child.stdin.take().ok_or_else(|| AgentError::Execution {
@@ -463,6 +462,43 @@ impl ExecManager {
         Ok(ExecTrace {
             summary: ExecSummary::from_output(&command, output, timed_out || cancelled),
             events,
+        })
+    }
+}
+
+pub trait PlatformSandboxRunner {
+    fn diagnostic(&self, command: &ExecCommand) -> SandboxRunnerDiagnostic;
+    fn spawn(&self, command: &ExecCommand) -> AgentResult<tokio::process::Child>;
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DirectProcessRunner;
+
+impl PlatformSandboxRunner for DirectProcessRunner {
+    fn diagnostic(&self, command: &ExecCommand) -> SandboxRunnerDiagnostic {
+        yunxi_agent_sandbox::SandboxRunner.diagnostic(
+            &command.policy,
+            &command.cwd,
+            Some(command.command.as_str()),
+        )
+    }
+
+    fn spawn(&self, command: &ExecCommand) -> AgentResult<tokio::process::Child> {
+        let mut process = Command::new(&command.argv[0]);
+        process
+            .args(&command.argv[1..])
+            .current_dir(&command.cwd)
+            .envs(&command.env)
+            .stdin(if command.stdin.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        process.spawn().map_err(|error| AgentError::Execution {
+            message: format!("failed to spawn exec command {}: {error}", command.command),
         })
     }
 }
@@ -857,6 +893,15 @@ mod tests {
         assert_eq!(trace.summary.exit_code, Some(0));
         assert!(!trace.summary.timed_out);
         assert!(trace.summary.aggregated_output.contains("yunxi"));
+        assert!(trace.events.iter().any(|event| matches!(
+            event,
+            ExecLifecycleEvent::RunnerDiagnostic {
+                id: Some(id),
+                diagnostic
+            } if id == "exec-stdin"
+                && diagnostic.runner == "direct_process_policy_bypass"
+                && !diagnostic.os_isolation
+        )));
         assert!(trace.events.iter().any(|event| matches!(
             event,
             ExecLifecycleEvent::StdinWritten {

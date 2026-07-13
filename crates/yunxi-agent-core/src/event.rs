@@ -37,6 +37,10 @@ pub enum AgentEvent {
         os_isolation: bool,
         #[serde(default)]
         enforcement: String,
+        #[serde(default)]
+        runner: String,
+        #[serde(default)]
+        unsupported_reason: Option<String>,
         command: Option<String>,
         cwd: String,
         message: Option<String>,

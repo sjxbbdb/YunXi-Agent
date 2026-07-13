@@ -432,6 +432,10 @@ pub enum RuntimeEvent {
         os_isolation: bool,
         #[serde(default)]
         enforcement: String,
+        #[serde(default)]
+        runner: String,
+        #[serde(default)]
+        unsupported_reason: Option<String>,
         command: Option<String>,
         cwd: String,
         message: Option<String>,
@@ -812,6 +816,8 @@ mod tests {
             backend: "direct_process".to_string(),
             os_isolation: false,
             enforcement: "policy_guard".to_string(),
+            runner: "direct_process".to_string(),
+            unsupported_reason: None,
             command: Some("echo ok".to_string()),
             cwd: "D:/YunXi Agent".to_string(),
             message: None,

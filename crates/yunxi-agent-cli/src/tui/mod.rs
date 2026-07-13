@@ -119,6 +119,7 @@ impl InteractiveRenderer for TuiInteractiveRenderer {
                 cwd: request.cwd.clone(),
                 command: request.command.clone(),
                 reason: request.reason.clone(),
+                risk_label: None,
             })
         })?;
         let _ = request.respond_to.send(AgentRunApprovalDecision {

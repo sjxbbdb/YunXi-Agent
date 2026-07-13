@@ -1,6 +1,7 @@
 use crate::bottom_pane::{ApprovalRequestView, BottomPane, UserInputRequestView};
 use crate::chat::Transcript;
 use crate::viewport::TranscriptViewport;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use yunxi_agent_core::AgentEvent;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,7 +26,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v1.7.5".to_string(),
+            version: "v1.7.6".to_string(),
             banner: None,
             transcript: Transcript::default(),
             viewport: TranscriptViewport::default(),
@@ -55,47 +56,115 @@ impl YunxiTuiApp {
         &mut self.bottom_pane
     }
 
-    pub(crate) fn footer(&self) -> String {
+    pub(crate) fn footer_for_width(&self, width: usize) -> String {
         match self.viewport.scroll_status() {
-            "new output below" => {
-                "new output below | End follow tail | wheel/drag history".to_string()
-            }
-            "history" => "history view | End follow tail | wheel/drag PgUp/PgDown".to_string(),
+            "new output below" => fit_line(
+                &[
+                    "new output below",
+                    "End follow tail",
+                    if width < 72 {
+                        "wheel history"
+                    } else {
+                        "wheel/drag history"
+                    },
+                ],
+                width,
+            ),
+            "history" => fit_line(
+                &[
+                    "history view",
+                    "End follow tail",
+                    if width < 72 {
+                        "PgUp/PgDown"
+                    } else {
+                        "wheel/drag PgUp/PgDown"
+                    },
+                ],
+                width,
+            ),
+            _ if width < 56 => "Enter | /help | Ctrl+C".to_string(),
+            _ if width < 86 => "Enter submit | /help | wheel scroll | Ctrl+C exit".to_string(),
             _ => "Enter submit | Alt+Enter newline | /help commands | wheel/drag scroll | Ctrl+C exit"
                 .to_string(),
         }
     }
 
-    pub(crate) fn header(&self) -> String {
+    #[allow(dead_code)]
+    pub(crate) fn footer(&self) -> String {
+        self.footer_for_width(usize::MAX)
+    }
+
+    pub(crate) fn header_for_width(&self, width: usize) -> String {
         match &self.banner {
-            Some(banner) => format!(
-                "YunXi Agent {} | {} | provider={} mode={} model={}",
-                self.version,
-                banner.cwd,
-                banner.provider,
-                if banner.provider_live {
-                    "live"
-                } else {
-                    "offline"
-                },
-                banner.model
+            Some(banner) => {
+                let mode = mode_label(banner.provider_live);
+                if width < 64 {
+                    return fit_line(
+                        &[
+                            &format!("YunXi {}", self.version),
+                            mode,
+                            short_model(&banner.model, banner.provider_live),
+                        ],
+                        width,
+                    );
+                }
+                let cwd = compact_path(&banner.cwd, if width < 90 { 28 } else { 44 });
+                let provider = format!("{} {}", banner.provider, mode);
+                let model = format!("model={}", banner.model);
+                fit_line(
+                    &[
+                        &format!("YunXi Agent {}", self.version),
+                        &cwd,
+                        &provider,
+                        &model,
+                    ],
+                    width,
+                )
+            }
+            None => truncate_end(
+                &format!("YunXi Agent {} interactive CLI", self.version),
+                width,
             ),
-            None => format!("YunXi Agent {} interactive CLI", self.version),
         }
     }
 
-    pub(crate) fn subheader(&self) -> String {
+    #[allow(dead_code)]
+    pub(crate) fn header(&self) -> String {
+        self.header_for_width(usize::MAX)
+    }
+
+    pub(crate) fn subheader_for_width(&self, width: usize) -> String {
         match &self.banner {
-            Some(banner) => format!(
-                "backend={} source={} | transcript cells={} | view={} | {}",
-                banner.backend,
-                banner.provider_source,
-                self.transcript.cells().len(),
-                self.viewport.scroll_status(),
-                self.transcript.debug_status()
-            ),
+            Some(banner) => {
+                let cells = format!("cells={}", self.transcript.cells().len());
+                let view = self.viewport.scroll_status();
+                let debug = compact_debug_status(&self.transcript.debug_status());
+                if width < 64 {
+                    return fit_line(&[view, &cells, &debug], width);
+                }
+                let source = if width < 90 {
+                    banner.provider_source.clone()
+                } else {
+                    format!("source={}", banner.provider_source)
+                };
+                fit_line(
+                    &[
+                        &format!("backend={}", banner.backend),
+                        &source,
+                        &cells,
+                        view,
+                        &debug,
+                    ],
+                    width,
+                )
+            }
             None => "initializing".to_string(),
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn subheader(&self) -> String {
+        self.subheader_for_width(usize::MAX)
     }
 
     pub(crate) fn start_prompt(&mut self, prompt: &str) {
@@ -198,5 +267,140 @@ impl YunxiTuiApp {
 
     fn on_transcript_changed(&mut self) {
         self.viewport.on_content_changed();
+    }
+}
+
+fn mode_label(provider_live: bool) -> &'static str {
+    if provider_live { "live" } else { "offline" }
+}
+
+fn short_model(model: &str, provider_live: bool) -> &str {
+    if provider_live { model } else { "static" }
+}
+
+fn compact_debug_status(status: &str) -> String {
+    if status.contains("debug=on") {
+        "debug on".to_string()
+    } else {
+        "debug off".to_string()
+    }
+}
+
+fn fit_line(parts: &[&str], width: usize) -> String {
+    let mut included = Vec::new();
+    for part in parts.iter().filter(|part| !part.trim().is_empty()) {
+        let candidate = if included.is_empty() {
+            (*part).to_string()
+        } else {
+            format!("{} | {}", included.join(" | "), part)
+        };
+        if display_width(&candidate) <= width {
+            included.push((*part).to_string());
+        } else {
+            break;
+        }
+    }
+
+    if included.is_empty() {
+        parts
+            .first()
+            .map(|part| truncate_end(part, width))
+            .unwrap_or_default()
+    } else {
+        truncate_end(&included.join(" | "), width)
+    }
+}
+
+fn compact_path(path: &str, width: usize) -> String {
+    if display_width(path) <= width {
+        return path.to_string();
+    }
+    let normalized = path.replace('\\', "/");
+    let tail = normalized
+        .rsplit('/')
+        .find(|part| !part.is_empty())
+        .unwrap_or(normalized.as_str());
+    let prefix = if normalized.contains(':') {
+        normalized.split('/').next().unwrap_or("...")
+    } else {
+        "..."
+    };
+    let compact = format!("{prefix}/.../{tail}");
+    truncate_end(&compact, width)
+}
+
+fn truncate_end(value: &str, width: usize) -> String {
+    if width == usize::MAX || display_width(value) <= width {
+        return value.to_string();
+    }
+    if width <= 3 {
+        return String::new();
+    }
+    let mut output = String::new();
+    let limit = width.saturating_sub(3);
+    let mut used = 0usize;
+    for ch in value.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used.saturating_add(ch_width) > limit {
+            break;
+        }
+        output.push(ch);
+        used = used.saturating_add(ch_width);
+    }
+    output.push_str("...");
+    output
+}
+
+fn display_width(value: &str) -> usize {
+    UnicodeWidthStr::width(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn banner() -> YunxiTuiBanner {
+        YunxiTuiBanner {
+            cwd: "D:/YunXi Agent/crates/yunxi-agent-cli".to_string(),
+            backend: "yunxi".to_string(),
+            provider_live: false,
+            provider_source: "offline_static".to_string(),
+            model: "deepseek-chat".to_string(),
+            provider: "static".to_string(),
+        }
+    }
+
+    #[test]
+    fn narrow_header_keeps_complete_status_tokens() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+
+        let header = app.header_for_width(58);
+        let subheader = app.subheader_for_width(58);
+        let footer = app.footer_for_width(58);
+
+        assert!(display_width(&header) <= 58);
+        assert!(display_width(&subheader) <= 58);
+        assert!(display_width(&footer) <= 58);
+        assert!(header.contains("YunXi v1.7.6"));
+        assert!(header.contains("offline"));
+        assert!(header.contains("static"));
+        assert!(!subheader.ends_with('|'));
+        assert!(!subheader.ends_with("| d"));
+        assert_eq!(footer, "Enter submit | /help | wheel scroll | Ctrl+C exit");
+    }
+
+    #[test]
+    fn wide_header_preserves_provider_and_model_details() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+
+        let header = app.header_for_width(120);
+        let subheader = app.subheader_for_width(120);
+
+        assert!(header.contains("YunXi Agent v1.7.6"));
+        assert!(header.contains("model=deepseek-chat"));
+        assert!(subheader.contains("backend=yunxi"));
+        assert!(subheader.contains("source=offline_static"));
     }
 }

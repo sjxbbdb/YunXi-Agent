@@ -1599,6 +1599,66 @@ whole slice first, avoid repeated mid-construction validation loops, then run
 the unified verification gate and publish a new immutable `v1.7.4` tag only
 after source implementation and verification complete.
 
+## YunXi Agent v1.7.4 TUI Scrollbar Viewport Construction
+
+YunXi Agent v1.7.4 promotes the TUI transcript scroll model from logical lines
+to wrapped screen rows and adds mouse-drag scrollbar control.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.7.4`.
+- `yunxi-agent-tui` now owns a shared `layout` module so rendering and mouse
+  hit-testing use the same header, transcript, transcript-inner, scrollbar, and
+  bottom-pane rectangles.
+- `yunxi-agent-tui` now owns a `transcript_layout` module that converts
+  filtered transcript cells into styled, pre-wrapped screen rows before
+  viewport slicing.
+- TUI transcript rendering no longer relies on `Paragraph.wrap` for the main
+  transcript content; title ranges and scrollbar state now use wrapped row
+  counts.
+- `TranscriptViewport` keeps tail-follow bottom-offset behavior while adding
+  explicit start-row and scroll-fraction setters for precise scrollbar drag.
+- `yunxi-agent-tui` now owns a `scrollbar` geometry module for thumb sizing,
+  hit-testing, and drag-y to start-row mapping.
+- The TUI host handles left-button scrollbar down/drag/up, track page clicks,
+  and transcript-scoped mouse wheel events without changing composer and
+  approval overlay input behavior.
+- README and the v1.7.4 development report document the wrapped-row scrollbar
+  correction.
+
+Unified verification passed on 2026-07-13 after construction completed,
+following the project hard constraint to avoid mid-construction test loops.
+
+Verified in this slice:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.7.4`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.7.4`
+- `target\release\yunxi.exe --offline "v1.7.4 offline smoke"`: pass
+- Plain `--no-tui` interactive smoke: pass
+- JSON and JSONL offline smoke: pass
+- `cargo test -p yunxi-agent-tui`: pass; 31 TUI tests covered wrapped rows,
+  scrollbar geometry, viewport start/fraction mapping, shared layout metrics,
+  and transcript rendering
+- DeepSeek live stream smoke with `deepseek-chat`: pass; 28 JSONL lines,
+  `secret_leak_detected=False`
+- DeepSeek live non-stream smoke with `deepseek-chat`: pass; 19 JSONL lines,
+  `secret_leak_detected=False`
+- Default CLI dependency keyword scan: pass; no `codex`, `vendor`, or
+  `yunxi-agent-codex` matches
+- Owned-source secret scan excluding `vendor`, `extracted`, `target`, `.git`,
+  and `.codegraph`: pass
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `codegraph sync "D:\YunXi Agent"`: pass; 12 changed files synced
+- `codegraph status "D:\YunXi Agent"`: pass; index is up to date
+- Install script and PATH smoke: pass; installed `yunxi` and
+  `yunxi-agent-cli` report `1.7.4`
+
 ## Stage 3 Verification
 
 Verified on 2026-07-10:

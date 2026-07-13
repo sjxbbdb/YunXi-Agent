@@ -527,3 +527,48 @@ scroll_drag: Option<TranscriptScrollDrag>,
 - resize 后不丢失滚动位置、不出现半截/空白滚动区。
 - 与 v1.7.3 event filter/tool timeline/debug detail 能力兼容。
 - 继续保持 YunXi 自主运行，不依赖上游 Codex CLI 源码。
+
+## 构建记录
+
+本轮 v1.7.4 已按报告进入源码构建阶段，当前构建内容包括：
+
+- 新增 `crates/yunxi-agent-tui/src/layout.rs`，统一 render 与 host 使用的 TUI 区域几何。
+- 新增 `crates/yunxi-agent-tui/src/transcript_layout.rs`，把 transcript cell 转换为 styled wrapped rows，支持长中文、长英文和多行 continuation gutter。
+- 新增 `crates/yunxi-agent-tui/src/scrollbar.rs`，提供 scrollbar thumb 几何、hit-test 和 drag y 坐标映射。
+- 修改 `crates/yunxi-agent-tui/src/render.rs`，主 transcript 改为先预换行再按 wrapped rows 切片渲染，取消主 transcript 的隐式 `Paragraph.wrap`。
+- 修改 `crates/yunxi-agent-tui/src/viewport.rs`，保留 bottom-offset tail 模型，同时新增 start-row、scroll-fraction 和 clamp API。
+- 修改 `crates/yunxi-agent-tui/src/host.rs`，接入 transcript-scoped wheel、scrollbar left-button down/drag/up、track page click。
+- 修改 `crates/yunxi-agent-tui/src/app.rs`，版本更新到 v1.7.4，footer 提示加入 wheel/drag，并把滚动方法切到 wrapped content height。
+- 修改 `Cargo.toml`、`Cargo.lock`、`crates/yunxi-agent-tui/Cargo.toml`，版本推进到 1.7.4 并显式加入 `unicode-width`。
+- 修改 `README.md` 和 `docs/extraction-status.md`，记录 v1.7.4 TUI wrapped-row scrollbar 修复。
+
+## 统一验证结果
+
+验证时间：2026-07-13 08:22:08 +08:00
+
+本轮源码构建完成后执行统一验证，结果如下：
+
+- `cargo fmt`：通过。
+- `cargo fmt -- --check`：通过。
+- `cargo test`：通过，workspace unit tests、integration tests、doc tests 均无失败。
+- `cargo check --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- `target\release\yunxi.exe --version`：输出 `yunxi 1.7.4`。
+- `target\release\yunxi-agent-cli.exe --version`：输出 `yunxi 1.7.4`。
+- `target\release\yunxi.exe --offline "v1.7.4 offline smoke"`：通过。
+- plain `--no-tui` interactive smoke：通过。
+- JSON 和 JSONL offline smoke：通过。
+- `cargo test -p yunxi-agent-tui`：通过，31 项 TUI 测试覆盖 wrapped row、scrollbar geometry、viewport start/fraction、shared layout metrics、transcript rendering。
+- DeepSeek live stream smoke：`deepseek-chat` 通过，28 行 JSONL，`secret_leak_detected=False`。
+- DeepSeek live non-stream smoke：`deepseek-chat` 通过，19 行 JSONL，`secret_leak_detected=False`。
+- 默认 CLI dependency scan：通过，没有 `codex`、`vendor`、`yunxi-agent-codex` 匹配。
+- owned-source secret scan：通过，排除 `vendor`、`extracted`、`target`、`.git`、`.codegraph` 后未发现密钥形态内容。
+- `git diff --check`：通过，仅有 Windows LF-to-CRLF 提示。
+- `codegraph sync "D:\YunXi Agent"`：通过，同步 12 个变更文件。
+- `codegraph status "D:\YunXi Agent"`：通过，索引已是最新。
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`：通过；安装目录为 `C:\Users\admin\AppData\Local\YunXi Agent\bin`。
+- PATH smoke：`yunxi --version` 和 `yunxi-agent-cli --version` 均输出 `yunxi 1.7.4`，`yunxi --offline "installed path v1.7.4 smoke"` 通过。
+
+安装时检测到旧的已安装 `yunxi.exe` 进程占用目标文件，已结束该 YunXi 旧进程后完成覆盖安装。
+
+GitHub REST API 发布、annotated tag `v1.7.4`、`cargo clean` 和桌面开发日志在最终收尾步骤执行，结果同步记录在桌面开发日志和本轮最终答复中。

@@ -25,7 +25,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v1.7.3".to_string(),
+            version: "v1.7.4".to_string(),
             banner: None,
             transcript: Transcript::default(),
             viewport: TranscriptViewport::default(),
@@ -58,10 +58,10 @@ impl YunxiTuiApp {
     pub(crate) fn footer(&self) -> String {
         match self.viewport.scroll_status() {
             "new output below" => {
-                "new output below | End follow tail | wheel/PageDown history".to_string()
+                "new output below | End follow tail | wheel/drag history".to_string()
             }
-            "history" => "history view | End follow tail | wheel/PageUp/PageDown".to_string(),
-            _ => "Enter submit | Alt+Enter newline | /help commands | wheel scroll | Ctrl+C exit"
+            "history" => "history view | End follow tail | wheel/drag PgUp/PgDown".to_string(),
+            _ => "Enter submit | Alt+Enter newline | /help commands | wheel/drag scroll | Ctrl+C exit"
                 .to_string(),
         }
     }
@@ -155,13 +155,9 @@ impl YunxiTuiApp {
         self.viewport.reset();
     }
 
-    pub(crate) fn transcript_content_height(&self) -> usize {
-        self.transcript.render_line_count()
-    }
-
-    pub(crate) fn scroll_up(&mut self, lines: usize, visible_height: usize) {
+    pub(crate) fn scroll_up(&mut self, lines: usize, content_height: usize, visible_height: usize) {
         self.viewport
-            .scroll_up(lines, self.transcript_content_height(), visible_height);
+            .scroll_up(lines, content_height, visible_height);
     }
 
     pub(crate) fn scroll_down(&mut self, lines: usize, visible_height: usize) {
@@ -169,22 +165,35 @@ impl YunxiTuiApp {
             .scroll_down(lines.max(1).min(visible_height.max(1)));
     }
 
-    pub(crate) fn page_up(&mut self, visible_height: usize) {
-        self.viewport
-            .page_up(self.transcript_content_height(), visible_height);
+    pub(crate) fn page_up(&mut self, content_height: usize, visible_height: usize) {
+        self.viewport.page_up(content_height, visible_height);
     }
 
     pub(crate) fn page_down(&mut self, visible_height: usize) {
         self.viewport.page_down(visible_height);
     }
 
-    pub(crate) fn jump_top(&mut self, visible_height: usize) {
-        self.viewport
-            .jump_top(self.transcript_content_height(), visible_height);
+    pub(crate) fn jump_top(&mut self, content_height: usize, visible_height: usize) {
+        self.viewport.jump_top(content_height, visible_height);
     }
 
     pub(crate) fn follow_tail(&mut self) {
         self.viewport.follow_tail();
+    }
+
+    pub(crate) fn set_scroll_fraction(
+        &mut self,
+        numerator: usize,
+        denominator: usize,
+        content_height: usize,
+        visible_height: usize,
+    ) {
+        self.viewport
+            .set_scroll_fraction(numerator, denominator, content_height, visible_height);
+    }
+
+    pub(crate) fn clamp_viewport(&mut self, content_height: usize, visible_height: usize) {
+        self.viewport.clamp(content_height, visible_height);
     }
 
     fn on_transcript_changed(&mut self) {

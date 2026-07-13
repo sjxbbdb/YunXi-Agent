@@ -39,7 +39,7 @@ exclude = ["external/codex-rs", "vendor/codex-rs", "crates/yunxi-agent-codex"]
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "1.7.3"
+version = "1.7.4"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -58,6 +58,7 @@ serde_json = "1"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+unicode-width = "0.2"
 
 [profile.dev]
 debug = 1

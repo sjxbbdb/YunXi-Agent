@@ -8,4 +8,5 @@ version.workspace = true
 anyhow.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
+unicode-width.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }

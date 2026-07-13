@@ -4,13 +4,16 @@ use crate::bottom_pane::{
     UserInputRequestView, UserInputResponse,
 };
 use crate::frame::FrameScheduler;
+use crate::layout::{compute_layout, rect_contains};
 use crate::render::render_tui_frame;
+use crate::scrollbar::{ScrollbarHit, TranscriptScrollbarGeometry};
+use crate::transcript_layout::build_wrapped_transcript;
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
     EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-    MouseEventKind, poll, read,
+    MouseButton, MouseEventKind, poll, read,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -18,7 +21,7 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::Size;
+use ratatui::layout::{Rect, Size};
 use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
 
@@ -26,6 +29,7 @@ pub struct YunxiTui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     app: YunxiTuiApp,
     frame: FrameScheduler,
+    scroll_drag: Option<TranscriptScrollDrag>,
     _guard: TerminalGuard,
 }
 
@@ -39,6 +43,7 @@ impl YunxiTui {
             terminal,
             app: YunxiTuiApp::default(),
             frame: FrameScheduler::default(),
+            scroll_drag: None,
             _guard: guard,
         })
     }
@@ -229,30 +234,51 @@ impl YunxiTui {
     }
 
     fn handle_navigation_event(&mut self, event: &Event) -> Result<bool> {
-        let visible_height = self.transcript_visible_height()?;
+        let metrics = self.transcript_metrics()?;
         match event {
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    self.app.scroll_up(3, visible_height);
-                    Ok(true)
+                    if rect_contains(metrics.layout.transcript, mouse.column, mouse.row) {
+                        self.app
+                            .scroll_up(3, metrics.content_height, metrics.visible_height);
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
                 }
                 MouseEventKind::ScrollDown => {
-                    self.app.scroll_down(3, visible_height);
-                    Ok(true)
+                    if rect_contains(metrics.layout.transcript, mouse.column, mouse.row) {
+                        self.app.scroll_down(3, metrics.visible_height);
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    self.handle_scrollbar_down(&metrics, mouse.column, mouse.row)
+                }
+                MouseEventKind::Drag(MouseButton::Left) => {
+                    self.handle_scrollbar_drag(&metrics, mouse.row)
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    let was_dragging = self.scroll_drag.take().is_some();
+                    Ok(was_dragging)
                 }
                 _ => Ok(false),
             },
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::PageUp => {
-                    self.app.page_up(visible_height);
+                    self.app
+                        .page_up(metrics.content_height, metrics.visible_height);
                     Ok(true)
                 }
                 KeyCode::PageDown => {
-                    self.app.page_down(visible_height);
+                    self.app.page_down(metrics.visible_height);
                     Ok(true)
                 }
                 KeyCode::Home => {
-                    self.app.jump_top(visible_height);
+                    self.app
+                        .jump_top(metrics.content_height, metrics.visible_height);
                     Ok(true)
                 }
                 KeyCode::End => {
@@ -261,24 +287,113 @@ impl YunxiTui {
                 }
                 _ => Ok(false),
             },
-            Event::Resize(_, _) => Ok(true),
+            Event::Resize(_, _) => {
+                self.scroll_drag = None;
+                self.app
+                    .clamp_viewport(metrics.content_height, metrics.visible_height);
+                Ok(true)
+            }
             _ => Ok(false),
         }
     }
 
-    fn transcript_visible_height(&self) -> Result<usize> {
+    fn handle_scrollbar_down(
+        &mut self,
+        metrics: &TranscriptMetrics,
+        x: u16,
+        y: u16,
+    ) -> Result<bool> {
+        let Some(scrollbar) = metrics.scrollbar else {
+            return Ok(false);
+        };
+        match scrollbar.hit_test(x, y) {
+            ScrollbarHit::Thumb { grab_offset } => {
+                self.scroll_drag = Some(TranscriptScrollDrag { grab_offset });
+                Ok(true)
+            }
+            ScrollbarHit::PageUp => {
+                self.app
+                    .page_up(metrics.content_height, metrics.visible_height);
+                Ok(true)
+            }
+            ScrollbarHit::PageDown => {
+                self.app.page_down(metrics.visible_height);
+                Ok(true)
+            }
+            ScrollbarHit::Outside => Ok(false),
+        }
+    }
+
+    fn handle_scrollbar_drag(&mut self, metrics: &TranscriptMetrics, y: u16) -> Result<bool> {
+        let Some(drag) = self.scroll_drag else {
+            return Ok(false);
+        };
+        let Some(scrollbar) = metrics.scrollbar else {
+            self.scroll_drag = None;
+            return Ok(false);
+        };
+        let start = scrollbar.start_for_drag_y(y, drag.grab_offset);
+        let max_start = crate::viewport::max_start(metrics.content_height, metrics.visible_height);
+        self.app.set_scroll_fraction(
+            start,
+            max_start,
+            metrics.content_height,
+            metrics.visible_height,
+        );
+        Ok(true)
+    }
+
+    fn transcript_metrics(&self) -> Result<TranscriptMetrics> {
         let size = self.terminal.size()?;
-        Ok(transcript_visible_height(
+        Ok(transcript_metrics_for_size(
             size,
             self.app.bottom_pane().desired_height(),
+            &self.app,
         ))
     }
 }
 
-fn transcript_visible_height(size: Size, bottom_pane_height: u16) -> usize {
-    let bottom_height = bottom_pane_height.min(size.height.saturating_sub(4)).max(3);
-    let transcript_height = size.height.saturating_sub(3).saturating_sub(bottom_height);
-    transcript_height.saturating_sub(2).max(1) as usize
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TranscriptScrollDrag {
+    grab_offset: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TranscriptMetrics {
+    layout: crate::layout::TuiLayout,
+    visible_height: usize,
+    content_height: usize,
+    start: usize,
+    scrollbar: Option<TranscriptScrollbarGeometry>,
+}
+
+fn transcript_metrics_for_size(
+    size: Size,
+    bottom_pane_height: u16,
+    app: &YunxiTuiApp,
+) -> TranscriptMetrics {
+    let layout = compute_layout(Rect::new(0, 0, size.width, size.height), bottom_pane_height);
+    let visible_height = layout.transcript_inner.height.max(1) as usize;
+    let wrapped = build_wrapped_transcript(
+        app.transcript().cells(),
+        layout.transcript_inner.width as usize,
+    );
+    let content_height = wrapped.rows.len();
+    let start = app.viewport().view_start(content_height, visible_height);
+    let scrollbar = TranscriptScrollbarGeometry::new(
+        layout.transcript_scrollbar,
+        content_height,
+        visible_height,
+        start,
+    );
+
+    TranscriptMetrics {
+        layout,
+        visible_height,
+        content_height,
+        start,
+        scrollbar,
+    }
 }
 
 fn is_ctrl_d(key: KeyEvent) -> bool {
@@ -324,25 +439,48 @@ mod tests {
 
     #[test]
     fn transcript_visible_height_matches_tui_layout() {
+        let app = YunxiTuiApp::default();
         assert_eq!(
-            transcript_visible_height(
+            transcript_metrics_for_size(
                 Size {
                     width: 100,
                     height: 18,
                 },
                 3,
-            ),
+                &app,
+            )
+            .visible_height,
             10
         );
         assert_eq!(
-            transcript_visible_height(
+            transcript_metrics_for_size(
                 Size {
                     width: 100,
                     height: 6,
                 },
                 3,
-            ),
+                &app,
+            )
+            .visible_height,
             1
         );
+    }
+
+    #[test]
+    fn transcript_metrics_uses_wrapped_content_height() {
+        let mut app = YunxiTuiApp::default();
+        app.push_assistant("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz");
+
+        let metrics = transcript_metrics_for_size(
+            Size {
+                width: 24,
+                height: 18,
+            },
+            3,
+            &app,
+        );
+
+        assert!(metrics.content_height > app.transcript().render_line_count());
+        assert!(metrics.scrollbar.is_none() || metrics.content_height > metrics.visible_height);
     }
 }

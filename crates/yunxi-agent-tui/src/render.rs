@@ -1,8 +1,9 @@
 use crate::app::YunxiTuiApp;
 use crate::bottom_pane::BottomPaneMode;
-use crate::chat::HistoryCell;
+use crate::layout::compute_layout;
+use crate::transcript_layout::build_wrapped_transcript;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
+use ratatui::layout::{Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -11,22 +12,17 @@ use ratatui::widgets::{
 
 pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     let area = frame.area();
-    let bottom_height = app
-        .bottom_pane()
-        .desired_height()
-        .min(area.height.saturating_sub(4));
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(3),
-            Constraint::Length(bottom_height.max(3)),
-        ])
-        .split(area);
+    let layout = compute_layout(area, app.bottom_pane().desired_height());
 
-    render_header(frame, app, chunks[0]);
-    render_transcript(frame, app, chunks[1]);
-    render_bottom_pane(frame, app, chunks[2]);
+    render_header(frame, app, layout.header);
+    render_transcript(
+        frame,
+        app,
+        layout.transcript,
+        layout.transcript_inner,
+        layout.transcript_scrollbar,
+    );
+    render_bottom_pane(frame, app, layout.bottom_pane);
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
@@ -46,32 +42,30 @@ fn render_header(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
     frame.render_widget(header, area);
 }
 
-fn render_transcript(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
-    let lines = transcript_lines(app);
-    let visible = area.height.saturating_sub(2) as usize;
-    let start = app.viewport().view_start(lines.len(), visible);
-    let end = start.saturating_add(visible.max(1)).min(lines.len());
-    let title = transcript_title(app, start, end, lines.len(), visible);
-    let transcript = Paragraph::new(lines[start..end].to_vec())
-        .block(Block::default().title(title).borders(Borders::ALL))
-        .wrap(Wrap { trim: false });
+fn render_transcript(
+    frame: &mut Frame<'_>,
+    app: &YunxiTuiApp,
+    area: Rect,
+    inner: Rect,
+    scrollbar_area: Rect,
+) {
+    let wrapped = build_wrapped_transcript(app.transcript().cells(), inner.width as usize);
+    let visible = inner.height.max(1) as usize;
+    let start = app.viewport().view_start(wrapped.rows.len(), visible);
+    let end = start.saturating_add(visible).min(wrapped.rows.len());
+    let title = transcript_title(app, start, end, wrapped.rows.len(), visible);
+    let transcript = Paragraph::new(wrapped.rows[start..end].to_vec())
+        .block(Block::default().title(title).borders(Borders::ALL));
     frame.render_widget(transcript, area);
 
-    if lines.len() > visible.max(1) {
+    if wrapped.rows.len() > visible {
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("^"))
             .end_symbol(Some("v"));
-        let mut scrollbar_state = ScrollbarState::new(lines.len())
+        let mut scrollbar_state = ScrollbarState::new(wrapped.rows.len())
             .position(start)
-            .viewport_content_length(visible.max(1));
-        frame.render_stateful_widget(
-            scrollbar,
-            area.inner(Margin {
-                vertical: 1,
-                horizontal: 0,
-            }),
-            &mut scrollbar_state,
-        );
+            .viewport_content_length(visible);
+        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
     }
 }
 
@@ -208,78 +202,6 @@ fn option_line(label: &str, selected: bool, shortcut: &str) -> Line<'static> {
     ])
 }
 
-fn push_cell_lines(lines: &mut Vec<Line<'static>>, cell: &HistoryCell) {
-    match cell {
-        HistoryCell::User(content) => push_labeled(lines, "user", Color::Green, content),
-        HistoryCell::Assistant { content, active } => {
-            let label = if *active { "assistant*" } else { "assistant" };
-            push_labeled(lines, label, Color::LightGreen, content);
-        }
-        HistoryCell::Reasoning { content, active } => {
-            let label = if *active { "thinking*" } else { "thinking" };
-            push_labeled(lines, label, Color::Blue, content);
-        }
-        HistoryCell::Tool(entry) => {
-            push_labeled(lines, "tool", Color::Magenta, &entry.display_text())
-        }
-        HistoryCell::Event { kind, message } => {
-            push_labeled(lines, kind, label_color(kind), message)
-        }
-        HistoryCell::Debug { id, label, message } => {
-            push_labeled(
-                lines,
-                "debug",
-                Color::DarkGray,
-                &format!("#{id} {label}: {message}"),
-            );
-        }
-        HistoryCell::Warning(message) => push_labeled(lines, "warning", Color::Yellow, message),
-        HistoryCell::Error(message) => push_labeled(lines, "error", Color::Red, message),
-    }
-}
-
-fn push_labeled(lines: &mut Vec<Line<'static>>, label: &str, color: Color, content: &str) {
-    let mut iter = content.lines();
-    let first = iter.next().unwrap_or("");
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("[{label}] "),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(first.to_string()),
-    ]));
-    for rest in iter {
-        lines.push(Line::from(vec![
-            Span::styled("  | ".to_string(), Style::default().fg(Color::DarkGray)),
-            Span::raw(rest.to_string()),
-        ]));
-    }
-}
-
-fn label_color(label: &str) -> Color {
-    match label {
-        "shell" | "tool" | "mcp" => Color::Magenta,
-        "approval" | "escalation" => Color::Yellow,
-        "context" | "session" | "usage" | "debug" | "details" => Color::Gray,
-        "cancelled" | "provider" => Color::Red,
-        _ => Color::White,
-    }
-}
-
-fn transcript_lines(app: &YunxiTuiApp) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    for cell in app.transcript().cells() {
-        push_cell_lines(&mut lines, cell);
-    }
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "Ready.",
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-    lines
-}
-
 fn transcript_title(
     app: &YunxiTuiApp,
     start: usize,
@@ -351,7 +273,7 @@ mod tests {
         for idx in 0..30 {
             app.push_notice("event", &format!("line-{idx:02}"));
         }
-        app.jump_top(8);
+        app.jump_top(30, 8);
 
         let backend = TestBackend::new(100, 18);
         let mut terminal = Terminal::new(backend).expect("terminal");
@@ -372,7 +294,7 @@ mod tests {
         for idx in 0..30 {
             app.push_notice("event", &format!("line-{idx:02}"));
         }
-        app.scroll_up(8, 10);
+        app.scroll_up(8, 30, 10);
         app.push_notice("event", "fresh-line");
 
         let backend = TestBackend::new(100, 18);
@@ -384,5 +306,24 @@ mod tests {
 
         assert!(rendered.contains("new output below"));
         assert!(!rendered.contains("fresh-line"));
+    }
+
+    #[test]
+    fn transcript_scroll_uses_wrapped_rows_for_title_and_tail() {
+        let mut app = YunxiTuiApp::default();
+        app.push_assistant(
+            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+        );
+
+        let backend = TestBackend::new(28, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| render_tui_frame(frame, &app))
+            .expect("draw");
+        let rendered = format!("{:?}", terminal.backend().buffer());
+
+        assert!(rendered.contains("Transcript"));
+        assert!(rendered.contains("tail"));
+        assert!(rendered.contains("/"));
     }
 }

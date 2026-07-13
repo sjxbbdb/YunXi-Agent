@@ -1,6 +1,6 @@
-# YunXi Agent v1.7.3
+# YunXi Agent v1.7.4
 
-YunXi Agent v1.7.3 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.7.4 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -18,7 +18,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.7.3 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.7.4 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -32,13 +32,17 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Starts an interactive terminal session when `yunxi` is run without a prompt
 - Uses a Codex-style TUI terminal host by default when stdin/stdout are both
   real terminals, with mouse wheel/PageUp/PageDown/Home/End transcript
-  navigation and `--no-tui` available for the stable plain REPL
+  navigation, draggable transcript scrollbar, and `--no-tui` available for the
+  stable plain REPL
 - Uses a TUI composer for terminal input while keeping piped stdin and scripted
   sessions on the plain line reader
 - Renders approval and `request_user_input` inside the TUI bottom pane instead
   of leaking line prompts into the alternate screen
 - Keeps the TUI composer fixed while the transcript can scroll through history
   without losing new streamed output below
+- Scrolls the TUI transcript by pre-wrapped screen rows, so long Chinese,
+  English, tool, and reasoning output keeps the title, viewport, and scrollbar
+  in sync
 - Throttles TUI streaming redraws to keep long reasoning/model output readable
 - Merges reasoning deltas into transcript cells instead of rendering one line per token
 - Filters the TUI transcript so raw tool protocol JSON, stdout token noise,
@@ -93,7 +97,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.7.3 CLI into a user-local bin directory:
+Build and install the v1.7.4 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -119,9 +123,9 @@ Run `yunxi` without a prompt to enter interactive mode:
 yunxi
 ```
 
-When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.3
-TUI host, scrollable transcript, composer, and approval overlay. Use `--no-tui`
-to force the stable plain REPL:
+When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.4
+TUI host, wrapped-row transcript viewport, draggable scrollbar, composer, and
+approval overlay. Use `--no-tui` to force the stable plain REPL:
 
 ```powershell
 yunxi --no-tui
@@ -297,6 +301,11 @@ TUI transcript by hiding raw tool protocol JSON, stdout token noise, context
 and session bookkeeping, and long skill/tool outputs from the normal view.
 Tool execution is rendered as compact timeline cells, while `/debug events
 on|off` and `/details [id]` retain diagnostic access to redacted raw details.
+
+v1.7.4 adds immutable tag `v1.7.4` without moving earlier tags. It corrects the
+TUI transcript viewport to scroll by wrapped screen rows instead of logical
+lines, shares one layout geometry between render and mouse handling, and adds
+mouse-drag scrollbar support while preserving wheel and keyboard navigation.
 
 ## Backend Capability Matrix
 

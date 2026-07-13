@@ -78,6 +78,7 @@ impl Transcript {
         self.push_notice("details", message);
     }
 
+    #[cfg(test)]
     pub(crate) fn render_line_count(&self) -> usize {
         self.cells
             .iter()
@@ -233,6 +234,7 @@ impl Transcript {
     }
 }
 
+#[cfg(test)]
 fn history_cell_line_count(cell: &HistoryCell) -> usize {
     let content = match cell {
         HistoryCell::User(content)

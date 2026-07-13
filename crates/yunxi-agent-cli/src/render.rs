@@ -111,7 +111,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.7.7 interactive CLI");
+    println!("YunXi Agent v1.7.8 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -418,9 +418,12 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
         | AgentEvent::MultiAgentEvent { .. }
         | AgentEvent::Started { .. } => {}
         AgentEvent::SandboxAttempt {
+            schema_version,
             platform,
             status,
             backend,
+            backend_id,
+            backend_label,
             os_isolation,
             enforcement,
             enforcement_level,
@@ -432,7 +435,7 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
             ..
         } => {
             println!(
-                "[sandbox] platform={platform} status={status} backend={backend} os_isolation={os_isolation} enforcement={enforcement} enforcement_level={enforcement_level} runner={runner} unsupported_reason={} cwd={cwd} command={} message={} (policy-only unless enforcement_level=os_restricted)",
+                "[sandbox] schema_version={schema_version} platform={platform} status={status} backend_id={backend_id} backend_label={backend_label} backend={backend} os_isolation={os_isolation} enforcement={enforcement} enforcement_level={enforcement_level} runner={runner} unsupported_reason={} cwd={cwd} command={} message={} (policy guard/process lifecycle unless enforcement=os_restricted)",
                 unsupported_reason.as_deref().unwrap_or("none"),
                 command.as_deref().unwrap_or("none"),
                 message.as_deref().unwrap_or("none")

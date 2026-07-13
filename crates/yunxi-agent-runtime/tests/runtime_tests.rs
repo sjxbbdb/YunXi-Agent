@@ -1752,8 +1752,20 @@ async fn stage_4m_real_parity_fixture_runs_real_runtime_chain() {
         event,
         AgentEvent::SandboxAttempt {
             id: Some(id),
+            schema_version: 1,
+            backend_id,
+            backend_label,
+            os_isolation: false,
+            enforcement,
+            enforcement_level,
+            runner,
+            unsupported_reason: Some(_),
             ..
         } if id == "stage-4m-shell-1"
+            && !backend_id.is_empty()
+            && !backend_label.is_empty()
+            && enforcement == enforcement_level
+            && runner == backend_id
     )));
     assert!(result.events.iter().any(|event| matches!(
         event,

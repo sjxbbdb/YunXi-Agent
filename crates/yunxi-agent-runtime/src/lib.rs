@@ -3189,24 +3189,32 @@ where
     for event in &response.runtime_events {
         match event {
             ToolRuntimeEvent::SandboxDecision {
+                schema_version,
                 allowed,
                 backend,
+                backend_id,
+                backend_label,
+                enforcement,
+                enforcement_level,
                 network,
                 escalation_required,
                 denial_reason,
             } => {
                 sink.emit(AgentEvent::Reasoning {
                     content: format!(
-                        "Sandbox decision: allowed={allowed}, backend={backend}, network={network}, escalation_required={escalation_required}, denial_reason={}",
+                        "Sandbox decision: schema_version={schema_version}, allowed={allowed}, backend_id={backend_id}, backend_label={backend_label}, backend={backend}, enforcement={enforcement}, enforcement_level={enforcement_level}, network={network}, escalation_required={escalation_required}, denial_reason={}",
                         denial_reason.as_deref().unwrap_or("none")
                     ),
                 })
                 .await?;
             }
             ToolRuntimeEvent::SandboxRunner {
+                schema_version,
                 platform,
                 status,
                 backend,
+                backend_id,
+                backend_label,
                 os_isolation,
                 enforcement,
                 enforcement_level,
@@ -3218,9 +3226,12 @@ where
             } => {
                 sink.emit(AgentEvent::SandboxAttempt {
                     id: response.id.clone(),
+                    schema_version: *schema_version,
                     platform: platform.clone(),
                     status: status.clone(),
                     backend: backend.clone(),
+                    backend_id: backend_id.clone(),
+                    backend_label: backend_label.clone(),
                     os_isolation: *os_isolation,
                     enforcement: enforcement.clone(),
                     enforcement_level: enforcement_level.clone(),
@@ -3233,7 +3244,7 @@ where
                 .await?;
                 sink.emit(AgentEvent::Reasoning {
                     content: format!(
-                        "Sandbox runner: platform={platform}, status={status}, backend={backend}, os_isolation={os_isolation}, enforcement={enforcement}, enforcement_level={enforcement_level}, runner={runner}, unsupported_reason={}, cwd={cwd}, command={}, message={}",
+                        "Sandbox runner: schema_version={schema_version}, platform={platform}, status={status}, backend_id={backend_id}, backend_label={backend_label}, backend={backend}, os_isolation={os_isolation}, enforcement={enforcement}, enforcement_level={enforcement_level}, runner={runner}, unsupported_reason={}, cwd={cwd}, command={}, message={}",
                         unsupported_reason.as_deref().unwrap_or("none"),
                         command.as_deref().unwrap_or("none"),
                         message.as_deref().unwrap_or("none")

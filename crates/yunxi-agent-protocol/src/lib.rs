@@ -425,9 +425,15 @@ pub enum RuntimeEvent {
         thread_id: ThreadId,
         turn_id: TurnId,
         call_id: Option<String>,
+        #[serde(default)]
+        schema_version: u32,
         platform: String,
         status: String,
         backend: String,
+        #[serde(default)]
+        backend_id: String,
+        #[serde(default)]
+        backend_label: String,
         #[serde(default)]
         os_isolation: bool,
         #[serde(default)]
@@ -813,9 +819,12 @@ mod tests {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             call_id: Some("call-1".to_string()),
+            schema_version: 1,
             platform: "windows".to_string(),
             status: "ready".to_string(),
             backend: "direct_process".to_string(),
+            backend_id: "direct_process".to_string(),
+            backend_label: "no policy guard".to_string(),
             os_isolation: false,
             enforcement: "policy_only".to_string(),
             enforcement_level: "policy_only".to_string(),

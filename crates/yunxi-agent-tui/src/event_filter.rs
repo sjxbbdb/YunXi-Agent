@@ -221,9 +221,12 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
             ),
         ),
         AgentEvent::SandboxAttempt {
+            schema_version,
             platform,
             status,
             backend,
+            backend_id,
+            backend_label,
             os_isolation,
             enforcement,
             enforcement_level,
@@ -235,7 +238,7 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
             ..
         } => {
             let detail = format!(
-                "platform={platform} status={status} backend={backend} os_isolation={os_isolation} enforcement={enforcement} enforcement_level={enforcement_level} runner={runner} unsupported_reason={} cwd={cwd} command={} message={}",
+                "schema_version={schema_version} platform={platform} status={status} backend_id={backend_id} backend_label={backend_label} backend={backend} os_isolation={os_isolation} enforcement={enforcement} enforcement_level={enforcement_level} runner={runner} unsupported_reason={} cwd={cwd} command={} message={}",
                 unsupported_reason.as_deref().unwrap_or("none"),
                 command.as_deref().unwrap_or("none"),
                 message.as_deref().unwrap_or("none")

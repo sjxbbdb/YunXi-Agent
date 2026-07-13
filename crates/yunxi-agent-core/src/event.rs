@@ -30,9 +30,15 @@ pub enum AgentEvent {
     },
     SandboxAttempt {
         id: Option<String>,
+        #[serde(default)]
+        schema_version: u32,
         platform: String,
         status: String,
         backend: String,
+        #[serde(default)]
+        backend_id: String,
+        #[serde(default)]
+        backend_label: String,
         #[serde(default)]
         os_isolation: bool,
         #[serde(default)]

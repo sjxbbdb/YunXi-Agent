@@ -177,7 +177,10 @@ fn stage_4k_jsonl_fixtures_emit_new_core_events() {
             "run stage 4k child provider fixture",
             "\"type\":\"child_agent\"",
         ),
-        ("run stage 4k sandbox fixture", "Sandbox runner: platform="),
+        (
+            "run stage 4k sandbox fixture",
+            "Sandbox runner: schema_version=1",
+        ),
         ("run stage 4k mcp reuse fixture", "\"type\":\"mcp_session\""),
         (
             "run stage 4k child scoped stream fixture",
@@ -306,7 +309,7 @@ fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
     let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
     let mut deep_parity_events = 0usize;
     let mut reused_approval = false;
-    let mut saw_sandbox_enforcement_level = false;
+    let mut saw_sandbox_schema = false;
     let mut started = BTreeSet::new();
     let mut completed = BTreeSet::new();
     for line in output.lines() {
@@ -336,11 +339,45 @@ fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
             Some("sandbox_attempt") => {
                 assert_eq!(
                     value
+                        .get("schema_version")
+                        .and_then(serde_json::Value::as_u64),
+                    Some(1)
+                );
+                assert!(
+                    value
+                        .get("backend_id")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|backend_id| !backend_id.is_empty())
+                );
+                assert!(
+                    value
+                        .get("backend_label")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|backend_label| !backend_label.is_empty())
+                );
+                assert_eq!(
+                    value
                         .get("os_isolation")
                         .and_then(serde_json::Value::as_bool),
                     Some(false)
                 );
-                saw_sandbox_enforcement_level |= value
+                let enforcement = value
+                    .get("enforcement")
+                    .and_then(serde_json::Value::as_str)
+                    .expect("sandbox enforcement");
+                assert_eq!(
+                    value
+                        .get("enforcement_level")
+                        .and_then(serde_json::Value::as_str),
+                    Some(enforcement)
+                );
+                assert!(
+                    value
+                        .get("runner")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|runner| !runner.is_empty())
+                );
+                saw_sandbox_schema |= value
                     .get("enforcement_level")
                     .and_then(serde_json::Value::as_str)
                     .is_some_and(|level| {
@@ -352,7 +389,7 @@ fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
     }
     assert_eq!(deep_parity_events, 12);
     assert!(reused_approval);
-    assert!(saw_sandbox_enforcement_level);
+    assert!(saw_sandbox_schema);
     for id in &started {
         assert!(completed.contains(id), "missing tool_completed for {id}");
     }

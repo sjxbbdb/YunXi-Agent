@@ -251,14 +251,22 @@ async fn shell_tool_runtime_executes_shell_command() {
     assert!(response.runtime_events.iter().any(|event| matches!(
         event,
         ToolRuntimeEvent::SandboxRunner {
+            schema_version,
             status,
+            backend_id,
+            backend_label,
             os_isolation,
+            enforcement,
             enforcement_level,
             command: Some(command),
             ..
-        } if status == "ready"
+        } if *schema_version == 1
+            && status == "ready"
+            && backend_id == "direct_process_policy_bypass"
+            && backend_label == "policy bypass: danger-full-access"
             && command.contains("yunxi-shell")
             && !*os_isolation
+            && enforcement == "policy_bypass"
             && enforcement_level == "policy_bypass"
     )));
 }
@@ -656,6 +664,100 @@ async fn request_user_input_declines_without_interactive_host() {
             .expect("error")
             .contains("interactive host")
     );
+}
+
+#[tokio::test]
+async fn all_tool_entrypoints_emit_policy_schema_and_decline_when_approval_is_required() {
+    let runtime = ShellToolRuntime;
+    let workspace = TempDir::new().expect("workspace");
+    let config = AgentConfig::new(workspace.path())
+        .with_approval_mode(ApprovalMode::OnRequest)
+        .with_sandbox_mode(SandboxMode::WorkspaceWrite);
+    let policy = ToolPolicy::from_config(&config);
+    let requests = [
+        ToolRequestKind::Shell {
+            command: "echo guarded".to_string(),
+        },
+        ToolRequestKind::Patch {
+            patch: r#"{"op":"write","path":"guarded.txt","content":"no"}"#.to_string(),
+        },
+        ToolRequestKind::Mcp {
+            server: "local".to_string(),
+            tool: "echo".to_string(),
+            arguments_json: None,
+        },
+        ToolRequestKind::Skill {
+            name: "writer".to_string(),
+            arguments_json: None,
+        },
+        ToolRequestKind::MultiAgent {
+            action: "spawn_run".to_string(),
+            arguments_json: Some(r#"{"task":"guarded child"}"#.to_string()),
+        },
+        ToolRequestKind::ToolSearch {
+            query: "guarded".to_string(),
+        },
+        ToolRequestKind::RequestUserInput {
+            prompt: "guarded?".to_string(),
+        },
+        ToolRequestKind::ViewImage {
+            path: "guarded.png".to_string(),
+        },
+    ];
+
+    for kind in requests {
+        let tool_name = kind.tool_name();
+        let response = runtime
+            .execute(ToolRequest {
+                id: Some(format!("guarded-{tool_name}")),
+                cwd: workspace.path().to_path_buf(),
+                kind,
+                policy: policy.clone(),
+            })
+            .await
+            .expect("guarded response");
+
+        assert_eq!(response.status, ToolStatus::Declined, "{tool_name}");
+        assert_eq!(
+            response.error.as_deref(),
+            Some("tool execution requires approval")
+        );
+        assert!(
+            response.runtime_events.iter().any(|event| matches!(
+                event,
+                ToolRuntimeEvent::SandboxDecision {
+                    schema_version: 1,
+                    backend_id,
+                    backend_label,
+                    enforcement,
+                    enforcement_level,
+                    ..
+                } if !backend_id.is_empty()
+                    && !backend_label.is_empty()
+                    && enforcement == enforcement_level
+            )),
+            "{tool_name} missing sandbox decision schema"
+        );
+        assert!(
+            response.runtime_events.iter().any(|event| matches!(
+                event,
+                ToolRuntimeEvent::SandboxRunner {
+                    schema_version: 1,
+                    backend_id,
+                    backend_label,
+                    os_isolation: false,
+                    enforcement,
+                    enforcement_level,
+                    ..
+                } if !backend_id.is_empty()
+                    && !backend_label.is_empty()
+                    && enforcement == enforcement_level
+            )),
+            "{tool_name} missing sandbox runner schema"
+        );
+    }
+
+    assert!(!workspace.path().join("guarded.txt").exists());
 }
 
 #[tokio::test]

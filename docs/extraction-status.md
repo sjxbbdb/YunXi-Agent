@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.7.7 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.7.8 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -18,6 +18,56 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.7.8 Sandbox Schema And Policy Hardening Construction
+
+YunXi Agent v1.7.8 keeps the 1.7 series focused on terminal Agent stability and
+sandbox honesty. It does not introduce 1.8 new-module work.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.7.8`.
+- `sandbox_attempt` events now carry `schema_version`, `backend_id`, and
+  `backend_label` in addition to the compatibility `backend` string.
+- `enforcement` is the canonical machine field. `enforcement_level` remains as
+  a compatibility alias and is kept equal to `enforcement`.
+- Windows workspace-write/read-only attempts continue to report
+  `backend_id=windows_process_lifecycle`, `enforcement=process_lifecycle`,
+  `runner=windows_process_lifecycle`, `os_isolation=false`, and a non-empty
+  `unsupported_reason`.
+- `danger-full-access` attempts are explicitly visible as
+  `backend_id=direct_process_policy_bypass`, `enforcement=policy_bypass`, and
+  `os_isolation=false`.
+- Tool runtime policy diagnostics now use the same adjusted `ExecutionPolicy`
+  for decision and runner diagnostic generation, including workspace root.
+- Acceptance tests cover schema fields, disabled-network command detection,
+  danger-full-access bypass visibility, and policy-gated behavior across shell,
+  patch, MCP, skill, multi-agent, tool search, view image, and user-input tool
+  entries.
+- `docs/protocol/sandbox-events.md` records the v1 schema and current Windows
+  boundary without claiming OS-enforced filesystem isolation.
+
+Verification for this slice was performed only after construction, following
+the project hard constraint to avoid repeated mid-construction test loops.
+
+Verified in this slice:
+
+- `cargo fmt -- --check`: pass
+- targeted package tests for sandbox/tools/exec/runtime/tui/cli: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- release binary version smoke: `yunxi 1.7.8`
+- offline plain/JSON/JSONL smoke: pass
+- fixture JSONL schema smoke: pass; 7 `sandbox_attempt` events carried
+  `schema_version=1`, `backend_id`, `backend_label`, canonical `enforcement`,
+  matching `enforcement_level`, `runner`, and `os_isolation=false`
+- DeepSeek live JSONL and JSON smoke: pass; model returned `OK`, and output did
+  not leak the local credential
+- dependency and owned-source secret scans: pass
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `codegraph sync` and `codegraph status`: pass
+- install helper and PATH smoke: pass
 
 ## Stage 4A Runtime Boundary
 

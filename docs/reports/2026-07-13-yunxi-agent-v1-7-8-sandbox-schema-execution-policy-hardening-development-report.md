@@ -499,3 +499,70 @@ YunXi Agent v1.7.8 的目标是关闭 v1.7.7 审核报告指出的剩余 hardeni
 - v1.7.7 已关闭的 TUI/CLI 回归不退化。
 - 默认运行路径继续保持 YunXi 自主化，不依赖上游 Codex CLI 源码。
 - 后续如果进入 1.8 新模块或真实 OS sandbox 专项，可以在 v1.7.8 稳定 schema 和 policy invariant 上继续推进。
+
+## v1.7.8 构建与统一验证记录
+
+构建完成时间：2026-07-13
+
+本轮严格先完成源码构建，再集中验证。构建内容包括：
+
+- Workspace 与所有 YunXi workspace package 版本推进到 `1.7.8`。
+- `SandboxRunnerDiagnostic` 增加 `schema_version`、`backend_id`、
+  `backend_label`，并保留兼容字段 `backend`。
+- `ToolRuntimeEvent::SandboxDecision` 与 `ToolRuntimeEvent::SandboxRunner`
+  均输出 v1 sandbox schema 机器字段。
+- `AgentEvent::SandboxAttempt` 与 `RuntimeEvent::SandboxAttempt` 贯通
+  `schema_version`、`backend_id`、`backend_label`。
+- `enforcement` 明确为 canonical machine field，`enforcement_level` 作为
+  compatibility alias 保持等值。
+- `danger-full-access` 稳定报告
+  `backend_id=direct_process_policy_bypass`、`enforcement=policy_bypass`、
+  `os_isolation=false`。
+- `ToolPolicy::execution_policy_for()` 统一 policy decision 与 runner
+  diagnostic 的 workspace root，避免二者使用不同 policy。
+- disabled network 风险识别扩展到显式 URL、`Invoke-WebRequest`、`irm`、
+  `wget`、`python -c` 与 `node -e` URL 访问场景。
+- 新增 execution entry acceptance，覆盖 shell、patch、MCP、skill、
+  multi-agent、tool_search、request_user_input、view_image 在 approval
+  required 下统一先通过 policy schema。
+- 新增 `docs/protocol/sandbox-events.md`，记录 sandbox event v1 schema 与
+  当前 Windows `policy guard + process lifecycle` 边界。
+- README 与 extraction status 同步 v1.7.8 安全边界。
+
+统一验证结果：
+
+- `cargo fmt`：通过。
+- `cargo fmt -- --check`：通过。
+- `cargo test -p yunxi-agent-sandbox -p yunxi-agent-tools -p yunxi-agent-exec -p yunxi-agent-runtime -p yunxi-agent-tui -p yunxi-agent-cli`：通过。
+- `cargo test`：通过。
+- `cargo check --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- `target\release\yunxi.exe --version`：`yunxi 1.7.8`。
+- `target\release\yunxi-agent-cli.exe --version`：`yunxi 1.7.8`。
+- Offline plain smoke：通过。
+- Offline JSON smoke：`status=completed`。
+- Offline JSONL smoke：18 events。
+- Fixture JSONL schema smoke：131 events，7 个 `sandbox_attempt`，首个
+  `backend_id=windows_process_lifecycle`、`enforcement=process_lifecycle`。
+- `--backend codex "hello codex"`：exit code `2`，继续拒绝 detached Codex
+  backend。
+- `sessions list --jsonl`：exit code `2`。
+- `parity map --jsonl`：exit code `2`。
+- dependency scan：默认 `yunxi-agent-cli` normal graph 未命中 `codex`、
+  `vendor`、`yunxi-agent-codex`。
+- owned-source secret scan：通过，未发现密钥形态。
+- `git diff --check`：通过，仅 Windows LF-to-CRLF 提示。
+- `codegraph sync "D:\YunXi Agent"`：通过，15 changed files synced。
+- `codegraph status "D:\YunXi Agent"`：通过，index is up to date。
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`：通过。
+- PATH smoke：
+  - `yunxi --version`：`yunxi 1.7.8`。
+  - `yunxi-agent-cli --version`：`yunxi 1.7.8`。
+  - `yunxi --offline "installed path v1.7.8 smoke"`：通过。
+- DeepSeek live JSONL smoke：通过，56 events，模型返回 `OK`，输出未泄漏
+  密钥。
+- DeepSeek live JSON smoke：通过，`status=completed`，44 events，模型返回
+  `OK`，输出未泄漏密钥。
+- TUI/CJK 自动化回归：包含在 `cargo test` 与 `cargo test -p
+  yunxi-agent-tui` 范围内；本轮没有单独执行真实 Windows Terminal 人工
+  CJK 抽查，因为 v1.7.8 不是视觉布局专项。

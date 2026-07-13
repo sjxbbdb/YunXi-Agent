@@ -163,7 +163,17 @@ async fn danger_full_access_runs_but_reports_policy_bypass() {
         diagnostic.enforcement_level,
         SandboxEnforcementLevel::PolicyBypass
     );
+    assert_eq!(diagnostic.schema_version, 1);
+    assert_eq!(diagnostic.backend_id, "direct_process_policy_bypass");
+    assert_eq!(
+        diagnostic.backend_label,
+        "policy bypass: danger-full-access"
+    );
     assert_eq!(diagnostic.enforcement, "policy_bypass");
+    assert_eq!(
+        diagnostic.enforcement,
+        diagnostic.enforcement_level.as_str()
+    );
     assert!(!diagnostic.os_isolation);
 }
 
@@ -179,6 +189,9 @@ fn default_platform_runner_is_honest_when_os_isolation_is_not_verified() {
     let diagnostic = SandboxRunner.diagnostic(&policy, workspace.path(), Some("echo yunxi"));
 
     assert!(!diagnostic.os_isolation);
+    assert_eq!(diagnostic.schema_version, 1);
+    assert!(!diagnostic.backend_id.is_empty());
+    assert!(!diagnostic.backend_label.is_empty());
     assert_ne!(
         diagnostic.enforcement_level,
         SandboxEnforcementLevel::OsRestricted
@@ -188,4 +201,64 @@ fn default_platform_runner_is_honest_when_os_isolation_is_not_verified() {
         diagnostic.enforcement_level.as_str()
     );
     assert!(diagnostic.unsupported_reason.is_some());
+}
+
+#[test]
+fn sandbox_attempt_schema_fields_are_machine_stable() {
+    let workspace = TempDir::new().expect("workspace");
+    let policy = policy(
+        &workspace,
+        SandboxRequirement::WorkspaceWrite,
+        NetworkPolicy::Inherit,
+    );
+
+    let diagnostic = SandboxRunner.diagnostic(&policy, workspace.path(), Some("echo yunxi"));
+
+    assert_eq!(diagnostic.schema_version, 1);
+    assert!(!diagnostic.backend_id.contains(' '));
+    assert_eq!(
+        diagnostic.backend_label,
+        diagnostic.backend.user_facing_label()
+    );
+    assert_eq!(
+        diagnostic.enforcement,
+        diagnostic.enforcement_level.as_str()
+    );
+    assert!(!diagnostic.runner.is_empty());
+}
+
+#[test]
+fn disabled_network_blocks_common_network_entrypoints() {
+    let workspace = TempDir::new().expect("workspace");
+    let policy = policy(
+        &workspace,
+        SandboxRequirement::WorkspaceWrite,
+        NetworkPolicy::Disabled,
+    );
+    let commands = [
+        "curl https://example.test",
+        "Invoke-WebRequest https://example.test",
+        "irm https://example.test",
+        "wget https://example.test",
+        "python -c \"import urllib.request; urllib.request.urlopen('https://example.test')\"",
+        "node -e \"fetch('https://example.test')\"",
+    ];
+
+    for command in commands {
+        let evaluation = policy.evaluate(workspace.path(), Some(command));
+        assert!(
+            matches!(
+                evaluation.decision,
+                PolicyDecision::Blocked { ref reason } if reason.contains("network")
+            ),
+            "command was not blocked by disabled network policy: {command}"
+        );
+        assert_eq!(
+            evaluation
+                .escalation_request
+                .expect("network escalation")
+                .required_network,
+            Some(NetworkPolicy::Enabled)
+        );
+    }
 }

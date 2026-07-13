@@ -1,6 +1,6 @@
-# YunXi Agent v1.7.7
+# YunXi Agent v1.7.8
 
-YunXi Agent v1.7.7 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.7.8 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -18,7 +18,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.7.7 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.7.8 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -69,11 +69,12 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Avoids provider fallback warnings for explicitly selected non-provider
   backends such as `dry-run`
 - Shows offline runtime as a static provider with stage fixtures disabled by default
-- Uses policy-only/process-lifecycle wording for sandbox decisions; v1.7.7
+- Uses policy-only/process-lifecycle wording for sandbox decisions; v1.7.8
   does not claim OS-level sandbox isolation unless a runner reports
-  `enforcement_level=os_restricted`, and emits machine-readable
-  `os_isolation`, `enforcement`, `enforcement_level`, `runner`, and
-  `unsupported_reason` fields on sandbox attempt events
+  `enforcement=os_restricted` and `os_isolation=true`, and emits
+  machine-readable `schema_version`, `backend_id`, `backend_label`,
+  `os_isolation`, `enforcement`, compatibility `enforcement_level`, `runner`,
+  and `unsupported_reason` fields on sandbox attempt events
 - Enforces the configured process-internal policy guard on the default shell
   tool path instead of bypassing it with trusted `DangerFullAccess`
 - Blocks obvious `workspace-write` shell targets that escape the workspace by
@@ -114,7 +115,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.7.7 CLI into a user-local bin directory:
+Build and install the v1.7.8 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -140,7 +141,7 @@ Run `yunxi` without a prompt to enter interactive mode:
 yunxi
 ```
 
-When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.7
+When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.8
 TUI host, wrapped-row transcript viewport, draggable scrollbar, composer, and
 approval overlay. Use `--no-tui` to force the stable plain REPL:
 
@@ -177,7 +178,7 @@ yunxi --jsonl "explain this project"
 `--json` and `--jsonl` never enter the REPL when a prompt is missing; they keep
 returning structured errors for script safety.
 
-`--jsonl` is reserved for agent execution streams in v1.7.7. Metadata
+`--jsonl` is reserved for agent execution streams in v1.7.8. Metadata
 subcommands such as `sessions list` and `parity map` reject `--jsonl`; use
 `--json` for their machine-readable output.
 
@@ -190,14 +191,23 @@ auto mode prints a warning when no live credentials are found.
 The current sandbox layer is a process-internal policy guard/advisor with a
 platform runner diagnostic entrypoint. It classifies commands, routes
 approvals, blocks common workspace-write target escapes, including resolvable
-symlink escapes, and can request escalation. v1.7.7 reports the selected runner,
-`enforcement_level`, and unsupported reason. The default Windows runner is
-`process_lifecycle`, not filesystem isolation; unverified platform paths remain
-`policy_only`; `danger-full-access` is reported as `policy_bypass`. YunXi does
-not claim OS-enforced Windows restricted tokens, Linux Landlock/seccomp,
-namespaces, or macOS seatbelt isolation unless the event explicitly reports
-`enforcement_level=os_restricted` and `os_isolation=true`. Approved commands
-still execute with the YunXi process permissions.
+symlink escapes, and can request escalation. v1.7.8 reports the selected runner,
+stable `backend_id`, human `backend_label`, canonical `enforcement`, and
+unsupported reason. The default Windows runner is `process_lifecycle`, not
+filesystem isolation; unverified platform paths remain `policy_only`;
+`danger-full-access` is reported as `policy_bypass`. The legacy
+`enforcement_level` field is kept as a compatibility alias and must match
+`enforcement`. YunXi does not claim OS-enforced Windows restricted tokens,
+Linux Landlock/seccomp, namespaces, or macOS seatbelt isolation unless the
+event explicitly reports `enforcement=os_restricted` and `os_isolation=true`.
+Approved commands still execute with the YunXi process permissions.
+
+Sandbox event consumers should read `schema_version=1`, `backend_id`,
+`enforcement`, `runner`, and `os_isolation` instead of parsing the human
+`backend` string. Current Windows workspace-write/read-only attempts report
+`backend_id=windows_process_lifecycle`, `enforcement=process_lifecycle`,
+`runner=windows_process_lifecycle`, `os_isolation=false`, and a non-empty
+`unsupported_reason`.
 
 Historical `stage 4x` fixture prompts are disabled in the default product path.
 They remain available only for explicit compatibility smoke runs with
@@ -342,7 +352,7 @@ misleading provider fallback warnings for explicit dry-run/detached backends,
 and exposing sandbox `os_isolation=false`/`enforcement` fields instead of
 implying OS-level isolation.
 
-v1.7.7 adds immutable tag `v1.7.7` without moving earlier tags. It closes the
+v1.7.8 adds immutable tag `v1.7.8` without moving earlier tags. It closes the
 v1.7.6 sandbox/TUI hard gate by adding machine-readable sandbox
 `enforcement_level`, sandbox acceptance coverage for policy-only and
 policy-bypass paths, bounded TUI approval layout that keeps Approve, Decline,

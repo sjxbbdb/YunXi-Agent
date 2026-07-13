@@ -252,11 +252,16 @@ impl CommandRisk {
         } else if contains_any(
             &lower,
             &[
+                "http://",
+                "https://",
                 "curl ",
                 "wget ",
                 "invoke-webrequest",
                 "invoke-restmethod",
                 "irm ",
+                "python -c",
+                "python3 -c",
+                "node -e",
                 "npm install",
                 "cargo install",
                 "pip install",
@@ -375,9 +380,15 @@ pub struct SandboxRunnerDecision {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SandboxRunnerDiagnostic {
+    #[serde(default)]
+    pub schema_version: u32,
     pub platform: String,
     pub status: SandboxRunnerStatus,
     pub backend: SandboxBackend,
+    #[serde(default)]
+    pub backend_id: String,
+    #[serde(default)]
+    pub backend_label: String,
     pub os_isolation: bool,
     pub enforcement: String,
     #[serde(default)]
@@ -643,9 +654,12 @@ impl SandboxRunner {
             SandboxRunnerStatus::Ready
         };
         SandboxRunnerDiagnostic {
+            schema_version: SANDBOX_ATTEMPT_SCHEMA_VERSION,
             platform: platform_name().to_string(),
             status,
             backend: plan.backend,
+            backend_id: plan.backend.backend_id().to_string(),
+            backend_label: plan.backend.user_facing_label().to_string(),
             os_isolation: plan.backend.os_isolation(),
             enforcement: plan.backend.enforcement_label().to_string(),
             enforcement_level: plan.enforcement_level,
@@ -702,6 +716,8 @@ impl SandboxEnforcementLevel {
     }
 }
 
+pub const SANDBOX_ATTEMPT_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxBackend {
@@ -713,6 +729,16 @@ pub enum SandboxBackend {
 }
 
 impl SandboxBackend {
+    pub fn backend_id(self) -> &'static str {
+        match self {
+            Self::None => "direct_process",
+            Self::DangerFullAccess => "direct_process_policy_bypass",
+            Self::WorkspaceGuard => "workspace_policy_guard",
+            Self::WindowsRestrictedToken => "windows_process_lifecycle",
+            Self::LinuxLandlock => "linux_landlock_entrypoint",
+        }
+    }
+
     pub fn user_facing_label(self) -> &'static str {
         match self {
             Self::None => "no policy guard",
@@ -746,13 +772,7 @@ impl SandboxBackend {
     }
 
     pub fn runner_label(self) -> &'static str {
-        match self {
-            Self::None => "direct_process",
-            Self::DangerFullAccess => "direct_process_policy_bypass",
-            Self::WorkspaceGuard => "workspace_policy_guard",
-            Self::WindowsRestrictedToken => "windows_process_lifecycle",
-            Self::LinuxLandlock => "linux_landlock_entrypoint",
-        }
+        self.backend_id()
     }
 
     pub fn unsupported_reason(self) -> Option<&'static str> {
@@ -923,12 +943,28 @@ fn tokenized_credential_access(tokens: &[String]) -> bool {
 
 fn tokenized_network(tokens: &[String]) -> bool {
     tokens.iter().enumerate().any(|(index, token)| {
-        matches!(
-            token.as_str(),
-            "curl" | "wget" | "invoke-webrequest" | "invoke-restmethod" | "irm"
-        ) || matches!(token.as_str(), "npm" | "cargo" | "pip")
-            && tokens.get(index + 1).is_some_and(|next| next == "install")
+        contains_url(token)
+            || script_eval_contains_url(tokens, index, token)
+            || matches!(
+                token.as_str(),
+                "curl" | "wget" | "invoke-webrequest" | "invoke-restmethod" | "irm"
+            )
+            || matches!(token.as_str(), "npm" | "cargo" | "pip")
+                && tokens.get(index + 1).is_some_and(|next| next == "install")
     })
+}
+
+fn contains_url(value: &str) -> bool {
+    value.contains("http://") || value.contains("https://")
+}
+
+fn script_eval_contains_url(tokens: &[String], index: usize, token: &str) -> bool {
+    matches!(token, "python" | "python3" | "py" | "node")
+        && tokens.get(index + 1).is_some_and(|next| next == "-c")
+        && tokens
+            .iter()
+            .skip(index + 2)
+            .any(|candidate| contains_url(candidate))
 }
 
 fn tokenized_write(tokens: &[String]) -> bool {

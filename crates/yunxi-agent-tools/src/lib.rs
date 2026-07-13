@@ -21,7 +21,7 @@ use yunxi_agent_multi_agent::{
 use yunxi_agent_patch::{PatchFileChangeKind, apply_patch_detailed};
 use yunxi_agent_sandbox::{
     ApprovalRequirement, ExecutionPolicy, NetworkPolicy, PolicyDecision, PolicyEvaluation,
-    SandboxRequirement, SandboxRunner,
+    SANDBOX_ATTEMPT_SCHEMA_VERSION, SandboxRequirement, SandboxRunner,
 };
 use yunxi_agent_skills::{
     DynamicToolKind, DynamicToolMetadata, SkillCatalog, SkillInvocation, SkillInvocationResult,
@@ -749,16 +749,25 @@ impl ToolResponse {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolRuntimeEvent {
     SandboxDecision {
+        schema_version: u32,
         allowed: bool,
         backend: String,
+        backend_id: String,
+        backend_label: String,
+        enforcement: String,
+        #[serde(default)]
+        enforcement_level: String,
         network: String,
         escalation_required: bool,
         denial_reason: Option<String>,
     },
     SandboxRunner {
+        schema_version: u32,
         platform: String,
         status: String,
         backend: String,
+        backend_id: String,
+        backend_label: String,
         os_isolation: bool,
         enforcement: String,
         #[serde(default)]
@@ -883,11 +892,16 @@ impl ToolPolicy {
         Self::decision_from_evaluation(&self.evaluation_for(request))
     }
 
-    pub fn evaluation_for(&self, request: &ToolRequest) -> PolicyEvaluation {
+    pub fn execution_policy_for(&self) -> ExecutionPolicy {
         let mut policy = self.execution_policy.clone();
         if let Some(workspace_root) = self.workspace_root.clone() {
             policy.workspace_root = workspace_root;
         }
+        policy
+    }
+
+    pub fn evaluation_for(&self, request: &ToolRequest) -> PolicyEvaluation {
+        let policy = self.execution_policy_for();
         policy.evaluate(&request.cwd, request.kind.policy_command().as_deref())
     }
 
@@ -911,23 +925,32 @@ impl ToolPolicy {
 fn policy_runtime_events(request: &ToolRequest) -> Vec<ToolRuntimeEvent> {
     let evaluation = request.policy.evaluation_for(request);
     let plan = evaluation.execution_plan();
+    let execution_policy = request.policy.execution_policy_for();
     let runner_diagnostic = SandboxRunner.diagnostic(
-        &request.policy.execution_policy,
+        &execution_policy,
         &request.cwd,
         request.kind.policy_command().as_deref(),
     );
     vec![
         ToolRuntimeEvent::SandboxDecision {
+            schema_version: SANDBOX_ATTEMPT_SCHEMA_VERSION,
             allowed: plan.allowed,
             backend: plan.backend.user_facing_label().to_string(),
+            backend_id: plan.backend.backend_id().to_string(),
+            backend_label: plan.backend.user_facing_label().to_string(),
+            enforcement: plan.backend.enforcement_label().to_string(),
+            enforcement_level: plan.enforcement_level.as_str().to_string(),
             network: format!("{:?}", plan.network),
             escalation_required: plan.escalation_required,
             denial_reason: plan.denial_reason,
         },
         ToolRuntimeEvent::SandboxRunner {
+            schema_version: runner_diagnostic.schema_version,
             platform: runner_diagnostic.platform,
             status: format!("{:?}", runner_diagnostic.status).to_ascii_lowercase(),
             backend: runner_diagnostic.backend.user_facing_label().to_string(),
+            backend_id: runner_diagnostic.backend_id,
+            backend_label: runner_diagnostic.backend_label,
             os_isolation: runner_diagnostic.os_isolation,
             enforcement: runner_diagnostic.enforcement,
             enforcement_level: runner_diagnostic.enforcement_level.as_str().to_string(),

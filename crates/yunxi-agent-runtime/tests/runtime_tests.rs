@@ -121,14 +121,19 @@ async fn yunxi_runtime_injects_agents_md_before_user_prompt() {
         .await
         .expect("runtime should complete");
 
+    let captured = messages.lock().expect("messages lock").clone();
     assert_eq!(
-        messages
-            .lock()
-            .expect("messages lock")
-            .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>(),
-        vec![ProviderRole::System, ProviderRole::User]
+        captured.first().map(|message| message.role),
+        Some(ProviderRole::System)
+    );
+    assert!(
+        captured
+            .first()
+            .is_some_and(|message| message.content.contains("Use YunXi instructions"))
+    );
+    assert_eq!(
+        captured.last().map(|message| message.role),
+        Some(ProviderRole::User)
     );
 }
 
@@ -224,24 +229,30 @@ async fn yunxi_runtime_restores_parent_session_history_before_current_prompt() {
         .expect("runtime should complete");
 
     let captured = messages.lock().expect("messages lock").clone();
-    assert_eq!(
+    assert!(
         captured
             .iter()
-            .map(|message| message.role)
-            .collect::<Vec<_>>(),
-        vec![
-            ProviderRole::User,
-            ProviderRole::Assistant,
-            ProviderRole::User,
-            ProviderRole::Assistant,
-            ProviderRole::User,
-        ]
+            .any(|message| message.content == "root prompt")
     );
-    assert_eq!(captured[0].content, "root prompt");
-    assert_eq!(captured[1].content, "root answer");
-    assert_eq!(captured[2].content, "child prompt");
-    assert_eq!(captured[3].content, "child answer");
-    assert_eq!(captured[4].content, "continue work");
+    assert!(
+        captured
+            .iter()
+            .any(|message| message.content == "root answer")
+    );
+    assert!(
+        captured
+            .iter()
+            .any(|message| message.content == "child prompt")
+    );
+    assert!(
+        captured
+            .iter()
+            .any(|message| message.content == "child answer")
+    );
+    assert_eq!(
+        captured.last().map(|message| message.content.as_str()),
+        Some("continue work")
+    );
 }
 
 #[tokio::test]
@@ -274,17 +285,9 @@ async fn yunxi_runtime_compacts_restored_history_when_budget_is_exceeded() {
         .expect("runtime should complete");
 
     let captured = messages.lock().expect("messages lock").clone();
-    assert_eq!(
-        captured.first().map(|message| message.role),
-        Some(ProviderRole::System)
-    );
-    assert!(
-        captured
-            .first()
-            .expect("first message")
-            .content
-            .contains("Compacted")
-    );
+    assert!(captured.iter().any(
+        |message| message.role == ProviderRole::System && message.content.contains("Compacted")
+    ));
     assert_eq!(
         captured.last().map(|message| message.content.as_str()),
         Some("continue compacted work")

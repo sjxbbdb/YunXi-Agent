@@ -28,6 +28,7 @@ tokio.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
 yunxi-agent-protocol = { path = "../yunxi-agent-protocol" }
 yunxi-agent-provider = { path = "../yunxi-agent-provider" }
+yunxi-agent-persona = { path = "../yunxi-agent-persona" }
 yunxi-agent-runtime = { path = "../yunxi-agent-runtime" }
 yunxi-agent-storage = { path = "../yunxi-agent-storage" }
 yunxi-agent-tools = { path = "../yunxi-agent-tools" }

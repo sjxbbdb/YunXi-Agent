@@ -111,7 +111,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.7.8 interactive CLI");
+    println!("YunXi Agent v1.8.0 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -370,6 +370,65 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
                 session_id.as_deref().unwrap_or("unknown"),
                 child_session_ids.len()
             );
+        }
+        AgentEvent::PersonaLoaded {
+            profile_id,
+            display_name,
+            enabled,
+            ..
+        } => {
+            println!("[persona] loaded profile={profile_id} display_name={display_name} enabled={enabled}");
+        }
+        AgentEvent::PersonaContextInjected {
+            profile_id,
+            memory_count,
+            budget_used_chars,
+            budget_limit_chars,
+            ..
+        } => {
+            println!(
+                "[persona] context profile={profile_id} memories={memory_count} budget={budget_used_chars}/{budget_limit_chars}"
+            );
+        }
+        AgentEvent::MemoryRecall {
+            enabled,
+            scope,
+            count,
+            budget_used_chars,
+            truncated,
+            ..
+        } => {
+            println!(
+                "[memory] recall enabled={enabled} scope={scope} count={count} budget_used_chars={budget_used_chars} truncated={truncated}"
+            );
+        }
+        AgentEvent::MemoryCandidate {
+            id,
+            kind,
+            sensitivity,
+            status,
+            write_policy,
+            reason,
+            ..
+        } => {
+            println!(
+                "[memory] candidate id={id} kind={kind} sensitivity={sensitivity} status={status} policy={write_policy} reason={reason}"
+            );
+        }
+        AgentEvent::MemoryWrite {
+            id,
+            scope,
+            kind,
+            status,
+            action,
+            ..
+        } => {
+            println!(
+                "[memory] write id={id} scope={scope} kind={kind} status={status} action={action}"
+            );
+        }
+        AgentEvent::MemoryWarning { warning, .. } => {
+            println!("[memory-warning] {warning}");
         }
         AgentEvent::Warning { message } => {
             println!("[warning] {message}");

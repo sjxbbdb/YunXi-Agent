@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentEvent, AgentRunStatus};
+use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus};
 use yunxi_agent_storage::{
-    FileSessionStore, HistoryItemKind, HistoryLoadOptions, InMemorySessionStore, RolloutRecord,
-    SessionId, SessionRecord, SessionStore, ThreadMetadata,
+    FilePersonaMemoryStore, FileSessionStore, HistoryItemKind, HistoryLoadOptions,
+    InMemorySessionStore, PersonaMemoryScope, RolloutRecord, SessionId, SessionRecord,
+    SessionStore, ThreadMetadata,
 };
 
 #[tokio::test]
@@ -233,4 +235,60 @@ async fn session_store_rejects_cyclic_parent_history() {
         .expect_err("cycle should be rejected");
 
     assert!(format!("{error}").contains("cycle detected"));
+}
+
+#[test]
+fn file_persona_memory_store_appends_lists_and_updates_status() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let record = MemoryRecord::new(
+        "memory-1",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+
+    store.append(&record).expect("append memory");
+
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    assert!(loaded.warnings.is_empty());
+    assert_eq!(loaded.records.len(), 1);
+    assert_eq!(loaded.records[0].id, "memory-1");
+
+    let updated = store
+        .update_status("memory-1", MemoryStatus::Archived)
+        .expect("update status")
+        .expect("record should exist");
+    assert_eq!(updated.status, MemoryStatus::Archived);
+    assert_eq!(
+        store
+            .list(PersonaMemoryScope::Workspace)
+            .records
+            .first()
+            .map(|record| record.status),
+        Some(MemoryStatus::Archived)
+    );
+}
+
+#[test]
+fn file_persona_memory_store_skips_corrupt_jsonl_lines() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let memory_dir = temp.path().join(".yunxi").join("memory");
+    std::fs::create_dir_all(&memory_dir).expect("memory dir");
+    std::fs::write(
+        memory_dir.join("workspace-memory.jsonl"),
+        "{not-json}\n{\"id\":\"memory-2\",\"schema_version\":1,\"scope\":{\"workspace\":{\"root_fingerprint\":\"x\"}},\"kind\":\"preference\",\"content\":\"ok\",\"confidence\":1.0,\"importance\":1.0,\"sensitivity\":\"low\",\"status\":\"active\",\"created_at_millis\":1,\"updated_at_millis\":1}\n",
+    )
+    .expect("write fixture");
+
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+
+    assert_eq!(loaded.records.len(), 1);
+    assert_eq!(loaded.records[0].id, "memory-2");
+    assert_eq!(loaded.warnings.len(), 1);
 }

@@ -4,6 +4,7 @@ members = [
     "crates/yunxi-agent-protocol",
     "crates/yunxi-agent-provider",
     "crates/yunxi-agent-context",
+    "crates/yunxi-agent-persona",
     "crates/yunxi-agent-sandbox",
     "crates/yunxi-agent-exec",
     "crates/yunxi-agent-patch",
@@ -21,6 +22,7 @@ default-members = [
     "crates/yunxi-agent-protocol",
     "crates/yunxi-agent-provider",
     "crates/yunxi-agent-context",
+    "crates/yunxi-agent-persona",
     "crates/yunxi-agent-sandbox",
     "crates/yunxi-agent-exec",
     "crates/yunxi-agent-patch",
@@ -39,7 +41,7 @@ exclude = ["external/codex-rs", "vendor/codex-rs", "crates/yunxi-agent-codex"]
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "1.7.8"
+version = "1.8.0"
 
 [workspace.dependencies]
 anyhow = "1"

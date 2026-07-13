@@ -280,6 +280,65 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
                 }
             }
         }
+        AgentEvent::PersonaLoaded {
+            profile_id,
+            enabled,
+            ..
+        } => FilteredEvent::DebugOnly {
+            label: "persona".to_string(),
+            detail: format!("profile={profile_id} enabled={enabled}"),
+        },
+        AgentEvent::PersonaContextInjected {
+            profile_id,
+            memory_count,
+            budget_used_chars,
+            budget_limit_chars,
+            ..
+        } => FilteredEvent::DebugOnly {
+            label: "persona context".to_string(),
+            detail: format!(
+                "profile={profile_id} memories={memory_count} budget={budget_used_chars}/{budget_limit_chars}"
+            ),
+        },
+        AgentEvent::MemoryRecall {
+            enabled,
+            scope,
+            count,
+            budget_used_chars,
+            truncated,
+            ..
+        } => FilteredEvent::DebugOnly {
+            label: "memory recall".to_string(),
+            detail: format!(
+                "enabled={enabled} scope={scope} count={count} budget_used_chars={budget_used_chars} truncated={truncated}"
+            ),
+        },
+        AgentEvent::MemoryCandidate {
+            id,
+            kind,
+            sensitivity,
+            status,
+            write_policy,
+            reason,
+            ..
+        } => FilteredEvent::DebugOnly {
+            label: "memory candidate".to_string(),
+            detail: format!(
+                "id={id} kind={kind} sensitivity={sensitivity} status={status} policy={write_policy} reason={reason}"
+            ),
+        },
+        AgentEvent::MemoryWrite {
+            id,
+            scope,
+            kind,
+            status,
+            action,
+            ..
+        } => FilteredEvent::DebugOnly {
+            label: "memory write".to_string(),
+            detail: format!("id={id} scope={scope} kind={kind} status={status} action={action}"),
+        },
+        AgentEvent::MemoryWarning { warning, .. } => FilteredEvent::Warning(warning.clone()),
         AgentEvent::Warning { message } => FilteredEvent::Warning(message.clone()),
         AgentEvent::Error { message } => FilteredEvent::Error(message.clone()),
         AgentEvent::ProviderError {
@@ -478,6 +537,12 @@ fn debug_label(event: &AgentEvent) -> &'static str {
         AgentEvent::TurnState { .. } => "turn state",
         AgentEvent::DeepParityState { .. } => "deep parity",
         AgentEvent::ApprovalCacheState { .. } => "approval cache",
+        AgentEvent::PersonaLoaded { .. } => "persona",
+        AgentEvent::PersonaContextInjected { .. } => "persona context",
+        AgentEvent::MemoryRecall { .. } => "memory recall",
+        AgentEvent::MemoryCandidate { .. } => "memory candidate",
+        AgentEvent::MemoryWrite { .. } => "memory write",
+        AgentEvent::MemoryWarning { .. } => "memory warning",
         AgentEvent::MultiAgentEvent { .. } => "multi-agent",
         AgentEvent::Started { .. } => "started",
         _ => "event",

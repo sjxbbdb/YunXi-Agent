@@ -60,6 +60,55 @@ pub enum AgentEvent {
         decision: String,
         reused: bool,
     },
+    PersonaLoaded {
+        #[serde(default)]
+        schema_version: u32,
+        profile_id: String,
+        display_name: String,
+        enabled: bool,
+    },
+    PersonaContextInjected {
+        #[serde(default)]
+        schema_version: u32,
+        profile_id: String,
+        memory_count: usize,
+        budget_used_chars: usize,
+        budget_limit_chars: usize,
+    },
+    MemoryRecall {
+        #[serde(default)]
+        schema_version: u32,
+        enabled: bool,
+        scope: String,
+        query: String,
+        count: usize,
+        budget_used_chars: usize,
+        truncated: bool,
+    },
+    MemoryCandidate {
+        #[serde(default)]
+        schema_version: u32,
+        id: String,
+        kind: String,
+        sensitivity: String,
+        status: String,
+        write_policy: String,
+        reason: String,
+    },
+    MemoryWrite {
+        #[serde(default)]
+        schema_version: u32,
+        id: String,
+        scope: String,
+        kind: String,
+        status: String,
+        action: String,
+    },
+    MemoryWarning {
+        #[serde(default)]
+        schema_version: u32,
+        warning: String,
+    },
     Message {
         content: String,
     },

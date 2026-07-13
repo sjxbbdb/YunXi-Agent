@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,6 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use yunxi_agent_core::{AgentError, AgentEvent, AgentResult, AgentRunStatus};
 use yunxi_agent_multi_agent::{
     AgentGraphSessionMetadata, AgentId, AgentMetadata, AgentRole, AgentStatus,
+};
+use yunxi_agent_persona::{
+    MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings, yunxi_home_dir,
 };
 use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
@@ -686,6 +691,223 @@ impl SessionRecord {
             provider: self.provider.clone(),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilePersonaMemoryStore {
+    workspace_root: PathBuf,
+    global_root: PathBuf,
+    workspace_fingerprint: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PersonaMemoryLoad {
+    pub records: Vec<MemoryRecord>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PersonaMemoryScope {
+    All,
+    Global,
+    Workspace,
+    Pending,
+}
+
+impl FilePersonaMemoryStore {
+    pub fn for_workspace(cwd: impl AsRef<Path>) -> Self {
+        let workspace_root = cwd.as_ref().join(".yunxi").join("memory");
+        let global_root = yunxi_home_dir().join("memory");
+        let workspace_fingerprint = workspace_fingerprint(cwd.as_ref());
+        Self {
+            workspace_root,
+            global_root,
+            workspace_fingerprint,
+        }
+    }
+
+    pub fn workspace_fingerprint(&self) -> &str {
+        &self.workspace_fingerprint
+    }
+
+    pub fn settings(&self) -> PersonaSettings {
+        PersonaSettings::load()
+    }
+
+    pub fn append(&self, record: &MemoryRecord) -> AgentResult<()> {
+        let path = self.path_for_record(record);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
+                message: format!(
+                    "failed to create memory directory {}: {error}",
+                    parent.display()
+                ),
+            })?;
+        }
+        let line = serde_json::to_string(record).map_err(|error| AgentError::Execution {
+            message: format!("failed to serialize memory {}: {error}", record.id),
+        })?;
+        let mut content = line;
+        content.push('\n');
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| std::io::Write::write_all(&mut file, content.as_bytes()))
+            .map_err(|error| AgentError::Execution {
+                message: format!("failed to append memory {}: {error}", path.display()),
+            })
+    }
+
+    pub fn list(&self, scope: PersonaMemoryScope) -> PersonaMemoryLoad {
+        let mut load = PersonaMemoryLoad::default();
+        for path in self.paths_for_scope(scope) {
+            read_memory_jsonl(&path, &mut load.records, &mut load.warnings);
+        }
+        load.records = latest_records(load.records);
+        load.records.sort_by(|left, right| {
+            right
+                .updated_at_millis
+                .cmp(&left.updated_at_millis)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        load
+    }
+
+    pub fn search(&self, query: &str, scope: PersonaMemoryScope) -> PersonaMemoryLoad {
+        let mut load = self.list(scope);
+        let query = query.to_ascii_lowercase();
+        load.records.retain(|record| {
+            query.trim().is_empty()
+                || record.content.to_ascii_lowercase().contains(&query)
+                || record.id.to_ascii_lowercase().contains(&query)
+        });
+        load
+    }
+
+    pub fn show(&self, id: &str) -> PersonaMemoryLoad {
+        let mut load = self.list(PersonaMemoryScope::All);
+        load.records.retain(|record| record.id == id);
+        load
+    }
+
+    pub fn update_status(
+        &self,
+        id: &str,
+        status: MemoryStatus,
+    ) -> AgentResult<Option<MemoryRecord>> {
+        let load = self.list(PersonaMemoryScope::All);
+        let Some(record) = load.records.into_iter().find(|record| record.id == id) else {
+            return Ok(None);
+        };
+        let updated = record.with_status(status);
+        self.append(&updated)?;
+        Ok(Some(updated))
+    }
+
+    pub fn clear_workspace(&self) -> AgentResult<usize> {
+        let records = self.list(PersonaMemoryScope::Workspace).records;
+        let mut count = 0;
+        for record in records
+            .into_iter()
+            .filter(|record| record.status == MemoryStatus::Active)
+        {
+            let archived = record.with_status(MemoryStatus::Archived);
+            self.append(&archived)?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
+    pub fn active_records(&self) -> PersonaMemoryLoad {
+        let mut load = self.list(PersonaMemoryScope::All);
+        load.records
+            .retain(|record| record.status == MemoryStatus::Active);
+        load
+    }
+
+    fn path_for_record(&self, record: &MemoryRecord) -> PathBuf {
+        let pending = record.status == MemoryStatus::Pending;
+        match &record.scope {
+            MemoryScope::Workspace { .. } => {
+                if pending {
+                    self.workspace_root.join("pending.jsonl")
+                } else {
+                    self.workspace_root.join("workspace-memory.jsonl")
+                }
+            }
+            _ => {
+                if pending {
+                    self.global_root.join("pending.jsonl")
+                } else {
+                    self.global_root.join("global-memory.jsonl")
+                }
+            }
+        }
+    }
+
+    fn paths_for_scope(&self, scope: PersonaMemoryScope) -> Vec<PathBuf> {
+        let global = [
+            self.global_root.join("global-memory.jsonl"),
+            self.global_root.join("pending.jsonl"),
+        ];
+        let workspace = [
+            self.workspace_root.join("workspace-memory.jsonl"),
+            self.workspace_root.join("pending.jsonl"),
+        ];
+        match scope {
+            PersonaMemoryScope::All => global.into_iter().chain(workspace).collect(),
+            PersonaMemoryScope::Global => global.into_iter().collect(),
+            PersonaMemoryScope::Workspace => workspace.into_iter().collect(),
+            PersonaMemoryScope::Pending => vec![
+                self.global_root.join("pending.jsonl"),
+                self.workspace_root.join("pending.jsonl"),
+            ],
+        }
+    }
+}
+
+pub fn workspace_fingerprint(path: &Path) -> String {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut hasher = DefaultHasher::new();
+    canonical
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn read_memory_jsonl(path: &Path, records: &mut Vec<MemoryRecord>, warnings: &mut Vec<String>) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for (index, line) in content.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<MemoryRecord>(line) {
+            Ok(record) => records.push(record),
+            Err(error) => warnings.push(format!(
+                "failed to parse memory line {} in {}: {error}",
+                index + 1,
+                path.display()
+            )),
+        }
+    }
+}
+
+fn latest_records(records: Vec<MemoryRecord>) -> Vec<MemoryRecord> {
+    let mut by_id = BTreeMap::new();
+    for record in records {
+        let replace = by_id.get(&record.id).is_none_or(|existing: &MemoryRecord| {
+            existing.updated_at_millis <= record.updated_at_millis
+        });
+        if replace {
+            by_id.insert(record.id.clone(), record);
+        }
+    }
+    by_id.into_values().collect()
 }
 
 #[async_trait]

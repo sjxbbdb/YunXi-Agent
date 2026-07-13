@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.7.8 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.0 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -15,37 +15,63 @@ The repository currently contains:
   - `yunxi-agent-provider`
   - `yunxi-agent-tools`
   - `yunxi-agent-storage`
+- A YunXi-owned persona and transparent memory boundary crate:
+  - `yunxi-agent-persona`
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
 
-## YunXi Agent v1.8.0 Planned Direction
+## YunXi Agent v1.8.0 Persona And Transparent Memory Construction
 
-The next product stage is YunXi Agent v1.8.0 persona and transparent memory
+YunXi Agent v1.8.0 introduces the first persona and transparent memory
 foundation. The project baseline is v1.7.8, which already has the autonomous
 terminal runtime, provider/tool/storage/session chain, TUI, sandbox policy
 honesty, JSON/JSONL surfaces, and REST API release/tag workflow.
 
-v1.8.0 should introduce a YunXi-owned `yunxi-agent-persona` crate and wire it
-into runtime, context, storage, and CLI with a conservative local-first design:
+Constructed in this slice:
 
-- built-in `yunxi_companion_strong` persona profile
-- persona prompt compiler with clear priority below AGENTS.md and user hard
+- Workspace package version is promoted to `1.8.0`.
+- Added the YunXi-owned `yunxi-agent-persona` crate.
+- Added the built-in `yunxi_companion_strong` persona profile.
+- Added a persona prompt compiler with clear priority below AGENTS.md and user hard
   constraints
-- global and workspace JSONL memory records
-- pending/approve/reject/delete/off/on memory controls
-- turn-start recall with prompt budget limits
-- turn-end memory candidate extraction with rule fallback
-- privacy-first write policy where sensitive or long-term profile facts require
+- Added global and workspace JSONL memory records.
+- Added pending/approve/reject/delete/off/on memory controls.
+- Added turn-start recall with prompt budget limits.
+- Added turn-end memory candidate extraction with rule fallback.
+- Added privacy-first write policy where sensitive or long-term profile facts require
   confirmation
+- Added persona/memory summary events for CLI JSONL, plain rendering, and TUI
+  debug detail without printing full memory content.
+- Documented schema, paths, CLI, and privacy rules in `docs/persona-memory.md`.
 
-v1.8.0 should not add SQLite, vector search, graph memory, complex relationship
+v1.8.0 does not add SQLite, vector search, graph memory, complex relationship
 state machines, proactive triggers, or a TUI memory inspector. Those remain
 future v1.8.1/v1.9/v2.0 topics after the transparent memory foundation is
 stable.
 
 The development report is recorded in
 `docs/reports/2026-07-13-yunxi-agent-v1-8-0-persona-memory-foundation-development-report.md`.
+
+Unified verification was performed after construction according to the project
+hard constraint.
+
+Verified in this slice:
+
+- `cargo fmt -- --check`: pass
+- targeted package tests for persona/storage/context/runtime/cli: pass
+- `cargo test`: pass
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- release binary version smoke: `yunxi 1.8.0`
+- offline plain/JSON/JSONL smoke: pass
+- persona and memory CLI smoke: pass
+- DeepSeek live JSON and JSONL smoke: pass; model returned `OK`, and output did
+  not leak the local credential
+- dependency and owned-source secret scans: pass
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `codegraph sync` and `codegraph status`: pass
+- install helper and PATH smoke: pass
 
 ## YunXi Agent v1.7.8 Sandbox Schema And Policy Hardening Construction
 

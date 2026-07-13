@@ -581,7 +581,9 @@ impl TurnSummary {
                 AgentEvent::ChildAgentEvent { .. }
                 | AgentEvent::ChildScopedStream { .. }
                 | AgentEvent::MultiAgentEvent { .. } => summary.child_events += 1,
-                AgentEvent::Warning { .. } => summary.warnings += 1,
+                AgentEvent::Warning { .. } | AgentEvent::MemoryWarning { .. } => {
+                    summary.warnings += 1;
+                }
                 AgentEvent::Error { .. } | AgentEvent::ProviderError { .. } => {
                     summary.errors += 1;
                 }
@@ -601,6 +603,11 @@ impl TurnSummary {
                 | AgentEvent::DeepParityState { .. }
                 | AgentEvent::SandboxAttempt { .. }
                 | AgentEvent::ApprovalCacheState { .. }
+                | AgentEvent::PersonaLoaded { .. }
+                | AgentEvent::PersonaContextInjected { .. }
+                | AgentEvent::MemoryRecall { .. }
+                | AgentEvent::MemoryCandidate { .. }
+                | AgentEvent::MemoryWrite { .. }
                 | AgentEvent::ContextStatus { .. }
                 | AgentEvent::StorageState { .. } => {}
             }

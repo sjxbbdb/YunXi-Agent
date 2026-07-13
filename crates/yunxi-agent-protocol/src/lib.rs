@@ -457,6 +457,67 @@ pub enum RuntimeEvent {
         decision: String,
         reused: bool,
     },
+    PersonaLoaded {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        #[serde(default)]
+        schema_version: u32,
+        profile_id: String,
+        display_name: String,
+        enabled: bool,
+    },
+    PersonaContextInjected {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        #[serde(default)]
+        schema_version: u32,
+        profile_id: String,
+        memory_count: usize,
+        budget_used_chars: usize,
+        budget_limit_chars: usize,
+    },
+    MemoryRecall {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        #[serde(default)]
+        schema_version: u32,
+        enabled: bool,
+        scope: String,
+        query: String,
+        count: usize,
+        budget_used_chars: usize,
+        truncated: bool,
+    },
+    MemoryCandidate {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        #[serde(default)]
+        schema_version: u32,
+        id: String,
+        kind: String,
+        sensitivity: String,
+        status: String,
+        write_policy: String,
+        reason: String,
+    },
+    MemoryWrite {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        #[serde(default)]
+        schema_version: u32,
+        id: String,
+        scope: String,
+        kind: String,
+        status: String,
+        action: String,
+    },
+    MemoryWarning {
+        thread_id: ThreadId,
+        turn_id: TurnId,
+        #[serde(default)]
+        schema_version: u32,
+        warning: String,
+    },
     Item {
         thread_id: ThreadId,
         turn_id: TurnId,
@@ -673,6 +734,27 @@ mod tests {
         let parsed = from_jsonl_line(&line).expect("parsed event");
 
         assert_eq!(parsed, RuntimeEvent::Stream { event: stream });
+    }
+
+    #[test]
+    fn persona_memory_event_round_trips_jsonl() {
+        let event = RuntimeEvent::MemoryCandidate {
+            thread_id: ThreadId("thread-memory".to_string()),
+            turn_id: TurnId("turn-memory".to_string()),
+            schema_version: 1,
+            id: "mem-1".to_string(),
+            kind: "preference".to_string(),
+            sensitivity: "low".to_string(),
+            status: "active".to_string(),
+            write_policy: "auto".to_string(),
+            reason: "rule:language-preference".to_string(),
+        };
+
+        let line = to_jsonl_line(&event).expect("jsonl");
+        let parsed = from_jsonl_line(&line).expect("parsed event");
+
+        assert_eq!(parsed, event);
+        assert!(!line.contains("secret"));
     }
 
     #[test]

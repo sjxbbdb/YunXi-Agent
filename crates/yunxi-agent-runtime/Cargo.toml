@@ -13,6 +13,7 @@ yunxi-agent-core = { path = "../yunxi-agent-core" }
 yunxi-agent-context = { path = "../yunxi-agent-context" }
 yunxi-agent-exec = { path = "../yunxi-agent-exec" }
 yunxi-agent-multi-agent = { path = "../yunxi-agent-multi-agent" }
+yunxi-agent-persona = { path = "../yunxi-agent-persona" }
 yunxi-agent-protocol = { path = "../yunxi-agent-protocol" }
 yunxi-agent-provider = { path = "../yunxi-agent-provider" }
 yunxi-agent-sandbox = { path = "../yunxi-agent-sandbox" }

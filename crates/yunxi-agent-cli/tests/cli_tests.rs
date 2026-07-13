@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.7.8"));
+        .stdout(predicate::str::contains("yunxi 1.8.0"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.7.8"));
+        .stdout(predicate::str::contains("yunxi 1.8.0"));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.8 interactive CLI",
+            "YunXi Agent v1.8.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.8 interactive CLI",
+            "YunXi Agent v1.8.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.8 interactive CLI",
+            "YunXi Agent v1.8.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -483,6 +483,118 @@ fn cli_metadata_help_marks_jsonl_as_agent_execution_only() {
         .success()
         .stdout(predicate::str::contains("JSON Lines"))
         .stdout(predicate::str::contains("metadata commands reject"));
+}
+
+#[test]
+fn cli_persona_commands_manage_local_settings() {
+    let home = TempDir::new().expect("yunxi home");
+    let mut status = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    status
+        .env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args(["--json", "persona", "status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"persona_enabled\": true"))
+        .stdout(predicate::str::contains("yunxi_companion_strong"));
+
+    let mut off = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    off.env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args(["persona", "off"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("persona_enabled: false"));
+
+    let mut on = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    on.env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args(["persona", "on"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("persona_enabled: true"));
+}
+
+#[test]
+fn cli_memory_commands_manage_runtime_extracted_memory() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    let mut enable = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    enable
+        .env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args(["--cwd", cwd, "memory", "on"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("memory_enabled: true"));
+
+    let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    run.env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args(["--offline", "--cwd", cwd, "以后用中文回答"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "YunXi autonomous runtime accepted prompt",
+        ));
+
+    let list = run_json_command_with_env(
+        &home,
+        &["--cwd", cwd, "--json", "memory", "list", "--workspace"],
+    );
+    let records = list["records"].as_array().expect("memory records");
+    assert!(
+        records.iter().any(|record| {
+            record["kind"].as_str() == Some("preference")
+                && record["status"].as_str() == Some("active")
+        }),
+        "expected active language preference memory: {list:#}"
+    );
+
+    let search = run_json_command_with_env(
+        &home,
+        &[
+            "--cwd",
+            cwd,
+            "--json",
+            "memory",
+            "search",
+            "中文",
+            "--workspace",
+        ],
+    );
+    assert!(
+        search["records"]
+            .as_array()
+            .is_some_and(|records| !records.is_empty())
+    );
+}
+
+#[test]
+fn cli_rejects_jsonl_for_persona_and_memory_management() {
+    let mut persona = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    persona
+        .args(["persona", "status", "--jsonl"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("\"type\":\"error\""))
+        .stdout(predicate::str::contains("persona management commands"));
+
+    let mut memory = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    memory
+        .args(["memory", "status", "--jsonl"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("\"type\":\"error\""))
+        .stdout(predicate::str::contains("memory management commands"));
 }
 
 #[test]
@@ -786,6 +898,23 @@ fn session_json_files(temp: &TempDir) -> Vec<PathBuf> {
 fn run_json_command(args: &[&str]) -> Value {
     let output = Command::cargo_bin("yunxi-agent-cli")
         .expect("binary should build")
+        .args(args)
+        .output()
+        .expect("command should run");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("stdout should contain JSON")
+}
+
+fn run_json_command_with_env(home: &TempDir, args: &[&str]) -> Value {
+    let output = Command::cargo_bin("yunxi-agent-cli")
+        .expect("binary should build")
+        .env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
         .args(args)
         .output()
         .expect("command should run");

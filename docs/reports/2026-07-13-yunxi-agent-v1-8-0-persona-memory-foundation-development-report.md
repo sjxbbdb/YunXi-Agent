@@ -552,3 +552,68 @@ yunxi memory on
 - pending/high sensitivity 内容不会被默认注入 prompt 或泄漏到事件流。
 - 默认 CLI 继续保持 YunXi-owned runtime，不依赖上游 Codex CLI runtime。
 - 后续 v1.8.1 可继续做隐私/稳定性硬化，v1.9 再做关系状态机、记忆生命周期和检索升级。
+
+## v1.8.0 构建记录
+
+本轮按报告进入实现阶段，构建内容包括：
+
+- 新增 `crates/yunxi-agent-persona` crate，提供 persona profile、memory schema、
+  recall、prompt compiler、rule extractor、privacy classifier 和 write policy。
+- `crates/yunxi-agent-storage` 增加 `FilePersonaMemoryStore`，支持 global/workspace
+  JSONL 记忆、pending 文件、状态更新、搜索、损坏行 warning 和 workspace fingerprint。
+- `crates/yunxi-agent-runtime` 在 turn start 加载 persona/settings/memory，注入
+  bounded persona/memory context；在 turn end 执行规则提炼和 write policy，并发出
+  persona/memory 摘要事件。
+- `crates/yunxi-agent-core` 与 `crates/yunxi-agent-protocol` 增加 persona/memory
+  事件 schema。
+- `crates/yunxi-agent-cli` 增加 `persona` / `memory` 管理命令，并将事件映射到
+  JSONL protocol event。
+- `crates/yunxi-agent-cli/src/render.rs` 与 `crates/yunxi-agent-tui/src/event_filter.rs`
+  增加 persona/memory 摘要渲染，默认不泄漏完整记忆正文。
+- README、`docs/persona-memory.md` 和 `docs/extraction-status.md` 同步 v1.8.0
+  persona/memory 使用方式、隐私策略和非目标。
+
+统一验证仍按本报告的验证计划在源码构建完成后一次性执行；最终命令结果、发布
+SHA、annotated tag 和 `cargo clean` 结果在验证后追加到本报告和桌面工作日志。
+
+## v1.8.0 统一验证记录
+
+统一验证在源码构建完成后执行，中途发现并修复一次事件覆盖遗漏：
+
+- `crates/yunxi-agent-cli/src/interactive.rs` 的 `TurnSummary` match 未覆盖
+  persona/memory 新事件，已补为 summary/debug 级处理。
+- `crates/yunxi-agent-persona/tests/memory_policy_tests.rs` 中的假 secret fixture
+  命中源代码密钥形态扫描，已改为不符合真实 key 形态的 `<redacted>` 占位文本。
+
+最终验证结果：
+
+- `cargo fmt`：通过。
+- `cargo fmt -- --check`：通过。
+- `cargo test -p yunxi-agent-persona`：通过。
+- `cargo test -p yunxi-agent-storage`：通过。
+- `cargo test -p yunxi-agent-context`：通过。
+- `cargo test -p yunxi-agent-runtime`：通过。
+- `cargo test -p yunxi-agent-cli`：通过。
+- `cargo test`：通过。
+- `cargo check --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- release version smoke：
+  - `target\release\yunxi.exe --version`：`yunxi 1.8.0`。
+  - `target\release\yunxi-agent-cli.exe --version`：`yunxi 1.8.0`。
+- offline plain/JSON/JSONL smoke：通过，JSONL 含 `persona_loaded`、
+  `memory_recall`、`persona_context_injected` 事件。
+- persona CLI smoke：`status`、`profile`、`off`、`on` 通过。
+- memory CLI smoke：`status`、`on`、offline 写入偏好、`list --workspace`、
+  `pending`、`search`、`off` 通过。
+- DeepSeek live JSON smoke：通过，模型 `deepseek-chat` 返回 `OK`。
+- DeepSeek live JSONL smoke：通过，模型 `deepseek-chat` 返回 `OK`，输出未泄漏本地密钥。
+- 默认 CLI dependency scan：未发现 `codex`、`vendor`、`yunxi-agent-codex`。
+- owned-source secret scan：`secret_scan_matches=0`。
+- `git diff --check`：通过，仅有 Windows LF/CRLF 提示。
+- `codegraph sync "D:\YunXi Agent"`：通过。
+- `codegraph status "D:\YunXi Agent"`：通过，索引 up to date。
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`：通过。
+- PATH smoke：`yunxi --version`、`yunxi-agent-cli --version`、
+  `yunxi --offline "installed path v1.8.0 smoke"` 通过。
+
+发布 SHA、`v1.8.0` annotated tag 和 `cargo clean` 结果在发布收尾后追加。

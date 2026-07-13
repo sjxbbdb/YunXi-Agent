@@ -6,13 +6,18 @@ use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunControl, AgentRunResult,
     ApprovalMode, BackendKind, CommandStatus, SandboxMode,
 };
+use yunxi_agent_persona::{
+    MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus, PersonaSettings,
+    yunxi_companion_strong,
+};
 use yunxi_agent_protocol::{
     FunctionCallOutput, ProtocolRole, ResponseItem, ResponseItemDelta, RuntimeEvent, ThreadId,
     ThreadState, ToolCall, ToolCallStatus, TurnId, TurnMetadata, TurnState, to_jsonl_line,
 };
 use yunxi_agent_storage::{
-    FileSessionStore, HistoryLoadOptions, RolloutRecord, SessionGraphView, SessionHistory,
-    SessionId, SessionRecord, SessionStore, SessionSummary,
+    FilePersonaMemoryStore, FileSessionStore, HistoryLoadOptions, PersonaMemoryScope,
+    RolloutRecord, SessionGraphView, SessionHistory, SessionId, SessionRecord, SessionStore,
+    SessionSummary,
 };
 
 mod commands {
@@ -66,7 +71,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.7.8 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.8.0 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -157,6 +162,14 @@ enum CliCommand {
         #[command(subcommand)]
         command: ParityCommand,
     },
+    Persona {
+        #[command(subcommand)]
+        command: PersonaCommand,
+    },
+    Memory {
+        #[command(subcommand)]
+        command: MemoryCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -206,6 +219,62 @@ enum SessionCommand {
 #[derive(Debug, Subcommand)]
 enum ParityCommand {
     Map,
+}
+
+#[derive(Debug, Subcommand)]
+enum PersonaCommand {
+    Status,
+    Profile,
+    Set {
+        #[arg(value_name = "PROFILE")]
+        profile: String,
+    },
+    On,
+    Off,
+}
+
+#[derive(Debug, Subcommand)]
+enum MemoryCommand {
+    Status,
+    List {
+        #[arg(long, conflicts_with = "workspace")]
+        global: bool,
+        #[arg(long, conflicts_with = "global")]
+        workspace: bool,
+    },
+    Show {
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    Search {
+        #[arg(value_name = "QUERY", num_args = 1..)]
+        query: Vec<String>,
+        #[arg(long, conflicts_with = "workspace")]
+        global: bool,
+        #[arg(long, conflicts_with = "global")]
+        workspace: bool,
+    },
+    Pending,
+    Approve {
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    Reject {
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    Delete {
+        #[arg(value_name = "ID")]
+        id: String,
+    },
+    Clear {
+        #[arg(long)]
+        workspace: bool,
+        #[arg(long)]
+        confirm: bool,
+    },
+    On,
+    Off,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -856,6 +925,152 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     reused: *reused,
                 });
             }
+            AgentEvent::PersonaLoaded {
+                schema_version,
+                profile_id,
+                display_name,
+                enabled,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::PersonaLoaded {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    schema_version: *schema_version,
+                    profile_id: profile_id.clone(),
+                    display_name: display_name.clone(),
+                    enabled: *enabled,
+                });
+            }
+            AgentEvent::PersonaContextInjected {
+                schema_version,
+                profile_id,
+                memory_count,
+                budget_used_chars,
+                budget_limit_chars,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::PersonaContextInjected {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    schema_version: *schema_version,
+                    profile_id: profile_id.clone(),
+                    memory_count: *memory_count,
+                    budget_used_chars: *budget_used_chars,
+                    budget_limit_chars: *budget_limit_chars,
+                });
+            }
+            AgentEvent::MemoryRecall {
+                schema_version,
+                enabled,
+                scope,
+                query,
+                count,
+                budget_used_chars,
+                truncated,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::MemoryRecall {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    schema_version: *schema_version,
+                    enabled: *enabled,
+                    scope: scope.clone(),
+                    query: query.clone(),
+                    count: *count,
+                    budget_used_chars: *budget_used_chars,
+                    truncated: *truncated,
+                });
+            }
+            AgentEvent::MemoryCandidate {
+                schema_version,
+                id,
+                kind,
+                sensitivity,
+                status,
+                write_policy,
+                reason,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::MemoryCandidate {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    schema_version: *schema_version,
+                    id: id.clone(),
+                    kind: kind.clone(),
+                    sensitivity: sensitivity.clone(),
+                    status: status.clone(),
+                    write_policy: write_policy.clone(),
+                    reason: reason.clone(),
+                });
+            }
+            AgentEvent::MemoryWrite {
+                schema_version,
+                id,
+                scope,
+                kind,
+                status,
+                action,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::MemoryWrite {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    schema_version: *schema_version,
+                    id: id.clone(),
+                    scope: scope.clone(),
+                    kind: kind.clone(),
+                    status: status.clone(),
+                    action: action.clone(),
+                });
+            }
+            AgentEvent::MemoryWarning {
+                schema_version,
+                warning,
+            } => {
+                ensure_protocol_turn_started(
+                    &mut output,
+                    &thread_id,
+                    &turn_id,
+                    &mut emitted_thread,
+                    &mut emitted_turn,
+                );
+                output.push(RuntimeEvent::MemoryWarning {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    schema_version: *schema_version,
+                    warning: warning.clone(),
+                });
+            }
             AgentEvent::Message { content } => output.push(RuntimeEvent::Item {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
@@ -1270,6 +1485,8 @@ async fn run_command(
             run_session_command(command, config, backend, provider_mode, json, jsonl).await
         }
         CliCommand::Parity { command } => run_parity_command(command, json).await,
+        CliCommand::Persona { command } => run_persona_command(command, json).await,
+        CliCommand::Memory { command } => run_memory_command(command, config, json).await,
     }
 }
 
@@ -1283,10 +1500,16 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.7.8; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.8.0; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.7.8; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.8.0; use --json for parity commands"
+        ),
+        CliCommand::Persona { .. } => bail!(
+            "--jsonl is only supported for agent execution commands in v1.8.0; use --json for persona management commands"
+        ),
+        CliCommand::Memory { .. } => bail!(
+            "--jsonl is only supported for agent execution commands in v1.8.0; use --json for memory management commands"
         ),
     }
 }
@@ -1308,6 +1531,295 @@ async fn run_parity_command(command: ParityCommand, json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn run_persona_command(command: PersonaCommand, json: bool) -> Result<()> {
+    let mut settings = PersonaSettings::load();
+    match command {
+        PersonaCommand::Status => print_persona_status(&settings, json)?,
+        PersonaCommand::Profile => print_persona_profile(json)?,
+        PersonaCommand::Set { profile } => {
+            if profile != "yunxi_companion_strong" {
+                bail!("unknown persona profile: {profile}");
+            }
+            settings.active_profile = profile;
+            settings.save().context("failed to save persona settings")?;
+            print_persona_status(&settings, json)?;
+        }
+        PersonaCommand::On => {
+            settings.persona_enabled = true;
+            settings.save().context("failed to save persona settings")?;
+            print_persona_status(&settings, json)?;
+        }
+        PersonaCommand::Off => {
+            settings.persona_enabled = false;
+            settings.save().context("failed to save persona settings")?;
+            print_persona_status(&settings, json)?;
+        }
+    }
+    Ok(())
+}
+
+async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: bool) -> Result<()> {
+    let store = FilePersonaMemoryStore::for_workspace(&config.cwd);
+    let mut settings = PersonaSettings::load();
+    match command {
+        MemoryCommand::Status => {
+            let load = store.list(PersonaMemoryScope::All);
+            print_memory_status(&settings, &load.records, &load.warnings, json)?;
+        }
+        MemoryCommand::List { global, workspace } => {
+            let load = store.list(memory_scope_from_flags(global, workspace));
+            print_memory_records(&load.records, &load.warnings, json)?;
+        }
+        MemoryCommand::Show { id } => {
+            let load = store.show(&id);
+            let record = load
+                .records
+                .first()
+                .ok_or_else(|| anyhow::anyhow!("memory not found: {id}"))?;
+            print_memory_record(record, &load.warnings, json)?;
+        }
+        MemoryCommand::Search {
+            query,
+            global,
+            workspace,
+        } => {
+            let load = store.search(&query.join(" "), memory_scope_from_flags(global, workspace));
+            print_memory_records(&load.records, &load.warnings, json)?;
+        }
+        MemoryCommand::Pending => {
+            let mut load = store.list(PersonaMemoryScope::Pending);
+            load.records
+                .retain(|record| record.status == MemoryStatus::Pending);
+            print_memory_records(&load.records, &load.warnings, json)?;
+        }
+        MemoryCommand::Approve { id } => {
+            let record = store
+                .update_status(&id, MemoryStatus::Active)
+                .context("failed to approve memory")?
+                .ok_or_else(|| anyhow::anyhow!("memory not found: {id}"))?;
+            print_memory_record(&record, &[], json)?;
+        }
+        MemoryCommand::Reject { id } => {
+            let record = store
+                .update_status(&id, MemoryStatus::Rejected)
+                .context("failed to reject memory")?
+                .ok_or_else(|| anyhow::anyhow!("memory not found: {id}"))?;
+            print_memory_record(&record, &[], json)?;
+        }
+        MemoryCommand::Delete { id } => {
+            let record = store
+                .update_status(&id, MemoryStatus::Archived)
+                .context("failed to archive memory")?
+                .ok_or_else(|| anyhow::anyhow!("memory not found: {id}"))?;
+            print_memory_record(&record, &[], json)?;
+        }
+        MemoryCommand::Clear { workspace, confirm } => {
+            if !workspace || !confirm {
+                bail!("memory clear requires --workspace --confirm");
+            }
+            let archived = store
+                .clear_workspace()
+                .context("failed to clear workspace memory")?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "scope": "workspace",
+                        "archived_active_records": archived,
+                    }))?
+                );
+            } else {
+                println!("workspace memory archived_active_records: {archived}");
+            }
+        }
+        MemoryCommand::On => {
+            settings.memory_enabled = true;
+            settings.save().context("failed to save memory settings")?;
+            let load = store.list(PersonaMemoryScope::All);
+            print_memory_status(&settings, &load.records, &load.warnings, json)?;
+        }
+        MemoryCommand::Off => {
+            settings.memory_enabled = false;
+            settings.save().context("failed to save memory settings")?;
+            let load = store.list(PersonaMemoryScope::All);
+            print_memory_status(&settings, &load.records, &load.warnings, json)?;
+        }
+    }
+    Ok(())
+}
+
+fn print_persona_status(settings: &PersonaSettings, json: bool) -> Result<()> {
+    let profile = yunxi_companion_strong();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "persona_enabled": settings.persona_enabled,
+                "memory_enabled": settings.memory_enabled,
+                "active_profile": settings.active_profile,
+                "profile": {
+                    "id": profile.id,
+                    "display_name": profile.display_name,
+                    "version": profile.version,
+                }
+            }))?
+        );
+    } else {
+        println!("persona_enabled: {}", settings.persona_enabled);
+        println!("memory_enabled: {}", settings.memory_enabled);
+        println!("active_profile: {}", settings.active_profile);
+        println!("display_name: {}", profile.display_name);
+        println!("profile_version: {}", profile.version);
+    }
+    Ok(())
+}
+
+fn print_persona_profile(json: bool) -> Result<()> {
+    let profile = yunxi_companion_strong();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&profile)?);
+    } else {
+        println!("id: {}", profile.id);
+        println!("display_name: {}", profile.display_name);
+        println!("version: {}", profile.version);
+        println!("identity: {}", profile.layers.identity);
+        println!("voice: {}", profile.layers.voice);
+        println!("companion_style: {}", profile.layers.companion_style);
+        println!("work_style: {}", profile.layers.work_style);
+        println!("boundaries: {}", profile.layers.boundaries);
+        for constraint in profile.constraints {
+            println!("constraint.{}: {}", constraint.id, constraint.content);
+        }
+    }
+    Ok(())
+}
+
+fn print_memory_status(
+    settings: &PersonaSettings,
+    records: &[MemoryRecord],
+    warnings: &[String],
+    json: bool,
+) -> Result<()> {
+    let active = records
+        .iter()
+        .filter(|record| record.status == MemoryStatus::Active)
+        .count();
+    let pending = records
+        .iter()
+        .filter(|record| record.status == MemoryStatus::Pending)
+        .count();
+    let rejected = records
+        .iter()
+        .filter(|record| record.status == MemoryStatus::Rejected)
+        .count();
+    let archived = records
+        .iter()
+        .filter(|record| record.status == MemoryStatus::Archived)
+        .count();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "memory_enabled": settings.memory_enabled,
+                "persona_enabled": settings.persona_enabled,
+                "active_profile": settings.active_profile,
+                "counts": {
+                    "total": records.len(),
+                    "active": active,
+                    "pending": pending,
+                    "rejected": rejected,
+                    "archived": archived,
+                },
+                "warnings": warnings,
+            }))?
+        );
+    } else {
+        println!("memory_enabled: {}", settings.memory_enabled);
+        println!("records: {}", records.len());
+        println!("active: {active}");
+        println!("pending: {pending}");
+        println!("rejected: {rejected}");
+        println!("archived: {archived}");
+        for warning in warnings {
+            println!("[memory-warning] {warning}");
+        }
+    }
+    Ok(())
+}
+
+fn print_memory_records(records: &[MemoryRecord], warnings: &[String], json: bool) -> Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "records": records,
+                "warnings": warnings,
+            }))?
+        );
+    } else {
+        println!("records: {}", records.len());
+        for record in records {
+            println!(
+                "{}\t{}\t{}\t{}\t{}\t{}",
+                record.id,
+                memory_status_label(record.status),
+                memory_kind_label(record.kind),
+                memory_sensitivity_label(record.sensitivity),
+                record.scope.label(),
+                preview(&record.content)
+            );
+        }
+        for warning in warnings {
+            println!("[memory-warning] {warning}");
+        }
+    }
+    Ok(())
+}
+
+fn print_memory_record(record: &MemoryRecord, warnings: &[String], json: bool) -> Result<()> {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "record": record,
+                "warnings": warnings,
+            }))?
+        );
+    } else {
+        println!("id: {}", record.id);
+        println!("schema_version: {}", record.schema_version);
+        println!("scope: {}", record.scope.label());
+        println!("kind: {}", memory_kind_label(record.kind));
+        println!(
+            "sensitivity: {}",
+            memory_sensitivity_label(record.sensitivity)
+        );
+        println!("status: {}", memory_status_label(record.status));
+        println!("confidence: {}", record.confidence);
+        println!("importance: {}", record.importance);
+        if let Some(source_session_id) = &record.source_session_id {
+            println!("source_session_id: {source_session_id}");
+        }
+        println!("created_at_millis: {}", record.created_at_millis);
+        println!("updated_at_millis: {}", record.updated_at_millis);
+        println!("content: {}", record.content);
+        for warning in warnings {
+            println!("[memory-warning] {warning}");
+        }
+    }
+    Ok(())
+}
+
+fn memory_scope_from_flags(global: bool, workspace: bool) -> PersonaMemoryScope {
+    if global {
+        PersonaMemoryScope::Global
+    } else if workspace {
+        PersonaMemoryScope::Workspace
+    } else {
+        PersonaMemoryScope::All
+    }
 }
 
 async fn run_session_command(
@@ -1558,6 +2070,37 @@ fn preview(prompt: &str) -> String {
         .collect::<String>();
     value.push_str("...");
     value
+}
+
+fn memory_kind_label(kind: MemoryKind) -> &'static str {
+    match kind {
+        MemoryKind::Preference => "preference",
+        MemoryKind::PersonalFact => "personal_fact",
+        MemoryKind::RelationshipNote => "relationship_note",
+        MemoryKind::EmotionalState => "emotional_state",
+        MemoryKind::Goal => "goal",
+        MemoryKind::ProjectContext => "project_context",
+        MemoryKind::Correction => "correction",
+        MemoryKind::Event => "event",
+        MemoryKind::ToolTraceSummary => "tool_trace_summary",
+    }
+}
+
+fn memory_sensitivity_label(sensitivity: MemorySensitivity) -> &'static str {
+    match sensitivity {
+        MemorySensitivity::Low => "low",
+        MemorySensitivity::Medium => "medium",
+        MemorySensitivity::High => "high",
+    }
+}
+
+fn memory_status_label(status: MemoryStatus) -> &'static str {
+    match status {
+        MemoryStatus::Active => "active",
+        MemoryStatus::Pending => "pending",
+        MemoryStatus::Rejected => "rejected",
+        MemoryStatus::Archived => "archived",
+    }
 }
 
 fn print_session(session: &SessionRecord) {

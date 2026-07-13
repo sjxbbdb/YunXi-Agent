@@ -393,3 +393,71 @@ YunXi Agent v1.7.5 要修复审核报告中影响 CLI 可用性和外部集成�
 - 继续保留 v1.7.4 TUI 能力。
 - 继续保持默认运行路径不依赖上游 Codex CLI 源码。
 
+## 构建记录
+
+构建开始时间：2026-07-13 09:56:35 +08:00
+
+本轮已按报告进入源码构建阶段，当前构建内容包括：
+
+- 修改 `crates/yunxi-agent-runtime/src/lib.rs`，新增 provider stream 完整 assistant message 检测，避免 provider stream 已 emit 完整最终回复后 runtime completed 阶段再次 emit 同一条 `AgentEvent::Message`。
+- 修改 `crates/yunxi-agent-cli/src/main.rs`，让 `AgentEvent::McpToolCompleted` 同时输出通用 `RuntimeEvent::ToolCompleted` 和原有 `ResponseItem::McpToolCall` 富信息 item。
+- 修改 `crates/yunxi-agent-cli/src/provider_mode.rs`，使 provider auto fallback warning 只在真实 YunXi offline runtime fallback 时出现，显式 `dry-run` backend 不再打印误导性 provider credential warning。
+- 修改 `crates/yunxi-agent-cli/src/main.rs`，将 clap 解析切换到 `try_parse()`，保留 help/version 正常输出，同时把 parse/preflight 错误纳入统一错误和 JSONL error event 路径。
+- 修改 `crates/yunxi-agent-cli/src/main.rs`，让 `--json` 与 `--jsonl` 互斥。
+- 修改 `crates/yunxi-agent-cli/src/main.rs`，新增 `yunxi run [PROMPT]...` 显式 one-shot 入口，缓解 `sessions` / `parity` 保留词作为自然语言 prompt 时的冲突。
+- 修改 `crates/yunxi-agent-cli/src/main.rs`，对不支持 JSONL 的 `sessions` metadata 子命令和 `parity map` 明确拒绝 `--jsonl`。
+- 修改 `crates/yunxi-agent-cli/src/main.rs`，在默认 CLI 中提前拒绝 detached Codex compatibility backend，避免进入 provider fallback 逻辑。
+- 修改 `crates/yunxi-agent-storage/src/lib.rs`，新增 `SessionSummary`，包含轻量元数据、preview、event_count 和 child_count。
+- 修改 `crates/yunxi-agent-cli/src/main.rs`，让 `sessions list --json` 输出 `Vec<SessionSummary>`，完整会话记录继续通过 `sessions show <id> --json` 获取。
+- 修改 `crates/yunxi-agent-core/src/event.rs`、`crates/yunxi-agent-protocol/src/lib.rs`、`crates/yunxi-agent-sandbox/src/lib.rs`、`crates/yunxi-agent-tools/src/lib.rs`、`crates/yunxi-agent-runtime/src/lib.rs`、`crates/yunxi-agent-cli/src/render.rs`、`crates/yunxi-agent-tui/src/event_filter.rs`，为 sandbox attempt 增加 `os_isolation` 和 `enforcement` 机器可读字段，并在 plain/TUI 文案中继续明确 advisory policy guard。
+- 修改 `crates/yunxi-agent-cli/tests/cli_tests.rs`，新增/更新 CLI 行为目标：v1.7.5 版本、dry-run 无 fallback warning、JSON/JSONL 互斥、metadata 子命令拒绝 JSONL、`run` 子命令、保留词 prompt 逃逸提示、session summary。
+- 修改 `crates/yunxi-agent-cli/tests/jsonl_tests.rs`，新增 JSONL 协议目标：最终 assistant message 唯一、dry-run JSONL 无 fallback warning、Stage 4M tool lifecycle started/completed 配对。
+- 修改 `Cargo.toml`、`Cargo.lock`、`README.md`、`crates/yunxi-agent-cli/src/render.rs`、`crates/yunxi-agent-tui/src/app.rs`，版本推进到 `1.7.5` 并更新用户文档。
+
+本轮严格遵守用户硬性约束：先完成完整构建，不在构建过程中执行 cargo 测试或单点验证；构建完成后再执行统一验证。
+
+## 统一验证结果
+
+验证时间：2026-07-13 10:04:11 +08:00
+
+构建完成后按统一验证计划执行验证。第一轮 `cargo test` 发现 2 个 CLI 错误分类/提示问题：
+
+- `sessions list --jsonl` 已正确输出 JSONL error，但退出码为 `70`，应为 invalid input `2`。
+- `--offline sessions` 已由 clap 拒绝，但 friendly prompt escape 提示没有匹配 `yunxi-agent-cli.exe sessions` 形式，且退出码为 `70`。
+
+已集中修复：
+
+- `crates/yunxi-agent-cli/src/main.rs` 的 `classify_cli_error()` 增加 `usage:` 和 `only supported` invalid-input 分类。
+- `crates/yunxi-agent-cli/src/main.rs` 的 `friendly_clap_error()` 扩展 `yunxi-agent-cli.exe sessions/parity` 和 `sessions/parity [OPTIONS]` 匹配。
+
+修复后重新执行统一验证，最终结果：
+
+- `cargo fmt`：通过。
+- `cargo fmt -- --check`：通过。
+- `cargo test`：通过，workspace unit tests、integration tests、doc tests 均无失败。
+- `cargo check --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- `target\release\yunxi.exe --version`：输出 `yunxi 1.7.5`。
+- `target\release\yunxi-agent-cli.exe --version`：输出 `yunxi 1.7.5`。
+- `target\release\yunxi.exe --offline "v1.7.5 offline smoke"`：通过。
+- `target\release\yunxi.exe --offline --json "v1.7.5 json duplicate probe"`：通过，`status=completed`，final response 对应 `AgentEvent::Message` 数量为 `1`。
+- `target\release\yunxi.exe --offline --jsonl "v1.7.5 jsonl duplicate probe"`：通过，18 行 JSONL，可解析，最终 assistant message 数量为 `1`。
+- `YUNXI_RUNTIME_FIXTURES=1 target\release\yunxi.exe --offline --jsonl "run stage 4m real parity fixture"`：通过，131 行 JSONL；tool started/completed 缺口为 `0`；`stage-4m-mcp-1` 和 `stage-4m-mcp-2` 均有 `tool_completed`；sandbox event 包含 `os_isolation=false`、`enforcement=policy_guard`。
+- `target\release\yunxi.exe --backend dry-run "v1.7.5 dry run warning probe"`：通过，未包含 provider auto fallback warning。
+- `target\release\yunxi.exe --offline --json --jsonl "v1.7.5 conflict probe"`：按预期 exit code `2`，输出 JSONL error。
+- `target\release\yunxi.exe sessions list --jsonl`：按预期 exit code `2`，输出 JSONL error。
+- `target\release\yunxi.exe parity map --jsonl`：按预期 exit code `2`，输出 JSONL error。
+- `target\release\yunxi.exe sessions list --json`：通过，输出 session summary；不包含完整 `events` 字段。
+- `target\release\yunxi.exe --help`：显示 detached Codex compatibility backend 说明，默认 CLI 不把 Codex backend 当成可用 runtime。
+- plain `--no-tui` interactive smoke：通过，banner 为 `YunXi Agent v1.7.5 interactive CLI`，可 `/exit` 正常退出。
+- DeepSeek live stream smoke：`deepseek-chat` 通过，28 行 JSONL，可解析，`secret_leak_detected=false`，无 provider HTTP error。
+- DeepSeek live non-stream smoke：`deepseek-chat` 通过，18 行 JSONL，可解析，`secret_leak_detected=false`，无 provider HTTP error。
+- 默认 CLI dependency scan：通过，没有 `codex`、`vendor` 或 `yunxi-agent-codex` 匹配。
+- owned-source secret scan：通过，排除 `.git`、`.codegraph`、`target`、`vendor`、`extracted` 后未发现密钥形态内容。
+- `git diff --check`：通过，仅有 Windows LF-to-CRLF 提示。
+- `codegraph sync "D:\YunXi Agent"`：通过，同步 13 个变更文件。
+- `codegraph status "D:\YunXi Agent"`：通过，index is up to date。
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`：通过，安装目录为 `C:\Users\admin\AppData\Local\YunXi Agent\bin`，`path_updated=False`。
+- PATH smoke：`yunxi --version` 和 `yunxi-agent-cli --version` 均输出 `yunxi 1.7.5`，`yunxi --offline "installed path v1.7.5 smoke"` 通过。
+
+GitHub REST API 发布、annotated tag `v1.7.5`、`cargo clean` 和桌面开发日志在最终收尾步骤执行，结果同步记录在桌面开发日志和本轮最终答复中。

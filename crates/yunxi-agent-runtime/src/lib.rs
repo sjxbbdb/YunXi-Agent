@@ -921,7 +921,9 @@ impl YunXiRuntimeBackend {
             if control.is_cancelled() {
                 return cancelled_turn_result(&sink, "current turn cancelled").await;
             }
-            let provider_response = collect_provider_response(provider_stream)?;
+            let collected_provider_response = collect_provider_response(provider_stream)?;
+            let assistant_message_emitted = collected_provider_response.assistant_message_emitted;
+            let provider_response = collected_provider_response.response;
             usage = provider_response.usage;
             turn_driver
                 .emit_phase(
@@ -949,7 +951,9 @@ impl YunXiRuntimeBackend {
             .await?;
 
             if provider_response.tool_calls.is_empty() {
-                final_response = provider_response.message.map(|message| message.content);
+                final_response = provider_response
+                    .message
+                    .map(|message| (message.content, assistant_message_emitted));
                 break;
             }
 
@@ -1034,21 +1038,24 @@ impl YunXiRuntimeBackend {
                 .await?;
         }
 
-        let final_response = final_response.ok_or_else(|| AgentError::Execution {
-            message: format!(
-                "runtime did not produce a final response within {} turns",
-                self.max_turns
-            ),
-        })?;
+        let (final_response, final_response_emitted) =
+            final_response.ok_or_else(|| AgentError::Execution {
+                message: format!(
+                    "runtime did not produce a final response within {} turns",
+                    self.max_turns
+                ),
+            })?;
 
         if control.is_cancelled() {
             return cancelled_turn_result(&sink, "current turn cancelled").await;
         }
 
-        sink.emit(AgentEvent::Message {
-            content: final_response.clone(),
-        })
-        .await?;
+        if !final_response_emitted {
+            sink.emit(AgentEvent::Message {
+                content: final_response.clone(),
+            })
+            .await?;
+        }
         sink.emit(AgentEvent::Completed {
             status: AgentRunStatus::Completed,
             usage,
@@ -2017,9 +2024,24 @@ impl ProviderStreamEventSink for RuntimeProviderStreamSink<'_> {
     }
 }
 
-fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResponse> {
+struct CollectedProviderResponse {
+    response: ProviderResponse,
+    assistant_message_emitted: bool,
+}
+
+fn collect_provider_response(stream: ProviderStream) -> AgentResult<CollectedProviderResponse> {
+    let assistant_message_emitted = stream
+        .final_response
+        .as_ref()
+        .and_then(|response| response.message.as_ref())
+        .is_some_and(|message| {
+            stream_completed_assistant_message_matches(&stream.events, &message.content)
+        });
     if let Some(response) = stream.final_response {
-        return Ok(response);
+        return Ok(CollectedProviderResponse {
+            response,
+            assistant_message_emitted,
+        });
     }
 
     let mut message_content = String::new();
@@ -2030,26 +2052,35 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResp
     let mut failed_message = None;
     let mut cancelled_reason = None;
 
-    for event in stream.events {
+    let stream_events = stream.events;
+    for event in &stream_events {
         match event {
             StreamEvent::ItemStarted { item, .. } | StreamEvent::ItemCompleted { item, .. } => {
-                collect_response_item(item, &mut message_content, &mut tool_calls, &mut usage)?;
+                collect_response_item(
+                    item.clone(),
+                    &mut message_content,
+                    &mut tool_calls,
+                    &mut usage,
+                )?;
             }
             StreamEvent::ItemDelta { delta, .. } => match delta {
                 ResponseItemDelta::MessageContent { delta, .. } => {
-                    message_content.push_str(&delta);
+                    message_content.push_str(delta);
                 }
                 ResponseItemDelta::ToolCallArguments {
                     call_id: Some(call_id),
                     delta,
                 } => {
-                    argument_deltas.entry(call_id).or_default().push_str(&delta);
+                    argument_deltas
+                        .entry(call_id.clone())
+                        .or_default()
+                        .push_str(delta);
                 }
                 ResponseItemDelta::ToolCallName {
                     call_id: Some(call_id),
                     name,
                 } => {
-                    function_names.insert(call_id, name);
+                    function_names.insert(call_id.clone(), name.clone());
                 }
                 ResponseItemDelta::ReasoningContent { .. }
                 | ResponseItemDelta::ToolCallName { call_id: None, .. }
@@ -2067,11 +2098,14 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResp
                 }
             },
             StreamEvent::ResponseCancelled { reason, .. } => {
-                cancelled_reason =
-                    Some(reason.unwrap_or_else(|| "provider stream cancelled".to_string()));
+                cancelled_reason = Some(
+                    reason
+                        .clone()
+                        .unwrap_or_else(|| "provider stream cancelled".to_string()),
+                );
             }
             StreamEvent::ResponseFailed { message, .. } => {
-                failed_message = Some(message);
+                failed_message = Some(message.clone());
             }
             StreamEvent::ResponseStarted { .. } => {}
         }
@@ -2107,11 +2141,52 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<ProviderResp
     } else {
         Some(ProviderMessage::assistant(message_content))
     };
-    Ok(ProviderResponse {
-        message,
-        tool_calls,
-        usage,
+    let assistant_message_emitted = message.as_ref().is_some_and(|message| {
+        stream_completed_assistant_message_matches(&stream_events, &message.content)
+    });
+    Ok(CollectedProviderResponse {
+        response: ProviderResponse {
+            message,
+            tool_calls,
+            usage,
+        },
+        assistant_message_emitted,
     })
+}
+
+fn stream_completed_assistant_message_matches(events: &[StreamEvent], expected: &str) -> bool {
+    if expected.is_empty() {
+        return false;
+    }
+    events.iter().any(|event| match event {
+        StreamEvent::ItemStarted { item, .. } | StreamEvent::ItemCompleted { item, .. } => {
+            response_item_message_content(item).as_deref() == Some(expected)
+        }
+        StreamEvent::ResponseStarted { .. }
+        | StreamEvent::ItemDelta { .. }
+        | StreamEvent::ResponseCompleted { .. }
+        | StreamEvent::ResponseCancelled { .. }
+        | StreamEvent::ResponseFailed { .. } => false,
+    })
+}
+
+fn response_item_message_content(item: &ResponseItem) -> Option<String> {
+    match item {
+        ResponseItem::Message { content, .. } => Some(content.clone()),
+        ResponseItem::AgentMessage { content, .. } => first_content_text(content),
+        ResponseItem::Reasoning { .. }
+        | ResponseItem::ReasoningItem { .. }
+        | ResponseItem::Usage { .. }
+        | ResponseItem::LocalShellCall { .. }
+        | ResponseItem::FunctionCallOutput { .. }
+        | ResponseItem::WebSearchCall { .. }
+        | ResponseItem::Compaction { .. }
+        | ResponseItem::CompactionTrigger { .. }
+        | ResponseItem::ToolCall { .. }
+        | ResponseItem::FunctionCall { .. }
+        | ResponseItem::McpToolCall { .. }
+        | ResponseItem::ToolSearchCall { .. } => None,
+    }
 }
 
 fn collect_response_item(
@@ -3131,6 +3206,8 @@ where
                 platform,
                 status,
                 backend,
+                os_isolation,
+                enforcement,
                 command,
                 cwd,
                 message,
@@ -3140,6 +3217,8 @@ where
                     platform: platform.clone(),
                     status: status.clone(),
                     backend: backend.clone(),
+                    os_isolation: *os_isolation,
+                    enforcement: enforcement.clone(),
                     command: command.clone(),
                     cwd: cwd.clone(),
                     message: message.clone(),
@@ -3147,7 +3226,7 @@ where
                 .await?;
                 sink.emit(AgentEvent::Reasoning {
                     content: format!(
-                        "Sandbox runner: platform={platform}, status={status}, backend={backend}, cwd={cwd}, command={}, message={}",
+                        "Sandbox runner: platform={platform}, status={status}, backend={backend}, os_isolation={os_isolation}, enforcement={enforcement}, cwd={cwd}, command={}, message={}",
                         command.as_deref().unwrap_or("none"),
                         message.as_deref().unwrap_or("none")
                     ),

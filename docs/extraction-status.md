@@ -883,6 +883,77 @@ the unified verification gate and publish a new immutable `v1.7.5` tag only
 after source implementation and verification complete. GitHub publishing must
 continue through the REST API only, and old tags must not be deleted or moved.
 
+## YunXi Agent v1.7.5 CLI Protocol Safety Construction
+
+YunXi Agent v1.7.5 turns the 2026-07-13 CLI audit findings into source-level
+YunXi-owned behavior without reintroducing upstream Codex runtime dependencies.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.7.5`.
+- Runtime provider response collection now detects when the provider stream has
+  already emitted the complete assistant final message and avoids emitting a
+  duplicate final `AgentEvent::Message`.
+- CLI protocol mapping now emits generic `tool_completed` lifecycle events for
+  completed MCP tool calls while preserving the richer `mcp_tool_call` item.
+- Provider auto fallback warnings are limited to the real YunXi offline static
+  runtime fallback and are no longer printed for explicit dry-run backend
+  selection.
+- `--json` and `--jsonl` are mutually exclusive.
+- Unsupported `--jsonl` on metadata subcommands is rejected instead of silently
+  printing plain text.
+- `yunxi run [PROMPT]...` provides an explicit one-shot path for prompts that
+  overlap with reserved subcommand names.
+- The default CLI rejects the detached Codex compatibility backend before
+  provider selection.
+- `sessions list --json` now returns lightweight `SessionSummary` records
+  instead of full event-bearing sessions.
+- Sandbox attempt events now carry `os_isolation` and `enforcement` fields so
+  consumers can see that the current layer is an advisory policy guard, not
+  OS-level isolation.
+- README, CLI/TUI current-version text, and CLI/JSONL tests were updated for
+  the v1.7.5 behavior.
+
+Unified verification is intentionally deferred until after the full construction
+slice is complete, following the project hard constraint to avoid repeated
+mid-construction validation loops.
+
+Unified verification passed on 2026-07-13 after construction completed.
+
+Verified in this slice:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.7.5`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.7.5`
+- Offline, JSON, and JSONL smoke: pass; final assistant message appears once
+  in JSON/JSONL event outputs
+- Stage 4M real parity fixture JSONL: pass; all started tool ids have matching
+  `tool_completed`, including MCP ids `stage-4m-mcp-1` and
+  `stage-4m-mcp-2`
+- Sandbox attempt JSONL fields: pass; `os_isolation=false` and
+  `enforcement=policy_guard`
+- Dry-run backend smoke: pass; no provider auto fallback warning
+- `--json` plus `--jsonl`: pass; rejected with invalid input JSONL error
+- `sessions list --jsonl` and `parity map --jsonl`: pass; rejected with
+  invalid input JSONL errors
+- `sessions list --json`: pass; returns summaries without full `events`
+- Plain `--no-tui` interactive smoke: pass
+- DeepSeek live stream and non-stream smoke with `deepseek-chat`: pass; JSONL
+  parseable and `secret_leak_detected=false`
+- Default CLI dependency scan: pass; no `codex`, `vendor`, or
+  `yunxi-agent-codex` matches
+- Owned-source secret scan excluding generated/reference/build trees: pass
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `codegraph sync "D:\YunXi Agent"` and `codegraph status "D:\YunXi Agent"`:
+  pass; index is up to date
+- Install script and PATH smoke: pass; installed `yunxi` and
+  `yunxi-agent-cli` report `1.7.5`
+
 ## YunXi Agent v1.7.2 TUI Scroll And Streaming Construction
 
 YunXi Agent v1.7.2 deepens the v1.7.1 TUI host without changing the autonomous

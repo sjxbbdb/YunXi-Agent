@@ -1,6 +1,6 @@
-# YunXi Agent v1.7.4
+# YunXi Agent v1.7.5
 
-YunXi Agent v1.7.4 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.7.5 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -18,7 +18,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.7.4 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.7.5 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -59,13 +59,19 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Keeps the interactive session open when one provider or tool turn fails
 - Preserves assistant tool calls and matching tool result ids across provider turns
 - Preserves one-shot execution through `yunxi "your task"`
+- Provides explicit `yunxi run ...` one-shot execution for prompts that would
+  otherwise conflict with reserved subcommands such as `sessions` or `parity`
 - Automatically selects the real DeepSeek provider when credentials are present
 - Supports `--offline` for deterministic local and automation runs
 - Marks offline assistant output inline with `[offline]`
 - Warns in interactive, one-shot, JSON, JSONL, and resume paths when auto
   provider mode falls back to the offline static runtime
+- Avoids provider fallback warnings for explicitly selected non-provider
+  backends such as `dry-run`
 - Shows offline runtime as a static provider with stage fixtures disabled by default
-- Uses policy-guard wording for sandbox decisions; v1.7 does not claim OS-level sandbox isolation
+- Uses policy-guard wording for sandbox decisions; v1.7.5 does not claim
+  OS-level sandbox isolation and emits machine-readable `os_isolation=false`
+  and `enforcement` fields on sandbox attempt events
 - Enforces the configured process-internal policy guard on the default shell
   tool path instead of bypassing it with trusted `DangerFullAccess`
 - Blocks obvious `workspace-write` shell targets that escape the workspace by
@@ -81,6 +87,13 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Retains a boundary for checking local Codex CLI checkout shape during future refreshes
 - Runs the default workspace without `yunxi-agent-codex` in the CLI dependency graph
 - Keeps the source-level Codex compatibility backend outside the default workspace and CLI graph
+- Keeps JSON and JSONL output modes mutually exclusive
+- Rejects unsupported JSONL on metadata subcommands instead of silently
+  printing plain text
+- Emits paired generic `tool_completed` lifecycle events for MCP completions
+  while retaining the richer MCP response item
+- Keeps `sessions list --json` lightweight by returning session summaries
+  instead of full event-bearing session records
 
 ## Build
 
@@ -97,7 +110,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.7.4 CLI into a user-local bin directory:
+Build and install the v1.7.5 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -123,7 +136,7 @@ Run `yunxi` without a prompt to enter interactive mode:
 yunxi
 ```
 
-When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.4
+When stdin and stdout are both attached to a terminal, YunXi uses the v1.7.5
 TUI host, wrapped-row transcript viewport, draggable scrollbar, composer, and
 approval overlay. Use `--no-tui` to force the stable plain REPL:
 
@@ -152,12 +165,17 @@ One-shot and automation modes remain available:
 
 ```powershell
 yunxi "explain this project"
+yunxi run sessions
 yunxi --offline "run without a model provider"
 yunxi --jsonl "explain this project"
 ```
 
 `--json` and `--jsonl` never enter the REPL when a prompt is missing; they keep
 returning structured errors for script safety.
+
+`--jsonl` is reserved for agent execution streams in v1.7.5. Metadata
+subcommands such as `sessions list` and `parity map` reject `--jsonl`; use
+`--json` for their machine-readable output.
 
 ## Honesty And Safety Boundaries
 
@@ -168,7 +186,7 @@ auto mode prints a warning when no live credentials are found.
 The current sandbox layer is a process-internal policy guard/advisor. It
 classifies commands, routes approvals, blocks common workspace-write target
 escapes, including resolvable symlink escapes, and can request escalation, but
-v1.7 does not provide
+v1.7.5 does not provide
 OS-enforced Windows restricted tokens, Linux Landlock/seccomp, namespaces, or
 macOS seatbelt isolation. Approved commands still execute with the YunXi process
 permissions.
@@ -307,13 +325,22 @@ TUI transcript viewport to scroll by wrapped screen rows instead of logical
 lines, shares one layout geometry between render and mouse handling, and adds
 mouse-drag scrollbar support while preserving wheel and keyboard navigation.
 
+v1.7.5 adds immutable tag `v1.7.5` without moving earlier tags. It converges
+CLI protocol and safety surfaces by making assistant final messages
+single-source in event streams, pairing MCP tool completion lifecycle events,
+making `--json` and `--jsonl` mutually exclusive, rejecting unsupported JSONL
+metadata subcommands, returning lightweight JSON session summaries, avoiding
+misleading provider fallback warnings for explicit dry-run/detached backends,
+and exposing sandbox `os_isolation=false`/`enforcement` fields instead of
+implying OS-level isolation.
+
 ## Backend Capability Matrix
 
 | Backend | Default | Owner | Purpose |
 | --- | --- | --- | --- |
 | `yunxi` | Yes | YunXi runtime crates | Autonomous runtime migration path |
 | `dry-run` | No | `yunxi-agent-core` | Deterministic smoke checks |
-| `codex` / `--live` | No | Detached | Reports compatibility guidance in the default CLI |
+| `codex` / `--live` | No | Detached | Rejected by the default CLI with compatibility guidance |
 
 ## Codex Compatibility Matrix
 

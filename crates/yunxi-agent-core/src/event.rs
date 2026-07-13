@@ -33,6 +33,10 @@ pub enum AgentEvent {
         platform: String,
         status: String,
         backend: String,
+        #[serde(default)]
+        os_isolation: bool,
+        #[serde(default)]
+        enforcement: String,
         command: Option<String>,
         cwd: String,
         message: Option<String>,

@@ -428,6 +428,10 @@ pub enum RuntimeEvent {
         platform: String,
         status: String,
         backend: String,
+        #[serde(default)]
+        os_isolation: bool,
+        #[serde(default)]
+        enforcement: String,
         command: Option<String>,
         cwd: String,
         message: Option<String>,
@@ -806,6 +810,8 @@ mod tests {
             platform: "windows".to_string(),
             status: "ready".to_string(),
             backend: "direct_process".to_string(),
+            os_isolation: false,
+            enforcement: "policy_guard".to_string(),
             command: Some("echo ok".to_string()),
             cwd: "D:/YunXi Agent".to_string(),
             message: None,

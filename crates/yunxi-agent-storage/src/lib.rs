@@ -55,6 +55,25 @@ pub struct SessionRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub id: SessionId,
+    pub cwd: PathBuf,
+    pub status: AgentRunStatus,
+    pub created_at_millis: u128,
+    pub updated_at_millis: u128,
+    pub archived: bool,
+    pub pinned: bool,
+    pub parent_id: Option<SessionId>,
+    pub title: Option<String>,
+    pub prompt_preview: String,
+    pub final_response_preview: Option<String>,
+    pub event_count: usize,
+    pub child_count: usize,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ThreadMetadata {
     pub id: SessionId,
     pub parent_id: Option<SessionId>,
@@ -647,6 +666,26 @@ impl SessionRecord {
     pub fn agent_session_metadata(&self) -> AgentSessionMetadata {
         self.into()
     }
+
+    pub fn summary_with_child_count(&self, child_count: usize) -> SessionSummary {
+        SessionSummary {
+            id: self.id.clone(),
+            cwd: self.cwd.clone(),
+            status: self.status,
+            created_at_millis: self.created_at_millis,
+            updated_at_millis: self.updated_at_millis,
+            archived: self.archived,
+            pinned: self.pinned,
+            parent_id: self.parent_id.clone(),
+            title: self.title.clone(),
+            prompt_preview: preview_for_summary(&self.prompt),
+            final_response_preview: self.final_response.as_deref().map(preview_for_summary),
+            event_count: self.events.len(),
+            child_count,
+            model: self.model.clone(),
+            provider: self.provider.clone(),
+        }
+    }
 }
 
 #[async_trait]
@@ -877,6 +916,21 @@ fn preview_title(prompt: &str) -> String {
         .collect::<String>();
     value.push_str("...");
     value
+}
+
+fn preview_for_summary(value: &str) -> String {
+    const MAX: usize = 120;
+    let trimmed = value.trim();
+    if trimmed.chars().count() <= MAX {
+        return trimmed.to_string();
+    }
+
+    let mut preview = trimmed
+        .chars()
+        .take(MAX.saturating_sub(3))
+        .collect::<String>();
+    preview.push_str("...");
+    preview
 }
 
 fn now_millis() -> u128 {

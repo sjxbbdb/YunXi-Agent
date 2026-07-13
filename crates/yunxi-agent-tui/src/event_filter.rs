@@ -224,13 +224,15 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
             platform,
             status,
             backend,
+            os_isolation,
+            enforcement,
             command,
             cwd,
             message,
             ..
         } => {
             let detail = format!(
-                "platform={platform} status={status} backend={backend} cwd={cwd} command={} message={}",
+                "platform={platform} status={status} backend={backend} os_isolation={os_isolation} enforcement={enforcement} cwd={cwd} command={} message={}",
                 command.as_deref().unwrap_or("none"),
                 message.as_deref().unwrap_or("none")
             );

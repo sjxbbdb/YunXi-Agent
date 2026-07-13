@@ -12,7 +12,7 @@ use yunxi_agent_protocol::{
 };
 use yunxi_agent_storage::{
     FileSessionStore, HistoryLoadOptions, RolloutRecord, SessionGraphView, SessionHistory,
-    SessionId, SessionRecord, SessionStore,
+    SessionId, SessionRecord, SessionStore, SessionSummary,
 };
 
 mod commands {
@@ -66,7 +66,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.7.4 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.7.5 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -119,10 +119,10 @@ struct Cli {
     )]
     sandbox: CliSandboxMode,
 
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "jsonl")]
     json: bool,
 
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "json")]
     jsonl: bool,
 
     #[arg(long, global = true, conflicts_with = "no_tui")]
@@ -140,6 +140,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum CliCommand {
+    Run {
+        #[arg(value_name = "PROMPT", num_args = 1..)]
+        prompt: Vec<String>,
+    },
     Sessions {
         #[command(subcommand)]
         command: SessionCommand,
@@ -204,6 +208,7 @@ enum ParityCommand {
 enum CliBackend {
     DryRun,
     Yunxi,
+    #[value(help = "detached compatibility backend; rejected by the default CLI")]
     Codex,
 }
 
@@ -273,7 +278,9 @@ async fn main() {
 }
 
 async fn run_cli() -> Result<()> {
-    let cli = Cli::parse();
+    let Some(cli) = parse_cli()? else {
+        return Ok(());
+    };
     let provider_mode = provider_mode::ProviderMode::from_flags(cli.provider_live, cli.offline);
 
     let backend = if cli.live {
@@ -301,6 +308,8 @@ async fn run_cli() -> Result<()> {
         config = config.with_auto_compact_threshold_tokens(auto_compact_threshold_tokens);
     }
 
+    reject_detached_codex_backend(backend)?;
+
     if let Some(command) = cli.command {
         return run_command(command, config, backend, provider_mode, cli.json, cli.jsonl).await;
     }
@@ -326,12 +335,66 @@ async fn run_cli() -> Result<()> {
         bail!("a prompt is required");
     }
 
+    run_prompt(prompt, config, backend, provider_mode, cli.json, cli.jsonl).await
+}
+
+fn parse_cli() -> Result<Option<Cli>> {
+    match Cli::try_parse() {
+        Ok(cli) => Ok(Some(cli)),
+        Err(error) if !error.use_stderr() => {
+            print!("{error}");
+            Ok(None)
+        }
+        Err(error) => bail!("{}", friendly_clap_error(&error)),
+    }
+}
+
+fn friendly_clap_error(error: &clap::Error) -> String {
+    let mut message = error.to_string();
+    if message.contains("yunxi sessions")
+        || message.contains("yunxi.exe sessions")
+        || message.contains("yunxi-agent-cli.exe sessions")
+        || message.contains("sessions [OPTIONS]")
+    {
+        message.push_str(
+            "\nIf you meant to ask about `sessions` as a prompt, run `yunxi -- sessions` or `yunxi run sessions`.",
+        );
+    }
+    if message.contains("yunxi parity")
+        || message.contains("yunxi.exe parity")
+        || message.contains("yunxi-agent-cli.exe parity")
+        || message.contains("parity [OPTIONS]")
+    {
+        message.push_str(
+            "\nIf you meant to ask about `parity` as a prompt, run `yunxi -- parity` or `yunxi run parity`.",
+        );
+    }
+    message
+}
+
+fn reject_detached_codex_backend(backend: BackendKind) -> Result<()> {
+    if backend == BackendKind::Codex {
+        bail!(
+            "codex compatibility backend is detached from the default CLI; use the yunxi-agent-codex compatibility crate explicitly"
+        );
+    }
+    Ok(())
+}
+
+async fn run_prompt(
+    prompt: String,
+    config: AgentConfig,
+    backend: BackendKind,
+    provider_mode: provider_mode::ProviderMode,
+    json: bool,
+    jsonl: bool,
+) -> Result<()> {
     let selection = provider_mode.resolve(backend, &config)?;
     let config = selection.apply_to_config(config);
     let offline_label = selection.is_offline_runtime();
-    print_provider_selection_warning(&selection, cli.json, cli.jsonl)?;
+    print_provider_selection_warning(&selection, json, jsonl)?;
     let result = run_agent_backend(backend, config, prompt, selection.live).await?;
-    print_run_result(result, cli.json, cli.jsonl, offline_label)?;
+    print_run_result(result, json, jsonl, offline_label)?;
     Ok(())
 }
 
@@ -381,6 +444,11 @@ fn classify_cli_error(error: &anyhow::Error) -> CliExitCode {
     if message.contains("a prompt is required")
         || message.contains("session not found")
         || message.contains("invalid")
+        || message.contains("cannot be used with")
+        || message.contains("required")
+        || message.contains("unrecognized")
+        || message.contains("usage:")
+        || message.contains("only supported")
     {
         CliExitCode::InvalidInput
     } else if message.contains("cancelled") || message.contains("canceled") {
@@ -722,6 +790,8 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 platform,
                 status,
                 backend,
+                os_isolation,
+                enforcement,
                 command,
                 cwd,
                 message,
@@ -740,6 +810,8 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     platform: platform.clone(),
                     status: status.clone(),
                     backend: backend.clone(),
+                    os_isolation: *os_isolation,
+                    enforcement: enforcement.clone(),
                     command: command.clone(),
                     cwd: cwd.clone(),
                     message: message.clone(),
@@ -851,22 +923,33 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 server,
                 tool,
                 status,
-            } => output.push(RuntimeEvent::Item {
-                thread_id: thread_id.clone(),
-                turn_id: turn_id.clone(),
-                item: ResponseItem::McpToolCall {
-                    id: id.clone().unwrap_or_else(|| "mcp".to_string()),
-                    call_id: id.clone().unwrap_or_else(|| "mcp".to_string()),
-                    server: server.clone(),
-                    tool: tool.clone(),
-                    arguments: String::new(),
-                    status: match status {
-                        yunxi_agent_core::McpToolStatus::Completed => ToolCallStatus::Completed,
-                        yunxi_agent_core::McpToolStatus::InProgress => ToolCallStatus::InProgress,
-                        yunxi_agent_core::McpToolStatus::Failed => ToolCallStatus::Failed,
+            } => {
+                let call_id = id.clone().unwrap_or_else(|| "mcp".to_string());
+                let protocol_status = match status {
+                    yunxi_agent_core::McpToolStatus::Completed => ToolCallStatus::Completed,
+                    yunxi_agent_core::McpToolStatus::InProgress => ToolCallStatus::InProgress,
+                    yunxi_agent_core::McpToolStatus::Failed => ToolCallStatus::Failed,
+                };
+                output.push(RuntimeEvent::ToolCompleted {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    call_id: Some(call_id.clone()),
+                    output: format!("{server}.{tool} status: {status:?}"),
+                    success: *status == yunxi_agent_core::McpToolStatus::Completed,
+                });
+                output.push(RuntimeEvent::Item {
+                    thread_id: thread_id.clone(),
+                    turn_id: turn_id.clone(),
+                    item: ResponseItem::McpToolCall {
+                        id: call_id.clone(),
+                        call_id,
+                        server: server.clone(),
+                        tool: tool.clone(),
+                        arguments: String::new(),
+                        status: protocol_status,
                     },
-                },
-            }),
+                });
+            }
             AgentEvent::ToolCallStarted {
                 id,
                 name,
@@ -1155,11 +1238,41 @@ async fn run_command(
     json: bool,
     jsonl: bool,
 ) -> Result<()> {
+    ensure_command_jsonl_supported(&command, jsonl)?;
     match command {
+        CliCommand::Run { prompt } => {
+            run_prompt(
+                prompt.join(" "),
+                config,
+                backend,
+                provider_mode,
+                json,
+                jsonl,
+            )
+            .await
+        }
         CliCommand::Sessions { command } => {
             run_session_command(command, config, backend, provider_mode, json, jsonl).await
         }
         CliCommand::Parity { command } => run_parity_command(command, json).await,
+    }
+}
+
+fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<()> {
+    if !jsonl {
+        return Ok(());
+    }
+    match command {
+        CliCommand::Run { .. }
+        | CliCommand::Sessions {
+            command: SessionCommand::Resume { .. },
+        } => Ok(()),
+        CliCommand::Sessions { .. } => bail!(
+            "--jsonl is only supported for agent execution commands in v1.7.5; use --json for sessions metadata commands"
+        ),
+        CliCommand::Parity { .. } => bail!(
+            "--jsonl is only supported for agent execution commands in v1.7.5; use --json for parity commands"
+        ),
     }
 }
 
@@ -1195,7 +1308,8 @@ async fn run_session_command(
         SessionCommand::List => {
             let sessions = store.list().await.context("failed to list sessions")?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&sessions)?);
+                let summaries = session_summaries(&sessions);
+                println!("{}", serde_json::to_string_pretty(&summaries)?);
             } else {
                 for session in sessions {
                     println!(
@@ -1337,6 +1451,19 @@ fn print_record(record: &SessionRecord, json: bool) -> Result<()> {
         print_session(record);
     }
     Ok(())
+}
+
+fn session_summaries(sessions: &[SessionRecord]) -> Vec<SessionSummary> {
+    sessions
+        .iter()
+        .map(|session| {
+            let child_count = sessions
+                .iter()
+                .filter(|candidate| candidate.parent_id.as_ref() == Some(&session.id))
+                .count();
+            session.summary_with_child_count(child_count)
+        })
+        .collect()
 }
 
 fn print_rollout(rollout: &RolloutRecord, json: bool) -> Result<()> {

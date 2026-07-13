@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.7.4"));
+        .stdout(predicate::str::contains("yunxi 1.7.5"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.7.4"));
+        .stdout(predicate::str::contains("yunxi 1.7.5"));
 }
 
 #[test]
@@ -175,6 +175,7 @@ fn cli_accepts_explicit_dry_run_backend() {
     cmd.args(["--backend", "dry-run", "explain this project"])
         .assert()
         .success()
+        .stdout(predicate::str::contains("provider auto mode did not find live credentials").not())
         .stdout(predicate::str::contains(
             "Dry run accepted prompt: explain this project",
         ));
@@ -234,7 +235,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.4 interactive CLI",
+            "YunXi Agent v1.7.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -393,7 +394,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.4 interactive CLI",
+            "YunXi Agent v1.7.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -413,9 +414,71 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.4 interactive CLI",
+            "YunXi Agent v1.7.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn cli_rejects_json_and_jsonl_together() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.args(["--offline", "--json", "--jsonl", "hello both"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("\"type\":\"error\""))
+        .stdout(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn cli_rejects_jsonl_for_metadata_subcommands() {
+    let mut sessions = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    sessions
+        .args(["sessions", "list", "--jsonl"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("\"type\":\"error\""))
+        .stdout(predicate::str::contains("--jsonl is only supported"));
+
+    let mut parity = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    parity
+        .args(["parity", "map", "--jsonl"])
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("\"type\":\"error\""))
+        .stdout(predicate::str::contains("--jsonl is only supported"));
+}
+
+#[test]
+fn cli_run_subcommand_accepts_reserved_prompt_words() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.args(["--offline", "run", "sessions"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "YunXi autonomous runtime accepted prompt: sessions",
+        ));
+}
+
+#[test]
+fn cli_reserved_subcommand_prompt_error_suggests_escape() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+
+    cmd.args(["--offline", "sessions"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("yunxi -- sessions"))
+        .stderr(predicate::str::contains("yunxi run sessions"));
+
+    let mut escaped = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    escaped
+        .args(["--offline", "--", "sessions"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "YunXi autonomous runtime accepted prompt: sessions",
+        ));
 }
 
 #[test]
@@ -463,6 +526,20 @@ fn cli_lists_and_shows_yunxi_sessions() {
         .success()
         .stdout(predicate::str::contains("remember this session"))
         .stdout(predicate::str::contains(cwd));
+
+    let summary = run_json_command(&["--cwd", cwd, "--json", "sessions", "list"]);
+    let summaries = summary.as_array().expect("session summaries");
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0]["prompt_preview"].as_str(),
+        Some("remember this session")
+    );
+    assert!(summaries[0].get("events").is_none());
+    assert!(
+        summaries[0]["event_count"]
+            .as_u64()
+            .is_some_and(|count| count > 0)
+    );
 
     let session_dir = temp.path().join(".yunxi").join("sessions");
     let session_file = fs::read_dir(&session_dir)

@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::collections::BTreeSet;
 use tempfile::TempDir;
 
 #[test]
@@ -25,9 +26,30 @@ fn yunxi_jsonl_prints_one_json_event_per_line() {
         .stdout(predicate::str::contains("\"type\":\"turn_completed\""));
 
     let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    let mut final_message_count = 0usize;
     for line in output.lines() {
-        serde_json::from_str::<serde_json::Value>(line).expect("each line is json");
+        let value = serde_json::from_str::<serde_json::Value>(line).expect("each line is json");
+        if value.get("type").and_then(serde_json::Value::as_str) == Some("item")
+            && value
+                .get("item")
+                .and_then(|item| item.get("type"))
+                .and_then(serde_json::Value::as_str)
+                == Some("message")
+            && value
+                .get("item")
+                .and_then(|item| item.get("role"))
+                .and_then(serde_json::Value::as_str)
+                == Some("assistant")
+            && value
+                .get("item")
+                .and_then(|item| item.get("content"))
+                .and_then(serde_json::Value::as_str)
+                == Some("YunXi autonomous runtime accepted prompt: jsonl yunxi run")
+        {
+            final_message_count += 1;
+        }
     }
+    assert_eq!(final_message_count, 1);
 }
 
 #[test]
@@ -71,6 +93,7 @@ fn dry_run_jsonl_prints_one_json_event_per_line() {
         .args(["--backend", "dry-run", "--jsonl", "jsonl dry run"])
         .assert()
         .success()
+        .stdout(predicate::str::contains("provider auto mode did not find live credentials").not())
         .stdout(predicate::str::contains("\"type\":\"thread_started\""))
         .stdout(predicate::str::contains("\"type\":\"turn_started\""))
         .stdout(predicate::str::contains("\"type\":\"item\""))
@@ -283,10 +306,26 @@ fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
     let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
     let mut deep_parity_events = 0usize;
     let mut reused_approval = false;
+    let mut started = BTreeSet::new();
+    let mut completed = BTreeSet::new();
     for line in output.lines() {
         let value = serde_json::from_str::<serde_json::Value>(line).expect("each line is json");
         match value.get("type").and_then(serde_json::Value::as_str) {
             Some("deep_parity_state") => deep_parity_events += 1,
+            Some("tool_started") => {
+                if let Some(id) = value
+                    .get("call")
+                    .and_then(|call| call.get("id"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    started.insert(id.to_string());
+                }
+            }
+            Some("tool_completed") => {
+                if let Some(id) = value.get("call_id").and_then(serde_json::Value::as_str) {
+                    completed.insert(id.to_string());
+                }
+            }
             Some("approval_cache_state") => {
                 reused_approval |= value
                     .get("reused")
@@ -298,4 +337,9 @@ fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
     }
     assert_eq!(deep_parity_events, 12);
     assert!(reused_approval);
+    for id in &started {
+        assert!(completed.contains(id), "missing tool_completed for {id}");
+    }
+    assert!(completed.contains("stage-4m-mcp-1"));
+    assert!(completed.contains("stage-4m-mcp-2"));
 }

@@ -375,6 +375,8 @@ pub struct SandboxRunnerDiagnostic {
     pub platform: String,
     pub status: SandboxRunnerStatus,
     pub backend: SandboxBackend,
+    pub os_isolation: bool,
+    pub enforcement: String,
     pub command: Option<String>,
     pub cwd: PathBuf,
     pub message: Option<String>,
@@ -632,6 +634,8 @@ impl SandboxRunner {
             platform: platform_name().to_string(),
             status,
             backend: plan.backend,
+            os_isolation: plan.backend.os_isolation(),
+            enforcement: plan.backend.enforcement_label().to_string(),
             command: command.map(ToString::to_string),
             cwd: cwd.to_path_buf(),
             message: plan.denial_reason,
@@ -673,6 +677,20 @@ impl SandboxBackend {
             Self::DangerFullAccess => "policy bypass: danger-full-access",
             Self::WorkspaceGuard | Self::WindowsRestrictedToken | Self::LinuxLandlock => {
                 "policy guard: advisory only, no OS isolation"
+            }
+        }
+    }
+
+    pub fn os_isolation(self) -> bool {
+        false
+    }
+
+    pub fn enforcement_label(self) -> &'static str {
+        match self {
+            Self::None => "no_policy_guard",
+            Self::DangerFullAccess => "policy_bypass",
+            Self::WorkspaceGuard | Self::WindowsRestrictedToken | Self::LinuxLandlock => {
+                "policy_guard"
             }
         }
     }

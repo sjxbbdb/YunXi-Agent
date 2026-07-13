@@ -49,7 +49,7 @@ impl ProviderSelection {
     }
 
     pub(crate) fn auto_fallback_warning(&self) -> Option<&'static str> {
-        (self.source == ProviderModeSource::AutoOffline).then_some(
+        (self.source == ProviderModeSource::AutoOffline && self.is_offline_runtime()).then_some(
             "[warning] provider auto mode did not find live credentials; using offline static runtime, no model call will be made",
         )
     }

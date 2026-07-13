@@ -12,7 +12,9 @@ use yunxi_agent_multi_agent::{
     AgentGraphSessionMetadata, AgentId, AgentMetadata, AgentRole, AgentStatus,
 };
 use yunxi_agent_persona::{
-    MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings, yunxi_home_dir,
+    MemoryMigrationResult, MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings,
+    dedup_key_for_record, migrate_memory_record_value, now_millis as memory_now_millis,
+    yunxi_home_dir,
 };
 use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
@@ -727,6 +729,26 @@ pub enum PersonaMemoryScope {
     Pending,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MemoryPersistOutcome {
+    Inserted {
+        id: String,
+        status: MemoryStatus,
+        revision: u32,
+        merged_count: u32,
+    },
+    Merged {
+        id: String,
+        status: MemoryStatus,
+        revision: u32,
+        merged_count: u32,
+    },
+    Skipped {
+        id: String,
+        reason: String,
+    },
+}
+
 impl FilePersonaMemoryStore {
     pub fn for_workspace(cwd: impl AsRef<Path>) -> Self {
         let workspace_root = cwd.as_ref().join(".yunxi").join("memory");
@@ -777,6 +799,43 @@ impl FilePersonaMemoryStore {
             .map_err(|error| AgentError::Execution {
                 message: format!("failed to append memory {}: {error}", path.display()),
             })
+    }
+
+    pub fn append_or_merge(&self, record: &MemoryRecord) -> AgentResult<MemoryPersistOutcome> {
+        let mut incoming = record.clone();
+        incoming.ensure_dedup_metadata();
+        let existing = self
+            .list(PersonaMemoryScope::All)
+            .records
+            .into_iter()
+            .find(|candidate| can_merge_memory_records(candidate, &incoming));
+        let Some(existing) = existing else {
+            self.append(&incoming)?;
+            return Ok(MemoryPersistOutcome::Inserted {
+                id: incoming.id,
+                status: incoming.status,
+                revision: incoming.revision,
+                merged_count: incoming.merged_count,
+            });
+        };
+        let mut merged = incoming;
+        merged.id = existing.id.clone();
+        merged.created_at_millis = existing.created_at_millis;
+        merged.updated_at_millis = memory_now_millis();
+        merged.revision = existing.revision.saturating_add(1).max(2);
+        merged.merged_count = existing.merged_count.saturating_add(1).max(2);
+        merged.confidence = merged.confidence.max(existing.confidence);
+        merged.importance = merged.importance.max(existing.importance);
+        merged.sensitivity = max_memory_sensitivity(merged.sensitivity, existing.sensitivity);
+        merged.status = merged_memory_status(existing.status, merged.status, merged.sensitivity);
+        merged.ensure_dedup_metadata();
+        self.append(&merged)?;
+        Ok(MemoryPersistOutcome::Merged {
+            id: merged.id,
+            status: merged.status,
+            revision: merged.revision,
+            merged_count: merged.merged_count,
+        })
     }
 
     pub fn list(&self, scope: PersonaMemoryScope) -> PersonaMemoryLoad {
@@ -920,10 +979,29 @@ fn read_memory_jsonl(path: &Path, records: &mut Vec<MemoryRecord>, warnings: &mu
         if line.is_empty() {
             continue;
         }
-        match serde_json::from_str::<MemoryRecord>(line) {
-            Ok(record) => records.push(record),
-            Err(error) => warnings.push(format!(
-                "failed to parse memory line {} in {}: {error}",
+        let value = match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(value) => value,
+            Err(error) => {
+                warnings.push(format!(
+                    "failed to parse memory line {} in {}: {error}",
+                    index + 1,
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        match migrate_memory_record_value(value) {
+            MemoryMigrationResult::Record(record) => records.push(record),
+            MemoryMigrationResult::RecordWithWarning { record, warning } => {
+                warnings.push(format!(
+                    "memory line {} in {}: {warning}",
+                    index + 1,
+                    path.display()
+                ));
+                records.push(record);
+            }
+            MemoryMigrationResult::Skip { warning } => warnings.push(format!(
+                "failed to parse memory line {} in {}: {warning}",
                 index + 1,
                 path.display()
             )),
@@ -933,15 +1011,117 @@ fn read_memory_jsonl(path: &Path, records: &mut Vec<MemoryRecord>, warnings: &mu
 
 fn latest_records(records: Vec<MemoryRecord>) -> Vec<MemoryRecord> {
     let mut by_id = BTreeMap::new();
-    for record in records {
+    for mut record in records {
+        record.ensure_dedup_metadata();
         let replace = by_id.get(&record.id).is_none_or(|existing: &MemoryRecord| {
-            existing.updated_at_millis <= record.updated_at_millis
+            existing.updated_at_millis < record.updated_at_millis
+                || (existing.updated_at_millis == record.updated_at_millis
+                    && existing.revision <= record.revision)
         });
         if replace {
             by_id.insert(record.id.clone(), record);
         }
     }
-    by_id.into_values().collect()
+    collapse_latest_by_dedup_key(by_id.into_values().collect())
+}
+
+fn collapse_latest_by_dedup_key(records: Vec<MemoryRecord>) -> Vec<MemoryRecord> {
+    let mut out = Vec::new();
+    let mut by_key = BTreeMap::<String, MemoryRecord>::new();
+    for record in records {
+        if matches!(
+            record.status,
+            MemoryStatus::Archived | MemoryStatus::Rejected
+        ) {
+            out.push(record);
+            continue;
+        }
+        let key = format!(
+            "{}|{}",
+            record.dedup_key,
+            memory_status_group(record.status)
+        );
+        match by_key.get_mut(&key) {
+            Some(existing) => {
+                if should_replace_latest(existing, &record) {
+                    *existing = record;
+                }
+            }
+            None => {
+                by_key.insert(key, record);
+            }
+        }
+    }
+    out.extend(by_key.into_values());
+    out
+}
+
+fn should_replace_latest(existing: &MemoryRecord, candidate: &MemoryRecord) -> bool {
+    candidate.updated_at_millis > existing.updated_at_millis
+        || (candidate.updated_at_millis == existing.updated_at_millis
+            && candidate.revision > existing.revision)
+        || (candidate.updated_at_millis == existing.updated_at_millis
+            && candidate.revision == existing.revision
+            && candidate.importance > existing.importance)
+}
+
+fn can_merge_memory_records(existing: &MemoryRecord, incoming: &MemoryRecord) -> bool {
+    if matches!(
+        existing.status,
+        MemoryStatus::Archived | MemoryStatus::Rejected
+    ) {
+        return false;
+    }
+    let existing_key = if existing.dedup_key.trim().is_empty() {
+        dedup_key_for_record(existing).as_storage_key()
+    } else {
+        existing.dedup_key.clone()
+    };
+    existing_key == incoming.dedup_key
+}
+
+fn merged_memory_status(
+    existing: MemoryStatus,
+    incoming: MemoryStatus,
+    sensitivity: yunxi_agent_persona::MemorySensitivity,
+) -> MemoryStatus {
+    if existing == MemoryStatus::Pending || incoming == MemoryStatus::Pending {
+        return MemoryStatus::Pending;
+    }
+    if matches!(
+        sensitivity,
+        yunxi_agent_persona::MemorySensitivity::Medium
+            | yunxi_agent_persona::MemorySensitivity::High
+    ) {
+        return MemoryStatus::Pending;
+    }
+    incoming
+}
+
+fn max_memory_sensitivity(
+    left: yunxi_agent_persona::MemorySensitivity,
+    right: yunxi_agent_persona::MemorySensitivity,
+) -> yunxi_agent_persona::MemorySensitivity {
+    match (left, right) {
+        (yunxi_agent_persona::MemorySensitivity::High, _)
+        | (_, yunxi_agent_persona::MemorySensitivity::High) => {
+            yunxi_agent_persona::MemorySensitivity::High
+        }
+        (yunxi_agent_persona::MemorySensitivity::Medium, _)
+        | (_, yunxi_agent_persona::MemorySensitivity::Medium) => {
+            yunxi_agent_persona::MemorySensitivity::Medium
+        }
+        _ => yunxi_agent_persona::MemorySensitivity::Low,
+    }
+}
+
+fn memory_status_group(status: MemoryStatus) -> &'static str {
+    match status {
+        MemoryStatus::Active => "active",
+        MemoryStatus::Pending => "pending",
+        MemoryStatus::Rejected => "rejected",
+        MemoryStatus::Archived => "archived",
+    }
 }
 
 #[async_trait]

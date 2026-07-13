@@ -1,0 +1,1 @@
+{"id":"fixture-v1-language","schema_version":1,"scope":"global_user","kind":"preference","content":"用户偏好使用中文回答。","confidence":0.9,"importance":0.7,"sensitivity":"low","status":"active","created_at_millis":1,"updated_at_millis":1}

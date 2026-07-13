@@ -1,3 +1,4 @@
+use crate::dedup::deduplicate_candidates;
 use crate::memory::{
     MemoryCandidate, MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus, now_millis,
 };
@@ -24,11 +25,29 @@ impl ProviderMemoryExtractor {
         workspace_fingerprint: Option<&str>,
         memory_enabled: bool,
     ) -> Vec<MemoryCandidate> {
-        let Some(payload) = parse_payload(response) else {
-            return Vec::new();
-        };
+        self.extract_from_response_checked(
+            response,
+            evidence,
+            source_session_id,
+            workspace_fingerprint,
+            memory_enabled,
+        )
+        .unwrap_or_default()
+    }
+
+    pub fn extract_from_response_checked(
+        &self,
+        response: &str,
+        evidence: &str,
+        source_session_id: Option<&str>,
+        workspace_fingerprint: Option<&str>,
+        memory_enabled: bool,
+    ) -> Result<Vec<MemoryCandidate>, String> {
+        let payload = parse_payload(response).ok_or_else(|| {
+            "provider memory extraction returned invalid JSON candidates payload".to_string()
+        })?;
         let now = now_millis();
-        payload
+        let candidates = payload
             .candidates
             .into_iter()
             .enumerate()
@@ -90,7 +109,8 @@ impl ProviderMemoryExtractor {
                     reason,
                 })
             })
-            .collect()
+            .collect();
+        Ok(deduplicate_candidates(candidates))
     }
 }
 

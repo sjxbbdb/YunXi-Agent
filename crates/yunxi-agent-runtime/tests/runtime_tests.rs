@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,7 +9,7 @@ use tempfile::TempDir;
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunApprovalDecision,
     AgentRunControl, AgentRunStatus, AgentRunUserInputResponse, ApprovalMode, CommandStatus,
-    FileChangeKind, PatchStatus, SandboxMode,
+    FileChangeKind, MemoryExtractionMode, PatchStatus, SandboxMode,
 };
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId,
@@ -19,6 +21,31 @@ use yunxi_agent_provider::{
 use yunxi_agent_runtime::{YunXiRuntimeBackend, protocol_stream_events_to_agent_events};
 use yunxi_agent_storage::{InMemorySessionStore, SessionId, SessionRecord, SessionStore};
 use yunxi_agent_tools::{CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime};
+
+static MEMORY_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+async fn with_memory_enabled_home<T>(home: &Path, future: impl Future<Output = T>) -> T {
+    let _guard = MEMORY_ENV_LOCK.lock().expect("memory env lock");
+    let previous_home = std::env::var_os("YUNXI_HOME");
+    let previous_memory = std::env::var_os("YUNXI_MEMORY_ENABLED");
+    unsafe {
+        std::env::set_var("YUNXI_HOME", home);
+        std::env::set_var("YUNXI_MEMORY_ENABLED", "1");
+    }
+    let output = future.await;
+    restore_env_var("YUNXI_HOME", previous_home);
+    restore_env_var("YUNXI_MEMORY_ENABLED", previous_memory);
+    output
+}
+
+fn restore_env_var(name: &str, value: Option<OsString>) {
+    unsafe {
+        match value {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        }
+    }
+}
 
 #[cfg(windows)]
 fn long_running_shell_command() -> &'static str {
@@ -103,6 +130,49 @@ impl AgentProvider for CapturingProvider {
         *self.messages.lock().expect("messages lock") =
             request.messages.iter().cloned().collect::<Vec<_>>();
         Ok(ProviderResponse::assistant("captured"))
+    }
+}
+
+#[derive(Clone)]
+struct MemoryExtractionFixtureProvider {
+    memory_response: &'static str,
+    memory_delay: Duration,
+    memory_calls: Arc<AtomicUsize>,
+}
+
+impl MemoryExtractionFixtureProvider {
+    fn new(memory_response: &'static str) -> Self {
+        Self {
+            memory_response,
+            memory_delay: Duration::ZERO,
+            memory_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn with_delay(mut self, delay: Duration) -> Self {
+        self.memory_delay = delay;
+        self
+    }
+
+    fn memory_calls(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.memory_calls)
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentProvider for MemoryExtractionFixtureProvider {
+    async fn complete(
+        &self,
+        request: ProviderRequest,
+    ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
+        if request.input.prompt == "YunXi memory extraction" {
+            self.memory_calls.fetch_add(1, Ordering::SeqCst);
+            if !self.memory_delay.is_zero() {
+                tokio::time::sleep(self.memory_delay).await;
+            }
+            return Ok(ProviderResponse::assistant(self.memory_response));
+        }
+        Ok(ProviderResponse::assistant("fixture main response"))
     }
 }
 
@@ -1895,5 +1965,208 @@ fn protocol_stream_events_map_to_agent_events() {
     assert!(events.iter().any(|event| matches!(
         event,
         AgentEvent::Reasoning { content } if content == "reason"
+    )));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_memory_extraction_writes_valid_json_candidate() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = MemoryExtractionFixtureProvider::new(
+        r#"{"candidates":[{"kind":"preference","content":"用户偏好默认中文交流。","scope_hint":"global_user","sensitivity_hint":"low","confidence":0.9,"importance":0.8,"reason":"provider:language-preference"}]}"#,
+    );
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default())
+            .with_inherited_child_provider();
+    let config = AgentConfig::new(workspace.path())
+        .with_provider("fixture")
+        .with_model("fixture-model")
+        .with_memory_extraction_mode(MemoryExtractionMode::Provider);
+    let agent = Agent::new(config);
+
+    let result = with_memory_enabled_home(
+        home.path(),
+        agent.run_with_backend(&backend, AgentInput::text("你好")),
+    )
+    .await
+    .expect("runtime should complete");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryWrite {
+            action,
+            kind,
+            status,
+            revision: 1,
+            merged_count: 1,
+            ..
+        } if action == "auto_saved" && kind == "preference" && status == "active"
+    )));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_memory_extraction_invalid_json_warns_and_auto_falls_back_to_rules() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = MemoryExtractionFixtureProvider::new("not json");
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default())
+            .with_inherited_child_provider();
+    let config = AgentConfig::new(workspace.path())
+        .with_provider("fixture")
+        .with_model("fixture-model")
+        .with_memory_extraction_mode(MemoryExtractionMode::Auto);
+    let agent = Agent::new(config);
+
+    let result = with_memory_enabled_home(
+        home.path(),
+        agent.run_with_backend(&backend, AgentInput::text("以后请用中文回答")),
+    )
+    .await
+    .expect("runtime should complete");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryWarning { warning, .. }
+            if warning.contains("invalid JSON candidates payload")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryWrite { action, kind, .. }
+            if action == "auto_saved" && kind == "preference"
+    )));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_memory_extraction_empty_candidates_does_not_write_without_rule_candidate() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = MemoryExtractionFixtureProvider::new(r#"{"candidates":[]}"#);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default())
+            .with_inherited_child_provider();
+    let config = AgentConfig::new(workspace.path())
+        .with_provider("fixture")
+        .with_model("fixture-model")
+        .with_memory_extraction_mode(MemoryExtractionMode::Provider);
+    let agent = Agent::new(config);
+
+    let result = with_memory_enabled_home(
+        home.path(),
+        agent.run_with_backend(&backend, AgentInput::text("请计算 2+2")),
+    )
+    .await
+    .expect("runtime should complete");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(
+        !result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::MemoryWrite { .. }))
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rule_only_memory_extraction_does_not_call_provider_extractor() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = MemoryExtractionFixtureProvider::new(
+        r#"{"candidates":[{"kind":"preference","content":"用户偏好默认中文交流。"}]}"#,
+    );
+    let memory_calls = provider.memory_calls();
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default())
+            .with_inherited_child_provider();
+    let config = AgentConfig::new(workspace.path())
+        .with_provider("fixture")
+        .with_model("fixture-model")
+        .with_memory_extraction_mode(MemoryExtractionMode::RuleOnly);
+    let agent = Agent::new(config);
+
+    let result = with_memory_enabled_home(
+        home.path(),
+        agent.run_with_backend(&backend, AgentInput::text("以后请用中文回答")),
+    )
+    .await
+    .expect("runtime should complete");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert_eq!(memory_calls.load(Ordering::SeqCst), 0);
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryWrite { action, kind, .. }
+            if action == "auto_saved" && kind == "preference"
+    )));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_memory_extraction_mode_without_provider_or_model_warns_without_rule_fallback() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let backend = YunXiRuntimeBackend::with_parts(
+        MemoryExtractionFixtureProvider::new(r#"{"candidates":[]}"#),
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    )
+    .with_inherited_child_provider();
+    let config = AgentConfig::new(workspace.path())
+        .with_memory_extraction_mode(MemoryExtractionMode::Provider);
+    let agent = Agent::new(config);
+
+    let result = with_memory_enabled_home(
+        home.path(),
+        agent.run_with_backend(&backend, AgentInput::text("以后请用中文回答")),
+    )
+    .await
+    .expect("runtime should complete");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryWarning { warning, .. }
+            if warning.contains("provider and model are required")
+    )));
+    assert!(
+        !result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::MemoryWrite { .. }))
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_memory_extraction_timeout_warns_and_does_not_block_main_response() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = MemoryExtractionFixtureProvider::new(r#"{"candidates":[]}"#)
+        .with_delay(Duration::from_secs(7));
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default())
+            .with_inherited_child_provider();
+    let config = AgentConfig::new(workspace.path())
+        .with_provider("fixture")
+        .with_model("fixture-model")
+        .with_memory_extraction_mode(MemoryExtractionMode::Auto);
+    let agent = Agent::new(config);
+
+    let result = with_memory_enabled_home(
+        home.path(),
+        agent.run_with_backend(&backend, AgentInput::text("请计算 2+2")),
+    )
+    .await
+    .expect("runtime should complete");
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert_eq!(
+        result.final_response.as_deref(),
+        Some("fixture main response")
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryWarning { warning, .. }
+            if warning.contains("timed out")
     )));
 }

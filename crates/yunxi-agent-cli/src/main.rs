@@ -4,7 +4,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunControl, AgentRunResult,
-    ApprovalMode, BackendKind, CommandStatus, SandboxMode,
+    ApprovalMode, BackendKind, CommandStatus, MemoryExtractionMode, SandboxMode,
 };
 use yunxi_agent_persona::{
     MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus, PersonaSettings,
@@ -71,7 +71,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.8.1 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.8.2 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -107,6 +107,15 @@ struct Cli {
 
     #[arg(long, value_name = "TOKENS")]
     auto_compact_threshold_tokens: Option<i64>,
+
+    #[arg(
+        long = "memory-extraction",
+        value_name = "MODE",
+        value_enum,
+        default_value_t = CliMemoryExtractionMode::Auto,
+        help = "Memory extraction mode: auto, rule-only, or provider"
+    )]
+    memory_extraction: CliMemoryExtractionMode,
 
     #[arg(
         long,
@@ -277,6 +286,23 @@ enum MemoryCommand {
     Off,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CliMemoryExtractionMode {
+    Auto,
+    RuleOnly,
+    Provider,
+}
+
+impl From<CliMemoryExtractionMode> for MemoryExtractionMode {
+    fn from(mode: CliMemoryExtractionMode) -> Self {
+        match mode {
+            CliMemoryExtractionMode::Auto => Self::Auto,
+            CliMemoryExtractionMode::RuleOnly => Self::RuleOnly,
+            CliMemoryExtractionMode::Provider => Self::Provider,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 enum CliBackend {
@@ -379,6 +405,7 @@ async fn run_cli() -> Result<()> {
     if let Some(auto_compact_threshold_tokens) = cli.auto_compact_threshold_tokens {
         config = config.with_auto_compact_threshold_tokens(auto_compact_threshold_tokens);
     }
+    config = config.with_memory_extraction_mode(cli.memory_extraction.into());
 
     reject_detached_codex_backend(backend)?;
 
@@ -979,6 +1006,10 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 count,
                 budget_used_chars,
                 truncated,
+                always_on_count,
+                dropped_unrelated,
+                dropped_by_budget,
+                dropped_duplicates,
             } => {
                 ensure_protocol_turn_started(
                     &mut output,
@@ -997,6 +1028,10 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     count: *count,
                     budget_used_chars: *budget_used_chars,
                     truncated: *truncated,
+                    always_on_count: *always_on_count,
+                    dropped_unrelated: *dropped_unrelated,
+                    dropped_by_budget: *dropped_by_budget,
+                    dropped_duplicates: *dropped_duplicates,
                 });
             }
             AgentEvent::MemoryCandidate {
@@ -1034,6 +1069,8 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 kind,
                 status,
                 action,
+                revision,
+                merged_count,
             } => {
                 ensure_protocol_turn_started(
                     &mut output,
@@ -1051,6 +1088,8 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     kind: kind.clone(),
                     status: status.clone(),
                     action: action.clone(),
+                    revision: *revision,
+                    merged_count: *merged_count,
                 });
             }
             AgentEvent::MemoryWarning {
@@ -1500,16 +1539,16 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.1; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.8.2; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.1; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.8.2; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.1; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v1.8.2; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.1; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v1.8.2; use --json for memory management commands"
         ),
     }
 }
@@ -1810,6 +1849,11 @@ fn print_memory_on_status(
                     "pending": "personal facts, relationship notes, emotional state, goals, events, medium sensitivity content",
                     "discarded": "secret-like content such as API keys, bearer tokens, passwords, and sk-* markers",
                 },
+                "provider_extraction": {
+                    "default_mode": "auto",
+                    "auto_mode_note": "when a live provider and model are configured, YunXi may run one additional structured extraction call after the main response; failures fall back to local rules",
+                    "override_flag": "--memory-extraction <auto|rule-only|provider>",
+                },
                 "disable_command": "yunxi memory off",
                 "pending_command": "yunxi memory pending",
                 "counts": {
@@ -1832,6 +1876,9 @@ fn print_memory_on_status(
             println!("personal or sensitive candidates require `yunxi memory pending` approval.");
             println!("secret-like content is discarded instead of stored.");
             println!(
+                "auto extraction may run one extra structured provider call when live provider and model are configured; use `--memory-extraction rule-only` to force local rules."
+            );
+            println!(
                 "disable with `yunxi memory off`; archive workspace memory with `yunxi memory clear --workspace --confirm`."
             );
         }
@@ -1853,11 +1900,13 @@ fn print_memory_records(records: &[MemoryRecord], warnings: &[String], json: boo
         println!("records: {}", records.len());
         for record in records {
             println!(
-                "{}\t{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\trev={}\tmerged={}\t{}\t{}",
                 record.id,
                 memory_status_label(record.status),
                 memory_kind_label(record.kind),
                 memory_sensitivity_label(record.sensitivity),
+                record.revision,
+                record.merged_count,
                 record.scope.label(),
                 preview(&record.content)
             );
@@ -1895,6 +1944,9 @@ fn print_memory_record(record: &MemoryRecord, warnings: &[String], json: bool) -
         }
         println!("created_at_millis: {}", record.created_at_millis);
         println!("updated_at_millis: {}", record.updated_at_millis);
+        println!("dedup_key: {}", record.dedup_key);
+        println!("revision: {}", record.revision);
+        println!("merged_count: {}", record.merged_count);
         println!("content: {}", record.content);
         for warning in warnings {
             println!("[memory-warning] {warning}");

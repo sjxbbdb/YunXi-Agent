@@ -487,6 +487,14 @@ pub enum RuntimeEvent {
         count: usize,
         budget_used_chars: usize,
         truncated: bool,
+        #[serde(default)]
+        always_on_count: usize,
+        #[serde(default)]
+        dropped_unrelated: usize,
+        #[serde(default)]
+        dropped_by_budget: usize,
+        #[serde(default)]
+        dropped_duplicates: usize,
     },
     MemoryCandidate {
         thread_id: ThreadId,
@@ -510,6 +518,10 @@ pub enum RuntimeEvent {
         kind: String,
         status: String,
         action: String,
+        #[serde(default)]
+        revision: u32,
+        #[serde(default)]
+        merged_count: u32,
     },
     MemoryWarning {
         thread_id: ThreadId,
@@ -755,6 +767,55 @@ mod tests {
 
         assert_eq!(parsed, event);
         assert!(!line.contains("secret"));
+    }
+
+    #[test]
+    fn memory_recall_diagnostics_round_trip_jsonl() {
+        let event = RuntimeEvent::MemoryRecall {
+            thread_id: ThreadId("thread-memory".to_string()),
+            turn_id: TurnId("turn-memory".to_string()),
+            schema_version: 2,
+            enabled: true,
+            scope: "workspace:abc".to_string(),
+            query: "[redacted-sensitive-query]".to_string(),
+            count: 1,
+            budget_used_chars: 42,
+            truncated: false,
+            always_on_count: 1,
+            dropped_unrelated: 2,
+            dropped_by_budget: 3,
+            dropped_duplicates: 4,
+        };
+
+        let line = to_jsonl_line(&event).expect("jsonl");
+        let parsed = from_jsonl_line(&line).expect("parsed event");
+
+        assert_eq!(parsed, event);
+        assert!(line.contains("\"dropped_duplicates\":4"));
+        assert!(line.contains("[redacted-sensitive-query]"));
+    }
+
+    #[test]
+    fn memory_write_revision_round_trips_jsonl() {
+        let event = RuntimeEvent::MemoryWrite {
+            thread_id: ThreadId("thread-memory".to_string()),
+            turn_id: TurnId("turn-memory".to_string()),
+            schema_version: 2,
+            id: "mem-1".to_string(),
+            scope: "global_user".to_string(),
+            kind: "preference".to_string(),
+            status: "active".to_string(),
+            action: "merged".to_string(),
+            revision: 2,
+            merged_count: 2,
+        };
+
+        let line = to_jsonl_line(&event).expect("jsonl");
+        let parsed = from_jsonl_line(&line).expect("parsed event");
+
+        assert_eq!(parsed, event);
+        assert!(line.contains("\"revision\":2"));
+        assert!(line.contains("\"merged_count\":2"));
     }
 
     #[test]

@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-cli"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1984,7 +1984,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-context"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "serde",
  "tempfile",
@@ -1993,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-core"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -2005,7 +2005,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-exec"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "serde",
  "tempfile",
@@ -2016,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-mcp"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -2029,7 +2029,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-multi-agent"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "serde",
  "yunxi-agent-core",
@@ -2037,7 +2037,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-patch"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-persona"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2055,7 +2055,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-protocol"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2063,7 +2063,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-provider"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2080,7 +2080,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-runtime"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -2101,7 +2101,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-sandbox"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "serde",
  "tempfile",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-skills"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -2120,7 +2120,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-storage"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -2135,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-tools"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-tui"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "anyhow",
  "crossterm",

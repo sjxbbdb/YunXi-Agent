@@ -111,7 +111,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.8.1 interactive CLI");
+    println!("YunXi Agent v1.8.2 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -391,15 +391,18 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
             );
         }
         AgentEvent::MemoryRecall {
-            enabled,
-            scope,
             count,
+            always_on_count,
+            dropped_unrelated,
+            dropped_by_budget,
+            dropped_duplicates,
             budget_used_chars,
             truncated,
             ..
         } => {
+            let dropped = dropped_unrelated + dropped_by_budget + dropped_duplicates;
             println!(
-                "[memory] recall enabled={enabled} scope={scope} count={count} budget_used_chars={budget_used_chars} truncated={truncated}"
+                "[memory] recalled={count} always_on={always_on_count} dropped={dropped} unrelated={dropped_unrelated} duplicates={dropped_duplicates} budget_dropped={dropped_by_budget} budget_used={budget_used_chars} truncated={truncated}"
             );
         }
         AgentEvent::MemoryCandidate {
@@ -416,15 +419,15 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
             );
         }
         AgentEvent::MemoryWrite {
-            id,
-            scope,
             kind,
             status,
             action,
+            revision,
+            merged_count,
             ..
         } => {
             println!(
-                "[memory] write id={id} scope={scope} kind={kind} status={status} action={action}"
+                "[memory] write action={action} kind={kind} status={status} revision={revision} merged_count={merged_count}"
             );
         }
         AgentEvent::MemoryWarning { warning, .. } => {

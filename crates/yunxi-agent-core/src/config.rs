@@ -19,6 +19,8 @@ pub struct AgentConfig {
     pub context_window_tokens: Option<i64>,
     #[serde(default)]
     pub auto_compact_threshold_tokens: Option<i64>,
+    #[serde(default)]
+    pub memory_extraction_mode: MemoryExtractionMode,
 }
 
 impl AgentConfig {
@@ -35,6 +37,7 @@ impl AgentConfig {
             session_title: None,
             context_window_tokens: None,
             auto_compact_threshold_tokens: None,
+            memory_extraction_mode: MemoryExtractionMode::Auto,
         }
     }
 
@@ -90,6 +93,20 @@ impl AgentConfig {
         self.auto_compact_threshold_tokens = Some(auto_compact_threshold_tokens.max(1));
         self
     }
+
+    pub fn with_memory_extraction_mode(mut self, mode: MemoryExtractionMode) -> Self {
+        self.memory_extraction_mode = mode;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MemoryExtractionMode {
+    #[default]
+    Auto,
+    RuleOnly,
+    Provider,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

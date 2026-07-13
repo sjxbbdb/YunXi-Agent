@@ -17,8 +17,8 @@ use yunxi_agent_context::{
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
     AgentResult, AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus,
-    CommandStatus, FileChangeKind, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata,
-    TurnRuntimeState,
+    CommandStatus, FileChangeKind, MemoryExtractionMode, ThreadRuntimeState, TokenUsage,
+    TurnRuntimeMetadata, TurnRuntimeState,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_multi_agent::{
@@ -43,7 +43,8 @@ use yunxi_agent_provider::{
 use yunxi_agent_sandbox::{ApprovalRequirement, SandboxRequirement};
 use yunxi_agent_storage::{
     FilePersonaMemoryStore, FileSessionStore, HistoryItemKind, HistoryLoadOptions,
-    InMemorySessionStore, SessionHistory, SessionId, SessionRecord, SessionStore,
+    InMemorySessionStore, MemoryPersistOutcome, SessionHistory, SessionId, SessionRecord,
+    SessionStore,
 };
 use yunxi_agent_tools::{
     ApprovalDecision, CompositeToolRuntime, SandboxPolicy, ToolDispatch, ToolDispatchTrace,
@@ -1770,6 +1771,7 @@ fn empty_memory_recall() -> MemoryRecallResult {
         always_on_count: 0,
         dropped_unrelated: 0,
         dropped_by_budget: 0,
+        dropped_duplicates: 0,
     }
 }
 
@@ -1826,6 +1828,10 @@ async fn emit_persona_context_events(
         count: persona.memory_recall.records.len(),
         budget_used_chars: persona.memory_recall.budget_used_chars,
         truncated: persona.memory_recall.truncated,
+        always_on_count: persona.memory_recall.always_on_count,
+        dropped_unrelated: persona.memory_recall.dropped_unrelated,
+        dropped_by_budget: persona.memory_recall.dropped_by_budget,
+        dropped_duplicates: persona.memory_recall.dropped_duplicates,
     })
     .await?;
     if let Some(compiled_context) = &persona.compiled_context {
@@ -1864,34 +1870,54 @@ async fn emit_memory_extraction_events(
 
     let store = FilePersonaMemoryStore::for_workspace(&config.cwd);
     let extractor = MemoryRuleExtractor::new();
-    let mut candidates =
-        if provider_memory_extraction_enabled && should_try_provider_memory_extraction(config) {
-            match provider_memory_candidates(
-                provider,
-                config,
-                prompt,
-                final_response,
-                session_id,
-                &persona.workspace_fingerprint,
-                persona.settings.memory_enabled,
-            )
-            .await
-            {
-                Ok(candidates) if !candidates.is_empty() => candidates,
-                Ok(_) => Vec::new(),
-                Err(error) => {
-                    sink.emit(AgentEvent::MemoryWarning {
-                        schema_version: SCHEMA_VERSION,
-                        warning: format!("provider memory extraction skipped: {error}"),
-                    })
-                    .await?;
-                    Vec::new()
-                }
+    let extraction_mode = config.memory_extraction_mode;
+    let mut candidates = if provider_memory_extraction_enabled
+        && should_try_provider_memory_extraction(config)
+    {
+        match provider_memory_candidates(
+            provider,
+            config,
+            prompt,
+            final_response,
+            session_id,
+            &persona.workspace_fingerprint,
+            persona.settings.memory_enabled,
+        )
+        .await
+        {
+            Ok(candidates) if !candidates.is_empty() => candidates,
+            Ok(_) => Vec::new(),
+            Err(error) => {
+                sink.emit(AgentEvent::MemoryWarning {
+                    schema_version: SCHEMA_VERSION,
+                    warning: format!("provider memory extraction skipped: {error}"),
+                })
+                .await?;
+                Vec::new()
             }
-        } else {
-            Vec::new()
-        };
-    if candidates.is_empty() {
+        }
+    } else {
+        if extraction_mode == MemoryExtractionMode::Provider && !provider_memory_extraction_enabled
+        {
+            sink.emit(AgentEvent::MemoryWarning {
+                schema_version: SCHEMA_VERSION,
+                warning: "provider memory extraction skipped: live provider runtime is required"
+                    .to_string(),
+            })
+            .await?;
+        } else if extraction_mode == MemoryExtractionMode::Provider
+            && !provider_extraction_has_provider_and_model(config)
+        {
+            sink.emit(AgentEvent::MemoryWarning {
+                schema_version: SCHEMA_VERSION,
+                warning: "provider memory extraction skipped: provider and model are required"
+                    .to_string(),
+            })
+            .await?;
+        }
+        Vec::new()
+    };
+    if candidates.is_empty() && extraction_mode != MemoryExtractionMode::Provider {
         candidates = extractor.extract(
             prompt,
             Some(final_response),
@@ -1920,15 +1946,18 @@ async fn emit_memory_extraction_events(
                 } else {
                     "pending_confirmation"
                 };
-                match store.append(&record) {
-                    Ok(()) => {
+                match store.append_or_merge(&record) {
+                    Ok(outcome) => {
+                        let event = memory_write_event_parts(action, outcome);
                         sink.emit(AgentEvent::MemoryWrite {
                             schema_version: SCHEMA_VERSION,
-                            id: record.id.clone(),
+                            id: event.id,
                             scope: record.scope.label(),
                             kind: memory_kind_label(record.kind).to_string(),
-                            status: memory_status_label(record.status).to_string(),
-                            action: action.to_string(),
+                            status: memory_status_label(event.status).to_string(),
+                            action: event.action,
+                            revision: event.revision,
+                            merged_count: event.merged_count,
                         })
                         .await?;
                     }
@@ -1949,6 +1978,8 @@ async fn emit_memory_extraction_events(
                     kind: memory_kind_label(record.kind).to_string(),
                     status: memory_status_label(record.status).to_string(),
                     action: memory_write_policy_label(candidate.write_policy).to_string(),
+                    revision: record.revision,
+                    merged_count: record.merged_count,
                 })
                 .await?;
             }
@@ -1987,17 +2018,73 @@ async fn provider_memory_candidates(
         .message
         .map(|message| message.content)
         .unwrap_or_default();
-    Ok(ProviderMemoryExtractor::new().extract_from_response(
-        &content,
-        prompt,
-        Some(&session_id.0),
-        Some(workspace_fingerprint),
-        memory_enabled,
-    ))
+    ProviderMemoryExtractor::new()
+        .extract_from_response_checked(
+            &content,
+            prompt,
+            Some(&session_id.0),
+            Some(workspace_fingerprint),
+            memory_enabled,
+        )
+        .map_err(|message| AgentError::Execution { message })
 }
 
 fn should_try_provider_memory_extraction(config: &AgentConfig) -> bool {
+    if config.memory_extraction_mode == MemoryExtractionMode::RuleOnly {
+        return false;
+    }
+    provider_extraction_has_provider_and_model(config)
+}
+
+fn provider_extraction_has_provider_and_model(config: &AgentConfig) -> bool {
     config.provider.is_some() && config.model.is_some()
+}
+
+struct MemoryWriteEventParts {
+    id: String,
+    status: MemoryStatus,
+    action: String,
+    revision: u32,
+    merged_count: u32,
+}
+
+fn memory_write_event_parts(
+    default_action: &str,
+    outcome: MemoryPersistOutcome,
+) -> MemoryWriteEventParts {
+    match outcome {
+        MemoryPersistOutcome::Inserted {
+            id,
+            status,
+            revision,
+            merged_count,
+        } => MemoryWriteEventParts {
+            id,
+            status,
+            action: default_action.to_string(),
+            revision,
+            merged_count,
+        },
+        MemoryPersistOutcome::Merged {
+            id,
+            status,
+            revision,
+            merged_count,
+        } => MemoryWriteEventParts {
+            id,
+            status,
+            action: "merged".to_string(),
+            revision,
+            merged_count,
+        },
+        MemoryPersistOutcome::Skipped { id, reason } => MemoryWriteEventParts {
+            id,
+            status: MemoryStatus::Rejected,
+            action: format!("skipped:{reason}"),
+            revision: 0,
+            merged_count: 0,
+        },
+    }
 }
 
 fn safe_event_query(prompt: &str) -> String {

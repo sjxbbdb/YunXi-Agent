@@ -1,0 +1,1 @@
+{"id":"fixture-v1-project","schema_version":1,"scope":{"workspace":{"root_fingerprint":"workspace-fixture"}},"kind":"project_context","content":"项目要求通过 GitHub API 发布。","confidence":0.9,"importance":0.8,"sensitivity":"low","status":"active","created_at_millis":1,"updated_at_millis":1}

@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.1 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.2 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,65 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.2 Memory Deduplication, Migration, And Diagnostics
+
+YunXi Agent v1.8.2 hardens the v1.8.1 persona and transparent memory layer.
+The release keeps JSONL append-only storage and does not add SQLite, vector
+search, graph memory, or a TUI memory inspector.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.8.2`.
+- Memory schema is promoted to v2 with `dedup_key`, `revision`, and
+  `merged_count`.
+- Rule and provider candidates share batch deduplication for equivalent
+  language preferences and other normalized memory content.
+- Storage writes use `append_or_merge`, preserving append-only revisions while
+  merging equivalent active/pending records before they multiply.
+- v1 and legacy no-version JSONL records migrate to v2 on read; future schema
+  and corrupt JSONL lines produce warnings without panics.
+- Latest memory view and recall both defensively collapse duplicate active
+  records before prompt budgeting.
+- `memory_recall` JSONL events now expose `always_on_count`,
+  `dropped_unrelated`, `dropped_by_budget`, and `dropped_duplicates`.
+- CLI adds `--memory-extraction <auto|rule-only|provider>`.
+- Provider-backed extraction now distinguishes valid JSON, invalid JSON, empty
+  candidates, timeout, rule-only, and provider-required modes.
+- TUI memory notices use short user-facing wording while debug/details retain
+  id, scope, kind, status, action, revision, merged_count, and recall counts.
+- `docs/persona-memory.md` documents v2 schema, dedup, migration, recall
+  diagnostics, provider extraction modes, and TUI notice wording.
+
+The development report is recorded in
+`docs/reports/2026-07-14-yunxi-agent-v1-8-2-memory-dedup-migration-diagnostics-development-report.md`.
+
+Unified verification was performed after construction according to the project
+hard constraint.
+
+Verified in this slice:
+
+- `cargo fmt`: pass
+- `cargo fmt --check`: pass
+- targeted package tests for persona/storage/runtime/cli/tui: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.8.2`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.8.2`
+- isolated `YUNXI_HOME` black-box memory dedup: pass; equivalent language
+  preferences merged to one active global preference with `revision=2`
+- JSONL memory recall diagnostics: pass; recall events include
+  `always_on_count`, `dropped_unrelated`, `dropped_by_budget`, and
+  `dropped_duplicates`
+- provider extraction no-live-runtime warning path: pass for
+  `--memory-extraction provider --offline --jsonl`
+- `git diff --check`: pass
+- `codegraph sync .`: pass; 26 changed files synced
+- `codegraph status .`: pass; index is up to date
+- install script and PATH smoke: pass; installed `yunxi` and
+  `yunxi-agent-cli` report `1.8.2`
 
 ## YunXi Agent v1.8.1 Persona Memory Correctness And Transparency Hardening
 

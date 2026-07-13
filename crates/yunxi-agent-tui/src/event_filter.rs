@@ -16,6 +16,12 @@ pub(crate) enum FilteredEvent {
         kind: String,
         message: String,
     },
+    NoticeWithDebug {
+        kind: String,
+        message: String,
+        debug_label: String,
+        debug_detail: String,
+    },
     Warning(String),
     Error(String),
     DebugOnly {
@@ -23,6 +29,20 @@ pub(crate) enum FilteredEvent {
         detail: String,
     },
     Suppress,
+}
+
+impl FilteredEvent {
+    fn with_debug(self, label: impl Into<String>, detail: impl Into<String>) -> Self {
+        match self {
+            Self::Notice { kind, message } => Self::NoticeWithDebug {
+                kind,
+                message,
+                debug_label: label.into(),
+                debug_detail: detail.into(),
+            },
+            other => other,
+        }
+    }
 }
 
 pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
@@ -303,14 +323,19 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
         AgentEvent::MemoryRecall {
             enabled,
             scope,
+            query,
             count,
             budget_used_chars,
             truncated,
+            always_on_count,
+            dropped_unrelated,
+            dropped_by_budget,
+            dropped_duplicates,
             ..
         } => FilteredEvent::DebugOnly {
             label: "memory recall".to_string(),
             detail: format!(
-                "enabled={enabled} scope={scope} count={count} budget_used_chars={budget_used_chars} truncated={truncated}"
+                "enabled={enabled} scope={scope} query={query} count={count} always_on={always_on_count} dropped_unrelated={dropped_unrelated} dropped_by_budget={dropped_by_budget} dropped_duplicates={dropped_duplicates} budget_used_chars={budget_used_chars} truncated={truncated}"
             ),
         },
         AgentEvent::MemoryCandidate {
@@ -333,25 +358,44 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
             kind,
             status,
             action,
+            revision,
+            merged_count,
             ..
         } => {
-            if action == "auto_saved" || action == "pending_confirmation" {
-                let mut message =
-                    format!("{action}: id={id} kind={kind} scope={scope} status={status}");
-                if action == "pending_confirmation" {
-                    message.push_str("; run `yunxi memory pending` to review");
-                }
-                FilteredEvent::Notice {
+            let detail = format!(
+                "id={id} scope={scope} kind={kind} status={status} action={action} revision={revision} merged_count={merged_count}"
+            );
+            match action.as_str() {
+                "auto_saved" => FilteredEvent::Notice {
                     kind: "memory".to_string(),
-                    message,
+                    message: format!("memory saved: {kind}"),
                 }
-            } else {
-                FilteredEvent::DebugOnly {
+                .with_debug("memory write", detail),
+                "merged" => FilteredEvent::Notice {
+                    kind: "memory".to_string(),
+                    message: format!("memory updated: {kind}"),
+                }
+                .with_debug("memory write", detail),
+                "pending_confirmation" => FilteredEvent::Notice {
+                    kind: "memory".to_string(),
+                    message: "memory pending review; run `yunxi memory pending` to review"
+                        .to_string(),
+                }
+                .with_debug("memory write", detail),
+                "discard" | "discarded" => FilteredEvent::Notice {
+                    kind: "memory".to_string(),
+                    message: "memory discarded by privacy policy".to_string(),
+                }
+                .with_debug("memory write", detail),
+                "disabled" => FilteredEvent::Notice {
+                    kind: "memory".to_string(),
+                    message: "memory disabled".to_string(),
+                }
+                .with_debug("memory write", detail),
+                _ => FilteredEvent::DebugOnly {
                     label: "memory write".to_string(),
-                    detail: format!(
-                        "id={id} scope={scope} kind={kind} status={status} action={action}"
-                    ),
-                }
+                    detail,
+                },
             }
         }
         AgentEvent::MemoryWarning { warning, .. } => FilteredEvent::Warning(warning.clone()),
@@ -572,46 +616,107 @@ mod tests {
     #[test]
     fn memory_write_auto_saved_is_visible_without_content() {
         let event = AgentEvent::MemoryWrite {
-            schema_version: 1,
+            schema_version: 2,
             id: "mem-1".to_string(),
             scope: "global_user".to_string(),
             kind: "preference".to_string(),
             status: "active".to_string(),
             action: "auto_saved".to_string(),
-        };
-
-        let filtered = classify(&event);
-
-        assert_eq!(
-            filtered,
-            FilteredEvent::Notice {
-                kind: "memory".to_string(),
-                message: "auto_saved: id=mem-1 kind=preference scope=global_user status=active"
-                    .to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn memory_write_pending_points_to_cli_review_command() {
-        let event = AgentEvent::MemoryWrite {
-            schema_version: 1,
-            id: "mem-2".to_string(),
-            scope: "global_user".to_string(),
-            kind: "personal_fact".to_string(),
-            status: "pending".to_string(),
-            action: "pending_confirmation".to_string(),
+            revision: 1,
+            merged_count: 1,
         };
 
         let filtered = classify(&event);
 
         assert!(matches!(
             filtered,
-            FilteredEvent::Notice { kind, message }
+            FilteredEvent::NoticeWithDebug {
+                kind,
+                message,
+                debug_detail,
+                ..
+            } if kind == "memory"
+                && message == "memory saved: preference"
+                && debug_detail.contains("id=mem-1")
+                && debug_detail.contains("revision=1")
+                && !message.contains("content")
+        ));
+    }
+
+    #[test]
+    fn memory_write_pending_points_to_cli_review_command() {
+        let event = AgentEvent::MemoryWrite {
+            schema_version: 2,
+            id: "mem-2".to_string(),
+            scope: "global_user".to_string(),
+            kind: "personal_fact".to_string(),
+            status: "pending".to_string(),
+            action: "pending_confirmation".to_string(),
+            revision: 1,
+            merged_count: 1,
+        };
+
+        let filtered = classify(&event);
+
+        assert!(matches!(
+            filtered,
+            FilteredEvent::NoticeWithDebug { kind, message, .. }
                 if kind == "memory"
-                    && message.contains("id=mem-2")
+                    && message.contains("memory pending review")
                     && message.contains("yunxi memory pending")
                     && !message.contains("content")
+        ));
+    }
+
+    #[test]
+    fn memory_write_merged_uses_updated_notice() {
+        let event = AgentEvent::MemoryWrite {
+            schema_version: 2,
+            id: "mem-3".to_string(),
+            scope: "global_user".to_string(),
+            kind: "preference".to_string(),
+            status: "active".to_string(),
+            action: "merged".to_string(),
+            revision: 2,
+            merged_count: 2,
+        };
+
+        let filtered = classify(&event);
+
+        assert!(matches!(
+            filtered,
+            FilteredEvent::NoticeWithDebug {
+                kind,
+                message,
+                debug_detail,
+                ..
+            } if kind == "memory"
+                && message == "memory updated: preference"
+                && debug_detail.contains("merged_count=2")
+        ));
+    }
+
+    #[test]
+    fn memory_write_discarded_hides_secret_like_details_from_notice() {
+        let event = AgentEvent::MemoryWrite {
+            schema_version: 2,
+            id: "mem-secret".to_string(),
+            scope: "global_user".to_string(),
+            kind: "preference".to_string(),
+            status: "rejected".to_string(),
+            action: "discard".to_string(),
+            revision: 1,
+            merged_count: 1,
+        };
+
+        let filtered = classify(&event);
+
+        assert!(matches!(
+            filtered,
+            FilteredEvent::NoticeWithDebug { kind, message, .. }
+                if kind == "memory"
+                    && message == "memory discarded by privacy policy"
+                    && !message.contains("mem-secret")
         ));
     }
 }

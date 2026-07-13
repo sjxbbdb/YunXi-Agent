@@ -1,3 +1,4 @@
+use crate::dedup::deduplicate_candidates;
 use crate::memory::{MemoryCandidate, MemoryKind, MemoryRecord, MemoryStatus, now_millis};
 use crate::policy::{MemoryWritePolicy, MemoryWritePolicyEngine};
 use crate::scope::MemoryScopeRouter;
@@ -34,11 +35,6 @@ impl MemoryRuleExtractor {
             let write_policy = self
                 .policy
                 .policy_for(kind, sensitivity, &content, memory_enabled);
-            let status = match write_policy {
-                MemoryWritePolicy::Auto => MemoryStatus::Active,
-                MemoryWritePolicy::RequireConfirmation => MemoryStatus::Pending,
-                MemoryWritePolicy::Discard | MemoryWritePolicy::Disabled => MemoryStatus::Rejected,
-            };
             let mut record = MemoryRecord::new(
                 format!("mem-{now}-{index}"),
                 scope,
@@ -48,7 +44,7 @@ impl MemoryRuleExtractor {
             )
             .with_scores(0.82, 0.65)
             .with_sensitivity(sensitivity)
-            .with_status(status);
+            .with_status(crate::dedup::status_for_policy(write_policy));
             if let Some(source_session_id) = source_session_id {
                 record = record.with_source_session_id(source_session_id);
             }
@@ -91,7 +87,7 @@ impl MemoryRuleExtractor {
             }
         }
 
-        candidates
+        deduplicate_candidates(candidates)
     }
 }
 

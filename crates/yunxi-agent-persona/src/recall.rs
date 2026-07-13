@@ -1,6 +1,8 @@
+use crate::dedup::dedup_key_for_record;
 use crate::memory::{
     MemoryKind, MemoryRecallRequest, MemoryRecallResult, MemoryRecord, MemoryScope, MemoryStatus,
 };
+use std::collections::BTreeMap;
 
 const RECALL_RELEVANCE_THRESHOLD: f32 = 2.0;
 const ALWAYS_ON_LIMIT: usize = 3;
@@ -14,12 +16,11 @@ impl MemoryRecallEngine {
         records: &[MemoryRecord],
         request: &MemoryRecallRequest,
     ) -> MemoryRecallResult {
+        let (records, dropped_duplicates) = collapse_duplicate_records(records, request);
         let mut dropped_unrelated = 0;
         let mut always_on_count = 0;
         let mut scored = records
             .iter()
-            .filter(|record| record.status == MemoryStatus::Active)
-            .filter(|record| scope_matches(&record.scope, request.workspace_fingerprint.as_deref()))
             .filter_map(|record| {
                 if is_always_on_profile_record(record) {
                     if always_on_count < ALWAYS_ON_LIMIT {
@@ -57,13 +58,13 @@ impl MemoryRecallEngine {
             if records.len() >= request.max_records {
                 truncated = true;
                 dropped_by_budget += 1;
-                break;
+                continue;
             }
             let len = record.content.chars().count();
             if budget_used_chars + len > request.budget_chars {
                 truncated = true;
                 dropped_by_budget += 1;
-                break;
+                continue;
             }
             budget_used_chars += len;
             records.push(record);
@@ -76,8 +77,49 @@ impl MemoryRecallEngine {
             always_on_count,
             dropped_unrelated,
             dropped_by_budget,
+            dropped_duplicates,
         }
     }
+}
+
+fn collapse_duplicate_records(
+    records: &[MemoryRecord],
+    request: &MemoryRecallRequest,
+) -> (Vec<MemoryRecord>, usize) {
+    let mut by_key: BTreeMap<String, MemoryRecord> = BTreeMap::new();
+    let mut dropped_duplicates = 0;
+    for record in records
+        .iter()
+        .filter(|record| record.status == MemoryStatus::Active)
+        .filter(|record| scope_matches(&record.scope, request.workspace_fingerprint.as_deref()))
+    {
+        let key = if record.dedup_key.trim().is_empty() {
+            dedup_key_for_record(record).as_storage_key()
+        } else {
+            record.dedup_key.clone()
+        };
+        match by_key.get_mut(&key) {
+            Some(existing) => {
+                dropped_duplicates += 1;
+                if should_replace_duplicate(existing, record) {
+                    *existing = record.clone();
+                }
+            }
+            None => {
+                by_key.insert(key, record.clone());
+            }
+        }
+    }
+    (by_key.into_values().collect(), dropped_duplicates)
+}
+
+fn should_replace_duplicate(existing: &MemoryRecord, candidate: &MemoryRecord) -> bool {
+    candidate.updated_at_millis > existing.updated_at_millis
+        || (candidate.updated_at_millis == existing.updated_at_millis
+            && candidate.revision > existing.revision)
+        || (candidate.updated_at_millis == existing.updated_at_millis
+            && candidate.revision == existing.revision
+            && candidate.importance > existing.importance)
 }
 
 fn scope_matches(scope: &MemoryScope, workspace_fingerprint: Option<&str>) -> bool {

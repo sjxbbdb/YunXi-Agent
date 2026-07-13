@@ -11,7 +11,7 @@ mod stream;
 pub use backend::{AgentBackend, BackendKind, DryRunBackend};
 pub use cancellation::AgentCancellationToken;
 pub use codex_source::{CodexSource, CodexSourceStatus};
-pub use config::{AgentConfig, ApprovalMode, SandboxMode};
+pub use config::{AgentConfig, ApprovalMode, MemoryExtractionMode, SandboxMode};
 pub use error::{AgentError, AgentResult};
 pub use event::{
     AgentEvent, AgentRunResult, AgentRunStatus, CommandStatus, DeepParityData, FileChangeKind,

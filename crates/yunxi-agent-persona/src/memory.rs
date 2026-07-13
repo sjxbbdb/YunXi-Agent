@@ -1,8 +1,9 @@
+use crate::dedup::dedup_key_for_record;
 use crate::policy::MemoryWritePolicy;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,7 +29,7 @@ impl MemoryScope {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryKind {
     Preference,
@@ -74,6 +75,12 @@ pub struct MemoryRecord {
     pub status: MemoryStatus,
     pub created_at_millis: u128,
     pub updated_at_millis: u128,
+    #[serde(default)]
+    pub dedup_key: String,
+    #[serde(default = "default_revision")]
+    pub revision: u32,
+    #[serde(default = "default_merged_count")]
+    pub merged_count: u32,
 }
 
 impl MemoryRecord {
@@ -84,7 +91,7 @@ impl MemoryRecord {
         content: impl Into<String>,
         now: u128,
     ) -> Self {
-        Self {
+        let mut record = Self {
             id: id.into(),
             schema_version: SCHEMA_VERSION,
             scope,
@@ -97,7 +104,12 @@ impl MemoryRecord {
             status: MemoryStatus::Pending,
             created_at_millis: now,
             updated_at_millis: now,
-        }
+            dedup_key: String::new(),
+            revision: 1,
+            merged_count: 1,
+        };
+        record.ensure_dedup_metadata();
+        record
     }
 
     pub fn with_source_session_id(mut self, source_session_id: impl Into<String>) -> Self {
@@ -120,6 +132,24 @@ impl MemoryRecord {
         self.status = status;
         self.updated_at_millis = now_millis();
         self
+    }
+
+    pub fn with_dedup_metadata(mut self) -> Self {
+        self.ensure_dedup_metadata();
+        self
+    }
+
+    pub fn ensure_dedup_metadata(&mut self) {
+        self.schema_version = SCHEMA_VERSION;
+        if self.dedup_key.trim().is_empty() {
+            self.dedup_key = dedup_key_for_record(self).as_storage_key();
+        }
+        if self.revision == 0 {
+            self.revision = 1;
+        }
+        if self.merged_count == 0 {
+            self.merged_count = 1;
+        }
     }
 }
 
@@ -161,6 +191,16 @@ pub struct MemoryRecallResult {
     pub dropped_unrelated: usize,
     #[serde(default)]
     pub dropped_by_budget: usize,
+    #[serde(default)]
+    pub dropped_duplicates: usize,
+}
+
+fn default_revision() -> u32 {
+    1
+}
+
+fn default_merged_count() -> u32 {
+    1
 }
 
 pub fn now_millis() -> u128 {

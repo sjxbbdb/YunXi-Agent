@@ -35,7 +35,7 @@ impl PersonaPromptCompiler {
         relationship: &RelationshipState,
         memories: &[MemoryRecord],
     ) -> CompiledPersonaContext {
-        // v1.8.1 keeps durable human/relationship state in transparent memory records;
+        // v1.8.2 keeps durable human/relationship state in transparent memory records;
         // persisted HumanProfile/RelationshipState loading is intentionally deferred.
         let mut lines = vec![
             "[YunXi persona context]".to_string(),

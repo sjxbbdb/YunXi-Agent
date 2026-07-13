@@ -193,3 +193,119 @@ fn recall_reports_budget_truncation() {
     assert!(result.truncated);
     assert_eq!(result.dropped_by_budget, 1);
 }
+
+#[test]
+fn recall_collapses_legacy_duplicate_language_preferences_before_always_on() {
+    let records = (0..4)
+        .map(|index| {
+            let mut record = MemoryRecord::new(
+                format!("language-{index}"),
+                MemoryScope::GlobalUser,
+                MemoryKind::Preference,
+                if index % 2 == 0 {
+                    "用户偏好使用中文回答。"
+                } else {
+                    "用户偏好默认中文交流。"
+                },
+                index + 1,
+            )
+            .with_status(MemoryStatus::Active);
+            record.dedup_key.clear();
+            record
+        })
+        .collect::<Vec<_>>();
+
+    let request = MemoryRecallRequest {
+        query: "测试".to_string(),
+        workspace_fingerprint: Some("workspace-a".to_string()),
+        max_records: 8,
+        budget_chars: 1000,
+    };
+    let result = MemoryRecallEngine.recall(&records, &request);
+
+    assert_eq!(result.records.len(), 1);
+    assert_eq!(result.always_on_count, 1);
+    assert_eq!(result.dropped_duplicates, 3);
+}
+
+#[test]
+fn recall_reports_unrelated_and_duplicate_drops_together() {
+    let duplicate_a = MemoryRecord::new(
+        "language-a",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let duplicate_b = MemoryRecord::new(
+        "language-b",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好默认中文交流。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+    let unrelated = MemoryRecord::new(
+        "event",
+        MemoryScope::GlobalUser,
+        MemoryKind::Event,
+        "用户曾经测试一个普通事件。",
+        3,
+    )
+    .with_status(MemoryStatus::Active);
+
+    let request = MemoryRecallRequest {
+        query: "请计算 2+2".to_string(),
+        workspace_fingerprint: Some("workspace-a".to_string()),
+        max_records: 8,
+        budget_chars: 1000,
+    };
+    let result = MemoryRecallEngine.recall(&[duplicate_a, duplicate_b, unrelated], &request);
+
+    assert_eq!(result.records.len(), 1);
+    assert_eq!(result.dropped_duplicates, 1);
+    assert_eq!(result.dropped_unrelated, 1);
+}
+
+#[test]
+fn recall_deduplicates_before_budget_accounting() {
+    let duplicate_a = MemoryRecord::new(
+        "language-a",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let duplicate_b = MemoryRecord::new(
+        "language-b",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好默认中文交流。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+    let project = MemoryRecord::new(
+        "project",
+        MemoryScope::Workspace {
+            root_fingerprint: "workspace-a".to_string(),
+        },
+        MemoryKind::ProjectContext,
+        "项目要求使用 GitHub REST API 发布，并保持发布记录可追踪。",
+        3,
+    )
+    .with_status(MemoryStatus::Active);
+
+    let request = MemoryRecallRequest {
+        query: "项目 发布".to_string(),
+        workspace_fingerprint: Some("workspace-a".to_string()),
+        max_records: 8,
+        budget_chars: 20,
+    };
+    let result = MemoryRecallEngine.recall(&[duplicate_a, duplicate_b, project], &request);
+
+    assert_eq!(result.dropped_duplicates, 1);
+    assert!(result.truncated);
+    assert_eq!(result.dropped_by_budget, 1);
+}

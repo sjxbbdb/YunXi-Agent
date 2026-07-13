@@ -4,8 +4,8 @@ use yunxi_agent_core::{AgentEvent, AgentRunStatus};
 use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus};
 use yunxi_agent_storage::{
     FilePersonaMemoryStore, FileSessionStore, HistoryItemKind, HistoryLoadOptions,
-    InMemorySessionStore, PersonaMemoryScope, RolloutRecord, SessionId, SessionRecord,
-    SessionStore, ThreadMetadata,
+    InMemorySessionStore, MemoryPersistOutcome, PersonaMemoryScope, RolloutRecord, SessionId,
+    SessionRecord, SessionStore, ThreadMetadata,
 };
 
 #[tokio::test]
@@ -290,7 +290,176 @@ fn file_persona_memory_store_skips_corrupt_jsonl_lines() {
 
     assert_eq!(loaded.records.len(), 1);
     assert_eq!(loaded.records[0].id, "memory-2");
+    assert_eq!(loaded.records[0].schema_version, 2);
+    assert!(!loaded.records[0].dedup_key.is_empty());
     assert_eq!(loaded.warnings.len(), 1);
+}
+
+#[test]
+fn file_persona_memory_store_merges_equivalent_active_language_preferences() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let first = MemoryRecord::new(
+        "memory-first",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let second = MemoryRecord::new(
+        "memory-second",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好默认中文交流。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+
+    let inserted = store.append_or_merge(&first).expect("insert");
+    let merged = store.append_or_merge(&second).expect("merge");
+
+    assert!(matches!(inserted, MemoryPersistOutcome::Inserted { .. }));
+    assert!(matches!(
+        merged,
+        MemoryPersistOutcome::Merged {
+            revision: 2,
+            merged_count: 2,
+            ..
+        }
+    ));
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    assert_eq!(loaded.records.len(), 1);
+    assert_eq!(loaded.records[0].id, "memory-first");
+    assert_eq!(loaded.records[0].revision, 2);
+    assert_eq!(loaded.records[0].merged_count, 2);
+}
+
+#[test]
+fn file_persona_memory_store_keeps_pending_when_equivalent_pending_repeats() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let first = MemoryRecord::new(
+        "pending-first",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::PersonalFact,
+        "用户自述事实候选：我的名字是 YunXi 测试用户。",
+        1,
+    );
+    let second = MemoryRecord::new(
+        "pending-second",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::PersonalFact,
+        "用户自述事实候选：我的名字是 YunXi 测试用户。",
+        2,
+    );
+
+    store.append_or_merge(&first).expect("insert pending");
+    store.append_or_merge(&second).expect("merge pending");
+
+    let pending = store.list(PersonaMemoryScope::Workspace);
+    assert_eq!(pending.records.len(), 1);
+    assert_eq!(pending.records[0].id, "pending-first");
+    assert_eq!(pending.records[0].status, MemoryStatus::Pending);
+    assert_eq!(pending.records[0].revision, 2);
+}
+
+#[test]
+fn archived_and_rejected_equivalent_records_are_not_auto_revived() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let archived = MemoryRecord::new(
+        "archived-language",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Archived);
+    let rejected = MemoryRecord::new(
+        "rejected-language",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好默认中文交流。",
+        2,
+    )
+    .with_status(MemoryStatus::Rejected);
+    let active = MemoryRecord::new(
+        "active-language",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好用中文回复我。",
+        3,
+    )
+    .with_status(MemoryStatus::Active);
+
+    store.append(&archived).expect("append archived");
+    store.append(&rejected).expect("append rejected");
+    store.append_or_merge(&active).expect("insert active");
+
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    assert!(loaded.records.iter().any(|record| {
+        record.id == "archived-language" && record.status == MemoryStatus::Archived
+    }));
+    assert!(loaded.records.iter().any(|record| {
+        record.id == "rejected-language" && record.status == MemoryStatus::Rejected
+    }));
+    assert!(loaded.records.iter().any(|record| {
+        record.id == "active-language"
+            && record.status == MemoryStatus::Active
+            && record.revision == 1
+    }));
+}
+
+#[test]
+fn file_persona_memory_store_migrates_v1_and_legacy_jsonl_records() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let workspace_dir = temp.path().join(".yunxi").join("memory");
+    std::fs::create_dir_all(&workspace_dir).expect("workspace memory dir");
+    let fixture = format!(
+        "{}\n{}\n{}\n",
+        include_str!("fixtures/memory-v1-workspace-project-context.jsonl").trim(),
+        "{\"id\":\"legacy-project\",\"scope\":{\"workspace\":{\"root_fingerprint\":\"workspace-fixture\"}},\"kind\":\"project_context\",\"content\":\"项目要求使用 REST API。\",\"confidence\":0.8,\"importance\":0.6,\"sensitivity\":\"low\",\"status\":\"active\",\"created_at_millis\":2,\"updated_at_millis\":2}",
+        "{\"id\":\"future\",\"schema_version\":99,\"scope\":{\"workspace\":{\"root_fingerprint\":\"workspace-fixture\"}},\"kind\":\"project_context\",\"content\":\"future\",\"confidence\":0.8,\"importance\":0.6,\"sensitivity\":\"low\",\"status\":\"active\",\"created_at_millis\":3,\"updated_at_millis\":3}",
+    );
+    std::fs::write(workspace_dir.join("workspace-memory.jsonl"), fixture)
+        .expect("write migration fixture");
+
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+
+    assert!(loaded.records.iter().all(|record| {
+        record.schema_version == 2
+            && !record.dedup_key.is_empty()
+            && record.revision >= 1
+            && record.merged_count >= 1
+    }));
+    assert!(
+        loaded
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("missing schema_version"))
+    );
+    assert!(
+        loaded
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("unsupported future memory schema_version=99"))
+    );
 }
 
 #[test]
@@ -364,32 +533,15 @@ fn clear_workspace_archives_active_and_pending_workspace_records_only() {
         "当前项目 pending 候选。",
         2,
     );
-    let global_pending = MemoryRecord::new(
-        "global-pending",
-        MemoryScope::GlobalUser,
-        MemoryKind::PersonalFact,
-        "全局 pending 候选。",
-        3,
-    );
 
     store.append(&workspace_active).expect("append active");
     store
         .append(&workspace_pending)
         .expect("append workspace pending");
-    store
-        .append(&global_pending)
-        .expect("append global pending");
 
     let summary = store.clear_workspace().expect("clear workspace");
 
     assert_eq!(summary.archived_active_records, 1);
     assert_eq!(summary.archived_pending_records, 1);
     assert_eq!(summary.remaining_pending_records, 0);
-    assert!(
-        store
-            .list(PersonaMemoryScope::Global)
-            .records
-            .iter()
-            .any(|record| record.id == "global-pending" && record.status == MemoryStatus::Pending)
-    );
 }

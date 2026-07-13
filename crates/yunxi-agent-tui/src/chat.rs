@@ -170,6 +170,16 @@ impl Transcript {
                 self.push_debug_cell_if_enabled(id);
             }
             FilteredEvent::Notice { kind, message } => self.push_notice(kind, message),
+            FilteredEvent::NoticeWithDebug {
+                kind,
+                message,
+                debug_label,
+                debug_detail,
+            } => {
+                let id = self.debug.add(debug_label, debug_detail);
+                self.push_notice(kind, message);
+                self.push_debug_cell_if_enabled(id);
+            }
             FilteredEvent::Warning(message) => self.push_warning(message),
             FilteredEvent::Error(message) => self.push_error(message),
             FilteredEvent::DebugOnly { label, detail } => {

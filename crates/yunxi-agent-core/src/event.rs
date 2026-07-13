@@ -84,6 +84,14 @@ pub enum AgentEvent {
         count: usize,
         budget_used_chars: usize,
         truncated: bool,
+        #[serde(default)]
+        always_on_count: usize,
+        #[serde(default)]
+        dropped_unrelated: usize,
+        #[serde(default)]
+        dropped_by_budget: usize,
+        #[serde(default)]
+        dropped_duplicates: usize,
     },
     MemoryCandidate {
         #[serde(default)]
@@ -103,6 +111,10 @@ pub enum AgentEvent {
         kind: String,
         status: String,
         action: String,
+        #[serde(default)]
+        revision: u32,
+        #[serde(default)]
+        merged_count: u32,
     },
     MemoryWarning {
         #[serde(default)]

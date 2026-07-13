@@ -1,65 +1,89 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.8.1 hardens the first YunXi-owned persona and transparent memory
-foundation. The goal is not to make memory invisible or automatic in a risky
-way; the goal is to make persona context stable, local, relevant, inspectable,
-and under user control.
+YunXi Agent v1.8.2 keeps persona and long-term memory local, inspectable, and
+under user control. Memory is context, not instruction: it cannot override
+AGENTS.md, sandbox policy, privacy policy, or the current user request.
 
 ## Defaults
 
 - Persona is enabled by default.
-- The active built-in profile is `yunxi_companion_strong`.
-- Long-term memory writes are disabled by default.
-- Memory writes become active only after `yunxi memory on`,
-  `YUNXI_MEMORY_ENABLED=1`, or a saved config setting enables them.
-- Pending, rejected, and archived memories are not recalled into prompts.
+- The built-in profile is `yunxi_companion_strong`.
+- Long-term memory writes are disabled until `yunxi memory on`,
+  `YUNXI_MEMORY_ENABLED=1`, or a saved config enables them.
+- Only `active` memories are recalled. `pending`, `rejected`, and `archived`
+  records are never injected into prompts.
+- `YUNXI_HOME` overrides the default `%USERPROFILE%\.yunxi` root.
 
-Settings are stored at:
+## Storage
 
-```text
-%USERPROFILE%\.yunxi\persona\config.toml
-```
-
-`YUNXI_HOME` can override the root directory.
-
-## Storage Paths
-
-Global memory:
+Memory is append-only JSONL:
 
 ```text
 %USERPROFILE%\.yunxi\memory\global-memory.jsonl
 %USERPROFILE%\.yunxi\memory\pending.jsonl
-```
-
-Workspace memory:
-
-```text
 <workspace>\.yunxi\memory\workspace-memory.jsonl
 <workspace>\.yunxi\memory\pending.jsonl
 ```
 
-YunXi v1.8.1 stores memory as append-only JSONL. Status changes append a new
-record revision rather than silently deleting the old audit entry. Workspace
-records use a stable workspace fingerprint instead of exposing the full
-workspace path inside the record scope.
+v1.8.2 writes `schema_version = 2`. Every record includes:
 
-v1.8.1 keeps `memory pending` consistent by reading the full latest-record view
-and then filtering pending records. Approving, rejecting, or archiving a pending
-record removes it from `memory pending` without rewriting the audit ledger.
+- `dedup_key`: `scope + kind + normalized_content`.
+- `revision`: latest revision number for the durable memory id.
+- `merged_count`: how many equivalent candidates have been folded into it.
 
-## CLI
+Equivalent active/pending records are merged before writing. The store still
+appends a new revision line, preserving the audit ledger. Archived or rejected
+records are not revived automatically.
 
-Persona commands:
+v1 JSONL records are migrated on read. Missing `schema_version` records with the
+old v1 shape are treated as legacy v1 and emit a warning. Unsupported future
+schema lines are skipped with a warning instead of panicking.
+
+## Extraction
+
+The CLI supports:
 
 ```powershell
-yunxi persona status
-yunxi persona profile
-yunxi persona set yunxi_companion_strong
-yunxi persona off
-yunxi persona on
+yunxi --memory-extraction auto "prompt"
+yunxi --memory-extraction rule-only "prompt"
+yunxi --memory-extraction provider "prompt"
 ```
 
-Memory commands:
+- `auto` is the default. Live provider mode may run one additional structured
+  extraction call after the main response. Invalid JSON, provider errors, or
+  timeouts warn and fall back to local rules.
+- `rule-only` never calls the provider extractor.
+- `provider` requires both provider and model. If unavailable, YunXi emits a
+  memory warning and does not silently fall back.
+
+Provider and rule candidates share the same batch dedup path. Chinese language
+preferences such as `以后请用中文回答`, `默认用中文交流`, and `用中文回复我` normalize to
+`language:zh`; English preferences normalize to `language:en`.
+
+Secret-like content is never downgraded by dedup. API keys, bearer tokens,
+authorization headers, passwords, GitHub tokens, and `sk-` markers remain
+discarded by policy.
+
+## Recall Diagnostics
+
+`memory_recall` JSONL events expose counts only:
+
+- `count`
+- `always_on_count`
+- `dropped_unrelated`
+- `dropped_by_budget`
+- `dropped_duplicates`
+- `budget_used_chars`
+- `truncated`
+
+The event does not print memory content. Secret-like queries remain
+`[redacted-sensitive-query]`.
+
+Recall performs defensive dedup before scoring, so old duplicate JSONL rows do
+not consume prompt budget. Global language and interaction preferences use a
+small always-on budget after dedup.
+
+## CLI
 
 ```powershell
 yunxi memory status
@@ -76,67 +100,23 @@ yunxi memory off
 yunxi memory on
 ```
 
-Use `--json` for machine-readable management output. `--jsonl` remains reserved
-for agent execution event streams and is rejected for persona/memory management
-commands.
+Use `--json` for management output. `--jsonl` is reserved for agent execution
+streams.
 
-## Record Schema
+## TUI Notices
 
-Every memory record has:
+Normal TUI memory notices are intentionally short:
 
-- `schema_version`: v1.8.1 writes `1`.
-- `id`: stable memory id.
-- `scope`: `global_user`, `workspace`, `agent_identity`, or `relationship`.
-- `kind`: preference, personal fact, correction, project context, and related
-  categories.
-- `content`: concise memory text.
-- `source_session_id`: optional session id.
-- `confidence`: 0.0 to 1.0.
-- `importance`: 0.0 to 1.0.
-- `sensitivity`: `low`, `medium`, or `high`.
-- `status`: `active`, `pending`, `rejected`, or `archived`.
-- `created_at_millis` and `updated_at_millis`.
+- `memory saved: preference`
+- `memory updated: preference`
+- `memory pending review`
+- `memory discarded by privacy policy`
+- `memory disabled`
 
-## Prompt Injection
+Debug/details keep engineering fields such as id, scope, kind, status, action,
+revision, merged_count, and recall diagnostic counts.
 
-Runtime prompt order is:
+## Non-Goals In v1.8.2
 
-1. Project and user instructions from AGENTS.md.
-2. YunXi persona context.
-3. Recalled active memory context.
-4. Mentioned file context.
-5. Restored session history.
-6. Current user prompt.
-
-Memory is marked as context, not instruction. It cannot override project
-instructions, sandbox policy, privacy policy, or the user's current turn.
-
-## Write Policy
-
-Provider-backed structured extraction may run after a completed live-provider
-turn. It has a timeout, falls back to rule extraction, and never blocks the
-assistant final response.
-
-- Low-risk preferences, corrections, and project context can be saved as active
-  memories when memory is enabled.
-- Personal facts, relationship notes, emotional state, goals, events, and
-  medium-risk content require confirmation and go to pending.
-- API keys, bearer tokens, authorization headers, passwords, GitHub tokens, and
-  similar secrets are discarded or require confirmation; they are not auto-saved
-  as active memory.
-- When memory is disabled, extraction candidates are not written.
-- Language and general interaction preferences are global user memories by
-  default. Project hard constraints and workspace facts remain workspace-scoped.
-- Recall has a relevance gate. Active memories are not injected only because
-  they exist; global language/interaction preferences use a small always-on
-  profile budget.
-
-Persona/memory runtime events expose only summary fields such as id, kind,
-status, scope, counts, and budget. They do not print full memory content into
-JSONL execution streams.
-
-## Non-Goals In v1.8.1
-
-YunXi v1.8.1 does not add SQLite, vector search, graph memory, relationship
-state machines, active check-in triggers, or TUI memory inspector screens.
-Those can be layered later after this local transparent foundation is stable.
+v1.8.2 does not add SQLite, vector search, graph memory, relationship state
+machines, proactive triggers, or a TUI memory inspector page.

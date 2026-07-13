@@ -848,6 +848,41 @@ Verified on 2026-07-09:
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.
 
+## YunXi Agent v1.7.5 Planned Direction
+
+The next stage is the v1.7.5 CLI protocol and safety convergence slice. The
+v1.7.4 CLI can run live provider, offline, JSON/JSONL, sessions, fixture tools,
+multi-agent fixtures, and TUI, but the 2026-07-13 CLI audit found protocol and
+surface issues that should be fixed before expanding more product features.
+
+The v1.7.5 development report is recorded in
+`docs/reports/2026-07-13-yunxi-agent-v1-7-5-cli-protocol-safety-development-report.md`.
+
+The planned implementation should:
+
+- Make final assistant messages single-source in runtime/JSON/JSONL output.
+- Emit generic `tool_completed` lifecycle events for completed MCP tool calls
+  while preserving rich MCP response items.
+- Avoid provider credential fallback warnings for explicitly selected dry-run
+  or unavailable Codex compatibility backends.
+- Reject conflicting `--json` and `--jsonl` output modes.
+- Reject unsupported `--jsonl` on non-run subcommands instead of silently
+  printing plain text.
+- Make `sessions list --json` return lightweight summaries instead of full
+  session records with embedded events.
+- Clarify prompt/subcommand reserved-word behavior and provide an explicit run
+  path or clear `--` guidance.
+- Hide or explicitly reject the detached Codex backend placeholder in the
+  default CLI surface.
+- Keep sandbox output honest: the current sandbox is an advisory policy guard,
+  not OS-level isolation.
+
+The implementation stage should keep the project hard constraints: build the
+whole slice first, avoid repeated mid-construction validation loops, then run
+the unified verification gate and publish a new immutable `v1.7.5` tag only
+after source implementation and verification complete. GitHub publishing must
+continue through the REST API only, and old tags must not be deleted or moved.
+
 ## YunXi Agent v1.7.2 TUI Scroll And Streaming Construction
 
 YunXi Agent v1.7.2 deepens the v1.7.1 TUI host without changing the autonomous

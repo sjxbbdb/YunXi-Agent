@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.8.0"));
+        .stdout(predicate::str::contains("yunxi 1.8.1"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.8.0"));
+        .stdout(predicate::str::contains("yunxi 1.8.1"));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.0 interactive CLI",
+            "YunXi Agent v1.8.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.0 interactive CLI",
+            "YunXi Agent v1.8.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.0 interactive CLI",
+            "YunXi Agent v1.8.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -533,6 +533,7 @@ fn cli_memory_commands_manage_runtime_extracted_memory() {
         .args(["--cwd", cwd, "memory", "on"])
         .assert()
         .success()
+        .stdout(predicate::str::contains("YunXi memory is now enabled."))
         .stdout(predicate::str::contains("memory_enabled: true"));
 
     let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
@@ -548,7 +549,7 @@ fn cli_memory_commands_manage_runtime_extracted_memory() {
 
     let list = run_json_command_with_env(
         &home,
-        &["--cwd", cwd, "--json", "memory", "list", "--workspace"],
+        &["--cwd", cwd, "--json", "memory", "list", "--global"],
     );
     let records = list["records"].as_array().expect("memory records");
     assert!(
@@ -562,19 +563,31 @@ fn cli_memory_commands_manage_runtime_extracted_memory() {
     let search = run_json_command_with_env(
         &home,
         &[
-            "--cwd",
-            cwd,
-            "--json",
-            "memory",
-            "search",
-            "中文",
-            "--workspace",
+            "--cwd", cwd, "--json", "memory", "search", "中文", "--global",
         ],
     );
     assert!(
         search["records"]
             .as_array()
             .is_some_and(|records| !records.is_empty())
+    );
+}
+
+#[test]
+fn cli_memory_on_json_reports_first_enable_disclosure_fields() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    let value = run_json_command_with_env(&home, &["--cwd", cwd, "--json", "memory", "on"]);
+
+    assert_eq!(value["memory_enabled"].as_bool(), Some(true));
+    assert_eq!(value["first_enable_notice_shown"].as_bool(), Some(true));
+    assert!(value["storage_roots"]["global"].as_str().is_some());
+    assert!(value["storage_roots"]["workspace"].as_str().is_some());
+    assert_eq!(
+        value["pending_command"].as_str(),
+        Some("yunxi memory pending")
     );
 }
 

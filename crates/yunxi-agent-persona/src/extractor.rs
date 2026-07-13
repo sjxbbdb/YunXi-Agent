@@ -1,11 +1,11 @@
-use crate::memory::{
-    MemoryCandidate, MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, now_millis,
-};
+use crate::memory::{MemoryCandidate, MemoryKind, MemoryRecord, MemoryStatus, now_millis};
 use crate::policy::{MemoryWritePolicy, MemoryWritePolicyEngine};
+use crate::scope::MemoryScopeRouter;
 
 #[derive(Clone, Debug, Default)]
 pub struct MemoryRuleExtractor {
     policy: MemoryWritePolicyEngine,
+    scope_router: MemoryScopeRouter,
 }
 
 impl MemoryRuleExtractor {
@@ -23,15 +23,13 @@ impl MemoryRuleExtractor {
     ) -> Vec<MemoryCandidate> {
         let mut candidates = Vec::new();
         let now = now_millis();
-        let scope = workspace_fingerprint
-            .map(|root_fingerprint| MemoryScope::Workspace {
-                root_fingerprint: root_fingerprint.to_string(),
-            })
-            .unwrap_or(MemoryScope::GlobalUser);
 
         for (index, (kind, content, reason)) in
             detect_prompt_memories(prompt).into_iter().enumerate()
         {
+            let scope =
+                self.scope_router
+                    .route(kind, &content, &reason, workspace_fingerprint, None);
             let sensitivity = self.policy.classify_content(&content);
             let write_policy = self
                 .policy
@@ -43,7 +41,7 @@ impl MemoryRuleExtractor {
             };
             let mut record = MemoryRecord::new(
                 format!("mem-{now}-{index}"),
-                scope.clone(),
+                scope,
                 kind,
                 content.clone(),
                 now,
@@ -68,6 +66,14 @@ impl MemoryRuleExtractor {
                 && prompt.contains("硬性")
             {
                 let content = "用户强调当前项目开发需要遵守既定硬性约束。".to_string();
+                let reason = "rule:project-constraint-summary".to_string();
+                let scope = self.scope_router.route(
+                    MemoryKind::ProjectContext,
+                    &content,
+                    &reason,
+                    workspace_fingerprint,
+                    Some("workspace"),
+                );
                 let record = MemoryRecord::new(
                     format!("mem-{now}-assistant-summary"),
                     scope,
@@ -80,7 +86,7 @@ impl MemoryRuleExtractor {
                     proposed_record: record,
                     evidence: response.to_string(),
                     write_policy: MemoryWritePolicy::Auto,
-                    reason: "rule:project-constraint-summary".to_string(),
+                    reason,
                 });
             }
         }

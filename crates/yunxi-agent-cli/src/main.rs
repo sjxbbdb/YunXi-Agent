@@ -71,7 +71,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.8.0 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.8.1 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -1500,16 +1500,16 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.0; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.8.1; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.0; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.8.1; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.0; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v1.8.1; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.0; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v1.8.1; use --json for memory management commands"
         ),
     }
 }
@@ -1589,9 +1589,7 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
             print_memory_records(&load.records, &load.warnings, json)?;
         }
         MemoryCommand::Pending => {
-            let mut load = store.list(PersonaMemoryScope::Pending);
-            load.records
-                .retain(|record| record.status == MemoryStatus::Pending);
+            let load = store.pending_records();
             print_memory_records(&load.records, &load.warnings, json)?;
         }
         MemoryCommand::Approve { id } => {
@@ -1619,7 +1617,7 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
             if !workspace || !confirm {
                 bail!("memory clear requires --workspace --confirm");
             }
-            let archived = store
+            let summary = store
                 .clear_workspace()
                 .context("failed to clear workspace memory")?;
             if json {
@@ -1627,18 +1625,39 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "scope": "workspace",
-                        "archived_active_records": archived,
+                        "archived_active_records": summary.archived_active_records,
+                        "archived_pending_records": summary.archived_pending_records,
+                        "remaining_pending_records": summary.remaining_pending_records,
                     }))?
                 );
             } else {
-                println!("workspace memory archived_active_records: {archived}");
+                println!(
+                    "workspace memory archived_active_records: {}",
+                    summary.archived_active_records
+                );
+                println!(
+                    "workspace memory archived_pending_records: {}",
+                    summary.archived_pending_records
+                );
+                println!(
+                    "workspace memory remaining_pending_records: {}",
+                    summary.remaining_pending_records
+                );
             }
         }
         MemoryCommand::On => {
+            let first_enable_notice_shown = !settings.memory_enabled;
             settings.memory_enabled = true;
             settings.save().context("failed to save memory settings")?;
             let load = store.list(PersonaMemoryScope::All);
-            print_memory_status(&settings, &load.records, &load.warnings, json)?;
+            print_memory_on_status(
+                &settings,
+                &load.records,
+                &load.warnings,
+                &store,
+                first_enable_notice_shown,
+                json,
+            )?;
         }
         MemoryCommand::Off => {
             settings.memory_enabled = false;
@@ -1745,6 +1764,78 @@ fn print_memory_status(
         for warning in warnings {
             println!("[memory-warning] {warning}");
         }
+    }
+    Ok(())
+}
+
+fn print_memory_on_status(
+    settings: &PersonaSettings,
+    records: &[MemoryRecord],
+    warnings: &[String],
+    store: &FilePersonaMemoryStore,
+    first_enable_notice_shown: bool,
+    json: bool,
+) -> Result<()> {
+    if json {
+        let active = records
+            .iter()
+            .filter(|record| record.status == MemoryStatus::Active)
+            .count();
+        let pending = records
+            .iter()
+            .filter(|record| record.status == MemoryStatus::Pending)
+            .count();
+        let rejected = records
+            .iter()
+            .filter(|record| record.status == MemoryStatus::Rejected)
+            .count();
+        let archived = records
+            .iter()
+            .filter(|record| record.status == MemoryStatus::Archived)
+            .count();
+        let roots = store.storage_roots();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "memory_enabled": settings.memory_enabled,
+                "persona_enabled": settings.persona_enabled,
+                "active_profile": settings.active_profile,
+                "first_enable_notice_shown": first_enable_notice_shown,
+                "storage_roots": {
+                    "global": roots.global_root,
+                    "workspace": roots.workspace_root,
+                },
+                "pending_policy_summary": {
+                    "auto_saved": "low-risk preferences, corrections, and project context",
+                    "pending": "personal facts, relationship notes, emotional state, goals, events, medium sensitivity content",
+                    "discarded": "secret-like content such as API keys, bearer tokens, passwords, and sk-* markers",
+                },
+                "disable_command": "yunxi memory off",
+                "pending_command": "yunxi memory pending",
+                "counts": {
+                    "total": records.len(),
+                    "active": active,
+                    "pending": pending,
+                    "rejected": rejected,
+                    "archived": archived,
+                },
+                "warnings": warnings,
+            }))?
+        );
+    } else {
+        if first_enable_notice_shown {
+            let roots = store.storage_roots();
+            println!("YunXi memory is now enabled.");
+            println!("storage.global: {}", roots.global_root.display());
+            println!("storage.workspace: {}", roots.workspace_root.display());
+            println!("low-risk preferences and project context may be auto-saved.");
+            println!("personal or sensitive candidates require `yunxi memory pending` approval.");
+            println!("secret-like content is discarded instead of stored.");
+            println!(
+                "disable with `yunxi memory off`; archive workspace memory with `yunxi memory clear --workspace --confirm`."
+            );
+        }
+        print_memory_status(settings, records, warnings, false)?;
     }
     Ok(())
 }

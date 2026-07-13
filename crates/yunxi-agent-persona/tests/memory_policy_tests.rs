@@ -88,3 +88,108 @@ fn recall_filters_pending_records_and_respects_workspace_scope() {
     assert_eq!(result.records.len(), 1);
     assert_eq!(result.records[0].id, "active");
 }
+
+#[test]
+fn recall_keeps_global_language_preference_but_drops_unrelated_workspace_memory() {
+    let language = MemoryRecord::new(
+        "language",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let unrelated_project = MemoryRecord::new(
+        "project",
+        MemoryScope::Workspace {
+            root_fingerprint: "workspace-a".to_string(),
+        },
+        MemoryKind::ProjectContext,
+        "项目发布必须使用 GitHub API。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+
+    let request = MemoryRecallRequest {
+        query: "请计算 2+2".to_string(),
+        workspace_fingerprint: Some("workspace-a".to_string()),
+        max_records: 8,
+        budget_chars: 1000,
+    };
+    let result = MemoryRecallEngine.recall(&[language, unrelated_project], &request);
+
+    assert_eq!(result.records.len(), 1);
+    assert_eq!(result.records[0].id, "language");
+    assert_eq!(result.always_on_count, 1);
+    assert_eq!(result.dropped_unrelated, 1);
+}
+
+#[test]
+fn recall_empty_query_does_not_return_all_active_records() {
+    let language = MemoryRecord::new(
+        "language",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let unrelated = MemoryRecord::new(
+        "unrelated",
+        MemoryScope::GlobalUser,
+        MemoryKind::Event,
+        "用户曾经测试过一个普通事件。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+
+    let request = MemoryRecallRequest {
+        query: String::new(),
+        workspace_fingerprint: Some("workspace-a".to_string()),
+        max_records: 8,
+        budget_chars: 1000,
+    };
+    let result = MemoryRecallEngine.recall(&[language, unrelated], &request);
+
+    assert_eq!(
+        result
+            .records
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["language"]
+    );
+    assert_eq!(result.dropped_unrelated, 1);
+}
+
+#[test]
+fn recall_reports_budget_truncation() {
+    let first = MemoryRecord::new(
+        "language-1",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let second = MemoryRecord::new(
+        "language-2",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好回答保持简洁。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+
+    let request = MemoryRecallRequest {
+        query: "语言偏好".to_string(),
+        workspace_fingerprint: Some("workspace-a".to_string()),
+        max_records: 1,
+        budget_chars: 1000,
+    };
+    let result = MemoryRecallEngine.recall(&[first, second], &request);
+
+    assert_eq!(result.records.len(), 1);
+    assert!(result.truncated);
+    assert_eq!(result.dropped_by_budget, 1);
+}

@@ -292,3 +292,104 @@ fn file_persona_memory_store_skips_corrupt_jsonl_lines() {
     assert_eq!(loaded.records[0].id, "memory-2");
     assert_eq!(loaded.warnings.len(), 1);
 }
+
+#[test]
+fn pending_scope_uses_latest_status_after_approve_reject_and_archive() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let pending = MemoryRecord::new(
+        "pending-1",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::PersonalFact,
+        "用户自述事实候选。",
+        1,
+    );
+
+    store.append(&pending).expect("append pending");
+    assert!(
+        store
+            .pending_records()
+            .records
+            .iter()
+            .any(|record| record.id == "pending-1")
+    );
+
+    store
+        .update_status("pending-1", MemoryStatus::Active)
+        .expect("approve")
+        .expect("record");
+    assert!(
+        !store
+            .pending_records()
+            .records
+            .iter()
+            .any(|record| record.id == "pending-1")
+    );
+
+    store
+        .update_status("pending-1", MemoryStatus::Archived)
+        .expect("archive")
+        .expect("record");
+    assert!(
+        !store
+            .pending_records()
+            .records
+            .iter()
+            .any(|record| record.id == "pending-1")
+    );
+}
+
+#[test]
+fn clear_workspace_archives_active_and_pending_workspace_records_only() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let workspace_active = MemoryRecord::new(
+        "workspace-active",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::ProjectContext,
+        "项目要求使用 GitHub API。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let workspace_pending = MemoryRecord::new(
+        "workspace-pending",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::PersonalFact,
+        "当前项目 pending 候选。",
+        2,
+    );
+    let global_pending = MemoryRecord::new(
+        "global-pending",
+        MemoryScope::GlobalUser,
+        MemoryKind::PersonalFact,
+        "全局 pending 候选。",
+        3,
+    );
+
+    store.append(&workspace_active).expect("append active");
+    store
+        .append(&workspace_pending)
+        .expect("append workspace pending");
+    store
+        .append(&global_pending)
+        .expect("append global pending");
+
+    let summary = store.clear_workspace().expect("clear workspace");
+
+    assert_eq!(summary.archived_active_records, 1);
+    assert_eq!(summary.archived_pending_records, 1);
+    assert_eq!(summary.remaining_pending_records, 0);
+    assert!(
+        store
+            .list(PersonaMemoryScope::Global)
+            .records
+            .iter()
+            .any(|record| record.id == "global-pending" && record.status == MemoryStatus::Pending)
+    );
+}

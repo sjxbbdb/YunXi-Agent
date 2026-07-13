@@ -1,5 +1,6 @@
 use crate::approval_layout::approval_desired_height;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApprovalRequestView {
@@ -283,14 +284,33 @@ impl BottomPane {
 
     pub(crate) fn desired_height_for_width(&self, width: usize) -> u16 {
         match &self.mode {
-            BottomPaneMode::Composer { buffer, .. } => {
-                let lines = buffer.lines().count().max(1) as u16;
-                3u16.saturating_add(lines.min(4))
+            BottomPaneMode::Composer { prompt, buffer, .. } => {
+                composer_desired_height(prompt, buffer, width)
             }
             BottomPaneMode::Approval { request, .. } => approval_desired_height(request, width),
-            BottomPaneMode::UserInput { .. } => 5,
+            BottomPaneMode::UserInput {
+                request, buffer, ..
+            } => composer_desired_height(&format!("{} ", request.prompt), buffer, width),
         }
     }
+}
+
+pub(crate) fn composer_desired_height(prompt: &str, buffer: &str, width: usize) -> u16 {
+    let inner_width = width.saturating_sub(2).max(1);
+    let prompt_width = UnicodeWidthStr::width(prompt);
+    let body_width = inner_width.saturating_sub(prompt_width).max(1);
+    let display_rows = buffer
+        .split('\n')
+        .map(|line| wrapped_display_rows(line, body_width))
+        .sum::<usize>()
+        .max(1);
+    3u16.saturating_add(display_rows.min(6) as u16)
+}
+
+fn wrapped_display_rows(value: &str, width: usize) -> usize {
+    let width = width.max(1);
+    let display_width = UnicodeWidthStr::width(value);
+    display_width.checked_sub(1).unwrap_or_default() / width + 1
 }
 
 impl ApprovalRequestView {
@@ -441,6 +461,25 @@ mod tests {
         let pane = BottomPane::default();
 
         assert_eq!(pane.desired_height_for_width(58), 4);
+    }
+
+    #[test]
+    fn composer_height_accounts_for_long_cjk_display_width() {
+        let mut pane = BottomPane::default();
+        pane.paste("这是一段很长的中文输入用于验证窄终端自动换行高度不会覆盖底部提示");
+
+        assert!(pane.desired_height_for_width(58) > 4);
+        assert!(pane.desired_height_for_width(58) <= 9);
+    }
+
+    #[test]
+    fn composer_height_accounts_for_long_unbroken_token() {
+        let mut pane = BottomPane::default();
+        pane.paste(
+            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+        );
+
+        assert!(pane.desired_height_for_width(32) > 4);
     }
 
     #[test]

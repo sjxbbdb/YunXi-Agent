@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.0 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.1 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,60 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.1 Persona Memory Correctness And Transparency Hardening
+
+YunXi Agent v1.8.1 hardens the v1.8.0 persona and transparent memory foundation
+after source audit. It keeps the same local JSONL architecture and does not add
+SQLite, vector search, graph memory, or a TUI memory inspector.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.8.1`.
+- Added semantic memory scope routing so language/general interaction
+  preferences are global user memories, while project hard constraints remain
+  workspace-scoped.
+- Added recall relevance gating and a small always-on profile budget for global
+  language/interaction preferences.
+- Fixed pending workflow consistency by basing `memory pending` on the latest
+  full-record state instead of pending JSONL files alone.
+- Updated `memory clear --workspace --confirm` to archive workspace active and
+  pending records and report active/pending summary counts.
+- Added provider-backed structured memory candidate extraction with timeout,
+  rule fallback, and write-policy enforcement.
+- Added first-enable disclosure fields for `yunxi memory on`, including storage
+  roots and pending policy summary.
+- Aligned prompt order to AGENTS/persona+memory/mentioned files/restored
+  history/current user prompt.
+- Made TUI memory write transparency events visible without exposing memory
+  content.
+- Hardened TUI composer display-width and height calculations for CJK and long
+  tokens.
+
+The development report is recorded in
+`docs/reports/2026-07-13-yunxi-agent-v1-8-1-persona-memory-correctness-transparency-development-report.md`.
+
+Unified verification was performed after construction according to the project
+hard constraint.
+
+Verified in this slice:
+
+- `cargo fmt --check`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.8.1`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.8.1`
+- `target\release\yunxi.exe --offline "v1.8.1 smoke"`: pass
+- isolated `yunxi memory on --json`: pass; first-enable disclosure, storage
+  roots, pending policy summary, disable command, and pending command were
+  present without exposing secrets
+- isolated `yunxi memory pending --json`: pass
+- isolated `yunxi memory clear --workspace --confirm --json`: pass; returned
+  active/pending archive counts and remaining pending count
+- `codegraph sync .`: pass; 21 changed files synced
+- `codegraph status .`: pass; index is up to date
 
 ## YunXi Agent v1.8.0 Persona And Transparent Memory Construction
 

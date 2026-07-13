@@ -10,6 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
 };
+use unicode_width::UnicodeWidthStr;
 
 pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     let area = frame.area();
@@ -169,7 +170,7 @@ fn render_composer(
             first = false;
         } else {
             lines.push(Line::from(vec![
-                Span::styled("  ".repeat(prompt.chars().count()), Style::default()),
+                Span::styled(" ".repeat(UnicodeWidthStr::width(prompt)), Style::default()),
                 Span::raw(line.to_string()),
             ]));
         }
@@ -196,16 +197,42 @@ fn render_composer(
 fn composer_cursor_position(area: Rect, prompt: &str, buffer: &str, cursor: usize) -> Position {
     let cursor = clamp_to_boundary(buffer, cursor);
     let before = &buffer[..cursor];
-    let row = before.chars().filter(|ch| *ch == '\n').count() as u16;
-    let col = before.rsplit('\n').next().unwrap_or("").chars().count() as u16;
+    let inner_width = area.width.saturating_sub(2).max(1) as usize;
+    let prompt_width = UnicodeWidthStr::width(prompt);
+    let body_width = inner_width.saturating_sub(prompt_width).max(1);
+    let mut row = 0usize;
+    for line in before
+        .split('\n')
+        .take(before.split('\n').count().saturating_sub(1))
+    {
+        row += wrapped_rows(line, body_width);
+    }
+    let current_line = before.rsplit('\n').next().unwrap_or("");
+    let display_col = UnicodeWidthStr::width(current_line);
+    row += display_col / body_width;
+    let col = display_col % body_width;
     Position {
         x: area
             .x
             .saturating_add(1)
-            .saturating_add(prompt.chars().count() as u16)
-            .saturating_add(col),
-        y: area.y.saturating_add(1).saturating_add(row),
+            .saturating_add(prompt_width as u16)
+            .saturating_add(col as u16)
+            .min(area.x.saturating_add(area.width.saturating_sub(2))),
+        y: area
+            .y
+            .saturating_add(1)
+            .saturating_add(row as u16)
+            .min(area.y.saturating_add(area.height.saturating_sub(2))),
     }
+}
+
+fn wrapped_rows(value: &str, width: usize) -> usize {
+    let width = width.max(1);
+    UnicodeWidthStr::width(value)
+        .checked_sub(1)
+        .unwrap_or_default()
+        / width
+        + 1
 }
 
 fn option_line(label: &str, selected: bool, shortcut: &str) -> Line<'static> {
@@ -279,6 +306,26 @@ mod tests {
         format!("{:?}", terminal.backend().buffer())
     }
 
+    #[test]
+    fn composer_cursor_uses_display_width_for_cjk_text() {
+        let area = Rect::new(0, 0, 58, 6);
+        let position = composer_cursor_position(area, "yunxi> ", "你好abc", "你好abc".len());
+
+        assert_eq!(position.x, 1 + "yunxi> ".len() as u16 + 7);
+        assert_eq!(position.y, 1);
+    }
+
+    #[test]
+    fn composer_cursor_wraps_inside_composer_bounds() {
+        let area = Rect::new(0, 0, 24, 6);
+        let input = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz";
+        let position = composer_cursor_position(area, "yunxi> ", input, input.len());
+
+        assert!(position.x < area.width - 1);
+        assert!(position.y < area.height - 1);
+        assert!(position.y > 1);
+    }
+
     fn approval_app() -> YunxiTuiApp {
         let mut app = YunxiTuiApp::default();
         app.set_banner(banner());
@@ -334,7 +381,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v1.8.0"));
+        assert!(rendered.contains("YunXi v1.8.1"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }

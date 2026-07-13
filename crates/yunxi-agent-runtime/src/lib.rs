@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use yunxi_agent_context::{
     ContextManagerState, ContextWindowBudget, ConversationMessage, ConversationRole,
     PromptAssembly, PromptDebugSnapshot, RestoredHistory, extract_file_mentions,
@@ -28,8 +28,8 @@ use yunxi_agent_multi_agent::{
 use yunxi_agent_persona::{
     CompiledPersonaContext, HumanProfile, MemoryKind, MemoryRecallEngine, MemoryRecallRequest,
     MemoryRecallResult, MemoryRuleExtractor, MemorySensitivity, MemoryStatus, MemoryWritePolicy,
-    PersonaPromptCompiler, PersonaSettings, RelationshipState, SCHEMA_VERSION,
-    yunxi_companion_strong,
+    PersonaPromptCompiler, PersonaSettings, ProviderMemoryExtractor, RelationshipState,
+    SCHEMA_VERSION, yunxi_companion_strong,
 };
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
@@ -1065,6 +1065,8 @@ impl YunXiRuntimeBackend {
         }
         emit_memory_extraction_events(
             &sink,
+            self.provider.as_ref(),
+            matches!(self.child_provider_mode, ChildProviderMode::InheritParent),
             prompt,
             &final_response,
             &session_id,
@@ -1628,6 +1630,15 @@ impl YunXiRuntimeBackend {
             messages.push(ProviderMessage::system(compiled_context.content.clone()));
         }
 
+        let mentioned_context = load_mentioned_file_context(&config.cwd, prompt)?;
+        let file_mentions = mentioned_context
+            .as_ref()
+            .map(|context| context.matches("### ").count())
+            .unwrap_or_default();
+        if let Some(file_context) = mentioned_context {
+            messages.push(ProviderMessage::system(file_context));
+        }
+
         let restored_history = self.restore_parent_history(config).await?;
         let history_fragments = restored_history
             .as_ref()
@@ -1641,15 +1652,6 @@ impl YunXiRuntimeBackend {
                     .cloned()
                     .map(conversation_message_to_provider),
             );
-        }
-
-        let mentioned_context = load_mentioned_file_context(&config.cwd, prompt)?;
-        let file_mentions = mentioned_context
-            .as_ref()
-            .map(|context| context.matches("### ").count())
-            .unwrap_or_default();
-        if let Some(file_context) = mentioned_context {
-            messages.push(ProviderMessage::system(file_context));
         }
 
         messages.push(ProviderMessage::user(prompt));
@@ -1765,6 +1767,9 @@ fn empty_memory_recall() -> MemoryRecallResult {
         records: Vec::new(),
         budget_used_chars: 0,
         truncated: false,
+        always_on_count: 0,
+        dropped_unrelated: 0,
+        dropped_by_budget: 0,
     }
 }
 
@@ -1845,6 +1850,8 @@ async fn emit_persona_context_events(
 
 async fn emit_memory_extraction_events(
     sink: &VecEventSink,
+    provider: &dyn AgentProvider,
+    provider_memory_extraction_enabled: bool,
     prompt: &str,
     final_response: &str,
     session_id: &SessionId,
@@ -1857,13 +1864,43 @@ async fn emit_memory_extraction_events(
 
     let store = FilePersonaMemoryStore::for_workspace(&config.cwd);
     let extractor = MemoryRuleExtractor::new();
-    for candidate in extractor.extract(
-        prompt,
-        Some(final_response),
-        Some(&session_id.0),
-        Some(&persona.workspace_fingerprint),
-        persona.settings.memory_enabled,
-    ) {
+    let mut candidates =
+        if provider_memory_extraction_enabled && should_try_provider_memory_extraction(config) {
+            match provider_memory_candidates(
+                provider,
+                config,
+                prompt,
+                final_response,
+                session_id,
+                &persona.workspace_fingerprint,
+                persona.settings.memory_enabled,
+            )
+            .await
+            {
+                Ok(candidates) if !candidates.is_empty() => candidates,
+                Ok(_) => Vec::new(),
+                Err(error) => {
+                    sink.emit(AgentEvent::MemoryWarning {
+                        schema_version: SCHEMA_VERSION,
+                        warning: format!("provider memory extraction skipped: {error}"),
+                    })
+                    .await?;
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+    if candidates.is_empty() {
+        candidates = extractor.extract(
+            prompt,
+            Some(final_response),
+            Some(&session_id.0),
+            Some(&persona.workspace_fingerprint),
+            persona.settings.memory_enabled,
+        );
+    }
+    for candidate in candidates {
         let record = candidate.proposed_record;
         sink.emit(AgentEvent::MemoryCandidate {
             schema_version: SCHEMA_VERSION,
@@ -1918,6 +1955,49 @@ async fn emit_memory_extraction_events(
         }
     }
     Ok(())
+}
+
+async fn provider_memory_candidates(
+    provider: &dyn AgentProvider,
+    config: &AgentConfig,
+    prompt: &str,
+    final_response: &str,
+    session_id: &SessionId,
+    workspace_fingerprint: &str,
+    memory_enabled: bool,
+) -> AgentResult<Vec<yunxi_agent_persona::MemoryCandidate>> {
+    let request = ProviderRequest::with_messages(
+        config.clone(),
+        AgentInput::text("YunXi memory extraction"),
+        vec![
+            ProviderMessage::system(
+                "You are YunXi Agent's structured memory extraction subsystem. Return only JSON with a top-level candidates array. Each candidate must include kind, content, optional scope_hint, optional sensitivity_hint, optional confidence, optional importance, and optional reason. Do not include secrets; if content looks like a credential, still return it only as a candidate so YunXi policy can discard it.",
+            ),
+            ProviderMessage::user(format!(
+                "User prompt:\n{prompt}\n\nAssistant final response:\n{final_response}\n\nReturn JSON only."
+            )),
+        ],
+    );
+    let response = tokio::time::timeout(Duration::from_secs(6), provider.complete(request))
+        .await
+        .map_err(|_| AgentError::Execution {
+            message: "provider memory extraction timed out".to_string(),
+        })??;
+    let content = response
+        .message
+        .map(|message| message.content)
+        .unwrap_or_default();
+    Ok(ProviderMemoryExtractor::new().extract_from_response(
+        &content,
+        prompt,
+        Some(&session_id.0),
+        Some(workspace_fingerprint),
+        memory_enabled,
+    ))
+}
+
+fn should_try_provider_memory_extraction(config: &AgentConfig) -> bool {
+    config.provider.is_some() && config.model.is_some()
 }
 
 fn safe_event_query(prompt: &str) -> String {

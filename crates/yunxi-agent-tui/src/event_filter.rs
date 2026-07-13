@@ -334,10 +334,26 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
             status,
             action,
             ..
-        } => FilteredEvent::DebugOnly {
-            label: "memory write".to_string(),
-            detail: format!("id={id} scope={scope} kind={kind} status={status} action={action}"),
-        },
+        } => {
+            if action == "auto_saved" || action == "pending_confirmation" {
+                let mut message =
+                    format!("{action}: id={id} kind={kind} scope={scope} status={status}");
+                if action == "pending_confirmation" {
+                    message.push_str("; run `yunxi memory pending` to review");
+                }
+                FilteredEvent::Notice {
+                    kind: "memory".to_string(),
+                    message,
+                }
+            } else {
+                FilteredEvent::DebugOnly {
+                    label: "memory write".to_string(),
+                    detail: format!(
+                        "id={id} scope={scope} kind={kind} status={status} action={action}"
+                    ),
+                }
+            }
+        }
         AgentEvent::MemoryWarning { warning, .. } => FilteredEvent::Warning(warning.clone()),
         AgentEvent::Warning { message } => FilteredEvent::Warning(message.clone()),
         AgentEvent::Error { message } => FilteredEvent::Error(message.clone()),
@@ -546,5 +562,56 @@ fn debug_label(event: &AgentEvent) -> &'static str {
         AgentEvent::MultiAgentEvent { .. } => "multi-agent",
         AgentEvent::Started { .. } => "started",
         _ => "event",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn memory_write_auto_saved_is_visible_without_content() {
+        let event = AgentEvent::MemoryWrite {
+            schema_version: 1,
+            id: "mem-1".to_string(),
+            scope: "global_user".to_string(),
+            kind: "preference".to_string(),
+            status: "active".to_string(),
+            action: "auto_saved".to_string(),
+        };
+
+        let filtered = classify(&event);
+
+        assert_eq!(
+            filtered,
+            FilteredEvent::Notice {
+                kind: "memory".to_string(),
+                message: "auto_saved: id=mem-1 kind=preference scope=global_user status=active"
+                    .to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn memory_write_pending_points_to_cli_review_command() {
+        let event = AgentEvent::MemoryWrite {
+            schema_version: 1,
+            id: "mem-2".to_string(),
+            scope: "global_user".to_string(),
+            kind: "personal_fact".to_string(),
+            status: "pending".to_string(),
+            action: "pending_confirmation".to_string(),
+        };
+
+        let filtered = classify(&event);
+
+        assert!(matches!(
+            filtered,
+            FilteredEvent::Notice { kind, message }
+                if kind == "memory"
+                    && message.contains("id=mem-2")
+                    && message.contains("yunxi memory pending")
+                    && !message.contains("content")
+        ));
     }
 }

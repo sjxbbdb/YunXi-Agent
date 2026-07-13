@@ -706,6 +706,19 @@ pub struct PersonaMemoryLoad {
     pub warnings: Vec<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PersonaMemoryStorageRoots {
+    pub global_root: PathBuf,
+    pub workspace_root: PathBuf,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ClearWorkspaceMemorySummary {
+    pub archived_active_records: usize,
+    pub archived_pending_records: usize,
+    pub remaining_pending_records: usize,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PersonaMemoryScope {
     All,
@@ -728,6 +741,13 @@ impl FilePersonaMemoryStore {
 
     pub fn workspace_fingerprint(&self) -> &str {
         &self.workspace_fingerprint
+    }
+
+    pub fn storage_roots(&self) -> PersonaMemoryStorageRoots {
+        PersonaMemoryStorageRoots {
+            global_root: self.global_root.clone(),
+            workspace_root: self.workspace_root.clone(),
+        }
     }
 
     pub fn settings(&self) -> PersonaSettings {
@@ -765,6 +785,10 @@ impl FilePersonaMemoryStore {
             read_memory_jsonl(&path, &mut load.records, &mut load.warnings);
         }
         load.records = latest_records(load.records);
+        if scope == PersonaMemoryScope::Pending {
+            load.records
+                .retain(|record| record.status == MemoryStatus::Pending);
+        }
         load.records.sort_by(|left, right| {
             right
                 .updated_at_millis
@@ -791,6 +815,10 @@ impl FilePersonaMemoryStore {
         load
     }
 
+    pub fn pending_records(&self) -> PersonaMemoryLoad {
+        self.list(PersonaMemoryScope::Pending)
+    }
+
     pub fn update_status(
         &self,
         id: &str,
@@ -805,18 +833,27 @@ impl FilePersonaMemoryStore {
         Ok(Some(updated))
     }
 
-    pub fn clear_workspace(&self) -> AgentResult<usize> {
+    pub fn clear_workspace(&self) -> AgentResult<ClearWorkspaceMemorySummary> {
         let records = self.list(PersonaMemoryScope::Workspace).records;
-        let mut count = 0;
+        let mut summary = ClearWorkspaceMemorySummary::default();
         for record in records
             .into_iter()
-            .filter(|record| record.status == MemoryStatus::Active)
+            .filter(|record| matches!(record.status, MemoryStatus::Active | MemoryStatus::Pending))
         {
-            let archived = record.with_status(MemoryStatus::Archived);
-            self.append(&archived)?;
-            count += 1;
+            match record.status {
+                MemoryStatus::Active => summary.archived_active_records += 1,
+                MemoryStatus::Pending => summary.archived_pending_records += 1,
+                MemoryStatus::Rejected | MemoryStatus::Archived => {}
+            }
+            self.append(&record.with_status(MemoryStatus::Archived))?;
         }
-        Ok(count)
+        summary.remaining_pending_records = self
+            .list(PersonaMemoryScope::Workspace)
+            .records
+            .into_iter()
+            .filter(|record| record.status == MemoryStatus::Pending)
+            .count();
+        Ok(summary)
     }
 
     pub fn active_records(&self) -> PersonaMemoryLoad {
@@ -859,10 +896,7 @@ impl FilePersonaMemoryStore {
             PersonaMemoryScope::All => global.into_iter().chain(workspace).collect(),
             PersonaMemoryScope::Global => global.into_iter().collect(),
             PersonaMemoryScope::Workspace => workspace.into_iter().collect(),
-            PersonaMemoryScope::Pending => vec![
-                self.global_root.join("pending.jsonl"),
-                self.workspace_root.join("pending.jsonl"),
-            ],
+            PersonaMemoryScope::Pending => global.into_iter().chain(workspace).collect(),
         }
     }
 }

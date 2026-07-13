@@ -155,6 +155,12 @@ pub struct MemoryRecallResult {
     pub records: Vec<MemoryRecord>,
     pub budget_used_chars: usize,
     pub truncated: bool,
+    #[serde(default)]
+    pub always_on_count: usize,
+    #[serde(default)]
+    pub dropped_unrelated: usize,
+    #[serde(default)]
+    pub dropped_by_budget: usize,
 }
 
 pub fn now_millis() -> u128 {

@@ -3,7 +3,9 @@ pub mod extractor;
 pub mod memory;
 pub mod policy;
 pub mod profile;
+pub mod provider_extractor;
 pub mod recall;
+pub mod scope;
 pub mod settings;
 
 pub use compiler::{CompiledPersonaContext, PersonaPromptCompiler};
@@ -17,5 +19,7 @@ pub use profile::{
     CompanionStrength, HumanProfile, PersonaConstraint, PersonaLayers, PersonaProfile,
     RelationshipFamiliarity, RelationshipState, yunxi_companion_strong,
 };
+pub use provider_extractor::ProviderMemoryExtractor;
 pub use recall::MemoryRecallEngine;
+pub use scope::MemoryScopeRouter;
 pub use settings::{PersonaSettings, yunxi_home_dir};

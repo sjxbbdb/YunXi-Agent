@@ -256,6 +256,51 @@ async fn yunxi_runtime_restores_parent_session_history_before_current_prompt() {
 }
 
 #[tokio::test]
+async fn yunxi_runtime_injects_mentioned_file_context_before_restored_history() {
+    let temp = TempDir::new().expect("temp dir");
+    std::fs::write(temp.path().join("notes.md"), "mentioned file marker").expect("notes file");
+    let store = InMemorySessionStore::default();
+    let mut root = SessionRecord::new(
+        temp.path(),
+        "root prompt",
+        Some("root answer".to_string()),
+        vec![],
+    );
+    root.id = SessionId::new("root");
+    store.save(root).await.expect("save root");
+
+    let provider = CapturingProvider::default();
+    let messages = Arc::clone(&provider.messages);
+    let backend = YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, store);
+    let agent = Agent::new(
+        AgentConfig::new(temp.path())
+            .with_parent_session_id("root")
+            .with_approval_mode(ApprovalMode::Never),
+    );
+
+    agent
+        .run_with_backend(&backend, AgentInput::text("inspect @notes.md"))
+        .await
+        .expect("runtime should complete");
+
+    let captured = messages.lock().expect("messages lock").clone();
+    let file_index = captured
+        .iter()
+        .position(|message| message.content.contains("mentioned file marker"))
+        .expect("mentioned file context");
+    let history_index = captured
+        .iter()
+        .position(|message| message.content == "root prompt")
+        .expect("restored history prompt");
+
+    assert!(file_index < history_index);
+    assert_eq!(
+        captured.last().map(|message| message.content.as_str()),
+        Some("inspect @notes.md")
+    );
+}
+
+#[tokio::test]
 async fn yunxi_runtime_compacts_restored_history_when_budget_is_exceeded() {
     let temp = TempDir::new().expect("temp dir");
     let store = InMemorySessionStore::default();

@@ -342,6 +342,7 @@ impl PolicyEvaluation {
         SandboxExecutionPlan {
             allowed: matches!(self.decision, PolicyDecision::Allowed),
             backend: self.sandbox_backend.backend,
+            enforcement_level: self.sandbox_backend.backend.enforcement_level(),
             network: self.network_decision.clone(),
             approval_required: self.approval_request.is_some(),
             escalation_required: self.escalation_request.is_some(),
@@ -357,6 +358,8 @@ impl PolicyEvaluation {
 pub struct SandboxExecutionPlan {
     pub allowed: bool,
     pub backend: SandboxBackend,
+    #[serde(default)]
+    pub enforcement_level: SandboxEnforcementLevel,
     pub network: NetworkDecision,
     pub approval_required: bool,
     pub escalation_required: bool,
@@ -378,6 +381,8 @@ pub struct SandboxRunnerDiagnostic {
     pub os_isolation: bool,
     pub enforcement: String,
     #[serde(default)]
+    pub enforcement_level: SandboxEnforcementLevel,
+    #[serde(default)]
     pub runner: String,
     #[serde(default)]
     pub unsupported_reason: Option<String>,
@@ -390,6 +395,8 @@ pub struct SandboxRunnerDiagnostic {
 pub struct SandboxAttemptRecord {
     pub requested: SandboxRequirement,
     pub materialized_backend: SandboxBackend,
+    #[serde(default)]
+    pub enforcement_level: SandboxEnforcementLevel,
     pub cwd: PathBuf,
     pub workspace_roots: Vec<PathBuf>,
     pub network: NetworkDecision,
@@ -408,6 +415,7 @@ impl SandboxAttemptRecord {
         Self {
             requested,
             materialized_backend: diagnostic.backend,
+            enforcement_level: diagnostic.enforcement_level,
             cwd: diagnostic.cwd,
             workspace_roots,
             network,
@@ -640,6 +648,7 @@ impl SandboxRunner {
             backend: plan.backend,
             os_isolation: plan.backend.os_isolation(),
             enforcement: plan.backend.enforcement_label().to_string(),
+            enforcement_level: plan.enforcement_level,
             runner: plan.backend.runner_label().to_string(),
             unsupported_reason: plan.backend.unsupported_reason().map(ToString::to_string),
             command: command.map(ToString::to_string),
@@ -666,6 +675,33 @@ pub enum PolicyDecision {
     Blocked { reason: String },
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SandboxEnforcementLevel {
+    NoPolicyGuard,
+    #[default]
+    PolicyOnly,
+    ProcessLifecycle,
+    OsRestricted,
+    PolicyBypass,
+}
+
+impl SandboxEnforcementLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NoPolicyGuard => "no_policy_guard",
+            Self::PolicyOnly => "policy_only",
+            Self::ProcessLifecycle => "process_lifecycle",
+            Self::OsRestricted => "os_restricted",
+            Self::PolicyBypass => "policy_bypass",
+        }
+    }
+
+    pub fn os_isolation(self) -> bool {
+        matches!(self, Self::OsRestricted)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxBackend {
@@ -681,24 +717,32 @@ impl SandboxBackend {
         match self {
             Self::None => "no policy guard",
             Self::DangerFullAccess => "policy bypass: danger-full-access",
-            Self::WorkspaceGuard | Self::WindowsRestrictedToken | Self::LinuxLandlock => {
-                "policy guard: advisory only, no OS isolation"
+            Self::WorkspaceGuard => "policy-only guard: advisory checks, no OS isolation",
+            Self::WindowsRestrictedToken => {
+                "process lifecycle runner: policy guard only, no filesystem OS isolation"
+            }
+            Self::LinuxLandlock => {
+                "policy-only Landlock entrypoint: OS isolation not verified in this build"
             }
         }
     }
 
     pub fn os_isolation(self) -> bool {
-        false
+        self.enforcement_level().os_isolation()
+    }
+
+    pub fn enforcement_level(self) -> SandboxEnforcementLevel {
+        match self {
+            Self::None => SandboxEnforcementLevel::NoPolicyGuard,
+            Self::DangerFullAccess => SandboxEnforcementLevel::PolicyBypass,
+            Self::WorkspaceGuard => SandboxEnforcementLevel::PolicyOnly,
+            Self::WindowsRestrictedToken => SandboxEnforcementLevel::ProcessLifecycle,
+            Self::LinuxLandlock => SandboxEnforcementLevel::PolicyOnly,
+        }
     }
 
     pub fn enforcement_label(self) -> &'static str {
-        match self {
-            Self::None => "no_policy_guard",
-            Self::DangerFullAccess => "policy_bypass",
-            Self::WorkspaceGuard | Self::WindowsRestrictedToken | Self::LinuxLandlock => {
-                "policy_guard"
-            }
-        }
+        self.enforcement_level().as_str()
     }
 
     pub fn runner_label(self) -> &'static str {
@@ -1472,7 +1516,21 @@ mod tests {
 
         assert_eq!(diagnostic.status, SandboxRunnerStatus::Ready);
         assert!(!diagnostic.os_isolation);
-        assert_eq!(diagnostic.enforcement, "policy_guard");
+        assert_eq!(
+            diagnostic.enforcement,
+            diagnostic.enforcement_level.as_str()
+        );
+        if cfg!(windows) {
+            assert_eq!(
+                diagnostic.enforcement_level,
+                SandboxEnforcementLevel::ProcessLifecycle
+            );
+        } else {
+            assert_eq!(
+                diagnostic.enforcement_level,
+                SandboxEnforcementLevel::PolicyOnly
+            );
+        }
         assert!(!diagnostic.runner.is_empty());
         assert!(
             diagnostic
@@ -1482,5 +1540,27 @@ mod tests {
                     reason.contains("policy guard") || reason.contains("not verified")
                 })
         );
+    }
+
+    #[test]
+    fn danger_full_access_reports_policy_bypass_not_isolation() {
+        let workspace = TempDir::new().expect("workspace");
+        let policy = ExecutionPolicy {
+            approval: ApprovalRequirement::PreApproved,
+            sandbox: SandboxRequirement::DangerFullAccess,
+            network: NetworkPolicy::Inherit,
+            workspace_root: workspace.path().to_path_buf(),
+        };
+
+        let diagnostic =
+            SandboxRunner.diagnostic(&policy, workspace.path(), Some("echo yunxi > file.txt"));
+
+        assert_eq!(
+            diagnostic.enforcement_level,
+            SandboxEnforcementLevel::PolicyBypass
+        );
+        assert_eq!(diagnostic.enforcement, "policy_bypass");
+        assert!(!diagnostic.os_isolation);
+        assert!(diagnostic.unsupported_reason.is_none());
     }
 }

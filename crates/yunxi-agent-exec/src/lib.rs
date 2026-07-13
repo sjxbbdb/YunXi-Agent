@@ -13,6 +13,11 @@ use yunxi_agent_sandbox::{
     SandboxRunnerDiagnostic,
 };
 
+#[cfg(target_os = "linux")]
+pub mod linux_runner;
+#[cfg(windows)]
+pub mod windows_runner;
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExecCommand {
     pub id: Option<String>,

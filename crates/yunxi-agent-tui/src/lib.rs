@@ -1,4 +1,5 @@
 mod app;
+mod approval_layout;
 mod bottom_pane;
 mod chat;
 mod debug;

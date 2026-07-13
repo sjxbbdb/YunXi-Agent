@@ -226,6 +226,7 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
             backend,
             os_isolation,
             enforcement,
+            enforcement_level,
             runner,
             unsupported_reason,
             command,
@@ -234,7 +235,7 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
             ..
         } => {
             let detail = format!(
-                "platform={platform} status={status} backend={backend} os_isolation={os_isolation} enforcement={enforcement} runner={runner} unsupported_reason={} cwd={cwd} command={} message={}",
+                "platform={platform} status={status} backend={backend} os_isolation={os_isolation} enforcement={enforcement} enforcement_level={enforcement_level} runner={runner} unsupported_reason={} cwd={cwd} command={} message={}",
                 unsupported_reason.as_deref().unwrap_or("none"),
                 command.as_deref().unwrap_or("none"),
                 message.as_deref().unwrap_or("none")
@@ -402,6 +403,9 @@ fn classify_reasoning(content: &str) -> FilteredEvent {
         "restored history",
         "backend=policy guard",
         "policy guard",
+        "enforcement_level=policy_only",
+        "enforcement_level=process_lifecycle",
+        "enforcement_level=policy_bypass",
     ]
     .iter()
     .any(|needle| lower.contains(needle))

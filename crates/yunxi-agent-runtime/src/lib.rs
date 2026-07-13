@@ -3209,6 +3209,7 @@ where
                 backend,
                 os_isolation,
                 enforcement,
+                enforcement_level,
                 runner,
                 unsupported_reason,
                 command,
@@ -3222,6 +3223,7 @@ where
                     backend: backend.clone(),
                     os_isolation: *os_isolation,
                     enforcement: enforcement.clone(),
+                    enforcement_level: enforcement_level.clone(),
                     runner: runner.clone(),
                     unsupported_reason: unsupported_reason.clone(),
                     command: command.clone(),
@@ -3231,7 +3233,7 @@ where
                 .await?;
                 sink.emit(AgentEvent::Reasoning {
                     content: format!(
-                        "Sandbox runner: platform={platform}, status={status}, backend={backend}, os_isolation={os_isolation}, enforcement={enforcement}, runner={runner}, unsupported_reason={}, cwd={cwd}, command={}, message={}",
+                        "Sandbox runner: platform={platform}, status={status}, backend={backend}, os_isolation={os_isolation}, enforcement={enforcement}, enforcement_level={enforcement_level}, runner={runner}, unsupported_reason={}, cwd={cwd}, command={}, message={}",
                         unsupported_reason.as_deref().unwrap_or("none"),
                         command.as_deref().unwrap_or("none"),
                         message.as_deref().unwrap_or("none")

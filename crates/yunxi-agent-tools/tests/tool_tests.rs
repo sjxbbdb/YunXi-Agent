@@ -252,9 +252,14 @@ async fn shell_tool_runtime_executes_shell_command() {
         event,
         ToolRuntimeEvent::SandboxRunner {
             status,
+            os_isolation,
+            enforcement_level,
             command: Some(command),
             ..
-        } if status == "ready" && command.contains("yunxi-shell")
+        } if status == "ready"
+            && command.contains("yunxi-shell")
+            && !*os_isolation
+            && enforcement_level == "policy_bypass"
     )));
 }
 

@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.7.6"));
+        .stdout(predicate::str::contains("yunxi 1.7.7"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.7.6"));
+        .stdout(predicate::str::contains("yunxi 1.7.7"));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.6 interactive CLI",
+            "YunXi Agent v1.7.7 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.6 interactive CLI",
+            "YunXi Agent v1.7.7 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.7.6 interactive CLI",
+            "YunXi Agent v1.7.7 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -464,6 +464,25 @@ fn cli_rejects_jsonl_for_metadata_subcommands() {
         .code(2)
         .stdout(predicate::str::contains("\"type\":\"error\""))
         .stdout(predicate::str::contains("--jsonl is only supported"));
+}
+
+#[test]
+fn cli_metadata_help_marks_jsonl_as_agent_execution_only() {
+    let mut sessions = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    sessions
+        .args(["sessions", "list", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("JSON Lines"))
+        .stdout(predicate::str::contains("metadata commands reject"));
+
+    let mut parity = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    parity
+        .args(["parity", "map", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("JSON Lines"))
+        .stdout(predicate::str::contains("metadata commands reject"));
 }
 
 #[test]

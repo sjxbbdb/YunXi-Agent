@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.7.6 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.7.7 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -1030,6 +1030,81 @@ Verified in this slice:
 - `codegraph status "D:\YunXi Agent"`: pass; index is up to date
 - Install script and PATH smoke: pass; installed `yunxi` and
   `yunxi-agent-cli` report `1.7.6`
+
+## YunXi Agent v1.7.7 Sandbox/TUI Hard Gate Construction
+
+YunXi Agent v1.7.7 closes the v1.7.6 hard-gate findings without adding new
+product modules or reintroducing upstream Codex CLI runtime dependencies.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.7.7`.
+- Sandbox diagnostics now include a stable machine-readable
+  `enforcement_level` in core events, protocol JSONL events, tool runtime
+  events, plain CLI output, and TUI debug details.
+- Sandbox backend labels distinguish `policy_only`, `process_lifecycle`,
+  `os_restricted`, and `policy_bypass`. The default Windows path reports
+  `process_lifecycle` with `os_isolation=false`; unverified Landlock paths
+  remain `policy_only`; `danger-full-access` reports `policy_bypass`.
+- The exec crate includes platform runner boundary modules documenting that
+  Windows restricted-token filesystem isolation and Linux Landlock isolation
+  are not enabled in this build.
+- Sandbox acceptance coverage now exercises read-only write escalation,
+  workspace-write absolute path escape, workspace-write symlink escape,
+  disabled-network escalation, policy-bypass execution, and honest
+  non-OS-isolated diagnostics.
+- TUI approval layout uses a shared bounded layout calculation for both
+  `desired_height_for_width(width)` and render output. Long cwd, reason, and
+  command text is pre-wrapped with row caps so Approve, Decline, and
+  `Tab changes selection` remain visible on 58-column terminals.
+- TUI header/subheader priority now keeps provider, mode, and truncated model
+  visible on medium-width terminals before spending space on cwd.
+- CLI metadata help marks `--jsonl` as agent-execution only, while metadata
+  subcommands continue to reject it and direct users to `--json`.
+
+Unified verification passed on 2026-07-13 after source construction completed,
+in line with the project constraint to avoid repeated mid-construction test
+loops.
+
+Verified in this slice:
+
+- `cargo fmt`: pass
+- `cargo fmt -- --check`: pass
+- `cargo test -p yunxi-agent-sandbox -p yunxi-agent-tools -p yunxi-agent-exec -p yunxi-agent-tui -p yunxi-agent-cli`:
+  pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.7.7`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.7.7`
+- Offline, JSON, and JSONL release smoke: pass
+- `--backend codex "hello codex"`: pass; rejected with exit code `2`
+  and invalid `codex` value
+- Default help backend list: pass; detached Codex backend is not presented as
+  a normal available runtime
+- Metadata `--jsonl` contract: pass; `sessions list --jsonl` and
+  `parity map --jsonl` reject with v1.7.7 guidance, while metadata help marks
+  JSONL as agent-execution only
+- Sandbox acceptance suite: pass; read-only write, workspace absolute escape,
+  symlink escape, disabled network escalation, policy bypass, and honest
+  non-OS-isolated diagnostics covered
+- TUI approval snapshots: pass; 58x18, 58x22, 80x22, and 100x24 keep Approve,
+  Decline, and `Tab changes selection` visible
+- TUI model header snapshot: pass; 100-column header keeps provider/mode/model
+  visible
+- DeepSeek live JSON smoke: pass with credentials read from local `api.txt`
+  and no secret output
+- DeepSeek live plain stream smoke: pass; model returned `OK`
+- Default CLI dependency scan via `cargo tree -p yunxi-agent-cli -e normal`:
+  pass; no Codex runtime dependency entries
+- Owned-source secret scan excluding `.git`, `.codegraph`, `target`,
+  `vendor`, and `extracted`: pass
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `codegraph sync "D:\YunXi Agent"` and `codegraph status "D:\YunXi Agent"`:
+  pass; index is up to date
+- Install script and PATH smoke: pass; installed `yunxi` and
+  `yunxi-agent-cli` report `1.7.7`
 
 ## YunXi Agent v1.7.2 TUI Scroll And Streaming Construction
 

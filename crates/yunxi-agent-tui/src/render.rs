@@ -1,4 +1,5 @@
 use crate::app::YunxiTuiApp;
+use crate::approval_layout::{ApprovalLayoutLine, ApprovalLineKind, approval_layout_for_width};
 use crate::bottom_pane::BottomPaneMode;
 use crate::layout::compute_layout;
 use crate::transcript_layout::build_wrapped_transcript;
@@ -88,40 +89,14 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
             *cursor,
         ),
         BottomPaneMode::Approval { request, selected } => {
-            let mut lines = vec![
-                Line::from(vec![
-                    Span::styled("approval ", Style::default().fg(Color::Yellow)),
-                    Span::styled(
-                        &request.tool_name,
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(format!(" in {}", request.cwd)),
-                ]),
-                Line::from(vec![
-                    Span::styled("reason   ", Style::default().fg(Color::Gray)),
-                    Span::raw(request.reason.clone()),
-                ]),
-                Line::from(vec![
-                    Span::styled("risk     ", Style::default().fg(Color::Yellow)),
-                    Span::raw(request.risk_label()),
-                ]),
-            ];
-            if let Some(command) = &request.command {
-                lines.push(Line::from(vec![
-                    Span::styled("command  ", Style::default().fg(Color::Gray)),
-                    Span::raw(command.clone()),
-                ]));
-            }
-            lines.push(Line::from(""));
-            lines.push(option_line("Approve", *selected == 0, "Enter/Y"));
-            lines.push(option_line("Decline", *selected == 1, "N/Esc"));
-            lines.push(Line::from(Span::styled(
-                "Tab changes selection",
-                Style::default().fg(Color::DarkGray),
-            )));
+            let layout = approval_layout_for_width(request, *selected, area.width as usize);
+            let lines = layout
+                .lines
+                .into_iter()
+                .map(render_approval_layout_line)
+                .collect::<Vec<_>>();
             let pane = Paragraph::new(lines)
-                .block(Block::default().title("Approval").borders(Borders::ALL))
-                .wrap(Wrap { trim: false });
+                .block(Block::default().title("Approval").borders(Borders::ALL));
             frame.render_widget(pane, area);
         }
         BottomPaneMode::UserInput {
@@ -138,6 +113,39 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
                 buffer,
                 *cursor,
             );
+        }
+    }
+}
+
+fn render_approval_layout_line(line: ApprovalLayoutLine) -> Line<'static> {
+    match line {
+        ApprovalLayoutLine::Label { kind, label, text } => {
+            let label_style = match kind {
+                ApprovalLineKind::Header | ApprovalLineKind::Risk => {
+                    Style::default().fg(Color::Yellow)
+                }
+                ApprovalLineKind::Reason | ApprovalLineKind::Command => {
+                    Style::default().fg(Color::Gray)
+                }
+            };
+            let text_style = match kind {
+                ApprovalLineKind::Header => Style::default().add_modifier(Modifier::BOLD),
+                ApprovalLineKind::Risk => Style::default().fg(Color::Yellow),
+                ApprovalLineKind::Reason | ApprovalLineKind::Command => Style::default(),
+            };
+            Line::from(vec![
+                Span::styled(label, label_style),
+                Span::styled(text, text_style),
+            ])
+        }
+        ApprovalLayoutLine::Blank => Line::from(""),
+        ApprovalLayoutLine::Action {
+            label,
+            selected,
+            shortcut,
+        } => option_line(label, selected, shortcut),
+        ApprovalLayoutLine::Hint(value) => {
+            Line::from(Span::styled(value, Style::default().fg(Color::DarkGray)))
         }
     }
 }
@@ -251,17 +259,47 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    #[test]
-    fn renders_approval_overlay_without_plain_prompt() {
-        let mut app = YunxiTuiApp::default();
-        app.set_banner(YunxiTuiBanner {
-            cwd: "D:/YunXi Agent".to_string(),
+    fn banner() -> YunxiTuiBanner {
+        YunxiTuiBanner {
+            cwd: "D:/YunXi Agent/crates/yunxi-agent-cli".to_string(),
             backend: "yunxi".to_string(),
             provider_live: true,
             provider_source: "auto_live".to_string(),
             provider: "deepseek".to_string(),
-            model: "deepseek-chat".to_string(),
+            model: "deepseek-chat-ultra-long-model-name".to_string(),
+        }
+    }
+
+    fn render_app(app: &YunxiTuiApp, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| render_tui_frame(frame, app))
+            .expect("draw");
+        format!("{:?}", terminal.backend().buffer())
+    }
+
+    fn approval_app() -> YunxiTuiApp {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        app.start_approval(crate::bottom_pane::ApprovalRequestView {
+            id: None,
+            tool_name: "shell".to_string(),
+            cwd: "D:/YunXi Agent/workspace/with/a/very/long/path".to_string(),
+            command: Some(
+                "Remove-Item -Recurse -Force D:/YunXi Agent/workspace/generated/very-long-output"
+                    .to_string(),
+            ),
+            reason: "requires approval before running a destructive command".to_string(),
+            risk_label: Some("risk: destructive".to_string()),
         });
+        app
+    }
+
+    #[test]
+    fn renders_approval_overlay_without_plain_prompt() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
         app.start_approval(crate::bottom_pane::ApprovalRequestView {
             id: None,
             tool_name: "shell".to_string(),
@@ -271,15 +309,12 @@ mod tests {
             risk_label: None,
         });
 
-        let backend = TestBackend::new(100, 18);
-        let mut terminal = Terminal::new(backend).expect("terminal");
-        terminal
-            .draw(|frame| render_tui_frame(frame, &app))
-            .expect("draw");
-        let rendered = format!("{:?}", terminal.backend().buffer());
+        let rendered = render_app(&app, 100, 18);
 
         assert!(rendered.contains("Approval"));
         assert!(rendered.contains("Approve"));
+        assert!(rendered.contains("Decline"));
+        assert!(rendered.contains("Tab changes selection"));
         assert!(rendered.contains("risk"));
         assert!(rendered.contains("risk: low"));
         assert!(!rendered.contains("approve? y/N"));
@@ -297,16 +332,54 @@ mod tests {
             model: "deepseek-chat".to_string(),
         });
 
-        let backend = TestBackend::new(58, 20);
-        let mut terminal = Terminal::new(backend).expect("terminal");
-        terminal
-            .draw(|frame| render_tui_frame(frame, &app))
-            .expect("draw");
-        let rendered = format!("{:?}", terminal.backend().buffer());
+        let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v1.7.6"));
+        assert!(rendered.contains("YunXi v1.7.7"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
+    }
+
+    #[test]
+    fn approval_actions_stay_visible_on_58_column_terminal() {
+        let rendered = render_app(&approval_app(), 58, 22);
+
+        assert!(rendered.contains("Approval"));
+        assert!(rendered.contains("Approve"));
+        assert!(rendered.contains("Decline"));
+        assert!(rendered.contains("Tab changes selection"));
+        assert!(rendered.contains("risk: destructive"));
+    }
+
+    #[test]
+    fn approval_actions_stay_visible_on_tight_58_column_terminal() {
+        let rendered = render_app(&approval_app(), 58, 18);
+
+        assert!(rendered.contains("Approve"));
+        assert!(rendered.contains("Decline"));
+        assert!(rendered.contains("Tab changes selection"));
+    }
+
+    #[test]
+    fn approval_actions_stay_visible_on_medium_and_wide_terminals() {
+        for (width, height) in [(80, 22), (100, 24)] {
+            let rendered = render_app(&approval_app(), width, height);
+
+            assert!(rendered.contains("Approve"));
+            assert!(rendered.contains("Decline"));
+            assert!(rendered.contains("Tab changes selection"));
+            assert!(rendered.contains("risk: destructive"));
+        }
+    }
+
+    #[test]
+    fn medium_width_header_keeps_model_visible() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+
+        let rendered = render_app(&app, 100, 30);
+
+        assert!(rendered.contains("deepseek live"));
+        assert!(rendered.contains("model=deepseek-chat"));
     }
 
     #[test]
@@ -317,12 +390,7 @@ mod tests {
         }
         app.jump_top(30, 8);
 
-        let backend = TestBackend::new(100, 18);
-        let mut terminal = Terminal::new(backend).expect("terminal");
-        terminal
-            .draw(|frame| render_tui_frame(frame, &app))
-            .expect("draw");
-        let rendered = format!("{:?}", terminal.backend().buffer());
+        let rendered = render_app(&app, 100, 18);
 
         assert!(rendered.contains("Transcript"));
         assert!(rendered.contains("history"));
@@ -339,12 +407,7 @@ mod tests {
         app.scroll_up(8, 30, 10);
         app.push_notice("event", "fresh-line");
 
-        let backend = TestBackend::new(100, 18);
-        let mut terminal = Terminal::new(backend).expect("terminal");
-        terminal
-            .draw(|frame| render_tui_frame(frame, &app))
-            .expect("draw");
-        let rendered = format!("{:?}", terminal.backend().buffer());
+        let rendered = render_app(&app, 100, 18);
 
         assert!(rendered.contains("new output below"));
         assert!(!rendered.contains("fresh-line"));
@@ -357,12 +420,7 @@ mod tests {
             "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
         );
 
-        let backend = TestBackend::new(28, 12);
-        let mut terminal = Terminal::new(backend).expect("terminal");
-        terminal
-            .draw(|frame| render_tui_frame(frame, &app))
-            .expect("draw");
-        let rendered = format!("{:?}", terminal.backend().buffer());
+        let rendered = render_app(&app, 28, 12);
 
         assert!(rendered.contains("Transcript"));
         assert!(rendered.contains("tail"));

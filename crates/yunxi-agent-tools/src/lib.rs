@@ -761,6 +761,8 @@ pub enum ToolRuntimeEvent {
         backend: String,
         os_isolation: bool,
         enforcement: String,
+        #[serde(default)]
+        enforcement_level: String,
         runner: String,
         unsupported_reason: Option<String>,
         command: Option<String>,
@@ -928,6 +930,7 @@ fn policy_runtime_events(request: &ToolRequest) -> Vec<ToolRuntimeEvent> {
             backend: runner_diagnostic.backend.user_facing_label().to_string(),
             os_isolation: runner_diagnostic.os_isolation,
             enforcement: runner_diagnostic.enforcement,
+            enforcement_level: runner_diagnostic.enforcement_level.as_str().to_string(),
             runner: runner_diagnostic.runner,
             unsupported_reason: runner_diagnostic.unsupported_reason,
             command: runner_diagnostic.command,

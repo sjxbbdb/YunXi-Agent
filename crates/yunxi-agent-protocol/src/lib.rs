@@ -433,6 +433,8 @@ pub enum RuntimeEvent {
         #[serde(default)]
         enforcement: String,
         #[serde(default)]
+        enforcement_level: String,
+        #[serde(default)]
         runner: String,
         #[serde(default)]
         unsupported_reason: Option<String>,
@@ -815,7 +817,8 @@ mod tests {
             status: "ready".to_string(),
             backend: "direct_process".to_string(),
             os_isolation: false,
-            enforcement: "policy_guard".to_string(),
+            enforcement: "policy_only".to_string(),
+            enforcement_level: "policy_only".to_string(),
             runner: "direct_process".to_string(),
             unsupported_reason: None,
             command: Some("echo ok".to_string()),

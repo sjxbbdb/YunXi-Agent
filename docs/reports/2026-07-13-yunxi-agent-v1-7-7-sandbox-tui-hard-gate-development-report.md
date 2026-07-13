@@ -140,7 +140,7 @@ YunXi Agent v1.7.7 的目标是关闭 v1.7.6 审核报告指出的 hard-gate 缺
 完成条件：
 
 - 默认 v1.7.7 在没有强隔离时通过“诚实 policy-only + acceptance suite”关闭 P0 用户误解风险。
-- 如果某平台强隔离未完成，后续报告中继续列为 v1.8.x/v1.9 安全工程，不在 v1.7.7 虚报。
+- 如果某平台强隔离未完成，后续报告中继续列为单独安全工程，不在 v1.7.7 虚报。
 
 ## 开发主线二：P1 TUI Approval 窄屏操作可见性
 
@@ -371,3 +371,39 @@ YunXi Agent v1.7.7 的目标是关闭 v1.7.6 审核报告指出的 hard-gate 缺
 - CLI metadata help 不再暗示 `--jsonl` 可用于 metadata 输出。
 - 默认运行路径继续保持 YunXi 自主化，不依赖上游 Codex CLI 源码。
 - P0/P1 hard gate 关闭后，后续版本才继续推进新模块或更复杂 agent 能力。
+
+## v1.7.7 构建与统一验证记录
+
+构建完成时间：2026-07-13
+
+本轮严格先完成源码构建，再集中验证。构建内容包括：
+
+- 新增 sandbox `enforcement_level` 机器字段，并贯通 core event、protocol JSONL、tool runtime event、plain CLI 与 TUI detail。
+- 将 sandbox backend 语义收敛为 `policy_only`、`process_lifecycle`、`os_restricted`、`policy_bypass`，默认 Windows 路径报告 `process_lifecycle` 且 `os_isolation=false`。
+- 新增 exec sandbox acceptance suite，覆盖 read-only write、workspace absolute escape、symlink escape、network disabled escalation、danger-full-access bypass 和 honest diagnostic。
+- 新增 TUI approval shared layout，render 与 `desired_height_for_width(width)` 共用同一份 bounded line 计算。
+- 58x18、58x22、80x22、100x24 approval snapshot 均断言 Approve、Decline、`Tab changes selection` 可见。
+- TUI header 在 100 列中等宽度稳定保留 provider、mode、model。
+- CLI `--jsonl` help 文案明确为 agent execution only，metadata 子命令继续稳定拒绝。
+- 版本推进到 `1.7.7`，README 与 extraction status 同步。
+
+统一验证结果：
+
+- `cargo fmt`：通过。
+- `cargo fmt -- --check`：通过。
+- `cargo test -p yunxi-agent-sandbox -p yunxi-agent-tools -p yunxi-agent-exec -p yunxi-agent-tui -p yunxi-agent-cli`：通过。
+- `cargo test`：通过。
+- `cargo check --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- `target\release\yunxi.exe --version`：`yunxi 1.7.7`。
+- `target\release\yunxi-agent-cli.exe --version`：`yunxi 1.7.7`。
+- Offline、JSON、JSONL release smoke：通过。
+- `--backend codex "hello codex"`：exit code `2`，默认 CLI 继续拒绝 detached Codex backend。
+- `sessions list --jsonl`、`parity map --jsonl`：exit code `2`，错误文案指向 v1.7.7 metadata JSON contract。
+- DeepSeek live JSON smoke：通过，密钥只从本地 `api.txt` 读取，未打印密钥。
+- DeepSeek live plain smoke：通过，模型返回 `OK`。
+- `cargo tree -p yunxi-agent-cli -e normal` 默认依赖扫描：未命中 Codex runtime 依赖。
+- owned-source secret scan：通过。
+- `git diff --check`：通过，仅 Windows LF-to-CRLF 提示。
+- `codegraph sync "D:\YunXi Agent"` / `codegraph status "D:\YunXi Agent"`：通过，索引已同步。
+- install script 与 PATH smoke：通过，PATH 中 `yunxi` 和 `yunxi-agent-cli` 均报告 `1.7.7`。

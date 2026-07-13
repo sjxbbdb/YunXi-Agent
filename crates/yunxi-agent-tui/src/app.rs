@@ -26,7 +26,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v1.7.6".to_string(),
+            version: "v1.7.7".to_string(),
             banner: None,
             transcript: Transcript::default(),
             viewport: TranscriptViewport::default(),
@@ -99,24 +99,24 @@ impl YunxiTuiApp {
             Some(banner) => {
                 let mode = mode_label(banner.provider_live);
                 if width < 64 {
+                    let model = short_model(&banner.model, banner.provider_live, width / 2);
+                    return fit_line(&[&format!("YunXi {}", self.version), mode, &model], width);
+                }
+                let provider = format!("{} {}", banner.provider, mode);
+                let model = model_label(&banner.model, if width < 90 { 28 } else { 36 });
+                if width < 90 {
                     return fit_line(
-                        &[
-                            &format!("YunXi {}", self.version),
-                            mode,
-                            short_model(&banner.model, banner.provider_live),
-                        ],
+                        &[&format!("YunXi Agent {}", self.version), &provider, &model],
                         width,
                     );
                 }
-                let cwd = compact_path(&banner.cwd, if width < 90 { 28 } else { 44 });
-                let provider = format!("{} {}", banner.provider, mode);
-                let model = format!("model={}", banner.model);
+                let cwd = compact_path(&banner.cwd, if width < 110 { 28 } else { 44 });
                 fit_line(
                     &[
                         &format!("YunXi Agent {}", self.version),
-                        &cwd,
                         &provider,
                         &model,
+                        &cwd,
                     ],
                     width,
                 )
@@ -140,7 +140,8 @@ impl YunxiTuiApp {
                 let view = self.viewport.scroll_status();
                 let debug = compact_debug_status(&self.transcript.debug_status());
                 if width < 64 {
-                    return fit_line(&[view, &cells, &debug], width);
+                    let provider = format!("provider={}", truncate_end(&banner.provider, 18));
+                    return fit_line(&[&provider, view, &cells, &debug], width);
                 }
                 let source = if width < 90 {
                     banner.provider_source.clone()
@@ -274,8 +275,18 @@ fn mode_label(provider_live: bool) -> &'static str {
     if provider_live { "live" } else { "offline" }
 }
 
-fn short_model(model: &str, provider_live: bool) -> &str {
-    if provider_live { model } else { "static" }
+fn short_model(model: &str, provider_live: bool, width: usize) -> String {
+    if provider_live {
+        model_label(model, width)
+    } else {
+        "model=static".to_string()
+    }
+}
+
+fn model_label(model: &str, width: usize) -> String {
+    let prefix = "model=";
+    let value_width = width.saturating_sub(display_width(prefix)).max(8);
+    format!("{prefix}{}", truncate_end(model, value_width))
 }
 
 fn compact_debug_status(status: &str) -> String {
@@ -382,9 +393,10 @@ mod tests {
         assert!(display_width(&header) <= 58);
         assert!(display_width(&subheader) <= 58);
         assert!(display_width(&footer) <= 58);
-        assert!(header.contains("YunXi v1.7.6"));
+        assert!(header.contains("YunXi v1.7.7"));
         assert!(header.contains("offline"));
         assert!(header.contains("static"));
+        assert!(subheader.contains("provider=static"));
         assert!(!subheader.ends_with('|'));
         assert!(!subheader.ends_with("| d"));
         assert_eq!(footer, "Enter submit | /help | wheel scroll | Ctrl+C exit");
@@ -398,9 +410,26 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v1.7.6"));
+        assert!(header.contains("YunXi Agent v1.7.7"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));
+    }
+
+    #[test]
+    fn medium_header_keeps_model_before_cwd() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(YunxiTuiBanner {
+            model: "deepseek-chat-ultra-long-model-name".to_string(),
+            provider_live: true,
+            provider: "deepseek".to_string(),
+            ..banner()
+        });
+
+        let header = app.header_for_width(100);
+
+        assert!(display_width(&header) <= 100);
+        assert!(header.contains("deepseek live"));
+        assert!(header.contains("model=deepseek-chat"));
     }
 }

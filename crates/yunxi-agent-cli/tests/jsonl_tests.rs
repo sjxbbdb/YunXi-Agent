@@ -306,6 +306,7 @@ fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
     let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
     let mut deep_parity_events = 0usize;
     let mut reused_approval = false;
+    let mut saw_sandbox_enforcement_level = false;
     let mut started = BTreeSet::new();
     let mut completed = BTreeSet::new();
     for line in output.lines() {
@@ -332,11 +333,26 @@ fn stage_4m_real_parity_fixture_emits_real_runtime_jsonl_shape() {
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false);
             }
+            Some("sandbox_attempt") => {
+                assert_eq!(
+                    value
+                        .get("os_isolation")
+                        .and_then(serde_json::Value::as_bool),
+                    Some(false)
+                );
+                saw_sandbox_enforcement_level |= value
+                    .get("enforcement_level")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|level| {
+                        matches!(level, "policy_only" | "process_lifecycle" | "policy_bypass")
+                    });
+            }
             _ => {}
         }
     }
     assert_eq!(deep_parity_events, 12);
     assert!(reused_approval);
+    assert!(saw_sandbox_enforcement_level);
     for id in &started {
         assert!(completed.contains(id), "missing tool_completed for {id}");
     }

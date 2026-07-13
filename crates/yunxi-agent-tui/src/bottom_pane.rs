@@ -1,3 +1,4 @@
+use crate::approval_layout::approval_desired_height;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -280,16 +281,13 @@ impl BottomPane {
         self.desired_height_for_width(usize::MAX)
     }
 
-    pub(crate) fn desired_height_for_width(&self, _width: usize) -> u16 {
+    pub(crate) fn desired_height_for_width(&self, width: usize) -> u16 {
         match &self.mode {
             BottomPaneMode::Composer { buffer, .. } => {
                 let lines = buffer.lines().count().max(1) as u16;
                 3u16.saturating_add(lines.min(4))
             }
-            BottomPaneMode::Approval { request, .. } => {
-                let command_lines = request.command.as_ref().map(|_| 1).unwrap_or(0);
-                9 + command_lines
-            }
+            BottomPaneMode::Approval { request, .. } => approval_desired_height(request, width),
             BottomPaneMode::UserInput { .. } => 5,
         }
     }

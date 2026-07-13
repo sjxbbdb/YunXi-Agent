@@ -9,3 +9,6 @@ serde.workspace = true
 tokio.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
 yunxi-agent-sandbox = { path = "../yunxi-agent-sandbox" }
+
+[dev-dependencies]
+tempfile.workspace = true

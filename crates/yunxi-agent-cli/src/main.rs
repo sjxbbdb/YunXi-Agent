@@ -66,7 +66,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.7.6 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.7.7 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -122,7 +122,12 @@ struct Cli {
     #[arg(long, global = true, conflicts_with = "jsonl")]
     json: bool,
 
-    #[arg(long, global = true, conflicts_with = "json")]
+    #[arg(
+        long,
+        global = true,
+        conflicts_with = "json",
+        help = "Emit agent execution events as JSON Lines; metadata commands reject this flag"
+    )]
     jsonl: bool,
 
     #[arg(long, global = true, conflicts_with = "no_tui")]
@@ -790,6 +795,7 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                 backend,
                 os_isolation,
                 enforcement,
+                enforcement_level,
                 runner,
                 unsupported_reason,
                 command,
@@ -812,6 +818,7 @@ fn protocol_events_from_agent_events(events: &[AgentEvent]) -> Vec<RuntimeEvent>
                     backend: backend.clone(),
                     os_isolation: *os_isolation,
                     enforcement: enforcement.clone(),
+                    enforcement_level: enforcement_level.clone(),
                     runner: runner.clone(),
                     unsupported_reason: unsupported_reason.clone(),
                     command: command.clone(),
@@ -1270,10 +1277,10 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.7.6; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.7.7; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.7.6; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.7.7; use --json for parity commands"
         ),
     }
 }

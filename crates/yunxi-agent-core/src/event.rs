@@ -38,6 +38,8 @@ pub enum AgentEvent {
         #[serde(default)]
         enforcement: String,
         #[serde(default)]
+        enforcement_level: String,
+        #[serde(default)]
         runner: String,
         #[serde(default)]
         unsupported_reason: Option<String>,

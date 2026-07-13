@@ -1574,6 +1574,31 @@ top of the already autonomous YunXi runtime; it does not introduce TUI,
 desktop app, cloud tasks, update, doctor, completion, marketplace, or new
 installer surfaces beyond the existing local PowerShell install helper.
 
+## YunXi Agent v1.7.4 Planned Direction
+
+The next TUI stage is the v1.7.4 scrollbar and viewport correction slice. The
+v1.7.3 TUI now filters protocol noise and shows a cleaner transcript, but user
+testing shows that the transcript scrollbar can appear stuck around the middle
+and cannot be dragged with the mouse.
+
+The v1.7.4 development report is recorded in
+`docs/reports/2026-07-13-yunxi-agent-v1-7-4-tui-scrollbar-viewport-development-report.md`.
+
+The planned implementation should:
+
+- Replace transcript logical-line scrolling with wrapped-screen-row scrolling.
+- Share one TUI layout geometry between rendering and mouse hit-testing.
+- Add transcript scrollbar geometry and mouse drag state.
+- Keep wheel, PageUp/PageDown, Home/End, and tail-follow behavior working.
+- Keep v1.7.3 event filtering, tool timeline, and debug/details behavior intact.
+- Continue avoiding default runtime dependencies on `vendor/codex-rs`,
+  `codex-*`, or `yunxi-agent-codex`.
+
+The implementation stage should keep the project hard constraint: build the
+whole slice first, avoid repeated mid-construction validation loops, then run
+the unified verification gate and publish a new immutable `v1.7.4` tag only
+after source implementation and verification complete.
+
 ## Stage 3 Verification
 
 Verified on 2026-07-10:

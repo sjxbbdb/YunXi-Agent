@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.8.3"));
+        .stdout(predicate::str::contains("yunxi 1.8.4"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.8.3"));
+        .stdout(predicate::str::contains("yunxi 1.8.4"));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.3 interactive CLI",
+            "YunXi Agent v1.8.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.3 interactive CLI",
+            "YunXi Agent v1.8.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.3 interactive CLI",
+            "YunXi Agent v1.8.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -587,6 +587,110 @@ fn cli_memory_commands_manage_runtime_extracted_memory() {
             .as_array()
             .is_some_and(|records| !records.is_empty())
     );
+}
+
+#[test]
+fn cli_rule_only_english_preference_writes_global_memory() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    run_json_command_with_env(&home, &["--cwd", cwd, "--json", "memory", "on"]);
+
+    let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    run.env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args([
+            "--offline",
+            "--memory-extraction",
+            "rule-only",
+            "--cwd",
+            cwd,
+            "以后请用英文回答",
+        ])
+        .assert()
+        .success();
+
+    let list = run_json_command_with_env(
+        &home,
+        &["--cwd", cwd, "--json", "memory", "list", "--global"],
+    );
+    let records = list["records"].as_array().expect("memory records");
+    let english = records
+        .iter()
+        .find(|record| record["dedup_key"].as_str() == Some("global_user|preference|language:en"))
+        .expect("English language preference should be saved");
+
+    assert_eq!(english["kind"].as_str(), Some("preference"));
+    assert_eq!(english["status"].as_str(), Some("active"));
+    assert!(
+        english["content"]
+            .as_str()
+            .is_some_and(|content| content.contains("英文"))
+    );
+}
+
+#[test]
+fn cli_language_conflict_routes_to_pending() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    run_json_command_with_env(&home, &["--cwd", cwd, "--json", "memory", "on"]);
+
+    let mut chinese = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    chinese
+        .env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args([
+            "--offline",
+            "--memory-extraction",
+            "rule-only",
+            "--cwd",
+            cwd,
+            "以后请用中文回答",
+        ])
+        .assert()
+        .success();
+
+    let mut english = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    english
+        .env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args([
+            "--offline",
+            "--memory-extraction",
+            "rule-only",
+            "--cwd",
+            cwd,
+            "--jsonl",
+            "以后请用英文回答",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"type\":\"memory_write\""))
+        .stdout(predicate::str::contains(
+            "\"action\":\"pending_confirmation\"",
+        ))
+        .stdout(predicate::str::contains(
+            "\"merge_strategy\":\"conflict_requires_confirmation\"",
+        ));
+
+    let pending = run_json_command_with_env(&home, &["--cwd", cwd, "--json", "memory", "pending"]);
+    let records = pending["records"].as_array().expect("pending records");
+    assert_eq!(
+        records.len(),
+        1,
+        "expected English conflict pending: {pending:#}"
+    );
+    assert_eq!(
+        records[0]["dedup_key"].as_str(),
+        Some("global_user|preference|language:en")
+    );
+    assert_eq!(records[0]["status"].as_str(), Some("pending"));
 }
 
 #[test]

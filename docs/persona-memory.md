@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.8.3 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.8.4 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, or the current user request.
 
@@ -25,7 +25,7 @@ Memory is append-only JSONL:
 <workspace>\.yunxi\memory\pending.jsonl
 ```
 
-v1.8.3 writes `schema_version = 2`. Every record includes:
+v1.8.4 writes `schema_version = 2`. Every record includes:
 
 - `dedup_key`: `scope + kind + normalized_content`.
 - `revision`: latest revision number for the durable memory id.
@@ -35,10 +35,16 @@ Equivalent active/pending records are merged before writing. The store still
 appends a new revision line, preserving the audit ledger. Archived or rejected
 records are not revived automatically.
 
-v1.8.3 adds merge fidelity for equivalent records. A generic incoming memory
+v1.8.3 added merge fidelity for equivalent records. A generic incoming memory
 cannot overwrite a richer existing memory in the same `dedup_key` slot. If the
 incoming memory adds real detail, YunXi promotes or combines the content while
 preserving the durable id and `created_at_millis`.
+
+v1.8.4 keeps the single-field source audit aligned with the selected merge
+strategy. When `promote_incoming` supplies the final richer content,
+`source_session_id` follows the incoming record. When `preserve_existing` or
+`combine_non_conflicting` keeps the existing record as the primary source, the
+existing source remains preferred.
 
 Language preference conflicts are not auto-overwritten. For example, an active
 Chinese preference and a later English preference share the same language
@@ -68,7 +74,9 @@ yunxi --memory-extraction provider "prompt"
 
 Provider and rule candidates share the same batch dedup path. Chinese language
 preferences such as `以后请用中文回答`, `默认用中文交流`, and `用中文回复我` normalize to
-`language:zh`; English preferences normalize to `language:en`.
+`language:zh`; English preferences such as `以后请用英文回答`, `以后请用英语回答`,
+`Please answer in English from now on`, and `use English by default` normalize
+to `language:en`.
 
 In `auto` mode, provider candidates and rule candidates are folded together and
 deduplicated before persistence. This lets a provider's richer preference such
@@ -132,7 +140,7 @@ Debug/details keep engineering fields such as id, scope, kind, status, action,
 revision, merged_count, merge_strategy, conflict_family, and recall diagnostic
 counts.
 
-## Non-Goals In v1.8.3
+## Non-Goals In v1.8.4
 
-v1.8.3 does not add SQLite, vector search, graph memory, relationship state
+v1.8.4 does not add SQLite, vector search, graph memory, relationship state
 machines, proactive triggers, or a TUI memory inspector page.

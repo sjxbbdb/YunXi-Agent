@@ -43,7 +43,7 @@ pub fn merge_equivalent_memory_records(
     merged.importance = existing.importance.max(incoming.importance);
     merged.sensitivity = max_sensitivity(existing.sensitivity, incoming.sensitivity);
     merged.status = merged_status(existing.status, incoming.status, merged.sensitivity);
-    merged.source_session_id = merge_source_session_id(existing, incoming);
+    merged.source_session_id = merge_source_session_id(decision.strategy, existing, incoming);
     merged.updated_at_millis = now_millis;
     merged.ensure_dedup_metadata();
 
@@ -201,11 +201,22 @@ fn trim_memory_sentence_end(value: &str) -> &str {
     value.trim_end_matches(|ch| matches!(ch, '。' | '.' | '；' | ';'))
 }
 
-fn merge_source_session_id(existing: &MemoryRecord, incoming: &MemoryRecord) -> Option<String> {
-    match (&existing.source_session_id, &incoming.source_session_id) {
-        (Some(existing), _) => Some(existing.clone()),
-        (None, Some(incoming)) => Some(incoming.clone()),
-        (None, None) => None,
+fn merge_source_session_id(
+    strategy: MemoryMergeStrategy,
+    existing: &MemoryRecord,
+    incoming: &MemoryRecord,
+) -> Option<String> {
+    match strategy {
+        MemoryMergeStrategy::PromoteIncoming => incoming
+            .source_session_id
+            .clone()
+            .or_else(|| existing.source_session_id.clone()),
+        MemoryMergeStrategy::PreserveExisting
+        | MemoryMergeStrategy::CombineNonConflicting
+        | MemoryMergeStrategy::ConflictRequiresConfirmation => existing
+            .source_session_id
+            .clone()
+            .or_else(|| incoming.source_session_id.clone()),
     }
 }
 

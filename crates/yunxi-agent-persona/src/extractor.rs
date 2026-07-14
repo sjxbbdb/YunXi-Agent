@@ -99,17 +99,31 @@ fn detect_prompt_memories(prompt: &str) -> Vec<(MemoryKind, String, String)> {
     let mut out = Vec::new();
     let lower = trimmed.to_ascii_lowercase();
 
-    if trimmed.contains("以后") && (trimmed.contains("中文") || trimmed.contains("说中文")) {
+    if is_future_chinese_language_preference(trimmed) {
         out.push((
             MemoryKind::Preference,
             "用户偏好后续默认使用中文交流。".to_string(),
             "rule:language-preference".to_string(),
         ));
     }
-    if trimmed.contains("说中文") || trimmed.contains("用中文") {
+    if is_direct_chinese_language_preference(trimmed) {
         out.push((
             MemoryKind::Preference,
             "用户偏好使用中文回答。".to_string(),
+            "rule:language-preference-direct".to_string(),
+        ));
+    }
+    if is_future_english_language_preference(trimmed, &lower) {
+        out.push((
+            MemoryKind::Preference,
+            "用户偏好后续默认使用英文交流。".to_string(),
+            "rule:language-preference".to_string(),
+        ));
+    }
+    if is_direct_english_language_preference(trimmed, &lower) {
+        out.push((
+            MemoryKind::Preference,
+            "用户偏好使用英文回答。".to_string(),
             "rule:language-preference-direct".to_string(),
         ));
     }
@@ -136,6 +150,33 @@ fn detect_prompt_memories(prompt: &str) -> Vec<(MemoryKind, String, String)> {
     }
 
     out
+}
+
+fn is_future_chinese_language_preference(value: &str) -> bool {
+    value.contains("以后") && (value.contains("中文") || value.contains("说中文"))
+}
+
+fn is_direct_chinese_language_preference(value: &str) -> bool {
+    value.contains("说中文") || value.contains("用中文")
+}
+
+fn is_future_english_language_preference(value: &str, lower: &str) -> bool {
+    let mentions_english =
+        value.contains("英文") || value.contains("英语") || lower.contains("english");
+    mentions_english
+        && (value.contains("以后") || lower.contains("from now on") || lower.contains("by default"))
+}
+
+fn is_direct_english_language_preference(value: &str, lower: &str) -> bool {
+    value.contains("说英文")
+        || value.contains("用英文")
+        || value.contains("说英语")
+        || value.contains("用英语")
+        || lower.contains("answer in english")
+        || lower.contains("reply in english")
+        || lower.contains("respond in english")
+        || lower.contains("use english")
+        || lower.contains("english please")
 }
 
 fn compact(value: &str, max_chars: usize) -> String {

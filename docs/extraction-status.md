@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.3 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.4 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,67 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.4 English Memory Preference And Audit Fix
+
+YunXi Agent v1.8.4 fixes the v1.8.3 audit findings around English language
+preference extraction and memory source audit semantics. The release stays
+inside the JSONL transparent memory layer and does not add SQLite, vector
+search, graph memory, relationship state machines, or new TUI memory UI.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.8.4`.
+- Rule extraction now recognizes English language preferences in Chinese and
+  English phrasing, including `以后请用英文回答`, `以后请用英语回答`,
+  `Please answer in English from now on`, `reply in English from now on`, and
+  `use English by default`.
+- English rule candidates normalize to
+  `global_user|preference|language:en`.
+- Chinese and English language preferences remain distinct dedup slots while
+  sharing the same language conflict family, so an active Chinese preference
+  followed by an English preference routes the English candidate to pending
+  review.
+- `promote_incoming` now uses the incoming `source_session_id`, aligning the
+  single-field audit trail with the final promoted content.
+- `preserve_existing` and `combine_non_conflicting` keep the existing source as
+  the preferred single source until a future schema can represent multi-source
+  provenance.
+- CLI black-box tests cover offline/rule-only English memory writes and
+  Chinese/English conflict pending.
+
+The development report is recorded in
+`docs/reports/2026-07-14-yunxi-agent-v1-8-4-english-memory-preference-development-report.md`.
+
+Unified verification was performed after construction according to the project
+hard constraint.
+
+Verified in this slice:
+
+- `cargo fmt`: pass
+- `cargo fmt --check`: pass
+- `cargo check --workspace`: pass
+- targeted package tests for persona/storage/runtime/cli/tui: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.8.4`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.8.4`
+- isolated `YUNXI_HOME` English memory write: pass; JSONL emitted
+  `memory_candidate` and `memory_write action=auto_saved`, and global memory
+  contained `global_user|preference|language:en`
+- isolated `YUNXI_HOME` language conflict: pass; English preference after
+  active Chinese preference entered pending with
+  `merge_strategy=conflict_requires_confirmation`, while active
+  `global_user|preference|language:zh` was preserved
+- `git diff --check`: pass
+- owned-source secret scan: pass; no live key-shaped matches
+- `codegraph sync .`: pass; 11 changed Rust files synced
+- `codegraph status .`: pass; index is up to date
+- install refresh with `scripts\install\install-yunxi.ps1 -AddToPath
+  -SkipBuild`: pass
+- PATH smoke: pass; `yunxi --version` and `yunxi-agent-cli --version` both
+  returned `yunxi 1.8.4`
 
 ## YunXi Agent v1.8.3 Memory Merge Fidelity
 

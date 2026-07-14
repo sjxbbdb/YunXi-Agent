@@ -426,6 +426,45 @@ fn file_persona_memory_store_promotes_rich_incoming_over_generic_existing() {
 }
 
 #[test]
+fn file_persona_memory_store_promoted_content_tracks_incoming_source_session() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let generic = MemoryRecord::new(
+        "memory-generic",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_source_session_id("session-generic")
+    .with_status(MemoryStatus::Active);
+    let rich = MemoryRecord::new(
+        "memory-rich",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答，并且回答要简洁、保留关键细节。",
+        2,
+    )
+    .with_source_session_id("session-rich")
+    .with_status(MemoryStatus::Active);
+
+    store.append_or_merge(&generic).expect("insert generic");
+    store.append_or_merge(&rich).expect("merge rich");
+
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    assert_eq!(loaded.records.len(), 1);
+    assert!(loaded.records[0].content.contains("保留关键细节"));
+    assert_eq!(
+        loaded.records[0].source_session_id.as_deref(),
+        Some("session-rich")
+    );
+}
+
+#[test]
 fn file_persona_memory_store_combines_non_conflicting_same_slot_details() {
     let temp = TempDir::new().expect("temp dir");
     let store = FilePersonaMemoryStore::for_workspace(temp.path());

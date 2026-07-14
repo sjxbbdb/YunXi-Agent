@@ -107,6 +107,100 @@ fn rule_extractor_deduplicates_equivalent_chinese_language_preferences() {
 }
 
 #[test]
+fn rule_extractor_routes_english_language_preference_to_global_user_scope() {
+    let cases = [
+        "以后请用英文回答",
+        "以后请用英语回答",
+        "Please answer in English from now on",
+        "reply in English from now on",
+        "use English by default",
+    ];
+
+    for prompt in cases {
+        let candidates = MemoryRuleExtractor::new().extract(
+            prompt,
+            None,
+            Some("session-en"),
+            Some("workspace-a"),
+            true,
+        );
+        let preference = candidates
+            .iter()
+            .find(|candidate| candidate.proposed_record.kind == MemoryKind::Preference)
+            .unwrap_or_else(|| panic!("expected English language preference for {prompt}"));
+
+        assert_eq!(preference.proposed_record.scope, MemoryScope::GlobalUser);
+        assert_eq!(preference.proposed_record.status, MemoryStatus::Active);
+        assert_eq!(
+            preference.proposed_record.dedup_key,
+            "global_user|preference|language:en"
+        );
+        assert!(
+            preference.proposed_record.content.contains("英文"),
+            "content should normalize to an English preference: {:?}",
+            preference.proposed_record.content
+        );
+    }
+}
+
+#[test]
+fn rule_extractor_deduplicates_equivalent_english_language_preferences() {
+    let candidates = MemoryRuleExtractor::new().extract(
+        "以后请用英文回答，并且 please answer in English from now on",
+        None,
+        Some("session-en"),
+        Some("workspace-a"),
+        true,
+    );
+
+    let language_preferences = candidates
+        .iter()
+        .filter(|candidate| candidate.proposed_record.kind == MemoryKind::Preference)
+        .collect::<Vec<_>>();
+
+    assert_eq!(language_preferences.len(), 1);
+    assert_eq!(
+        language_preferences[0].proposed_record.dedup_key,
+        "global_user|preference|language:en"
+    );
+}
+
+#[test]
+fn rule_extractor_keeps_chinese_and_english_language_keys_separate() {
+    let zh = MemoryRuleExtractor::new().extract(
+        "以后请用中文回答",
+        None,
+        Some("session-zh"),
+        Some("workspace-a"),
+        true,
+    );
+    let en = MemoryRuleExtractor::new().extract(
+        "以后请用英文回答",
+        None,
+        Some("session-en"),
+        Some("workspace-a"),
+        true,
+    );
+
+    assert_eq!(
+        zh.iter()
+            .find(|candidate| candidate.proposed_record.kind == MemoryKind::Preference)
+            .expect("zh preference")
+            .proposed_record
+            .dedup_key,
+        "global_user|preference|language:zh"
+    );
+    assert_eq!(
+        en.iter()
+            .find(|candidate| candidate.proposed_record.kind == MemoryKind::Preference)
+            .expect("en preference")
+            .proposed_record
+            .dedup_key,
+        "global_user|preference|language:en"
+    );
+}
+
+#[test]
 fn unified_candidate_dedup_merges_provider_and_rule_language_preferences() {
     let now = 10;
     let rule = MemoryCandidate {
@@ -337,5 +431,72 @@ fn dedup_keeps_secret_like_candidate_discard_policy() {
     assert_eq!(
         candidates[0].proposed_record.sensitivity,
         MemorySensitivity::High
+    );
+}
+
+#[test]
+fn merge_promote_incoming_uses_incoming_source_session_id() {
+    let existing = MemoryRecord::new(
+        "generic",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        10,
+    )
+    .with_source_session_id("session-generic")
+    .with_status(MemoryStatus::Active);
+    let incoming = MemoryRecord::new(
+        "rich",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答，并且回答要简洁、保留关键细节。",
+        20,
+    )
+    .with_source_session_id("session-rich")
+    .with_status(MemoryStatus::Active);
+
+    let merged = yunxi_agent_persona::merge_equivalent_memory_records(&existing, &incoming, 30);
+
+    assert_eq!(
+        merged.strategy,
+        yunxi_agent_persona::MemoryMergeStrategy::PromoteIncoming
+    );
+    assert_eq!(
+        merged.record.source_session_id.as_deref(),
+        Some("session-rich")
+    );
+    assert!(merged.record.content.contains("保留关键细节"));
+}
+
+#[test]
+fn merge_preserve_existing_keeps_existing_source_session_id() {
+    let existing = MemoryRecord::new(
+        "rich",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答，并且回答要简洁、保留关键细节。",
+        10,
+    )
+    .with_source_session_id("session-rich")
+    .with_status(MemoryStatus::Active);
+    let incoming = MemoryRecord::new(
+        "generic",
+        MemoryScope::GlobalUser,
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        20,
+    )
+    .with_source_session_id("session-generic")
+    .with_status(MemoryStatus::Active);
+
+    let merged = yunxi_agent_persona::merge_equivalent_memory_records(&existing, &incoming, 30);
+
+    assert_eq!(
+        merged.strategy,
+        yunxi_agent_persona::MemoryMergeStrategy::PreserveExisting
+    );
+    assert_eq!(
+        merged.record.source_session_id.as_deref(),
+        Some("session-rich")
     );
 }

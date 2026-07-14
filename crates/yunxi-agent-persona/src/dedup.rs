@@ -1,4 +1,5 @@
 use crate::memory::{MemoryCandidate, MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus};
+use crate::merge::merge_memory_candidates;
 use crate::policy::MemoryWritePolicy;
 use std::collections::BTreeMap;
 
@@ -59,7 +60,7 @@ pub fn deduplicate_candidates(candidates: Vec<MemoryCandidate>) -> Vec<MemoryCan
         ensure_record_dedup_metadata(&mut candidate.proposed_record);
         let key = candidate.proposed_record.dedup_key.clone();
         if let Some(existing) = by_key.get_mut(&key) {
-            merge_candidate(existing, candidate);
+            merge_memory_candidates(existing, candidate);
         } else {
             order.push(key.clone());
             by_key.insert(key, candidate);
@@ -69,25 +70,6 @@ pub fn deduplicate_candidates(candidates: Vec<MemoryCandidate>) -> Vec<MemoryCan
         .into_iter()
         .filter_map(|key| by_key.remove(&key))
         .collect()
-}
-
-fn merge_candidate(existing: &mut MemoryCandidate, incoming: MemoryCandidate) {
-    existing.proposed_record.confidence = existing
-        .proposed_record
-        .confidence
-        .max(incoming.proposed_record.confidence);
-    existing.proposed_record.importance = existing
-        .proposed_record
-        .importance
-        .max(incoming.proposed_record.importance);
-    existing.proposed_record.sensitivity = max_sensitivity(
-        existing.proposed_record.sensitivity,
-        incoming.proposed_record.sensitivity,
-    );
-    existing.write_policy = max_policy(existing.write_policy, incoming.write_policy);
-    existing.proposed_record.status = status_for_policy(existing.write_policy);
-    existing.evidence = merge_short(&existing.evidence, &incoming.evidence, 240);
-    existing.reason = merge_short(&existing.reason, &incoming.reason, 180);
 }
 
 pub fn max_sensitivity(left: MemorySensitivity, right: MemorySensitivity) -> MemorySensitivity {
@@ -123,28 +105,6 @@ fn policy_rank(policy: MemoryWritePolicy) -> u8 {
         MemoryWritePolicy::Disabled => 3,
         MemoryWritePolicy::Discard => 4,
     }
-}
-
-fn merge_short(left: &str, right: &str, max_chars: usize) -> String {
-    if left == right || right.trim().is_empty() {
-        return compact(left, max_chars);
-    }
-    if left.trim().is_empty() {
-        return compact(right, max_chars);
-    }
-    compact(&format!("{left} | {right}"), max_chars)
-}
-
-fn compact(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
-        return value.to_string();
-    }
-    let mut out = value
-        .chars()
-        .take(max_chars.saturating_sub(3))
-        .collect::<String>();
-    out.push_str("...");
-    out
 }
 
 fn normalize_text(content: &str) -> String {

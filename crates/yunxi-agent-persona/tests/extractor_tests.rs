@@ -149,6 +149,133 @@ fn unified_candidate_dedup_merges_provider_and_rule_language_preferences() {
 }
 
 #[test]
+fn unified_candidate_dedup_preserves_rich_provider_language_preference() {
+    let now = 10;
+    let provider = MemoryCandidate {
+        proposed_record: MemoryRecord::new(
+            "provider",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "用户偏好使用中文回答，并且回答要简洁、保留关键细节。",
+            now,
+        )
+        .with_scores(0.95, 0.9)
+        .with_status(MemoryStatus::Active),
+        evidence: "中文、简洁、关键细节".to_string(),
+        write_policy: MemoryWritePolicy::Auto,
+        reason: "provider:language-preference".to_string(),
+    };
+    let rule = MemoryCandidate {
+        proposed_record: MemoryRecord::new(
+            "rule",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "用户偏好使用中文回答。",
+            now + 1,
+        )
+        .with_status(MemoryStatus::Active),
+        evidence: "用中文回答".to_string(),
+        write_policy: MemoryWritePolicy::Auto,
+        reason: "rule:language-preference-direct".to_string(),
+    };
+
+    let candidates = deduplicate_candidates(vec![provider, rule]);
+
+    assert_eq!(candidates.len(), 1);
+    assert!(
+        candidates[0]
+            .proposed_record
+            .content
+            .contains("保留关键细节")
+    );
+    assert!(candidates[0].proposed_record.content.contains("简洁"));
+}
+
+#[test]
+fn unified_candidate_dedup_promotes_rich_incoming_language_preference() {
+    let now = 10;
+    let rule = MemoryCandidate {
+        proposed_record: MemoryRecord::new(
+            "rule",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "用户偏好使用中文回答。",
+            now,
+        )
+        .with_status(MemoryStatus::Active),
+        evidence: "用中文回答".to_string(),
+        write_policy: MemoryWritePolicy::Auto,
+        reason: "rule:language-preference-direct".to_string(),
+    };
+    let provider = MemoryCandidate {
+        proposed_record: MemoryRecord::new(
+            "provider",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "用户偏好使用中文回答，并且回答要简洁、保留关键细节。",
+            now + 1,
+        )
+        .with_scores(0.95, 0.9)
+        .with_status(MemoryStatus::Active),
+        evidence: "中文、简洁、关键细节".to_string(),
+        write_policy: MemoryWritePolicy::Auto,
+        reason: "provider:language-preference".to_string(),
+    };
+
+    let candidates = deduplicate_candidates(vec![rule, provider]);
+
+    assert_eq!(candidates.len(), 1);
+    assert!(
+        candidates[0]
+            .proposed_record
+            .content
+            .contains("保留关键细节")
+    );
+}
+
+#[test]
+fn unified_candidate_dedup_combines_non_conflicting_language_details() {
+    let now = 10;
+    let first = MemoryCandidate {
+        proposed_record: MemoryRecord::new(
+            "first",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "用户偏好使用中文回答，并且回答要简洁。",
+            now,
+        )
+        .with_status(MemoryStatus::Active),
+        evidence: "中文、简洁".to_string(),
+        write_policy: MemoryWritePolicy::Auto,
+        reason: "provider:language-preference".to_string(),
+    };
+    let second = MemoryCandidate {
+        proposed_record: MemoryRecord::new(
+            "second",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "用户偏好使用中文回答，并且保留关键细节。",
+            now + 1,
+        )
+        .with_status(MemoryStatus::Active),
+        evidence: "中文、关键细节".to_string(),
+        write_policy: MemoryWritePolicy::Auto,
+        reason: "rule:language-preference-direct".to_string(),
+    };
+
+    let candidates = deduplicate_candidates(vec![first, second]);
+
+    assert_eq!(candidates.len(), 1);
+    assert!(candidates[0].proposed_record.content.contains("简洁"));
+    assert!(
+        candidates[0]
+            .proposed_record
+            .content
+            .contains("保留关键细节")
+    );
+}
+
+#[test]
 fn dedup_keeps_project_constraints_separate_from_language_preferences() {
     let candidates = MemoryRuleExtractor::new().extract(
         "以后请用中文回答，当前项目硬性要求是推送必须走 GitHub API",

@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.2 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.3 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,55 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.3 Memory Merge Fidelity
+
+YunXi Agent v1.8.3 hardens the v1.8.2 transparent memory layer by preserving
+rich memory content during same-slot merges. The release keeps JSONL
+append-only storage and does not add SQLite, vector search, graph memory, or a
+TUI memory inspector.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.8.3`.
+- Added persona memory merge fidelity logic with explicit merge strategies:
+  `preserve_existing`, `promote_incoming`, `combine_non_conflicting`, and
+  `conflict_requires_confirmation`.
+- Batch dedup now uses the same merge fidelity path as storage, so provider and
+  rule candidates in the same turn do not discard richer memory content.
+- Storage `append_or_merge` no longer uses incoming records as the unconditional
+  merged base; it preserves durable ids and revision ledger while selecting the
+  richer content.
+- Language preference conflicts, such as active Chinese followed by English,
+  now route the incoming candidate to pending review instead of overwriting the
+  active preference.
+- Runtime Auto memory extraction folds provider and rule candidates together
+  before deduplication.
+- `memory_write` diagnostics can expose `merge_strategy` and `conflict_family`
+  without exposing memory content.
+- TUI memory notices stay short while debug/details retain merge diagnostics.
+- `docs/persona-memory.md` documents merge fidelity, provider/rule mixed
+  scenarios, and conflict pending behavior.
+
+The development report is recorded in
+`docs/reports/2026-07-14-yunxi-agent-v1-8-3-memory-merge-fidelity-development-report.md`.
+
+Unified verification is intentionally deferred until construction is complete,
+following the project hard constraint.
+
+Planned verification for this slice:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- targeted package tests for persona/storage/runtime/cli/tui
+- `cargo test`
+- `cargo check --workspace`
+- `cargo build -p yunxi-agent-cli --release --bins`
+- release binary version checks for `yunxi 1.8.3`
+- isolated `YUNXI_HOME` black-box memory merge fidelity checks
+- `git diff --check`
+- `codegraph sync .`
+- `codegraph status .`
 
 ## YunXi Agent v1.8.2 Memory Deduplication, Migration, And Diagnostics
 
@@ -1068,6 +1117,45 @@ Verified on 2026-07-09:
 
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.
+
+## YunXi Agent v1.8.3 Memory Merge Fidelity Construction
+
+YunXi Agent v1.8.3 fixes the v1.8.2 memory merge fidelity gap where a later generic memory with the same `dedup_key` could overwrite a richer existing long-term memory.
+
+Constructed in this slice:
+
+- Added `yunxi-agent-persona::merge` as the canonical memory merge fidelity module.
+- Added merge strategies for preserving existing rich content, promoting richer incoming content, combining non-conflicting details, and routing conflicts to confirmation.
+- Reworked batch candidate dedup so provider-rich and rule-generic candidates in the same turn keep the richer content.
+- Reworked storage `append_or_merge` to merge from existing + incoming records instead of using incoming as the unconditional base.
+- Added language conflict family detection so Chinese/English preference conflicts do not overwrite active memory and can be routed to pending review.
+- Added `merge_strategy` and `conflict_family` diagnostics to runtime/protocol events without exposing memory content in ordinary CLI/TUI notices.
+- Updated runtime auto extraction so provider and rule candidates are deduplicated together.
+- Updated version surfaces to `1.8.3`.
+
+Unified verification passed on 2026-07-14 after construction completed.
+
+Verified in this slice:
+
+- `cargo fmt`: pass
+- `cargo fmt --check`: pass
+- `cargo test -p yunxi-agent-persona -p yunxi-agent-storage -p yunxi-agent-runtime -p yunxi-agent-cli -p yunxi-agent-tui`: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.8.3`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.8.3`
+- Isolated `YUNXI_HOME` black-box memory smoke: pass; rich existing content survived generic CLI follow-up, JSONL merge diagnostics did not leak memory content, pending records were listed but not recalled
+- Owned-source secret scan excluding `vendor`, `extracted`, `target`, `.git`, and `.codegraph`: pass; only placeholders/fixtures matched
+- `git diff --check`: pass with Windows LF-to-CRLF warnings only
+- `codegraph sync .`: pass; 18 changed files synced
+- `codegraph status .`: pass; index is up to date
+- Install script and PATH smoke: pass; installed `yunxi` and `yunxi-agent-cli` report `1.8.3`
+- `cargo clean`: pass; removed 13154 files and 3.4GiB
+
+Known validation boundary:
+
+- CLI offline rule extraction currently recognizes Chinese language preference rules but does not synthesize provider-level rich candidates or English language preference candidates from natural-language prompts. Rich incoming/provider-rich and language conflict write paths are covered by storage/runtime/protocol/TUI regression tests; black-box CLI validation covers the externally reachable merge follow-up, JSONL diagnostic, pending list, and recall filtering paths.
 
 ## YunXi Agent v1.7.5 Planned Direction
 

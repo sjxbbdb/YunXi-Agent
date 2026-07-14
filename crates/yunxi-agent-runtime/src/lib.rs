@@ -29,7 +29,7 @@ use yunxi_agent_persona::{
     CompiledPersonaContext, HumanProfile, MemoryKind, MemoryRecallEngine, MemoryRecallRequest,
     MemoryRecallResult, MemoryRuleExtractor, MemorySensitivity, MemoryStatus, MemoryWritePolicy,
     PersonaPromptCompiler, PersonaSettings, ProviderMemoryExtractor, RelationshipState,
-    SCHEMA_VERSION, yunxi_companion_strong,
+    SCHEMA_VERSION, deduplicate_candidates, yunxi_companion_strong,
 };
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
@@ -1917,14 +1917,20 @@ async fn emit_memory_extraction_events(
         }
         Vec::new()
     };
-    if candidates.is_empty() && extraction_mode != MemoryExtractionMode::Provider {
-        candidates = extractor.extract(
+    if extraction_mode != MemoryExtractionMode::Provider {
+        let rule_candidates = extractor.extract(
             prompt,
             Some(final_response),
             Some(&session_id.0),
             Some(&persona.workspace_fingerprint),
             persona.settings.memory_enabled,
         );
+        if candidates.is_empty() {
+            candidates = rule_candidates;
+        } else if !rule_candidates.is_empty() {
+            candidates.extend(rule_candidates);
+            candidates = deduplicate_candidates(candidates);
+        }
     }
     for candidate in candidates {
         let record = candidate.proposed_record;
@@ -1958,6 +1964,8 @@ async fn emit_memory_extraction_events(
                             action: event.action,
                             revision: event.revision,
                             merged_count: event.merged_count,
+                            merge_strategy: event.merge_strategy,
+                            conflict_family: event.conflict_family,
                         })
                         .await?;
                     }
@@ -1980,6 +1988,8 @@ async fn emit_memory_extraction_events(
                     action: memory_write_policy_label(candidate.write_policy).to_string(),
                     revision: record.revision,
                     merged_count: record.merged_count,
+                    merge_strategy: None,
+                    conflict_family: None,
                 })
                 .await?;
             }
@@ -2046,6 +2056,8 @@ struct MemoryWriteEventParts {
     action: String,
     revision: u32,
     merged_count: u32,
+    merge_strategy: Option<String>,
+    conflict_family: Option<String>,
 }
 
 fn memory_write_event_parts(
@@ -2064,18 +2076,38 @@ fn memory_write_event_parts(
             action: default_action.to_string(),
             revision,
             merged_count,
+            merge_strategy: None,
+            conflict_family: None,
         },
         MemoryPersistOutcome::Merged {
             id,
             status,
             revision,
             merged_count,
+            merge_strategy,
         } => MemoryWriteEventParts {
             id,
             status,
             action: "merged".to_string(),
             revision,
             merged_count,
+            merge_strategy: Some(merge_strategy),
+            conflict_family: None,
+        },
+        MemoryPersistOutcome::ConflictPending {
+            id,
+            status,
+            revision,
+            merged_count,
+            conflict_family,
+        } => MemoryWriteEventParts {
+            id,
+            status,
+            action: "pending_confirmation".to_string(),
+            revision,
+            merged_count,
+            merge_strategy: Some("conflict_requires_confirmation".to_string()),
+            conflict_family: Some(conflict_family),
         },
         MemoryPersistOutcome::Skipped { id, reason } => MemoryWriteEventParts {
             id,
@@ -2083,6 +2115,8 @@ fn memory_write_event_parts(
             action: format!("skipped:{reason}"),
             revision: 0,
             merged_count: 0,
+            merge_strategy: None,
+            conflict_family: None,
         },
     }
 }

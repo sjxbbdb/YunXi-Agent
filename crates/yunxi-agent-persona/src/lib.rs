@@ -2,6 +2,7 @@ pub mod compiler;
 pub mod dedup;
 pub mod extractor;
 pub mod memory;
+pub mod merge;
 pub mod migration;
 pub mod policy;
 pub mod profile;
@@ -19,6 +20,10 @@ pub use extractor::MemoryRuleExtractor;
 pub use memory::{
     MemoryCandidate, MemoryKind, MemoryRecallRequest, MemoryRecallResult, MemoryRecord,
     MemoryScope, MemorySensitivity, MemoryStatus, SCHEMA_VERSION, now_millis,
+};
+pub use merge::{
+    MemoryMergeResult, MemoryMergeStrategy, memory_conflict_family,
+    merge_equivalent_memory_records, merge_memory_candidates,
 };
 pub use migration::{MemoryMigrationResult, migrate_memory_record_value};
 pub use policy::{MemoryPrivacyClassifier, MemoryWritePolicy, MemoryWritePolicyEngine};

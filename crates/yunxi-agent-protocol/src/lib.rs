@@ -522,6 +522,10 @@ pub enum RuntimeEvent {
         revision: u32,
         #[serde(default)]
         merged_count: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        merge_strategy: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conflict_family: Option<String>,
     },
     MemoryWarning {
         thread_id: ThreadId,
@@ -808,6 +812,8 @@ mod tests {
             action: "merged".to_string(),
             revision: 2,
             merged_count: 2,
+            merge_strategy: Some("preserve_existing".to_string()),
+            conflict_family: None,
         };
 
         let line = to_jsonl_line(&event).expect("jsonl");
@@ -816,6 +822,7 @@ mod tests {
         assert_eq!(parsed, event);
         assert!(line.contains("\"revision\":2"));
         assert!(line.contains("\"merged_count\":2"));
+        assert!(line.contains("\"merge_strategy\":\"preserve_existing\""));
     }
 
     #[test]

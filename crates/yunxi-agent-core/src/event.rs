@@ -115,6 +115,10 @@ pub enum AgentEvent {
         revision: u32,
         #[serde(default)]
         merged_count: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        merge_strategy: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conflict_family: Option<String>,
     },
     MemoryWarning {
         #[serde(default)]

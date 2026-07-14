@@ -111,7 +111,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.8.2 interactive CLI");
+    println!("YunXi Agent v1.8.3 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -424,10 +424,20 @@ pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) ->
             action,
             revision,
             merged_count,
+            merge_strategy,
+            conflict_family,
             ..
         } => {
+            let strategy = merge_strategy
+                .as_ref()
+                .map(|value| format!(" merge_strategy={value}"))
+                .unwrap_or_default();
+            let conflict = conflict_family
+                .as_ref()
+                .map(|value| format!(" conflict_family={value}"))
+                .unwrap_or_default();
             println!(
-                "[memory] write action={action} kind={kind} status={status} revision={revision} merged_count={merged_count}"
+                "[memory] write action={action} kind={kind} status={status} revision={revision} merged_count={merged_count}{strategy}{conflict}"
             );
         }
         AgentEvent::MemoryWarning { warning, .. } => {

@@ -19,7 +19,10 @@ use yunxi_agent_provider::{
     ProviderStream, ProviderStreamEventSink, ProviderToolCall, StaticProvider,
 };
 use yunxi_agent_runtime::{YunXiRuntimeBackend, protocol_stream_events_to_agent_events};
-use yunxi_agent_storage::{InMemorySessionStore, SessionId, SessionRecord, SessionStore};
+use yunxi_agent_storage::{
+    FilePersonaMemoryStore, InMemorySessionStore, PersonaMemoryScope, SessionId, SessionRecord,
+    SessionStore,
+};
 use yunxi_agent_tools::{CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime};
 
 static MEMORY_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -2003,6 +2006,102 @@ async fn provider_memory_extraction_writes_valid_json_candidate() {
             ..
         } if action == "auto_saved" && kind == "preference" && status == "active"
     )));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn rule_generic_and_provider_rich_same_turn_keeps_rich_candidate() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = MemoryExtractionFixtureProvider::new(
+        r#"{"candidates":[{"kind":"preference","content":"用户偏好使用中文回答，并且回答要简洁、保留关键细节。","scope_hint":"global_user","sensitivity_hint":"low","confidence":0.95,"importance":0.9,"reason":"provider:rich-language-preference"}]}"#,
+    );
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default())
+            .with_inherited_child_provider();
+    let config = AgentConfig::new(workspace.path())
+        .with_provider("fixture")
+        .with_model("fixture-model")
+        .with_memory_extraction_mode(MemoryExtractionMode::Auto);
+    let agent = Agent::new(config);
+
+    with_memory_enabled_home(home.path(), async {
+        let result = agent
+            .run_with_backend(&backend, AgentInput::text("以后请用中文回答"))
+            .await
+            .expect("runtime should complete");
+
+        assert_eq!(result.status, AgentRunStatus::Completed);
+        assert!(result.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::MemoryWrite {
+                action,
+                kind,
+                ..
+            } if action == "auto_saved" && kind == "preference"
+        )));
+        let store = FilePersonaMemoryStore::for_workspace(workspace.path());
+        let loaded = store.list(PersonaMemoryScope::Global);
+        assert_eq!(loaded.records.len(), 1);
+        assert!(loaded.records[0].content.contains("简洁"));
+        assert!(loaded.records[0].content.contains("保留关键细节"));
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_rich_memory_is_not_degraded_by_rule_generic_followup() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = MemoryExtractionFixtureProvider::new(
+        r#"{"candidates":[{"kind":"preference","content":"用户偏好使用中文回答，并且回答要简洁、保留关键细节。","scope_hint":"global_user","sensitivity_hint":"low","confidence":0.95,"importance":0.9,"reason":"provider:rich-language-preference"}]}"#,
+    );
+    let provider_backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default())
+            .with_inherited_child_provider();
+    let provider_agent = Agent::new(
+        AgentConfig::new(workspace.path())
+            .with_provider("fixture")
+            .with_model("fixture-model")
+            .with_memory_extraction_mode(MemoryExtractionMode::Provider),
+    );
+    let rule_backend = YunXiRuntimeBackend::with_parts(
+        StaticProvider::default(),
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let rule_agent = Agent::new(
+        AgentConfig::new(workspace.path())
+            .with_memory_extraction_mode(MemoryExtractionMode::RuleOnly),
+    );
+
+    with_memory_enabled_home(home.path(), async {
+        provider_agent
+            .run_with_backend(&provider_backend, AgentInput::text("你好"))
+            .await
+            .expect("provider runtime should complete");
+        let result = rule_agent
+            .run_with_backend(&rule_backend, AgentInput::text("以后请用中文回答"))
+            .await
+            .expect("rule runtime should complete");
+
+        assert_eq!(result.status, AgentRunStatus::Completed);
+        assert!(result.events.iter().any(|event| matches!(
+            event,
+            AgentEvent::MemoryWrite {
+                action,
+                merge_strategy: Some(strategy),
+                revision: 2,
+                ..
+            } if action == "merged" && strategy == "preserve_existing"
+        )));
+        let store = FilePersonaMemoryStore::for_workspace(workspace.path());
+        let loaded = store.list(PersonaMemoryScope::Global);
+        assert_eq!(loaded.records.len(), 1);
+        assert_eq!(loaded.records[0].revision, 2);
+        assert!(loaded.records[0].content.contains("简洁"));
+        assert!(loaded.records[0].content.contains("保留关键细节"));
+    })
+    .await;
 }
 
 #[tokio::test(flavor = "current_thread")]

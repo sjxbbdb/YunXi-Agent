@@ -340,6 +340,187 @@ fn file_persona_memory_store_merges_equivalent_active_language_preferences() {
 }
 
 #[test]
+fn file_persona_memory_store_preserves_rich_existing_when_generic_language_preference_repeats() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let rich = MemoryRecord::new(
+        "memory-rich",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答，并且回答要简洁、保留关键细节。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let generic = MemoryRecord::new(
+        "memory-generic",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好后续默认使用中文交流。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+
+    store.append_or_merge(&rich).expect("insert rich");
+    let merged = store.append_or_merge(&generic).expect("merge generic");
+
+    assert!(matches!(
+        merged,
+        MemoryPersistOutcome::Merged {
+            revision: 2,
+            merged_count: 2,
+            merge_strategy,
+            ..
+        } if merge_strategy == "preserve_existing"
+    ));
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    assert_eq!(loaded.records.len(), 1);
+    assert_eq!(loaded.records[0].id, "memory-rich");
+    assert!(loaded.records[0].content.contains("简洁"));
+    assert!(loaded.records[0].content.contains("保留关键细节"));
+}
+
+#[test]
+fn file_persona_memory_store_promotes_rich_incoming_over_generic_existing() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let generic = MemoryRecord::new(
+        "memory-generic",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let rich = MemoryRecord::new(
+        "memory-rich",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答，并且回答要简洁、保留关键细节。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+
+    store.append_or_merge(&generic).expect("insert generic");
+    let merged = store.append_or_merge(&rich).expect("merge rich");
+
+    assert!(matches!(
+        merged,
+        MemoryPersistOutcome::Merged {
+            merge_strategy,
+            ..
+        } if merge_strategy == "promote_incoming"
+    ));
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    assert_eq!(loaded.records.len(), 1);
+    assert_eq!(loaded.records[0].id, "memory-generic");
+    assert!(loaded.records[0].content.contains("简洁"));
+    assert!(loaded.records[0].content.contains("保留关键细节"));
+}
+
+#[test]
+fn file_persona_memory_store_combines_non_conflicting_same_slot_details() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let concise = MemoryRecord::new(
+        "memory-concise",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答，并且回答要简洁。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let details = MemoryRecord::new(
+        "memory-details",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答，并且保留关键细节。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+
+    store.append_or_merge(&concise).expect("insert concise");
+    let merged = store.append_or_merge(&details).expect("merge details");
+
+    assert!(matches!(
+        merged,
+        MemoryPersistOutcome::Merged {
+            merge_strategy,
+            ..
+        } if merge_strategy == "combine_non_conflicting"
+    ));
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    assert_eq!(loaded.records.len(), 1);
+    assert!(loaded.records[0].content.contains("简洁"));
+    assert!(loaded.records[0].content.contains("保留关键细节"));
+}
+
+#[test]
+fn file_persona_memory_store_routes_language_conflict_to_pending() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let chinese = MemoryRecord::new(
+        "memory-zh",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用中文回答。",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    let english = MemoryRecord::new(
+        "memory-en",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "用户偏好使用英文回答。",
+        2,
+    )
+    .with_status(MemoryStatus::Active);
+
+    store.append_or_merge(&chinese).expect("insert chinese");
+    let conflict = store.append_or_merge(&english).expect("pending conflict");
+
+    assert!(matches!(
+        conflict,
+        MemoryPersistOutcome::ConflictPending {
+            status: MemoryStatus::Pending,
+            conflict_family,
+            ..
+        } if conflict_family.ends_with("|preference|language")
+    ));
+    let active = store
+        .list(PersonaMemoryScope::Workspace)
+        .records
+        .into_iter()
+        .filter(|record| record.status == MemoryStatus::Active)
+        .collect::<Vec<_>>();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].id, "memory-zh");
+    let pending = store
+        .list(PersonaMemoryScope::Workspace)
+        .records
+        .into_iter()
+        .filter(|record| record.status == MemoryStatus::Pending)
+        .collect::<Vec<_>>();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, "memory-en");
+}
+
+#[test]
 fn file_persona_memory_store_keeps_pending_when_equivalent_pending_repeats() {
     let temp = TempDir::new().expect("temp dir");
     let store = FilePersonaMemoryStore::for_workspace(temp.path());

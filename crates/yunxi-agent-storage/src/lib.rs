@@ -13,8 +13,8 @@ use yunxi_agent_multi_agent::{
 };
 use yunxi_agent_persona::{
     MemoryMigrationResult, MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings,
-    dedup_key_for_record, migrate_memory_record_value, now_millis as memory_now_millis,
-    yunxi_home_dir,
+    dedup_key_for_record, memory_conflict_family, merge_equivalent_memory_records,
+    migrate_memory_record_value, now_millis as memory_now_millis, yunxi_home_dir,
 };
 use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
@@ -742,6 +742,14 @@ pub enum MemoryPersistOutcome {
         status: MemoryStatus,
         revision: u32,
         merged_count: u32,
+        merge_strategy: String,
+    },
+    ConflictPending {
+        id: String,
+        status: MemoryStatus,
+        revision: u32,
+        merged_count: u32,
+        conflict_family: String,
     },
     Skipped {
         id: String,
@@ -804,12 +812,25 @@ impl FilePersonaMemoryStore {
     pub fn append_or_merge(&self, record: &MemoryRecord) -> AgentResult<MemoryPersistOutcome> {
         let mut incoming = record.clone();
         incoming.ensure_dedup_metadata();
-        let existing = self
-            .list(PersonaMemoryScope::All)
-            .records
-            .into_iter()
-            .find(|candidate| can_merge_memory_records(candidate, &incoming));
+        let records = self.list(PersonaMemoryScope::All).records;
+        let existing = records
+            .iter()
+            .find(|candidate| can_merge_memory_records(candidate, &incoming))
+            .cloned();
         let Some(existing) = existing else {
+            if let Some(conflict_family) = incoming_conflict_family(&records, &incoming) {
+                incoming.status = MemoryStatus::Pending;
+                incoming.updated_at_millis = memory_now_millis();
+                incoming.ensure_dedup_metadata();
+                self.append(&incoming)?;
+                return Ok(MemoryPersistOutcome::ConflictPending {
+                    id: incoming.id,
+                    status: incoming.status,
+                    revision: incoming.revision,
+                    merged_count: incoming.merged_count,
+                    conflict_family,
+                });
+            }
             self.append(&incoming)?;
             return Ok(MemoryPersistOutcome::Inserted {
                 id: incoming.id,
@@ -818,16 +839,12 @@ impl FilePersonaMemoryStore {
                 merged_count: incoming.merged_count,
             });
         };
-        let mut merged = incoming;
+        let result = merge_equivalent_memory_records(&existing, &incoming, memory_now_millis());
+        let mut merged = result.record;
         merged.id = existing.id.clone();
         merged.created_at_millis = existing.created_at_millis;
-        merged.updated_at_millis = memory_now_millis();
         merged.revision = existing.revision.saturating_add(1).max(2);
         merged.merged_count = existing.merged_count.saturating_add(1).max(2);
-        merged.confidence = merged.confidence.max(existing.confidence);
-        merged.importance = merged.importance.max(existing.importance);
-        merged.sensitivity = max_memory_sensitivity(merged.sensitivity, existing.sensitivity);
-        merged.status = merged_memory_status(existing.status, merged.status, merged.sensitivity);
         merged.ensure_dedup_metadata();
         self.append(&merged)?;
         Ok(MemoryPersistOutcome::Merged {
@@ -835,6 +852,7 @@ impl FilePersonaMemoryStore {
             status: merged.status,
             revision: merged.revision,
             merged_count: merged.merged_count,
+            merge_strategy: result.strategy.as_label().to_string(),
         })
     }
 
@@ -1080,39 +1098,32 @@ fn can_merge_memory_records(existing: &MemoryRecord, incoming: &MemoryRecord) ->
     existing_key == incoming.dedup_key
 }
 
-fn merged_memory_status(
-    existing: MemoryStatus,
-    incoming: MemoryStatus,
-    sensitivity: yunxi_agent_persona::MemorySensitivity,
-) -> MemoryStatus {
-    if existing == MemoryStatus::Pending || incoming == MemoryStatus::Pending {
-        return MemoryStatus::Pending;
-    }
-    if matches!(
-        sensitivity,
-        yunxi_agent_persona::MemorySensitivity::Medium
-            | yunxi_agent_persona::MemorySensitivity::High
-    ) {
-        return MemoryStatus::Pending;
-    }
-    incoming
-}
-
-fn max_memory_sensitivity(
-    left: yunxi_agent_persona::MemorySensitivity,
-    right: yunxi_agent_persona::MemorySensitivity,
-) -> yunxi_agent_persona::MemorySensitivity {
-    match (left, right) {
-        (yunxi_agent_persona::MemorySensitivity::High, _)
-        | (_, yunxi_agent_persona::MemorySensitivity::High) => {
-            yunxi_agent_persona::MemorySensitivity::High
+fn incoming_conflict_family(records: &[MemoryRecord], incoming: &MemoryRecord) -> Option<String> {
+    let incoming_family = memory_conflict_family(incoming)?;
+    let incoming_key = if incoming.dedup_key.trim().is_empty() {
+        dedup_key_for_record(incoming).as_storage_key()
+    } else {
+        incoming.dedup_key.clone()
+    };
+    records.iter().find_map(|record| {
+        if matches!(
+            record.status,
+            MemoryStatus::Archived | MemoryStatus::Rejected
+        ) {
+            return None;
         }
-        (yunxi_agent_persona::MemorySensitivity::Medium, _)
-        | (_, yunxi_agent_persona::MemorySensitivity::Medium) => {
-            yunxi_agent_persona::MemorySensitivity::Medium
+        let existing_family = memory_conflict_family(record)?;
+        let existing_key = if record.dedup_key.trim().is_empty() {
+            dedup_key_for_record(record).as_storage_key()
+        } else {
+            record.dedup_key.clone()
+        };
+        if existing_family == incoming_family && existing_key != incoming_key {
+            Some(incoming_family.clone())
+        } else {
+            None
         }
-        _ => yunxi_agent_persona::MemorySensitivity::Low,
-    }
+    })
 }
 
 fn memory_status_group(status: MemoryStatus) -> &'static str {

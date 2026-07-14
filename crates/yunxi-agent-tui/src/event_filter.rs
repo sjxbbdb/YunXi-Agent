@@ -360,11 +360,19 @@ pub(crate) fn classify(event: &AgentEvent) -> FilteredEvent {
             action,
             revision,
             merged_count,
+            merge_strategy,
+            conflict_family,
             ..
         } => {
-            let detail = format!(
+            let mut detail = format!(
                 "id={id} scope={scope} kind={kind} status={status} action={action} revision={revision} merged_count={merged_count}"
             );
+            if let Some(strategy) = merge_strategy {
+                detail.push_str(&format!(" merge_strategy={strategy}"));
+            }
+            if let Some(family) = conflict_family {
+                detail.push_str(&format!(" conflict_family={family}"));
+            }
             match action.as_str() {
                 "auto_saved" => FilteredEvent::Notice {
                     kind: "memory".to_string(),
@@ -624,6 +632,8 @@ mod tests {
             action: "auto_saved".to_string(),
             revision: 1,
             merged_count: 1,
+            merge_strategy: None,
+            conflict_family: None,
         };
 
         let filtered = classify(&event);
@@ -654,6 +664,8 @@ mod tests {
             action: "pending_confirmation".to_string(),
             revision: 1,
             merged_count: 1,
+            merge_strategy: Some("conflict_requires_confirmation".to_string()),
+            conflict_family: Some("global_user|preference|language".to_string()),
         };
 
         let filtered = classify(&event);
@@ -679,6 +691,8 @@ mod tests {
             action: "merged".to_string(),
             revision: 2,
             merged_count: 2,
+            merge_strategy: Some("preserve_existing".to_string()),
+            conflict_family: None,
         };
 
         let filtered = classify(&event);
@@ -693,6 +707,7 @@ mod tests {
             } if kind == "memory"
                 && message == "memory updated: preference"
                 && debug_detail.contains("merged_count=2")
+                && debug_detail.contains("merge_strategy=preserve_existing")
         ));
     }
 
@@ -707,6 +722,8 @@ mod tests {
             action: "discard".to_string(),
             revision: 1,
             merged_count: 1,
+            merge_strategy: None,
+            conflict_family: None,
         };
 
         let filtered = classify(&event);

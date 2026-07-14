@@ -106,6 +106,69 @@ fn dry_run_jsonl_prints_one_json_event_per_line() {
 }
 
 #[test]
+fn yunxi_jsonl_redacts_secret_like_prompt_from_transcript_items() {
+    let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    let temp = TempDir::new().expect("temp dir");
+    let secret = format!("{}{}", "sk-", "b".repeat(32));
+    let prompt = format!("my token is {secret}");
+
+    let assert = cmd
+        .args([
+            "--backend",
+            "yunxi",
+            "--offline",
+            "--cwd",
+            temp.path().to_str().expect("temp path"),
+            "--jsonl",
+            &prompt,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"type\":\"item\""))
+        .stdout(predicate::str::contains("[redacted]"))
+        .stdout(predicate::str::contains(&secret).not());
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    let mut saw_user = false;
+    let mut saw_assistant = false;
+    for line in output.lines() {
+        let value = serde_json::from_str::<serde_json::Value>(line).expect("each line is json");
+        if value.get("type").and_then(serde_json::Value::as_str) == Some("item")
+            && value
+                .get("item")
+                .and_then(|item| item.get("type"))
+                .and_then(serde_json::Value::as_str)
+                == Some("message")
+        {
+            let role = value
+                .get("item")
+                .and_then(|item| item.get("role"))
+                .and_then(serde_json::Value::as_str);
+            let content = value
+                .get("item")
+                .and_then(|item| item.get("content"))
+                .and_then(serde_json::Value::as_str)
+                .expect("message content");
+            assert!(!content.contains(&secret));
+            if role == Some("user") {
+                saw_user = true;
+                assert!(content.contains("[redacted]"));
+            }
+            if role == Some("assistant") {
+                saw_assistant = true;
+                assert!(content.contains("[redacted]"));
+                assert!(content.contains("YunXi autonomous runtime accepted prompt"));
+            }
+        }
+    }
+    assert!(saw_user, "expected redacted user item in JSONL output");
+    assert!(
+        saw_assistant,
+        "expected redacted assistant item in JSONL output"
+    );
+}
+
+#[test]
 fn yunxi_jsonl_prints_child_agent_fixture_events() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
     let temp = TempDir::new().expect("temp dir");

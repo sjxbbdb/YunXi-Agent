@@ -26,7 +26,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v1.8.4".to_string(),
+            version: "v1.8.5".to_string(),
             banner: None,
             transcript: Transcript::default(),
             viewport: TranscriptViewport::default(),
@@ -393,7 +393,7 @@ mod tests {
         assert!(display_width(&header) <= 58);
         assert!(display_width(&subheader) <= 58);
         assert!(display_width(&footer) <= 58);
-        assert!(header.contains("YunXi v1.8.4"));
+        assert!(header.contains("YunXi v1.8.5"));
         assert!(header.contains("offline"));
         assert!(header.contains("static"));
         assert!(subheader.contains("provider=static"));
@@ -410,7 +410,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v1.8.4"));
+        assert!(header.contains("YunXi Agent v1.8.5"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));

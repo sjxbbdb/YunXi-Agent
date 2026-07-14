@@ -29,6 +29,12 @@ mod input {
 mod interactive {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/interactive.rs"));
 }
+mod jsonl_redaction {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/jsonl_redaction.rs"
+    ));
+}
 mod provider_mode {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/provider_mode.rs"));
 }
@@ -71,7 +77,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.8.4 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.8.5 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -701,6 +707,7 @@ fn print_run_result(
 ) -> Result<()> {
     if jsonl {
         for event in protocol_events_from_agent_events(&result.events) {
+            let event = jsonl_redaction::redact_runtime_event_for_jsonl(event);
             println!("{}", to_jsonl_line(&event)?);
         }
     } else if json {
@@ -1543,16 +1550,16 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.4; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.8.5; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.4; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.8.5; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.4; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v1.8.5; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.4; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v1.8.5; use --json for memory management commands"
         ),
     }
 }

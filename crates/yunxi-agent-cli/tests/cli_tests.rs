@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.8.4"));
+        .stdout(predicate::str::contains("yunxi 1.8.5"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.8.4"));
+        .stdout(predicate::str::contains("yunxi 1.8.5"));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.4 interactive CLI",
+            "YunXi Agent v1.8.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.4 interactive CLI",
+            "YunXi Agent v1.8.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.4 interactive CLI",
+            "YunXi Agent v1.8.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -691,6 +691,57 @@ fn cli_language_conflict_routes_to_pending() {
         Some("global_user|preference|language:en")
     );
     assert_eq!(records[0]["status"].as_str(), Some("pending"));
+}
+
+#[test]
+fn cli_jsonl_redacts_secret_prompt_while_memory_discards_candidate() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+    let secret = format!("{}{}", "sk-", "c".repeat(32));
+    let prompt = format!("my token is {secret}");
+
+    run_json_command_with_env(&home, &["--cwd", cwd, "--json", "memory", "on"]);
+
+    let mut run = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    let assert = run
+        .env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args([
+            "--offline",
+            "--memory-extraction",
+            "rule-only",
+            "--cwd",
+            cwd,
+            "--jsonl",
+            &prompt,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&secret).not())
+        .stdout(predicate::str::contains("[redacted]"))
+        .stdout(predicate::str::contains("\"type\":\"memory_recall\""))
+        .stdout(predicate::str::contains("[redacted-sensitive-query]"))
+        .stdout(predicate::str::contains("\"type\":\"memory_write\""))
+        .stdout(predicate::str::contains("\"action\":\"discard\""));
+
+    let output = String::from_utf8(assert.get_output().stdout.clone()).expect("utf8");
+    for line in output.lines() {
+        serde_json::from_str::<serde_json::Value>(line).expect("each line is json");
+    }
+
+    let list = run_json_command_with_env(
+        &home,
+        &["--cwd", cwd, "--json", "memory", "list", "--global"],
+    );
+    let records = list["records"].as_array().expect("memory records");
+    assert!(
+        records
+            .iter()
+            .all(|record| !record.to_string().contains(&secret)),
+        "secret-like prompt must not be persisted: {list:#}"
+    );
 }
 
 #[test]

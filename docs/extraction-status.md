@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.4 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.5 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,61 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.5 JSONL Redaction
+
+YunXi Agent v1.8.5 fixes the v1.8.4 audit finding that ordinary JSONL
+transcript events could print secret-like prompt fragments. The release keeps
+the existing memory write policy unchanged and adds a CLI output sanitization
+boundary before runtime events are serialized to machine-readable logs.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.8.5`.
+- CLI JSONL output now passes runtime events through a structured redaction
+  helper before `to_jsonl_line`.
+- User and assistant `item.message.content` fields are sanitized, including
+  offline assistant echo text such as `YunXi autonomous runtime accepted
+  prompt: ...`.
+- Stream items, deltas, tool arguments/output, approval/escalation reasons,
+  child-agent messages, nested function-call JSON output, and selected state
+  detail maps use the same secret-fragment redaction boundary.
+- JSONL redaction remains independent from memory write policy: secret-like
+  memory candidates are still discarded rather than persisted.
+- CLI black-box tests cover secret-like prompt redaction and memory discard in
+  JSONL mode without hard-coding full key-shaped literals.
+
+The development report is recorded in
+`docs/reports/2026-07-14-yunxi-agent-v1-8-5-jsonl-redaction-development-report.md`.
+
+Unified verification was performed after construction according to the project
+hard constraint.
+
+Verified in this slice:
+
+- `cargo fmt`: pass
+- `cargo fmt --check`: pass
+- CLI JSONL redaction tests: pass; `jsonl_tests` includes 10 passing tests
+- memory-enabled JSONL privacy test: pass; secret-like prompt output is
+  redacted while memory write emits `action=discard`
+- targeted package tests for persona/storage/runtime/cli/tui: pass
+- `cargo test`: pass; workspace unit tests, integration tests, and doc tests
+  completed with zero failures
+- `cargo check --workspace`: pass
+- `cargo build -p yunxi-agent-cli --release --bins`: pass
+- `target\release\yunxi.exe --version`: pass; `yunxi 1.8.5`
+- `target\release\yunxi-agent-cli.exe --version`: pass; `yunxi 1.8.5`
+- isolated `YUNXI_HOME` black-box JSONL privacy check: pass; fake secret was
+  absent from JSONL, `[redacted]`, `[redacted-sensitive-query]`, and
+  `memory_write action=discard` were present
+- `git diff --check`: pass
+- owned-source secret scan: pass; no live key-shaped matches
+- `codegraph sync .`: pass; 9 changed files synced
+- `codegraph status .`: pass; index is up to date
+- install refresh with `scripts\install\install-yunxi.ps1 -AddToPath
+  -SkipBuild`: pass
+- PATH smoke: pass; `yunxi --version` and `yunxi-agent-cli --version` both
+  returned `yunxi 1.8.5`
 
 ## YunXi Agent v1.8.4 English Memory Preference And Audit Fix
 

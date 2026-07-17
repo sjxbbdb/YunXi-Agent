@@ -80,8 +80,17 @@ return `yunxi 1.9.1`. The directory was already present in user PATH, so no
 duplicate PATH entry was written. Final `cargo clean` removed 13,133 files
 (about 3.6 GiB), and the repository `target` directory is absent.
 
-Publication and the immutable `v1.9.1` tag remain pending the GitHub REST
-publication gate at this writeback point.
+Release publication completed through the GitHub Git Data REST API without
+force. The release commit is
+`e9c14152e8e4b96b12fecd56f93063a3dcd90a8b`, its tree is
+`4029ffcc6e7fcb0dcd0a4985c1490c3836c706f4`, and annotated tag object
+`efd1302eff252b2aae0f0e4637c37e9401a4e8f0` is referenced by immutable
+`v1.9.1` and resolves to that release commit. GitHub reports 29 tags. The prior
+`v1.9.0` and `v1.8.9` tag objects remain respectively
+`2625358b36861811912e4c2be2671b0db04ff5db` and
+`3ab5c70dc3edc69583fa863412c1b4d454bd6f29`; neither was deleted, moved, or
+rewritten. This publication record is committed as a docs-only audit change
+after the immutable release tag.
 
 ## YunXi Agent v1.9.0 Boot Context And Recall Router
 

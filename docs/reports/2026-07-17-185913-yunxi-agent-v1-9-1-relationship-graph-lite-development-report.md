@@ -370,7 +370,25 @@ codegraph status .
 要求正确产生 supersession chain。测试更新为校验旧事实保留、新事实 active 和
 双向失效链后，完整验证门重跑通过。
 
-提交、推送和 annotated `v1.9.1` tag 尚未完成；这些结果必须在实际发布后继续
-写回，因此本节当前仍不是最终发布完成证明。
+发布于 `2026-07-17 20:26:03 +08:00` 完成：
+
+- 发布方式：GitHub Git Data REST API，API key 认证，`force=false`。
+- release commit：`e9c14152e8e4b96b12fecd56f93063a3dcd90a8b`。
+- release tree：`4029ffcc6e7fcb0dcd0a4985c1490c3836c706f4`。
+- annotated `v1.9.1` tag object：
+  `efd1302eff252b2aae0f0e4637c37e9401a4e8f0`。
+- `v1.9.1` 解析目标：release commit
+  `e9c14152e8e4b96b12fecd56f93063a3dcd90a8b`。
+- GitHub tag 总数：29。
+- 旧 `v1.9.0` tag object 仍为
+  `2625358b36861811912e4c2be2671b0db04ff5db`。
+- 旧 `v1.8.9` tag object 仍为
+  `3ab5c70dc3edc69583fa863412c1b4d454bd6f29`。
+- 未删除、移动或重写任何旧 tag；`v1.9.1` 固定在 release commit，最终发布
+  标识写回将作为 tag 之后的 docs-only 审计提交，不移动新 tag。
+
+至此本报告规定的源码、测试、release 构建、安装、PATH 冒烟、清理、GitHub
+release commit 和 annotated tag 已完成。最终还需完成 docs-only 审计提交、
+本地/远端 ref 对齐和外部开发日志 EOF 追加，完成后以开发日志为最终闭环记录。
 
 报告撰写者：开发报告撰写者

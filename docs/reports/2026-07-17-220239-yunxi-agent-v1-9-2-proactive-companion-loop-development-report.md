@@ -280,4 +280,9 @@ v1.9.2 开发过程中，以下文档需要与代码状态保持一致：
 - 旧 `v1.9.1` tag object `efd1302eff252b2aae0f0e4637c37e9401a4e8f0` 与 `v1.9.1-hotfix.1` tag object `b211aca4bd2af17c60b6dd95fa344ba45e260407` 均未移动或删除。
 - 已按用户确认执行 `cargo clean`，清理 `D:\YunXi Agent\target`，未删除源码、Git 数据或安装目录。
 
-截至本段写入时，尚未执行 v1.9.2 commit、annotated tag 和 GitHub 推送；这些动作将在日志写入后按固定流程执行。
+发布状态：
+
+- 本地 commit：`61ef2d3008faa9bf75b1247a238369037b25c24d`。
+- 本地 annotated `v1.9.2` tag object：`77e08a2f3b6982c37f6e86de2a96e3b016ea879e`，解析到上述 commit。
+- 两次使用 GitHub API key 的 non-force 远程连接均在 `github.com:443` 连接阶段失败，无法读取远程 master，因此本轮尚未推送；没有执行 force push，也没有修改旧 tag。
+- 本地工作树在提交后干净；当前相对远程为 `master...origin/master [ahead 1]`。

@@ -73,8 +73,11 @@ user-local YunXi bin directory and returned `yunxi 1.9.0`; the directory was
 already present in user PATH, so no duplicate PATH entry was written. The
 isolated black-box fixture was removed. After the final recent-turn audit and
 release rebuild, the final `cargo clean` removed 9,195 files (about 2.7 GiB).
-Publication will use the GitHub Git Data REST API, create a new annotated
-`v1.9.0` tag, and preserve every earlier tag.
+Publication completed through the GitHub Git Data REST API without force. The
+release commit is `4e014314df9c9296b5fb843b13bf390c71f6d4e0`; annotated tag
+object `2625358b36861811912e4c2be2671b0db04ff5db` is referenced by `v1.9.0`
+and resolves to that commit. GitHub reports 28 tags. The prior `v1.8.9` tag
+object remains `3ab5c70dc3edc69583fa863412c1b4d454bd6f29`.
 
 ## YunXi Agent v1.8.9 L0-L3 Memory Pipeline
 

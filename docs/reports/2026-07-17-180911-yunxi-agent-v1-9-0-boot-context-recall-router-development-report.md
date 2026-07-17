@@ -348,6 +348,10 @@ codegraph status .
 - owned-source key-shape scan：0 命中；`git diff --check`：通过。
 - `codegraph sync .` 与 `codegraph status .`：通过；索引为 1,169 files、45,164 nodes、146,675 edges，状态 current。
 
-经用户明确确认后，已把最终双二进制安装到 `C:\Users\24763\AppData\Local\YunXi Agent\bin`；两个安装后二进制均输出 `yunxi 1.9.0`。用户 PATH 已包含该目录，installer 报告 `path_updated=False`，未进行重复写入。隔离黑盒目录 `D:\YunXi Agent\.tmp\v190-blackbox` 已递归删除。补齐 recent-turn 审计并重建 release 后，最终一次 `cargo clean` 已清理 9,195 个文件、约 2.7 GiB，仓库不保留构建产物。提交、GitHub API 推送和 annotated `v1.9.0` tag 将在最终差异复核后执行；旧 tag 不会删除或移动。因此此处仍不是最终发布完成证明。
+经用户明确确认后，已把最终双二进制安装到 `C:\Users\24763\AppData\Local\YunXi Agent\bin`；两个安装后二进制均输出 `yunxi 1.9.0`。用户 PATH 已包含该目录，installer 报告 `path_updated=False`，未进行重复写入。隔离黑盒目录 `D:\YunXi Agent\.tmp\v190-blackbox` 已递归删除。补齐 recent-turn 审计并重建 release 后，最终一次 `cargo clean` 已清理 9,195 个文件、约 2.7 GiB，仓库不保留构建产物。
+
+发布已通过 GitHub Git Data REST API 完成，全程 `force=false`：release commit 为 `4e014314df9c9296b5fb843b13bf390c71f6d4e0`，release tree 为 `2580cc625ff5cc640af438af9250333677c876c3`，annotated `v1.9.0` tag object 为 `2625358b36861811912e4c2be2671b0db04ff5db`，tag 解引用到同一 release commit。GitHub 标签总数由 27 增加为 28；旧 `v1.8.9` tag object 保持 `3ab5c70dc3edc69583fa863412c1b4d454bd6f29`，未删除、未移动。API 首次创建 commit 因 PowerShell 将消息序列化为数组而返回 422，远端引用未变；修正为单字符串后发布成功。Git fetch 首次使用 Bearer 头被拒绝，改用 GitHub 支持的 `x-access-token` Basic 头后完成只读 fetch，并在 tree 完全一致后把本地 `master` 与远端对齐。
+
+本报告随发布后审计提交写回；审计提交自身的最终对象 id 与推送状态记录在外部时间戳开发日志中，避免要求一个 Git commit 在自身内容中预先包含其内容派生 SHA。v1.9.0 开发、验证、安装、清理和 release tag 闭环已完成。
 
 执行记录维护者：开发者

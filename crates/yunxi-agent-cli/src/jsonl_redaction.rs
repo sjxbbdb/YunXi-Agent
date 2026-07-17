@@ -1,10 +1,21 @@
 use std::collections::BTreeMap;
 
 use serde_json::Value;
+use yunxi_agent_core::{AgentEvent, AgentRunResult, TodoStatus};
 use yunxi_agent_protocol::{
     ContentItem, FunctionCallOutput, ResponseItem, ResponseItemDelta, RuntimeEvent, StreamEvent,
     ToolCall,
 };
+
+pub(crate) fn redact_agent_run_result_for_json(mut result: AgentRunResult) -> AgentRunResult {
+    result.final_response = result.final_response.map(redact_text);
+    result.events = result
+        .events
+        .into_iter()
+        .map(redact_agent_event_for_json)
+        .collect();
+    result
+}
 
 pub(crate) fn redact_runtime_event_for_jsonl(event: RuntimeEvent) -> RuntimeEvent {
     match event {
@@ -77,6 +88,13 @@ pub(crate) fn redact_runtime_event_for_jsonl(event: RuntimeEvent) -> RuntimeEven
             decision,
             reused,
         },
+        RuntimeEvent::ThreadState {
+            thread_id,
+            mut state,
+        } => {
+            state.data = redact_string_map(state.data);
+            RuntimeEvent::ThreadState { thread_id, state }
+        }
         RuntimeEvent::TurnMetadata {
             thread_id,
             turn_id,
@@ -339,6 +357,306 @@ pub(crate) fn redact_runtime_event_for_jsonl(event: RuntimeEvent) -> RuntimeEven
         },
         other => other,
     }
+}
+
+fn redact_agent_event_for_json(event: AgentEvent) -> AgentEvent {
+    match event {
+        AgentEvent::Started { prompt } => AgentEvent::Started {
+            prompt: redact_text(prompt),
+        },
+        AgentEvent::ThreadState { mut state } => {
+            state.data = redact_string_map(state.data);
+            AgentEvent::ThreadState { state }
+        }
+        AgentEvent::TurnMetadata { mut metadata } => {
+            metadata.data = redact_string_map(metadata.data);
+            AgentEvent::TurnMetadata { metadata }
+        }
+        AgentEvent::TurnState { mut state } => {
+            state.data = redact_string_map(state.data);
+            AgentEvent::TurnState { state }
+        }
+        AgentEvent::DeepParityState {
+            layer,
+            status,
+            message,
+            data,
+        } => AgentEvent::DeepParityState {
+            layer,
+            status,
+            message: message.map(redact_text),
+            data: redact_string_map(data),
+        },
+        AgentEvent::SandboxAttempt {
+            id,
+            schema_version,
+            platform,
+            status,
+            backend,
+            backend_id,
+            backend_label,
+            os_isolation,
+            enforcement,
+            enforcement_level,
+            runner,
+            unsupported_reason,
+            command,
+            cwd,
+            message,
+        } => AgentEvent::SandboxAttempt {
+            id,
+            schema_version,
+            platform,
+            status,
+            backend,
+            backend_id,
+            backend_label,
+            os_isolation,
+            enforcement,
+            enforcement_level,
+            runner,
+            unsupported_reason: unsupported_reason.map(redact_text),
+            command: command.map(redact_text),
+            cwd,
+            message: message.map(redact_text),
+        },
+        AgentEvent::ApprovalCacheState {
+            session_id,
+            tool_name,
+            key,
+            decision,
+            reused,
+        } => AgentEvent::ApprovalCacheState {
+            session_id,
+            tool_name,
+            key: redact_text(key),
+            decision,
+            reused,
+        },
+        AgentEvent::MemoryRecall {
+            schema_version,
+            enabled,
+            scope,
+            query,
+            count,
+            budget_used_chars,
+            truncated,
+            always_on_count,
+            dropped_unrelated,
+            dropped_by_budget,
+            dropped_duplicates,
+        } => AgentEvent::MemoryRecall {
+            schema_version,
+            enabled,
+            scope,
+            query: redact_text(query),
+            count,
+            budget_used_chars,
+            truncated,
+            always_on_count,
+            dropped_unrelated,
+            dropped_by_budget,
+            dropped_duplicates,
+        },
+        AgentEvent::MemoryCandidate {
+            schema_version,
+            id,
+            kind,
+            sensitivity,
+            status,
+            write_policy,
+            reason,
+        } => AgentEvent::MemoryCandidate {
+            schema_version,
+            id,
+            kind,
+            sensitivity,
+            status,
+            write_policy,
+            reason: redact_text(reason),
+        },
+        AgentEvent::MemoryWarning {
+            schema_version,
+            warning,
+        } => AgentEvent::MemoryWarning {
+            schema_version,
+            warning: redact_text(warning),
+        },
+        AgentEvent::Message { content } => AgentEvent::Message {
+            content: redact_text(content),
+        },
+        AgentEvent::Reasoning { content } => AgentEvent::Reasoning {
+            content: redact_text(content),
+        },
+        AgentEvent::CommandStarted { id, command } => AgentEvent::CommandStarted {
+            id,
+            command: redact_text(command),
+        },
+        AgentEvent::CommandUpdated {
+            id,
+            command,
+            aggregated_output,
+        } => AgentEvent::CommandUpdated {
+            id,
+            command: redact_text(command),
+            aggregated_output: redact_text(aggregated_output),
+        },
+        AgentEvent::CommandCompleted {
+            id,
+            command,
+            aggregated_output,
+            exit_code,
+            status,
+        } => AgentEvent::CommandCompleted {
+            id,
+            command: redact_text(command),
+            aggregated_output: redact_text(aggregated_output),
+            exit_code,
+            status,
+        },
+        AgentEvent::CommandFinished { command, exit_code } => AgentEvent::CommandFinished {
+            command: redact_text(command),
+            exit_code,
+        },
+        AgentEvent::ToolCallStarted {
+            id,
+            name,
+            arguments_json,
+        } => AgentEvent::ToolCallStarted {
+            id,
+            name,
+            arguments_json: arguments_json.map(redact_text),
+        },
+        AgentEvent::ToolCallCompleted {
+            id,
+            name,
+            output,
+            status,
+        } => AgentEvent::ToolCallCompleted {
+            id,
+            name,
+            output: redact_text(output),
+            status,
+        },
+        AgentEvent::ApprovalRequested {
+            id,
+            tool_name,
+            reason,
+        } => AgentEvent::ApprovalRequested {
+            id,
+            tool_name,
+            reason: redact_text(reason),
+        },
+        AgentEvent::ApprovalCompleted {
+            id,
+            approved,
+            reason,
+        } => AgentEvent::ApprovalCompleted {
+            id,
+            approved,
+            reason: reason.map(redact_text),
+        },
+        AgentEvent::EscalationRequested {
+            id,
+            tool_name,
+            reason,
+            required_sandbox,
+            required_network,
+        } => AgentEvent::EscalationRequested {
+            id,
+            tool_name,
+            reason: redact_text(reason),
+            required_sandbox,
+            required_network,
+        },
+        AgentEvent::EscalationCompleted {
+            id,
+            approved,
+            reason,
+        } => AgentEvent::EscalationCompleted {
+            id,
+            approved,
+            reason: reason.map(redact_text),
+        },
+        AgentEvent::McpSession {
+            server,
+            status,
+            message,
+        } => AgentEvent::McpSession {
+            server,
+            status,
+            message: message.map(redact_text),
+        },
+        AgentEvent::MultiAgentEvent {
+            agent_id,
+            parent_agent_id,
+            status,
+            message,
+        } => AgentEvent::MultiAgentEvent {
+            agent_id,
+            parent_agent_id,
+            status,
+            message: message.map(redact_text),
+        },
+        AgentEvent::ChildAgentEvent {
+            agent_id,
+            child_session_id,
+            parent_session_id,
+            status,
+            message,
+        } => AgentEvent::ChildAgentEvent {
+            agent_id,
+            child_session_id,
+            parent_session_id,
+            status,
+            message: message.map(redact_text),
+        },
+        AgentEvent::ChildScopedStream {
+            agent_id,
+            child_session_id,
+            parent_session_id,
+            event,
+            seq,
+            message,
+        } => AgentEvent::ChildScopedStream {
+            agent_id,
+            child_session_id,
+            parent_session_id,
+            event: redact_text(event),
+            seq,
+            message: message.map(redact_text),
+        },
+        AgentEvent::TodoUpdated { id, items } => AgentEvent::TodoUpdated {
+            id,
+            items: items.into_iter().map(redact_todo_status).collect(),
+        },
+        AgentEvent::Warning { message } => AgentEvent::Warning {
+            message: redact_text(message),
+        },
+        AgentEvent::Cancelled { reason } => AgentEvent::Cancelled {
+            reason: reason.map(redact_text),
+        },
+        AgentEvent::ProviderError {
+            provider,
+            status,
+            classification,
+            message,
+        } => AgentEvent::ProviderError {
+            provider,
+            status,
+            classification,
+            message: redact_text(message),
+        },
+        AgentEvent::Error { message } => AgentEvent::Error {
+            message: redact_text(message),
+        },
+        other => other,
+    }
+}
+
+fn redact_todo_status(mut item: TodoStatus) -> TodoStatus {
+    item.text = redact_text(item.text);
+    item
 }
 
 fn redact_stream_event(event: StreamEvent) -> StreamEvent {
@@ -649,13 +967,19 @@ fn redact_text(value: String) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use serde_json::json;
+    use yunxi_agent_core::{
+        AgentEvent, AgentRunResult, AgentRunStatus, CommandStatus, ThreadRuntimeState, TodoStatus,
+    };
     use yunxi_agent_protocol::{
         ContentItem, FunctionCallOutput, MessagePhase, ProtocolRole, ResponseItem,
-        ResponseItemDelta, RuntimeEvent, StreamEvent, ThreadId, ToolCall, ToolCallStatus, TurnId,
+        ResponseItemDelta, RuntimeEvent, StreamEvent, ThreadId, ThreadState, ToolCall,
+        ToolCallStatus, TurnId,
     };
 
-    use super::redact_runtime_event_for_jsonl;
+    use super::{redact_agent_run_result_for_json, redact_runtime_event_for_jsonl};
 
     fn fake_secret() -> String {
         format!("{}{}", "sk-", "a".repeat(32))
@@ -795,5 +1119,103 @@ mod tests {
         let shell_json = event_text(&redact_runtime_event_for_jsonl(shell_event));
         assert!(!shell_json.contains(&secret));
         assert!(shell_json.contains("[redacted]"));
+    }
+
+    #[test]
+    fn redacts_agent_run_result_for_json() {
+        let secret = fake_secret();
+        let mut thread_data = BTreeMap::new();
+        thread_data.insert("safe".to_string(), "visible-safe".to_string());
+        thread_data.insert("token".to_string(), format!("thread saw {secret}"));
+
+        let result = AgentRunResult {
+            status: AgentRunStatus::Completed,
+            final_response: Some(format!(
+                "YunXi autonomous runtime accepted prompt: my token is {secret}"
+            )),
+            events: vec![
+                AgentEvent::Started {
+                    prompt: format!("my token is {secret}"),
+                },
+                AgentEvent::Message {
+                    content: format!("assistant echo {secret}"),
+                },
+                AgentEvent::MemoryRecall {
+                    schema_version: 1,
+                    enabled: true,
+                    scope: "global".to_string(),
+                    query: format!("lookup {secret}"),
+                    count: 0,
+                    budget_used_chars: 0,
+                    truncated: false,
+                    always_on_count: 0,
+                    dropped_unrelated: 0,
+                    dropped_by_budget: 0,
+                    dropped_duplicates: 0,
+                },
+                AgentEvent::CommandCompleted {
+                    id: Some("cmd".to_string()),
+                    command: format!("echo {secret}"),
+                    aggregated_output: format!("tool printed {secret}"),
+                    exit_code: Some(0),
+                    status: CommandStatus::Completed,
+                },
+                AgentEvent::ThreadState {
+                    state: ThreadRuntimeState {
+                        thread_id: "thread".to_string(),
+                        session_id: Some("session".to_string()),
+                        parent_thread_id: None,
+                        status: "running".to_string(),
+                        cwd: "D:/YunXi Agent".to_string(),
+                        resume_source: None,
+                        child_depth: 0,
+                        data: thread_data,
+                    },
+                },
+                AgentEvent::TodoUpdated {
+                    id: Some("todo".to_string()),
+                    items: vec![TodoStatus {
+                        text: format!("check {secret}"),
+                        completed: false,
+                    }],
+                },
+            ],
+        };
+
+        let redacted = redact_agent_run_result_for_json(result);
+        let json = serde_json::to_string(&redacted).expect("json");
+
+        assert!(!json.contains(&secret));
+        assert!(json.contains("[redacted]"));
+        assert!(json.contains("visible-safe"));
+        assert!(json.contains("YunXi autonomous runtime accepted prompt"));
+    }
+
+    #[test]
+    fn redacts_thread_state_data_for_jsonl() {
+        let secret = fake_secret();
+        let mut data = BTreeMap::new();
+        data.insert("safe".to_string(), "visible-safe".to_string());
+        data.insert("token".to_string(), format!("thread data contains {secret}"));
+
+        let event = RuntimeEvent::ThreadState {
+            thread_id: ThreadId("thread".to_string()),
+            state: ThreadState {
+                thread_id: ThreadId("thread".to_string()),
+                session_id: Some("session".to_string()),
+                parent_thread_id: None,
+                status: "running".to_string(),
+                cwd: "D:/YunXi Agent".to_string(),
+                resume_source: None,
+                child_depth: 0,
+                data,
+            },
+        };
+
+        let json = event_text(&redact_runtime_event_for_jsonl(event));
+
+        assert!(!json.contains(&secret));
+        assert!(json.contains("[redacted]"));
+        assert!(json.contains("visible-safe"));
     }
 }

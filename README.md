@@ -1,6 +1,6 @@
-# YunXi Agent v1.8.0
+# YunXi Agent v1.8.6
 
-YunXi Agent v1.8.0 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.8.6 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -20,7 +20,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.8.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.8.6 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -126,7 +126,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.8.0 CLI into a user-local bin directory:
+Build and install the v1.8.6 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -152,7 +152,7 @@ Run `yunxi` without a prompt to enter interactive mode:
 yunxi
 ```
 
-When stdin and stdout are both attached to a terminal, YunXi uses the v1.8.0
+When stdin and stdout are both attached to a terminal, YunXi uses the v1.8.6
 TUI host, wrapped-row transcript viewport, draggable scrollbar, composer, and
 approval overlay. Use `--no-tui` to force the stable plain REPL:
 
@@ -191,7 +191,7 @@ returning structured errors for script safety.
 
 ## Persona And Memory
 
-YunXi v1.8.0 includes a local persona and transparent memory foundation. Persona
+YunXi v1.8.6 includes a local persona and transparent memory foundation. Persona
 prompt injection is enabled by default. Long-term memory writes are disabled by
 default and become active only after `yunxi memory on` or
 `YUNXI_MEMORY_ENABLED=1`.
@@ -216,7 +216,7 @@ Memory is stored as local JSONL under `%USERPROFILE%\.yunxi\memory` and
 `<workspace>\.yunxi\memory`. See `docs/persona-memory.md` for schema, privacy,
 and pending-review details.
 
-`--jsonl` is reserved for agent execution streams in v1.8.0. Metadata
+`--jsonl` is reserved for agent execution streams in v1.8.6. Metadata
 subcommands such as `sessions list`, `parity map`, `persona status`, and
 `memory status` reject `--jsonl`; use `--json` for their machine-readable
 output.
@@ -403,6 +403,11 @@ the YunXi-owned persona and transparent memory foundation: the
 `yunxi_companion_strong` profile, bounded persona/memory prompt injection,
 global/workspace JSONL memory storage, CLI review controls, privacy-first write
 policy, and summary-only persona/memory events.
+
+v1.8.6 extends that foundation with typed redaction for both `--json` and
+`--jsonl` agent execution output. Secret-like prompt, response, tool, state,
+provider, and nested protocol fields are sanitized before serialization while
+memory privacy policy independently continues to discard sensitive candidates.
 
 ## Backend Capability Matrix
 

@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.8.5 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.8.6 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, or the current user request.
 
@@ -25,7 +25,7 @@ Memory is append-only JSONL:
 <workspace>\.yunxi\memory\pending.jsonl
 ```
 
-v1.8.5 writes `schema_version = 2`. Every record includes:
+v1.8.6 writes `schema_version = 2`. Every record includes:
 
 - `dedup_key`: `scope + kind + normalized_content`.
 - `revision`: latest revision number for the durable memory id.
@@ -106,15 +106,17 @@ Recall performs defensive dedup before scoring, so old duplicate JSONL rows do
 not consume prompt budget. Global language and interaction preferences use a
 small always-on budget after dedup.
 
-## JSONL Redaction
+## Machine-Readable Output Redaction
 
-v1.8.5 sanitizes JSONL transcript output before serialization. Secret-like
-fragments in ordinary user/assistant message items, stream deltas, tool output,
-tool arguments, approval/escalation reasons, child-agent messages, and nested
-JSON function-call output are replaced with `[redacted]`.
+v1.8.6 sanitizes both `--json` and `--jsonl` agent execution output before
+serialization. Secret-like fragments in `AgentRunResult.final_response`,
+conversation events, memory recall queries, command/tool text, provider/error
+messages, state `data` maps, child-agent messages, and nested JSONL protocol
+payloads are replaced with `[redacted]` while ordinary non-secret text remains
+visible.
 
 This output boundary is independent from memory write policy. Secret-like
-memory candidates are still discarded instead of persisted; JSONL redaction
+memory candidates are still discarded instead of persisted; output redaction
 prevents the same sensitive text from being printed to machine-readable logs.
 
 ## CLI
@@ -151,7 +153,7 @@ Debug/details keep engineering fields such as id, scope, kind, status, action,
 revision, merged_count, merge_strategy, conflict_family, and recall diagnostic
 counts.
 
-## Non-Goals In v1.8.5
+## Non-Goals In v1.8.6
 
-v1.8.5 does not add SQLite, vector search, graph memory, relationship state
+v1.8.6 does not add SQLite, vector search, graph memory, relationship state
 machines, proactive triggers, or a TUI memory inspector page.

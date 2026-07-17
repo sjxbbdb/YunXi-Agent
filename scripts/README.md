@@ -2,7 +2,7 @@
 
 ## `install\install-yunxi.ps1`
 
-Builds and installs the YunXi Agent v1.0 terminal binaries:
+Builds and installs the current YunXi Agent v1.8.6 terminal binaries:
 
 ```powershell
 .\scripts\install\install-yunxi.ps1 -AddToPath

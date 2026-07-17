@@ -381,7 +381,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v1.8.5"));
+        assert!(rendered.contains("YunXi v1.8.6"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }

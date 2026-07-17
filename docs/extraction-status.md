@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.5 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.6 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,70 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.6 JSON Output Redaction
+
+YunXi Agent v1.8.6 fixes the v1.8.5 audit finding that one-shot `--json`
+agent execution output could still print secret-like prompt fragments through
+raw `AgentRunResult` serialization. The release treats both JSON and JSONL
+agent execution output as machine-readable redaction boundaries while keeping
+memory write policy unchanged.
+
+Constructed in this slice:
+
+- Workspace package version is promoted to `1.8.6`.
+- The CLI `--json` branch now redacts `AgentRunResult` before pretty JSON
+  serialization.
+- `AgentRunResult.final_response`, `AgentEvent::Started.prompt`,
+  `AgentEvent::Message.content`, memory recall query text, command/tool text,
+  provider/error/warning text, todo text, child-agent text, and state `data`
+  maps now share the CLI output redaction boundary.
+- JSONL redaction now also sanitizes `RuntimeEvent::ThreadState.data`, matching
+  the existing `TurnState.data` behavior.
+- CLI black-box tests cover fake secret prompt redaction in `--json`, memory
+  `action=discard`, and ordinary non-secret prompt preservation.
+- Unit tests cover structured `AgentRunResult` redaction and JSONL
+  `ThreadState.data` redaction.
+
+The development report is recorded in
+`docs/reports/2026-07-14-yunxi-agent-v1-8-6-json-output-redaction-development-report.md`.
+
+Unified verification was completed after construction, following the project
+hard constraint. Results for this slice:
+
+- `cargo fmt`: pass.
+- `cargo fmt --check`: pass.
+- `cargo test -p yunxi-agent-cli json --test cli_tests`: pass; 11 tests
+  passed, including JSON and JSONL secret-like prompt regressions.
+- `cargo test -p yunxi-agent-cli jsonl --test jsonl_tests`: pass; 9 tests
+  passed and 1 non-matching test was filtered out.
+- Targeted persona/storage/runtime/cli/tui package tests: pass; CLI integration
+  tests 40 passed, JSONL integration tests 10 passed, persona tests 25 passed,
+  runtime tests 40 passed, storage tests 25 passed, and TUI tests 52 passed.
+- `cargo test`: pass; all workspace unit, integration, and doc tests completed
+  with zero failures.
+- `cargo check --workspace`: pass.
+- `cargo build -p yunxi-agent-cli --release --bins`: pass.
+- Release version checks: pass; both `yunxi.exe` and
+  `yunxi-agent-cli.exe` returned `yunxi 1.8.6`.
+- Isolated `YUNXI_HOME` JSON and JSONL black-box privacy checks: pass; each
+  produced 23 structured events/lines, the fake secret was absent,
+  `[redacted]` and `[redacted-sensitive-query]` were present,
+  `memory_write action=discard` remained visible, the candidate was not
+  persisted, and ordinary non-secret text remained visible.
+- Owned-source secret scan excluding generated/upstream/build directories:
+  pass; no live key-shaped matches.
+- `git diff --check`: pass; only expected Windows LF-to-CRLF notices appeared.
+- `codegraph sync .`: pass; the index was already current.
+- `codegraph status .`: pass; the index is up to date with 1,164 files,
+  44,963 nodes, and 145,840 edges.
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`: pass; both PATH
+  commands returned `yunxi 1.8.6`.
+- `cargo clean`: pass; 33,298 files and approximately 5.1 GiB were removed,
+  and the workspace `target` directory no longer exists.
+- Pre-publish GitHub REST API check: remote `master` remained at the immutable
+  v1.8.5 commit and `v1.8.6` did not yet exist, so the verified release tree was
+  safe to publish as a new tag without moving earlier tags.
 
 ## YunXi Agent v1.8.5 JSONL Redaction
 

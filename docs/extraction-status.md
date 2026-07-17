@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.6 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.7 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,80 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.7 Persona Context Blocks
+
+YunXi Agent v1.8.7 upgrades the persona compiler from loose line-oriented text
+to stable, XML-like context blocks while leaving the runtime injection contract
+narrow: runtime continues to consume only `CompiledPersonaContext.content`.
+
+Constructed in this slice:
+
+- Workspace, CLI, TUI, built-in persona profile, tests, README, and installer
+  documentation are promoted to `1.8.7`.
+- `PersonaPromptCompiler` renders `persona`, `boundaries`, `human`,
+  `relationship`, and `memory_context` blocks in a stable order beneath a
+  versioned `yunxi_persona_context` wrapper.
+- Text and attribute values receive dependency-free XML-style escaping before
+  rendering, preventing persona, human, relationship, constraint, and memory
+  content from breaking structural tags.
+- Required boundary lines state that project instructions, the current user
+  request, sandbox/privacy/safety/tool policies, and tool execution boundaries
+  override persona and memory context.
+- Memory is explicitly marked as context rather than instruction, policy, or
+  authorization. The compiler independently filters non-active memories.
+- Budget handling keeps structural tags and safety notices intact, removes
+  optional content by priority with memory entries first, and emits stable
+  per-section truncation markers. A 1,000-character floor protects the required
+  structural/safety envelope; the default remains 1,800 characters.
+- Memory-only runtime injection now delegates to the persona compiler and uses
+  the same structured, escaped, active-only rendering boundary.
+- Regression tests cover version and block order, safety wording, escaping,
+  well-formed budget truncation, memory-only mode, and exclusion of pending,
+  rejected, and archived records.
+- External reference review was read-only: OpenPersona contributed the layered
+  identity/behavior/capability and monotonic-safety model; Letta contributed
+  labelled, bounded context-block rendering concepts. No JS/Python package or
+  external runtime dependency was introduced.
+
+The development report is recorded in
+`docs/reports/2026-07-17-144543-yunxi-agent-v1-8-7-persona-context-blocks-development-report.md`.
+
+Unified verification was completed after the full construction batch:
+
+- `cargo fmt`: pass.
+- `cargo fmt --check`: pass.
+- `cargo test -p yunxi-agent-persona`: pass; 28 integration tests passed,
+  including 4 Persona Context Blocks regressions.
+- `cargo test -p yunxi-agent-runtime`: pass; 40 integration tests passed.
+- `cargo test -p yunxi-agent-cli`: pass; both binaries passed 11 unit tests,
+  CLI integration passed 40 tests, and JSONL integration passed 10 tests.
+- `cargo test -p yunxi-agent-tui`: pass; 52 tests passed.
+- `cargo test`: pass; all workspace unit, integration, and doc tests completed
+  with zero failures.
+- `cargo check --workspace`: pass.
+- `cargo build -p yunxi-agent-cli --release --bins`: pass.
+- Release version checks: pass; both release binaries returned `yunxi 1.8.7`.
+- Isolated `YUNXI_HOME` JSON/JSONL smoke: pass; JSON produced 21 events and
+  JSONL produced 21 lines, with the respective camelCase/snake_case persona
+  context injection event present.
+- Owned-source secret scan excluding generated/upstream/build directories:
+  pass; no live key-shaped match files.
+- `git diff --check`: pass; only expected Windows LF-to-CRLF notices appeared.
+- `codegraph sync .`: pass; the index was already current.
+- `codegraph status .`: pass; the index is up to date with 1,164 files,
+  44,997 nodes, and 145,977 edges.
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`: binaries copied
+  successfully to the user-local install directory. Direct installed-binary
+  checks both returned `yunxi 1.8.7`; the user PATH entry was then normalized,
+  written once, and verified.
+- `cargo clean`: pass; 17,894 files and approximately 2.9 GiB
+  (3,156,749,840 measured bytes) were removed, and the workspace `target`
+  directory no longer exists.
+
+The source, documentation, verification, installation, and cleanup portions
+of the v1.8.7 slice are complete. Commit, GitHub REST API publication, and the
+new immutable annotated `v1.8.7` tag are recorded after release publication.
 
 ## YunXi Agent v1.8.6 JSON Output Redaction
 

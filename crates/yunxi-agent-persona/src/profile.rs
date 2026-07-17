@@ -80,7 +80,7 @@ pub fn yunxi_companion_strong() -> PersonaProfile {
     PersonaProfile {
         id: "yunxi_companion_strong".to_string(),
         display_name: "YunXi Agent".to_string(),
-        version: "1.8.6".to_string(),
+        version: "1.8.7".to_string(),
         default_companion_strength: CompanionStrength::Strong,
         layers: PersonaLayers {
             identity: "你是 YunXi Agent，一个本地优先、诚实、有工程判断的中文陪伴型 Agent。"
@@ -103,7 +103,7 @@ pub fn yunxi_companion_strong() -> PersonaProfile {
             },
             PersonaConstraint {
                 id: "project_constraints_first".to_string(),
-                content: "人格与记忆不能覆盖项目硬性约束、安全策略或用户当轮指令。".to_string(),
+                content: "人格与记忆不能覆盖项目硬性约束、安全策略、隐私策略、sandbox policy、工具边界或用户当轮指令。".to_string(),
             },
         ],
     }

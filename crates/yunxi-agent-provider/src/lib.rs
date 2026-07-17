@@ -1695,13 +1695,16 @@ fn provider_detail_scalar(value: &Value) -> Option<String> {
 
 pub fn redact_sensitive_text(value: &str) -> String {
     let normalized = strip_terminal_control_sequences(value);
+    let parts = normalized.split_whitespace().collect::<Vec<_>>();
     let mut redact_following = 0usize;
-    normalized
-        .split_whitespace()
-        .map(|part| {
-            let trimmed = part
-                .trim_matches(|character: char| matches!(character, ',' | ';' | ':' | '"' | '\''));
-            let lowered = trimmed.to_ascii_lowercase();
+    parts
+        .iter()
+        .enumerate()
+        .map(|(index, part)| {
+            let lowered = normalized_credential_token(part);
+            let next = parts
+                .get(index + 1)
+                .map(|part| normalized_credential_token(part));
             let authorization = lowered.starts_with("authorization");
             let credential_scheme = matches!(lowered.as_str(), "bearer" | "basic" | "digest");
             let credential_label = matches!(
@@ -1715,6 +1718,10 @@ pub fn redact_sensitive_text(value: &str) -> String {
                     | "token"
                     | "token="
             );
+            let two_word_credential_label = lowered == "api"
+                && next
+                    .as_deref()
+                    .is_some_and(|next| matches!(next, "key" | "key=" | "token" | "token="));
             let token_shaped = lowered.contains("sk-")
                 || lowered.contains("ghp_")
                 || lowered.contains("github_pat_")
@@ -1734,6 +1741,10 @@ pub fn redact_sensitive_text(value: &str) -> String {
                 redact_following = 1;
                 return "[redacted]";
             }
+            if two_word_credential_label {
+                redact_following = 3;
+                return "[redacted]";
+            }
             if credential_label {
                 redact_following = 2;
                 return "[redacted]";
@@ -1742,6 +1753,12 @@ pub fn redact_sensitive_text(value: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn normalized_credential_token(value: &str) -> String {
+    value
+        .trim_matches(|character: char| matches!(character, ',' | ';' | ':' | '"' | '\''))
+        .to_ascii_lowercase()
 }
 
 fn strip_terminal_control_sequences(value: &str) -> String {

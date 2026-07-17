@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.8.8 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.8.9 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -18,11 +18,11 @@ request.
 
 ## Persona Context Blocks
 
-v1.8.8 compiles the built-in persona into one bounded, XML-like context string
+v1.8.9 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="1.8.8" profile_id="yunxi_companion_strong">
+<yunxi_persona_context version="1.8.9" profile_id="yunxi_companion_strong">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>
@@ -63,7 +63,7 @@ Memory is append-only JSONL:
 <workspace>\.yunxi\memory\pending.jsonl
 ```
 
-v1.8.8 writes `schema_version = 3`. Existing v2 audit fields remain stable:
+v1.8.9 continues to write `schema_version = 3`. Existing v2 audit fields remain stable:
 
 - `dedup_key`: `scope + kind + normalized_content`.
 - `revision`: latest revision number for the durable memory id.
@@ -125,10 +125,11 @@ yunxi --memory-extraction provider "prompt"
 
 - `auto` is the default. Live provider mode may run one additional structured
   extraction call after the main response. Invalid JSON, provider errors, or
-  timeouts warn and fall back to local rules.
+  timeouts warn while local rule candidates continue through the pipeline.
 - `rule-only` never calls the provider extractor.
-- `provider` requires both provider and model. If unavailable, YunXi emits a
-  memory warning and does not silently fall back.
+- `provider` requires both provider and model for the provider stage. If it is
+  unavailable, YunXi emits a memory warning; the fail-soft rule stage remains
+  available so a provider outage cannot erase otherwise auditable candidates.
 
 Provider and rule candidates share the same batch dedup path. Chinese language
 preferences such as `以后请用中文回答`, `默认用中文交流`, and `用中文回复我` normalize to
@@ -149,6 +150,30 @@ later rule-extracted generic "use Chinese" candidate.
 Secret-like content is never downgraded by dedup. API keys, bearer tokens,
 authorization headers, passwords, GitHub tokens, and `sk-` markers remain
 discarded by policy.
+
+## L0-L3 Memory Pipeline
+
+v1.8.9 routes every enabled-memory turn through one Rust-native pipeline:
+
+- L0 Raw Turn creates a bounded, secret-aware evidence summary. It never
+  becomes an active durable memory and is never treated as an instruction.
+- L1 Structured Fact covers preferences, personal facts, goals, project
+  context, and corrections from both rules and Provider JSON.
+- L2 Relationship Event covers relationship notes, emotional state, and
+  events. These candidates require confirmation by default.
+- L3 Profile Summary is a promotion of an already deduplicated fact, not a
+  second copy. Promotion requires explicit stability, low sensitivity,
+  confidence of at least 0.8, adequate importance, and clear source lineage.
+
+The pipeline returns all four stage diagnostics and every candidate decision,
+including pending, rejected, discarded, disabled, and merged outcomes. Secret-
+like candidate content and L0 evidence are replaced by fixed redaction notices;
+raw credentials are neither persisted nor printed in memory events. Provider
+parse failure is recorded as a warning and does not block rule candidates.
+
+Rule and Provider candidates share one cross-layer dedup pass before L3
+promotion. Merge preserves both source attributions and L0/L1/L3 evidence,
+while append-only storage retains its revision and merged-count behavior.
 
 ## Recall Diagnostics
 
@@ -171,7 +196,7 @@ small always-on budget after dedup.
 
 ## Machine-Readable Output Redaction
 
-v1.8.8 continues to sanitize both `--json` and `--jsonl` agent execution output before
+v1.8.9 continues to sanitize both `--json` and `--jsonl` agent execution output before
 serialization. Secret-like fragments in `AgentRunResult.final_response`,
 conversation events, memory recall queries, command/tool text, provider/error
 messages, state `data` maps, child-agent messages, and nested JSONL protocol
@@ -216,9 +241,8 @@ Debug/details keep engineering fields such as id, scope, kind, status, action,
 revision, merged_count, merge_strategy, conflict_family, and recall diagnostic
 counts.
 
-## Non-Goals In v1.8.8
+## Non-Goals In v1.8.9
 
-v1.8.8 does not add a full L0-L3 pipeline, Boot Context/Recall Router,
-relationship graph, proactive loop, SQLite, vector search, external memory
-runtime, cloud/marketplace/SDK surfaces, evaluation harness, or a TUI memory
-inspector page.
+v1.8.9 does not add Boot Context/Recall Router, a relationship graph, proactive
+loop, SQLite, vector search, external memory runtime, cloud/marketplace/SDK
+surfaces, an evaluation harness, or a TUI memory inspector page.

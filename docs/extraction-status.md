@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.8 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.9 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,64 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.9 L0-L3 Memory Pipeline
+
+YunXi Agent v1.8.9 moves rule and Provider extraction into a single Rust-native
+pipeline while preserving Memory Schema v3 and the v1.8.7 Persona Context
+Blocks contract.
+
+Constructed in this slice:
+
+- L0 records a bounded, secret-aware raw-turn evidence summary and never emits
+  a durable instruction candidate.
+- L1 emits structured preference, personal fact, goal, project context, and
+  correction candidates.
+- L2 emits relationship, emotional, and event candidates as `pending` by
+  default.
+- L3 promotes only explicit, stable, low-risk, high-confidence, clearly sourced
+  facts after cross-source dedup; it does not create a duplicate durable fact.
+- Rule and Provider candidates share policy, source-lineage merge, dedup, and
+  append-only storage. Invalid Provider JSON is fail-soft and leaves rule
+  candidates intact.
+- Sensitive content is downgraded to confirmation; secret-like content and raw
+  evidence are redacted and discarded before durable persistence.
+- Runtime memory events retain summary-only metadata and do not print candidate
+  memory content.
+- No database, vector/graph service, Python/JavaScript runtime, external memory
+  dependency, Boot Context/Recall Router, proactive loop, TUI inspector, cloud,
+  marketplace, or SDK surface was added.
+
+The development report is recorded in
+`docs/reports/2026-07-17-165118-yunxi-agent-v1-8-9-l0-l3-memory-pipeline-development-report.md`.
+
+Unified verification completed after the construction batch:
+
+- `cargo fmt --check`, `cargo test`, and `cargo check --workspace`: pass.
+- `cargo test -p yunxi-agent-persona`: pass; 50 integration tests, including
+  all 12 required L0-L3 pipeline tests, 10 Schema v3 tests, and 4 Persona
+  Context Blocks tests.
+- `cargo test -p yunxi-agent-storage`: pass; 5 unit and 21 integration tests.
+- `cargo test -p yunxi-agent-runtime`: pass; 40 integration tests, including
+  Provider timeout/invalid/missing configuration fail-soft coverage.
+- `cargo test -p yunxi-agent-cli`: pass; 22 binary unit tests, 40 CLI
+  integration tests, and 10 JSONL integration tests.
+- Provider redaction tests: pass; the output boundary now also removes values
+  following the two-token `api key` label.
+- `cargo build -p yunxi-agent-cli --release --bins`: pass; both release
+  binaries return `yunxi 1.8.9`.
+- Isolated release black-box: pass for L3 `auto_saved`, L2 pending, secret
+  discard plus JSONL redaction, pending/approve/reject/archive flow, and
+  schema-v3-only durable records.
+- Owned-source key-shape scan and `git diff --check`: pass.
+- `codegraph sync .` and `codegraph status .`: pass; the index is current with
+  1,167 files, 45,106 nodes, and 146,403 edges.
+
+Publication uses the GitHub Git Data REST API with a non-force `master` update
+and a new annotated `v1.8.9` tag. Earlier tags are not deleted, moved, or
+rewritten. Exact immutable Git object ids and installation/cleanup evidence are
+recorded in the external timestamped development log because a commit cannot
+contain its own content-derived object id.
 
 ## YunXi Agent v1.8.8 Memory Schema v3
 

@@ -4,6 +4,7 @@ pub mod extractor;
 pub mod memory;
 pub mod merge;
 pub mod migration;
+pub mod pipeline;
 pub mod policy;
 pub mod profile;
 pub mod provider_extractor;
@@ -28,7 +29,14 @@ pub use merge::{
     merge_equivalent_memory_records, merge_memory_candidates,
 };
 pub use migration::{MemoryMigrationResult, migrate_memory_record_value};
-pub use policy::{MemoryPrivacyClassifier, MemoryWritePolicy, MemoryWritePolicyEngine};
+pub use pipeline::{
+    MemoryPipeline, MemoryPipelineDiagnostic, MemoryPipelineInput, MemoryPipelineOutput,
+    MemoryPipelineStageResult,
+};
+pub use policy::{
+    MemoryPipelineLayer, MemoryPolicyContext, MemoryPrivacyClassifier, MemoryWritePolicy,
+    MemoryWritePolicyEngine,
+};
 pub use profile::{
     CompanionStrength, HumanProfile, PersonaConstraint, PersonaLayers, PersonaProfile,
     RelationshipFamiliarity, RelationshipState, yunxi_companion_strong,

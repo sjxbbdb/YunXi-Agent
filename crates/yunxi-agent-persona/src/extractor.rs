@@ -148,6 +148,31 @@ fn detect_prompt_memories(prompt: &str) -> Vec<(MemoryKind, String, String)> {
             "rule:self-disclosure".to_string(),
         ));
     }
+    if trimmed.contains("关系") || lower.contains("relationship") {
+        out.push((
+            MemoryKind::RelationshipNote,
+            format!("关系事件候选：{}", compact(trimmed, 160)),
+            "rule:relationship-note".to_string(),
+        ));
+    }
+    if trimmed.contains("情绪")
+        || trimmed.contains("感到")
+        || lower.contains("i feel")
+        || lower.contains("emotion")
+    {
+        out.push((
+            MemoryKind::EmotionalState,
+            format!("情绪状态候选：{}", compact(trimmed, 160)),
+            "rule:emotional-state".to_string(),
+        ));
+    }
+    if trimmed.contains("目标") || lower.contains("my goal") {
+        out.push((
+            MemoryKind::Goal,
+            format!("目标候选：{}", compact(trimmed, 160)),
+            "rule:goal".to_string(),
+        ));
+    }
 
     out
 }

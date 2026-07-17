@@ -689,6 +689,18 @@ fn sensitive_text_redaction_removes_authorization_values_and_terminal_controls()
     assert!(rendered.contains("safe-tail"));
 }
 
+#[test]
+fn sensitive_text_redaction_removes_two_word_api_key_values() {
+    let fake_value = ["fake", "credential", "value"].join("-");
+    let rendered = redact_sensitive_text(&format!(
+        "Remember my api key is {fake_value} and keep this safe-tail"
+    ));
+
+    assert!(!rendered.contains(&fake_value));
+    assert!(!rendered.to_ascii_lowercase().contains("api key"));
+    assert!(rendered.contains("safe-tail"));
+}
+
 #[tokio::test]
 async fn fixture_transport_returns_configured_response() {
     let transport = FixtureTransport::new(200, r#"{"ok":true}"#);

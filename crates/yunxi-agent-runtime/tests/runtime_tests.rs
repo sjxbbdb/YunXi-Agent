@@ -2202,7 +2202,8 @@ async fn rule_only_memory_extraction_does_not_call_provider_extractor() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn provider_memory_extraction_mode_without_provider_or_model_warns_without_rule_fallback() {
+async fn provider_memory_extraction_mode_without_provider_or_model_warns_and_keeps_rule_candidate()
+{
     let home = TempDir::new().expect("yunxi home");
     let workspace = TempDir::new().expect("workspace");
     let backend = YunXiRuntimeBackend::with_parts(
@@ -2228,12 +2229,11 @@ async fn provider_memory_extraction_mode_without_provider_or_model_warns_without
         AgentEvent::MemoryWarning { warning, .. }
             if warning.contains("provider and model are required")
     )));
-    assert!(
-        !result
-            .events
-            .iter()
-            .any(|event| matches!(event, AgentEvent::MemoryWrite { .. }))
-    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryWrite { action, kind, .. }
+            if action == "auto_saved" && kind == "preference"
+    )));
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -26,10 +26,10 @@ use yunxi_agent_multi_agent::{
     InMemoryAgentRegistry, MultiAgentCommand, MultiAgentCommandResult,
 };
 use yunxi_agent_persona::{
-    CompiledPersonaContext, HumanProfile, MemoryKind, MemoryRecallEngine, MemoryRecallRequest,
-    MemoryRecallResult, MemoryRuleExtractor, MemorySensitivity, MemoryStatus, MemoryWritePolicy,
-    PersonaPromptCompiler, PersonaSettings, ProviderMemoryExtractor, RelationshipState,
-    SCHEMA_VERSION, deduplicate_candidates, yunxi_companion_strong,
+    CompiledPersonaContext, HumanProfile, MemoryKind, MemoryPipeline, MemoryPipelineInput,
+    MemoryRecallEngine, MemoryRecallRequest, MemoryRecallResult, MemorySensitivity, MemoryStatus,
+    MemoryWritePolicy, PersonaPromptCompiler, PersonaSettings, RelationshipState, SCHEMA_VERSION,
+    yunxi_companion_strong,
 };
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
@@ -1835,31 +1835,20 @@ async fn emit_memory_extraction_events(
     }
 
     let store = FilePersonaMemoryStore::for_workspace(&config.cwd);
-    let extractor = MemoryRuleExtractor::new();
     let extraction_mode = config.memory_extraction_mode;
-    let mut candidates = if provider_memory_extraction_enabled
+    let provider_response = if provider_memory_extraction_enabled
         && should_try_provider_memory_extraction(config)
     {
-        match provider_memory_candidates(
-            provider,
-            config,
-            prompt,
-            final_response,
-            session_id,
-            &persona.workspace_fingerprint,
-            persona.settings.memory_enabled,
-        )
-        .await
-        {
-            Ok(candidates) if !candidates.is_empty() => candidates,
-            Ok(_) => Vec::new(),
+        match provider_memory_response(provider, config, prompt, final_response).await {
+            Ok(response) if !response.trim().is_empty() => Some(response),
+            Ok(_) => None,
             Err(error) => {
                 sink.emit(AgentEvent::MemoryWarning {
                     schema_version: SCHEMA_VERSION,
                     warning: format!("provider memory extraction skipped: {error}"),
                 })
                 .await?;
-                Vec::new()
+                None
             }
         }
     } else {
@@ -1881,24 +1870,25 @@ async fn emit_memory_extraction_events(
             })
             .await?;
         }
-        Vec::new()
+        None
     };
-    if extraction_mode != MemoryExtractionMode::Provider {
-        let rule_candidates = extractor.extract(
-            prompt,
-            Some(final_response),
-            Some(&session_id.0),
-            Some(&persona.workspace_fingerprint),
-            persona.settings.memory_enabled,
-        );
-        if candidates.is_empty() {
-            candidates = rule_candidates;
-        } else if !rule_candidates.is_empty() {
-            candidates.extend(rule_candidates);
-            candidates = deduplicate_candidates(candidates);
-        }
+
+    let pipeline = MemoryPipeline::new().run(MemoryPipelineInput {
+        prompt: prompt.to_string(),
+        assistant_response: Some(final_response.to_string()),
+        provider_response,
+        source_session_id: Some(session_id.0.clone()),
+        workspace_fingerprint: Some(persona.workspace_fingerprint.clone()),
+        memory_enabled: persona.settings.memory_enabled,
+    });
+    for warning in pipeline.warnings {
+        sink.emit(AgentEvent::MemoryWarning {
+            schema_version: SCHEMA_VERSION,
+            warning: format!("memory pipeline continued after provider failure: {warning}"),
+        })
+        .await?;
     }
-    for candidate in candidates {
+    for candidate in pipeline.candidates {
         let record = candidate.proposed_record;
         sink.emit(AgentEvent::MemoryCandidate {
             schema_version: SCHEMA_VERSION,
@@ -1964,21 +1954,18 @@ async fn emit_memory_extraction_events(
     Ok(())
 }
 
-async fn provider_memory_candidates(
+async fn provider_memory_response(
     provider: &dyn AgentProvider,
     config: &AgentConfig,
     prompt: &str,
     final_response: &str,
-    session_id: &SessionId,
-    workspace_fingerprint: &str,
-    memory_enabled: bool,
-) -> AgentResult<Vec<yunxi_agent_persona::MemoryCandidate>> {
+) -> AgentResult<String> {
     let request = ProviderRequest::with_messages(
         config.clone(),
         AgentInput::text("YunXi memory extraction"),
         vec![
             ProviderMessage::system(
-                "You are YunXi Agent's structured memory extraction subsystem. Return only JSON with a top-level candidates array. Each candidate must include kind, content, optional scope_hint, optional sensitivity_hint, optional confidence, optional importance, and optional reason. Do not include secrets; if content looks like a credential, still return it only as a candidate so YunXi policy can discard it.",
+                "You are YunXi Agent's L1-L3 structured memory extraction subsystem. Return only JSON with a top-level candidates array. Each candidate must include kind, content, optional scope_hint, optional sensitivity_hint, optional confidence, optional importance, and optional reason. L2 relationship/emotional/event candidates are never auto-saved. Only stable, low-risk, clearly sourced facts may contribute to L3 profiles. Do not include secrets; if content looks like a credential, return it only as a candidate so YunXi policy can redact and discard it.",
             ),
             ProviderMessage::user(format!(
                 "User prompt:\n{prompt}\n\nAssistant final response:\n{final_response}\n\nReturn JSON only."
@@ -1990,19 +1977,10 @@ async fn provider_memory_candidates(
         .map_err(|_| AgentError::Execution {
             message: "provider memory extraction timed out".to_string(),
         })??;
-    let content = response
+    Ok(response
         .message
         .map(|message| message.content)
-        .unwrap_or_default();
-    ProviderMemoryExtractor::new()
-        .extract_from_response_checked(
-            &content,
-            prompt,
-            Some(&session_id.0),
-            Some(workspace_fingerprint),
-            memory_enabled,
-        )
-        .map_err(|message| AgentError::Execution { message })
+        .unwrap_or_default())
 }
 
 fn should_try_provider_memory_extraction(config: &AgentConfig) -> bool {

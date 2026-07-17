@@ -10,6 +10,28 @@ pub enum MemoryWritePolicy {
     Disabled,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryPipelineLayer {
+    L0RawTurn,
+    L1StructuredFact,
+    L2RelationshipEvent,
+    L3ProfileSummary,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MemoryPolicyContext<'a> {
+    pub kind: MemoryKind,
+    pub sensitivity: MemorySensitivity,
+    pub layer: MemoryPipelineLayer,
+    pub confidence: f32,
+    pub importance: f32,
+    pub content: &'a str,
+    pub source_is_clear: bool,
+    pub explicitly_remembered: bool,
+    pub memory_enabled: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct MemoryPrivacyClassifier;
 
@@ -72,6 +94,40 @@ impl MemoryWritePolicyEngine {
 
     pub fn classify_content(&self, content: &str) -> MemorySensitivity {
         self.classifier.classify(content)
+    }
+
+    pub fn policy_for_context(&self, context: MemoryPolicyContext<'_>) -> MemoryWritePolicy {
+        let baseline = self.policy_for(
+            context.kind,
+            context.sensitivity,
+            context.content,
+            context.memory_enabled,
+        );
+        if matches!(
+            baseline,
+            MemoryWritePolicy::Disabled | MemoryWritePolicy::Discard
+        ) {
+            return baseline;
+        }
+        if context.sensitivity != MemorySensitivity::Low {
+            return MemoryWritePolicy::RequireConfirmation;
+        }
+        match context.layer {
+            MemoryPipelineLayer::L0RawTurn => MemoryWritePolicy::Discard,
+            MemoryPipelineLayer::L2RelationshipEvent => MemoryWritePolicy::RequireConfirmation,
+            MemoryPipelineLayer::L3ProfileSummary => {
+                if context.source_is_clear
+                    && context.explicitly_remembered
+                    && context.confidence >= 0.8
+                    && context.importance >= 0.5
+                {
+                    MemoryWritePolicy::Auto
+                } else {
+                    MemoryWritePolicy::RequireConfirmation
+                }
+            }
+            MemoryPipelineLayer::L1StructuredFact => baseline,
+        }
     }
 }
 

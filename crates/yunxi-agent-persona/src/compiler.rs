@@ -1,7 +1,7 @@
 use crate::memory::{MemoryKind, MemoryRecord, now_millis};
 use crate::profile::{HumanProfile, PersonaProfile, RelationshipFamiliarity, RelationshipState};
 
-const CONTEXT_BLOCK_VERSION: &str = "1.8.8";
+const CONTEXT_BLOCK_VERSION: &str = "1.8.9";
 const MIN_SAFE_CONTEXT_BUDGET_CHARS: usize = 1000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -124,7 +124,7 @@ impl PersonaPromptCompiler {
         relationship: &RelationshipState,
         memories: &[MemoryRecord],
     ) -> CompiledPersonaContext {
-        // v1.8.8 keeps durable human/relationship state in transparent memory
+        // v1.8.9 keeps durable human/relationship state in transparent memory
         // records; persisted HumanProfile/RelationshipState loading remains
         // intentionally deferred.
         let active_memories = active_memories(memories);

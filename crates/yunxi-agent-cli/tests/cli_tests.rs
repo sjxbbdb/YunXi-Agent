@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.8.9"));
+        .stdout(predicate::str::contains("yunxi 1.9.0"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.8.9"));
+        .stdout(predicate::str::contains("yunxi 1.9.0"));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.9 interactive CLI",
+            "YunXi Agent v1.9.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.9 interactive CLI",
+            "YunXi Agent v1.9.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.8.9 interactive CLI",
+            "YunXi Agent v1.9.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -762,8 +762,11 @@ fn cli_json_redacts_secret_prompt_while_memory_discards_candidate() {
 
     let recall = events
         .iter()
-        .find(|event| event["type"].as_str() == Some("memoryRecall"))
-        .expect("memory recall event");
+        .find(|event| {
+            event["type"].as_str() == Some("memoryRecall")
+                && event["scope"].as_str() == Some("dynamic")
+        })
+        .expect("dynamic memory recall event");
     assert!(!recall["query"].to_string().contains(&secret));
     assert!(
         recall["query"]
@@ -890,16 +893,26 @@ fn cli_jsonl_memory_recall_includes_diagnostics_without_memory_content() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    let recall = stdout
+    let recalls = stdout
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).expect("jsonl line"))
-        .find(|value| value["type"].as_str() == Some("memory_recall"))
-        .expect("memory_recall event");
+        .filter(|value| value["type"].as_str() == Some("memory_recall"))
+        .collect::<Vec<_>>();
+    let boot = recalls
+        .iter()
+        .find(|value| value["scope"].as_str() == Some("boot"))
+        .expect("boot memory_recall event");
+    let dynamic = recalls
+        .iter()
+        .find(|value| value["scope"].as_str() == Some("dynamic"))
+        .expect("dynamic memory_recall event");
 
-    assert_eq!(recall["always_on_count"].as_u64(), Some(1));
-    assert!(recall.get("dropped_unrelated").is_some());
-    assert!(recall.get("dropped_by_budget").is_some());
-    assert!(recall.get("dropped_duplicates").is_some());
+    assert_eq!(boot["always_on_count"].as_u64(), Some(1));
+    for recall in [boot, dynamic] {
+        assert!(recall.get("dropped_unrelated").is_some());
+        assert!(recall.get("dropped_by_budget").is_some());
+        assert!(recall.get("dropped_duplicates").is_some());
+    }
     assert!(!stdout.contains("用户偏好使用中文回答"));
 }
 

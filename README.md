@@ -1,6 +1,6 @@
-# YunXi Agent v1.8.9
+# YunXi Agent v1.9.0
 
-YunXi Agent v1.8.9 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.9.0 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -20,7 +20,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.8.9 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.9.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -110,6 +110,10 @@ with `[offline]` and `/cost` reports that no model call was made.
   `YUNXI_MEMORY_ENABLED=1` enables them
 - Emits persona/memory summary events without printing full memory content into
   the execution event stream
+- Routes stable global, relationship, agent, and matching-workspace memory into
+  a bounded first-turn Boot Context while keeping prompt/recent-turn relevant
+  dynamic recall on every turn, with privacy-safe route explanations and
+  cross-route dedup
 
 ## Build
 
@@ -126,7 +130,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.8.9 CLI into a user-local bin directory:
+Build and install the v1.9.0 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -152,7 +156,7 @@ Run `yunxi` without a prompt to enter interactive mode:
 yunxi
 ```
 
-When stdin and stdout are both attached to a terminal, YunXi uses the v1.8.9
+When stdin and stdout are both attached to a terminal, YunXi uses the v1.9.0
 TUI host, wrapped-row transcript viewport, draggable scrollbar, composer, and
 approval overlay. Use `--no-tui` to force the stable plain REPL:
 
@@ -191,10 +195,13 @@ returning structured errors for script safety.
 
 ## Persona And Memory
 
-YunXi v1.8.9 renders the local persona and transparent memory foundation as
-stable `persona`, `boundaries`, `human`, `relationship`, and `memory_context`
-blocks. Persona prompt injection is enabled by default. Long-term memory writes
-are disabled by default and become active only after `yunxi memory on` or
+YunXi v1.9.0 renders the local persona and transparent memory foundation as
+stable `persona`, `boundaries`, `human`, `relationship`,
+`boot_memory_context`, and `dynamic_memory_context` blocks. Boot memory is
+selected only for a new session's first turn; prompt-relevant dynamic memory is
+selected every turn. Both memory blocks are context, not instructions. Persona
+prompt injection is enabled by default. Long-term memory writes are disabled by
+default and become active only after `yunxi memory on` or
 `YUNXI_MEMORY_ENABLED=1`.
 
 ```powershell
@@ -219,7 +226,7 @@ evidence, source-lineage, and invalidation metadata while migrating v1/v2
 records on read without rewriting their files. See `docs/persona-memory.md` for
 schema, privacy, expiry/invalidation, and pending-review details.
 
-`--jsonl` is reserved for agent execution streams in v1.8.9. Metadata
+`--jsonl` is reserved for agent execution streams in v1.9.0. Metadata
 subcommands such as `sessions list`, `parity map`, `persona status`, and
 `memory status` reject `--jsonl`; use `--json` for their machine-readable
 output.
@@ -429,6 +436,14 @@ through one rule/provider policy and dedup path; relationship and sensitive
 records remain pending; and only stable, low-risk, clearly sourced facts can be
 promoted to profile summaries. Provider extraction failure is fail-soft and
 does not suppress rule candidates.
+
+v1.9.0 adds immutable tag `v1.9.0` without moving earlier tags. Stable global
+preferences, relationship/agent baselines, and matching-workspace facts are
+selected into a bounded first-turn Boot Context; prompt-relevant memories remain
+available through an independent per-turn dynamic route. Route explanations
+contain ids, metadata, scores, and fixed reasons but never raw memory content.
+Boot and dynamic blocks remain bounded context and cannot override project,
+user, sandbox, privacy, safety, or tool instructions.
 
 ## Backend Capability Matrix
 

@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.9 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.9.0 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,61 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.9.0 Boot Context And Recall Router
+
+YunXi Agent v1.9.0 adds a Rust-native two-route recall boundary while
+preserving the v1.8.7 Persona Context Blocks, v1.8.8 Memory Schema v3, and
+v1.8.9 L0-L3 Memory Pipeline contracts.
+
+Constructed in this slice:
+
+- `MemoryRecallRouter` selects stable, privacy-allowed global, relationship,
+  agent, and matching-workspace records into a first-turn Boot Context with an
+  independent 1,000-character/six-record default budget.
+- Prompt/recent-turn-relevant Dynamic Recall remains active on every turn with
+  an independent 1,200-character/eight-record default budget, a bounded
+  recent-context query input, and no always-on preference shortcut.
+- Dedup runs before routing; a dedup key selected for Boot Context is excluded
+  from Dynamic Recall.
+- `MemoryRecallExplanation` exposes route, score, selected state, fixed reason,
+  safe source category, layer, scope, and kind without raw memory content.
+- New sessions compile stable `boot_memory_context` and
+  `dynamic_memory_context` blocks. Resume turns skip Boot Context. Both blocks
+  retain context-not-instruction and higher-priority policy notices.
+- Runtime emits separate `memory_recall` summaries for `scope=boot` and
+  `scope=dynamic`; event queries remain secret-redacted and memory content is
+  not emitted.
+- No relationship graph, proactive loop, database/vector/graph service,
+  external memory runtime, cloud, marketplace, SDK, evaluation harness, or TUI
+  memory inspector was added.
+
+Unified verification completed after the construction batch:
+
+- `cargo fmt --check`, `cargo test`, and `cargo check --workspace`: pass.
+- Persona: 61 integration tests pass, including all 12 required named v1.9.0
+  coverage points across router, runtime, compiler, Schema v3, and L0-L3
+  regression suites.
+- Storage: 5 unit and 21 integration tests pass. Runtime: 1 unit and 41
+  integration tests pass. CLI: 22 binary unit, 40 CLI integration, and 10
+  JSONL tests pass.
+- Release build passes; both binaries return `yunxi 1.9.0`.
+- Isolated black-box passes: new-session Boot selects two records while Dynamic
+  is deduplicated to zero; resume skips Boot and dynamically recalls one
+  prompt-relevant record.
+- Explanation JSON serialization, raw-sensitive-content exclusion, independent
+  budgets, Persona Context Blocks, Schema v3, L0-L3 regression, owned-source
+  key-shape scan, and `git diff --check`: pass.
+- `codegraph sync .` and `codegraph status .`: pass; the current index contains
+  1,169 files, 45,164 nodes, and 146,675 edges.
+
+After explicit user confirmation, both binaries were installed under the
+user-local YunXi bin directory and returned `yunxi 1.9.0`; the directory was
+already present in user PATH, so no duplicate PATH entry was written. The
+isolated black-box fixture was removed. After the final recent-turn audit and
+release rebuild, the final `cargo clean` removed 9,195 files (about 2.7 GiB).
+Publication will use the GitHub Git Data REST API, create a new annotated
+`v1.9.0` tag, and preserve every earlier tag.
 
 ## YunXi Agent v1.8.9 L0-L3 Memory Pipeline
 

@@ -77,7 +77,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.8.9 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.9.0 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -1551,16 +1551,16 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.9; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.9.0; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.9; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.9.0; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.9; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v1.9.0; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.8.9; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v1.9.0; use --json for memory management commands"
         ),
     }
 }

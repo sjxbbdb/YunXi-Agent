@@ -27,9 +27,9 @@ use yunxi_agent_multi_agent::{
 };
 use yunxi_agent_persona::{
     CompiledPersonaContext, HumanProfile, MemoryKind, MemoryPipeline, MemoryPipelineInput,
-    MemoryRecallEngine, MemoryRecallRequest, MemoryRecallResult, MemorySensitivity, MemoryStatus,
-    MemoryWritePolicy, PersonaPromptCompiler, PersonaSettings, RelationshipState, SCHEMA_VERSION,
-    yunxi_companion_strong,
+    MemoryRecallExplanation, MemoryRecallResult, MemoryRecallRouter, MemoryRecallRouterRequest,
+    MemorySensitivity, MemoryStatus, MemoryWritePolicy, PersonaPromptCompiler, PersonaSettings,
+    RelationshipState, SCHEMA_VERSION, yunxi_companion_strong,
 };
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
@@ -43,8 +43,8 @@ use yunxi_agent_provider::{
 use yunxi_agent_sandbox::{ApprovalRequirement, SandboxRequirement};
 use yunxi_agent_storage::{
     FilePersonaMemoryStore, FileSessionStore, HistoryItemKind, HistoryLoadOptions,
-    InMemorySessionStore, MemoryPersistOutcome, SessionHistory, SessionId, SessionRecord,
-    SessionStore,
+    InMemorySessionStore, MemoryPersistOutcome, PersonaMemoryScope, SessionHistory, SessionId,
+    SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
     ApprovalDecision, CompositeToolRuntime, SandboxPolicy, ToolDispatch, ToolDispatchTrace,
@@ -1157,7 +1157,9 @@ struct PersonaTurnContext {
     display_name: String,
     workspace_fingerprint: String,
     compiled_context: Option<CompiledPersonaContext>,
-    memory_recall: MemoryRecallResult,
+    boot_context: MemoryRecallResult,
+    dynamic_recall: MemoryRecallResult,
+    recall_explanations: Vec<MemoryRecallExplanation>,
     memory_warnings: Vec<String>,
 }
 
@@ -1626,7 +1628,9 @@ impl YunXiRuntimeBackend {
             messages.push(ProviderMessage::system(instructions));
         }
 
-        let persona = build_persona_turn_context(config, prompt);
+        let restored_history = self.restore_parent_history(config).await?;
+        let recall_query = memory_recall_query(prompt, restored_history.as_ref());
+        let persona = build_persona_turn_context(config, &recall_query, restored_history.is_none());
         if let Some(compiled_context) = &persona.compiled_context {
             messages.push(ProviderMessage::system(compiled_context.content.clone()));
         }
@@ -1640,7 +1644,6 @@ impl YunXiRuntimeBackend {
             messages.push(ProviderMessage::system(file_context));
         }
 
-        let restored_history = self.restore_parent_history(config).await?;
         let history_fragments = restored_history
             .as_ref()
             .map(|history| history.messages.len())
@@ -1718,34 +1721,53 @@ impl YunXiRuntimeBackend {
     }
 }
 
-fn build_persona_turn_context(config: &AgentConfig, prompt: &str) -> PersonaTurnContext {
+fn build_persona_turn_context(
+    config: &AgentConfig,
+    recall_query: &str,
+    include_boot_context: bool,
+) -> PersonaTurnContext {
     let settings = PersonaSettings::load();
     let profile = yunxi_companion_strong();
     let store = FilePersonaMemoryStore::for_workspace(&config.cwd);
     let mut memory_warnings = Vec::new();
-    let mut memory_recall = empty_memory_recall();
+    let mut boot_context = MemoryRecallResult::default();
+    let mut dynamic_recall = MemoryRecallResult::default();
+    let mut recall_explanations = Vec::new();
 
     if settings.memory_enabled {
-        let loaded = store.active_records();
+        let loaded = store.list(PersonaMemoryScope::All);
         memory_warnings = loaded.warnings;
-        let mut request = MemoryRecallRequest::new(prompt);
+        let mut request = MemoryRecallRouterRequest::new(recall_query);
         request.workspace_fingerprint = Some(store.workspace_fingerprint().to_string());
-        request.max_records = 8;
-        request.budget_chars = 1200;
-        memory_recall = MemoryRecallEngine::default().recall(&loaded.records, &request);
+        if !include_boot_context {
+            request.boot_max_records = 0;
+            request.boot_budget_chars = 0;
+        }
+        let routed = MemoryRecallRouter::default().route(&loaded.records, &request);
+        boot_context = routed.boot_context;
+        dynamic_recall = routed.dynamic_recall;
+        recall_explanations = routed.explanations;
     }
 
     let compiled_context = if settings.persona_enabled {
-        Some(PersonaPromptCompiler::default().compile(
+        Some(PersonaPromptCompiler::default().compile_routed_for_turn(
             &profile,
             &HumanProfile::default(),
             &RelationshipState::default(),
-            &memory_recall.records,
+            &boot_context.records,
+            &dynamic_recall.records,
+            include_boot_context,
         ))
-    } else if settings.memory_enabled && !memory_recall.records.is_empty() {
+    } else if settings.memory_enabled
+        && (!boot_context.records.is_empty() || !dynamic_recall.records.is_empty())
+    {
         Some(
-            PersonaPromptCompiler::new(1200)
-                .compile_memory_only(settings.active_profile.clone(), &memory_recall.records),
+            PersonaPromptCompiler::new(2600).compile_memory_only_routed_for_turn(
+                settings.active_profile.clone(),
+                &boot_context.records,
+                &dynamic_recall.records,
+                include_boot_context,
+            ),
         )
     } else {
         None
@@ -1757,20 +1779,70 @@ fn build_persona_turn_context(config: &AgentConfig, prompt: &str) -> PersonaTurn
         display_name: profile.display_name,
         workspace_fingerprint: store.workspace_fingerprint().to_string(),
         compiled_context,
-        memory_recall,
+        boot_context,
+        dynamic_recall,
+        recall_explanations,
         memory_warnings,
     }
 }
 
-fn empty_memory_recall() -> MemoryRecallResult {
-    MemoryRecallResult {
-        records: Vec::new(),
-        budget_used_chars: 0,
-        truncated: false,
-        always_on_count: 0,
-        dropped_unrelated: 0,
-        dropped_by_budget: 0,
-        dropped_duplicates: 0,
+fn memory_recall_query(prompt: &str, restored_history: Option<&RestoredHistory>) -> String {
+    const RECENT_CONTEXT_BUDGET_CHARS: usize = 600;
+    const RECENT_MESSAGE_MAX_CHARS: usize = 200;
+
+    let Some(history) = restored_history else {
+        return prompt.to_string();
+    };
+    let mut recent = Vec::new();
+    let mut used = 0;
+    for message in history.messages.iter().rev().filter(|message| {
+        matches!(
+            message.role,
+            ConversationRole::User | ConversationRole::Assistant
+        )
+    }) {
+        if recent.len() >= 4 || used >= RECENT_CONTEXT_BUDGET_CHARS {
+            break;
+        }
+        let remaining = RECENT_CONTEXT_BUDGET_CHARS
+            .saturating_sub(used)
+            .min(RECENT_MESSAGE_MAX_CHARS);
+        let bounded = message.content.chars().take(remaining).collect::<String>();
+        used += bounded.chars().count();
+        if !bounded.trim().is_empty() {
+            recent.push(bounded);
+        }
+    }
+    if recent.is_empty() {
+        return prompt.to_string();
+    }
+    recent.reverse();
+    recent.push(prompt.to_string());
+    recent.join("\n")
+}
+
+#[cfg(test)]
+mod memory_recall_query_tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_recall_query_includes_recent_turns_with_bounded_context() {
+        let budget = ContextWindowBudget::new(Some(4096), Some(3072));
+        let mut history = RestoredHistory::empty(budget);
+        history.messages = vec![
+            ConversationMessage::system("system text must stay out"),
+            ConversationMessage::user("previous release task"),
+            ConversationMessage::assistant("the GitHub API was selected"),
+            ConversationMessage::user("x".repeat(800)),
+        ];
+
+        let query = memory_recall_query("continue", Some(&history));
+
+        assert!(query.contains("previous release task"));
+        assert!(query.contains("the GitHub API was selected"));
+        assert!(query.ends_with("continue"));
+        assert!(!query.contains("system text must stay out"));
+        assert!(query.chars().count() <= 600 + "continue".chars().count() + 1);
     }
 }
 
@@ -1789,17 +1861,32 @@ async fn emit_persona_context_events(
     sink.emit(AgentEvent::MemoryRecall {
         schema_version: SCHEMA_VERSION,
         enabled: persona.settings.memory_enabled,
-        scope: "all".to_string(),
-        query: safe_event_query(prompt),
-        count: persona.memory_recall.records.len(),
-        budget_used_chars: persona.memory_recall.budget_used_chars,
-        truncated: persona.memory_recall.truncated,
-        always_on_count: persona.memory_recall.always_on_count,
-        dropped_unrelated: persona.memory_recall.dropped_unrelated,
-        dropped_by_budget: persona.memory_recall.dropped_by_budget,
-        dropped_duplicates: persona.memory_recall.dropped_duplicates,
+        scope: "boot".to_string(),
+        query: String::new(),
+        count: persona.boot_context.records.len(),
+        budget_used_chars: persona.boot_context.budget_used_chars,
+        truncated: persona.boot_context.truncated,
+        always_on_count: persona.boot_context.always_on_count,
+        dropped_unrelated: persona.boot_context.dropped_unrelated,
+        dropped_by_budget: persona.boot_context.dropped_by_budget,
+        dropped_duplicates: persona.boot_context.dropped_duplicates,
     })
     .await?;
+    sink.emit(AgentEvent::MemoryRecall {
+        schema_version: SCHEMA_VERSION,
+        enabled: persona.settings.memory_enabled,
+        scope: "dynamic".to_string(),
+        query: safe_event_query(prompt),
+        count: persona.dynamic_recall.records.len(),
+        budget_used_chars: persona.dynamic_recall.budget_used_chars,
+        truncated: persona.dynamic_recall.truncated,
+        always_on_count: persona.dynamic_recall.always_on_count,
+        dropped_unrelated: persona.dynamic_recall.dropped_unrelated,
+        dropped_by_budget: persona.dynamic_recall.dropped_by_budget,
+        dropped_duplicates: persona.dynamic_recall.dropped_duplicates,
+    })
+    .await?;
+    let _explanation_count = persona.recall_explanations.len();
     if let Some(compiled_context) = &persona.compiled_context {
         sink.emit(AgentEvent::PersonaContextInjected {
             schema_version: SCHEMA_VERSION,

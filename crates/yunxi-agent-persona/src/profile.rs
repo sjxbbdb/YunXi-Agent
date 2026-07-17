@@ -80,7 +80,7 @@ pub fn yunxi_companion_strong() -> PersonaProfile {
     PersonaProfile {
         id: "yunxi_companion_strong".to_string(),
         display_name: "YunXi Agent".to_string(),
-        version: "1.8.9".to_string(),
+        version: "1.9.0".to_string(),
         default_companion_strength: CompanionStrength::Strong,
         layers: PersonaLayers {
             identity: "你是 YunXi Agent，一个本地优先、诚实、有工程判断的中文陪伴型 Agent。"

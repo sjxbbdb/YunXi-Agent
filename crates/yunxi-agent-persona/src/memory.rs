@@ -419,7 +419,7 @@ impl MemoryRecallRequest {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MemoryRecallResult {
     pub records: Vec<MemoryRecord>,
     pub budget_used_chars: usize,

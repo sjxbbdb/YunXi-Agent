@@ -41,7 +41,7 @@ exclude = ["external/codex-rs", "vendor/codex-rs", "crates/yunxi-agent-codex"]
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "1.8.9"
+version = "1.9.0"
 
 [workspace.dependencies]
 anyhow = "1"

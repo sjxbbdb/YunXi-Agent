@@ -4,7 +4,7 @@ use crate::memory::{
 };
 use std::collections::BTreeMap;
 
-const RECALL_RELEVANCE_THRESHOLD: f32 = 2.0;
+pub(crate) const RECALL_RELEVANCE_THRESHOLD: f32 = 2.0;
 const ALWAYS_ON_LIMIT: usize = 3;
 
 #[derive(Clone, Debug, Default)]
@@ -16,13 +16,30 @@ impl MemoryRecallEngine {
         records: &[MemoryRecord],
         request: &MemoryRecallRequest,
     ) -> MemoryRecallResult {
+        self.recall_internal(records, request, true)
+    }
+
+    pub(crate) fn recall_prompt_relevant(
+        &self,
+        records: &[MemoryRecord],
+        request: &MemoryRecallRequest,
+    ) -> MemoryRecallResult {
+        self.recall_internal(records, request, false)
+    }
+
+    fn recall_internal(
+        &self,
+        records: &[MemoryRecord],
+        request: &MemoryRecallRequest,
+        include_always_on: bool,
+    ) -> MemoryRecallResult {
         let (records, dropped_duplicates) = collapse_duplicate_records(records, request);
         let mut dropped_unrelated = 0;
         let mut always_on_count = 0;
         let mut scored = records
             .iter()
             .filter_map(|record| {
-                if is_always_on_profile_record(record) {
+                if include_always_on && is_always_on_profile_record(record) {
                     if always_on_count < ALWAYS_ON_LIMIT {
                         always_on_count += 1;
                         return Some((
@@ -132,7 +149,7 @@ fn scope_matches(scope: &MemoryScope, workspace_fingerprint: Option<&str>) -> bo
     }
 }
 
-fn score_record(record: &MemoryRecord, request: &MemoryRecallRequest) -> f32 {
+pub(crate) fn score_record(record: &MemoryRecord, request: &MemoryRecallRequest) -> f32 {
     let mut score = 0.0;
     let query = request.query.to_ascii_lowercase();
     let content = record.content.to_ascii_lowercase();

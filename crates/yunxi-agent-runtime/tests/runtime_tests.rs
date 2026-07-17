@@ -11,6 +11,7 @@ use yunxi_agent_core::{
     AgentRunControl, AgentRunStatus, AgentRunUserInputResponse, ApprovalMode, CommandStatus,
     FileChangeKind, MemoryExtractionMode, PatchStatus, SandboxMode,
 };
+use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus};
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId,
 };
@@ -39,6 +40,46 @@ async fn with_memory_enabled_home<T>(home: &Path, future: impl Future<Output = T
     restore_env_var("YUNXI_HOME", previous_home);
     restore_env_var("YUNXI_MEMORY_ENABLED", previous_memory);
     output
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn runtime_emits_boot_and_dynamic_recall_summaries() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    let result = with_memory_enabled_home(home.path(), async move {
+        let store = FilePersonaMemoryStore::for_workspace(&workspace_path);
+        let preference = MemoryRecord::new(
+            "boot-preference",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "Prefer concise English responses",
+            1,
+        )
+        .with_scores(0.9, 0.8)
+        .with_status(MemoryStatus::Active);
+        store.append(&preference).expect("append boot memory");
+
+        let backend = YunXiRuntimeBackend::with_parts(
+            StaticProvider::default(),
+            NoopToolRuntime,
+            InMemorySessionStore::default(),
+        );
+        Agent::new(AgentConfig::new(&workspace_path))
+            .run_with_backend(&backend, AgentInput::text("release API status"))
+            .await
+    })
+    .await
+    .expect("runtime should complete");
+
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryRecall { scope, count: 1, .. } if scope == "boot"
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryRecall { scope, .. } if scope == "dynamic"
+    )));
 }
 
 fn restore_env_var(name: &str, value: Option<OsString>) {

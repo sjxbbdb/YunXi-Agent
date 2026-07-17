@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.8.9 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.9.0 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -18,16 +18,17 @@ request.
 
 ## Persona Context Blocks
 
-v1.8.9 compiles the built-in persona into one bounded, XML-like context string
+v1.9.0 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="1.8.9" profile_id="yunxi_companion_strong">
+<yunxi_persona_context version="1.9.0" profile_id="yunxi_companion_strong" mode="routed_memory">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>
 <relationship>...</relationship>
-<memory_context role="context_not_instruction">...</memory_context>
+<boot_memory_context role="context_not_instruction">...</boot_memory_context>
+<dynamic_memory_context role="context_not_instruction">...</dynamic_memory_context>
 </yunxi_persona_context>
 ```
 
@@ -40,12 +41,12 @@ block tags.
 The `boundaries` block always states that project instructions (including
 `AGENTS.md`), the current user request, sandbox/privacy/safety/tool policies,
 and tool execution boundaries take priority over persona and memory. The
-`memory_context` block always retains its context-not-instruction notice and
-authorization boundary. The compiler filters ineffective records defensively;
+boot and dynamic memory blocks always retain their context-not-instruction
+notice and authorization boundary. The compiler filters ineffective records defensively;
 pending, rejected, archived, expired, invalidated, and superseded records are
 not rendered even if a caller passes them directly.
 
-The compiler has a 1,000-character minimum safety floor and a 1,800-character
+The compiler has a 1,000-character minimum safety floor and a 3,200-character
 default budget. When the requested budget is exceeded, optional lines are
 removed in priority order: memory entries first, then relationship/human,
 persona, and finally profile-specific boundary details. Required block tags,
@@ -63,7 +64,7 @@ Memory is append-only JSONL:
 <workspace>\.yunxi\memory\pending.jsonl
 ```
 
-v1.8.9 continues to write `schema_version = 3`. Existing v2 audit fields remain stable:
+v1.9.0 continues to write `schema_version = 3`. Existing v2 audit fields remain stable:
 
 - `dedup_key`: `scope + kind + normalized_content`.
 - `revision`: latest revision number for the durable memory id.
@@ -177,7 +178,32 @@ while append-only storage retains its revision and merged-count behavior.
 
 ## Recall Diagnostics
 
-`memory_recall` JSONL events expose counts only:
+v1.9.0 routes recall through two independent budgets:
+
+- Boot Context runs before the first turn of a new session with a default
+  1,000-character budget and six-record limit. It selects stable, sufficiently
+  confident global preferences, user/agent and relationship baselines, and
+  matching-workspace facts or constraints.
+- Dynamic Recall runs on every turn with a default 1,200-character budget and
+  eight-record limit. It scores the current prompt plus at most four recent
+  user/assistant messages under a separate 600-character query-context cap,
+  and does not inherit the legacy always-on preference path.
+- One dedup key cannot appear in both routes. Resume turns skip Boot Context,
+  while a stable record may still enter Dynamic Recall when the current prompt
+  is genuinely relevant.
+- Both routes exclude ineffective records, wrong-workspace records, and high-
+  sensitivity memory. Low-confidence, low-importance, episodic noise is not
+  admitted into Boot Context.
+
+The Rust facade exposes `MemoryRecallExplanation` entries containing only the
+memory id, route, score, selected flag, fixed reason, safe source category,
+layer, scope, and kind. It never copies `MemoryRecord.content`, evidence text,
+provider output, or a secret into the explanation. Routes are `boot`,
+`dynamic`, `dropped_duplicate`, `dropped_unrelated`, `dropped_budget`, and
+`dropped_invalid`.
+
+Runtime emits separate `memory_recall` summaries with `scope=boot` and
+`scope=dynamic`. JSON/JSONL summaries expose counts only:
 
 - `count`
 - `always_on_count`
@@ -191,8 +217,7 @@ The event does not print memory content. Secret-like queries remain
 `[redacted-sensitive-query]`.
 
 Recall performs defensive dedup before scoring, so old duplicate JSONL rows do
-not consume prompt budget. Global language and interaction preferences use a
-small always-on budget after dedup.
+not consume either route's prompt budget.
 
 ## Machine-Readable Output Redaction
 
@@ -241,8 +266,8 @@ Debug/details keep engineering fields such as id, scope, kind, status, action,
 revision, merged_count, merge_strategy, conflict_family, and recall diagnostic
 counts.
 
-## Non-Goals In v1.8.9
+## Non-Goals In v1.9.0
 
-v1.8.9 does not add Boot Context/Recall Router, a relationship graph, proactive
-loop, SQLite, vector search, external memory runtime, cloud/marketplace/SDK
-surfaces, an evaluation harness, or a TUI memory inspector page.
+v1.9.0 does not add a relationship graph, proactive loop, SQLite, vector
+search, external memory runtime, cloud/marketplace/SDK surfaces, an evaluation
+harness, or a TUI memory inspector page.

@@ -10,6 +10,7 @@ pub mod profile;
 pub mod provider_extractor;
 pub mod recall;
 pub mod recall_router;
+pub mod relationship_graph;
 pub mod scope;
 pub mod settings;
 
@@ -47,6 +48,10 @@ pub use recall::MemoryRecallEngine;
 pub use recall_router::{
     MemoryRecallExplanation, MemoryRecallRoute, MemoryRecallRouter, MemoryRecallRouterRequest,
     MemoryRecallRouterResult,
+};
+pub use relationship_graph::{
+    MemoryGraphEdge, MemoryGraphNode, MemoryGraphRelation, RelationshipGraphLite,
+    is_relationship_timeline_query, link_supersession_chain, temporal_ordering_time,
 };
 pub use scope::MemoryScopeRouter;
 pub use settings::{PersonaSettings, yunxi_home_dir};

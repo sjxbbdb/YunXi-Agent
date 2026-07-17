@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.9.0"));
+        .stdout(predicate::str::contains("yunxi 1.9.1"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.9.0"));
+        .stdout(predicate::str::contains("yunxi 1.9.1"));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.0 interactive CLI",
+            "YunXi Agent v1.9.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.0 interactive CLI",
+            "YunXi Agent v1.9.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.0 interactive CLI",
+            "YunXi Agent v1.9.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -632,7 +632,7 @@ fn cli_rule_only_english_preference_writes_global_memory() {
 }
 
 #[test]
-fn cli_language_conflict_routes_to_pending() {
+fn cli_language_change_creates_supersession_chain() {
     let home = TempDir::new().expect("yunxi home");
     let workspace = TempDir::new().expect("workspace");
     let cwd = workspace.path().to_str().expect("workspace path");
@@ -673,24 +673,43 @@ fn cli_language_conflict_routes_to_pending() {
         .success()
         .stdout(predicate::str::contains("\"type\":\"memory_write\""))
         .stdout(predicate::str::contains(
-            "\"action\":\"pending_confirmation\"",
+            "\"action\":\"superseded_previous_fact\"",
         ))
         .stdout(predicate::str::contains(
-            "\"merge_strategy\":\"conflict_requires_confirmation\"",
+            "\"merge_strategy\":\"supersession_chain\"",
         ));
 
     let pending = run_json_command_with_env(&home, &["--cwd", cwd, "--json", "memory", "pending"]);
-    let records = pending["records"].as_array().expect("pending records");
-    assert_eq!(
-        records.len(),
-        1,
-        "expected English conflict pending: {pending:#}"
+    assert!(
+        pending["records"]
+            .as_array()
+            .expect("pending records")
+            .is_empty(),
+        "clear active language change should not remain pending: {pending:#}"
     );
-    assert_eq!(
-        records[0]["dedup_key"].as_str(),
-        Some("global_user|preference|language:en")
+
+    let listed = run_json_command_with_env(
+        &home,
+        &["--cwd", cwd, "--json", "memory", "list", "--global"],
     );
-    assert_eq!(records[0]["status"].as_str(), Some("pending"));
+    let records = listed["records"].as_array().expect("global records");
+    let old = records
+        .iter()
+        .find(|record| record["dedup_key"] == "global_user|preference|language:zh")
+        .expect("old Chinese preference retained");
+    let new = records
+        .iter()
+        .find(|record| record["dedup_key"] == "global_user|preference|language:en")
+        .expect("new English preference retained");
+    assert_eq!(
+        old["invalidation"]["superseded_by"].as_str(),
+        new["id"].as_str()
+    );
+    let supersedes = new["invalidation"]["supersedes"]
+        .as_array()
+        .expect("supersedes array");
+    assert_eq!(supersedes.len(), 1);
+    assert_eq!(supersedes[0], old["id"]);
 }
 
 #[test]

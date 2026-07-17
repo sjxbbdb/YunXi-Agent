@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.9.0 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.9.1 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -18,11 +18,11 @@ request.
 
 ## Persona Context Blocks
 
-v1.9.0 compiles the built-in persona into one bounded, XML-like context string
+v1.9.1 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="1.9.0" profile_id="yunxi_companion_strong" mode="routed_memory">
+<yunxi_persona_context version="1.9.1" profile_id="yunxi_companion_strong" mode="routed_memory">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>
@@ -64,7 +64,7 @@ Memory is append-only JSONL:
 <workspace>\.yunxi\memory\pending.jsonl
 ```
 
-v1.9.0 continues to write `schema_version = 3`. Existing v2 audit fields remain stable:
+v1.9.1 continues to write `schema_version = 3`. Existing v2 audit fields remain stable:
 
 - `dedup_key`: `scope + kind + normalized_content`.
 - `revision`: latest revision number for the durable memory id.
@@ -104,10 +104,12 @@ for backward compatibility. Schema v3 additionally unions evidence, source
 attributions, entities, invalidation relations, revision, and merged count, so
 the non-primary candidate's provenance is not discarded.
 
-Language preference conflicts are not auto-overwritten. For example, an active
-Chinese preference and a later English preference share the same language
-conflict family but not the same `dedup_key`; the later conflicting candidate is
-written as `pending` for explicit review.
+Language preference changes are never destructive. A later active English
+preference can supersede an active Chinese preference in the same language
+conflict family: storage appends an updated old record with `superseded_by` and
+an `invalidated_at_millis`, then appends the new record with `supersedes`.
+Pending or high-sensitivity conflicts remain pending and use `conflicts_with`
+instead of invalidating an active fact.
 
 v1 and v2 JSONL records are migrated to v3 in memory when read. The original
 append-only files are not rewritten. Missing `schema_version` records with the
@@ -219,6 +221,38 @@ The event does not print memory content. Secret-like queries remain
 Recall performs defensive dedup before scoring, so old duplicate JSONL rows do
 not consume either route's prompt budget.
 
+## Relationship Graph Lite
+
+v1.9.1 derives `RelationshipGraphLite` from Schema v3 `MemoryRecord` values.
+It is an in-memory view, not a second persistence system: append-only JSONL
+remains the durable ledger, and no SQLite, vector store, graph database, Python
+runtime, or external memory service is required.
+
+- Nodes retain typed user, agent, workspace, project, tool, person, and
+  relationship entity references. Records without explicit endpoints receive
+  stable scope and memory nodes so every retained fact has an inspectable edge.
+- Fact edges represent preference, correction, relationship note, project
+  context, goal, emotional state, event, and related-to semantics. Schema v3
+  `supersedes` and `conflicts_with` values produce explicit graph edges.
+- Event ordering is descending `event_at_millis`, then
+  `observed_at_millis`, then `updated_at_millis`, then
+  `created_at_millis`. Active-edge queries additionally enforce valid-from,
+  expiry, invalidation, supersession, and status checks.
+- Clear active preference/correction changes append a bidirectional
+  supersession chain. The old record stays in history but cannot enter Boot
+  Context or ordinary active recall. Pending/high-sensitivity conflicts never
+  invalidate an active fact automatically.
+- Relationship, emotion, before/after, changed, timeline, and history queries
+  use the time-ordered dynamic route. Historical expired or superseded facts
+  may appear there with fixed temporal reasons, while normal current queries
+  continue to exclude them.
+
+`MemoryRecallExplanation` now adds optional `relation` and `temporal_reason`
+metadata. Fixed graph reasons include `active_relation_edge`,
+`temporal_event_match`, `superseded_by_newer_fact`,
+`expired_relation_edge`, and `conflict_pending_confirmation`. These fields
+still never contain raw memory content, evidence, provider output, or secrets.
+
 ## Machine-Readable Output Redaction
 
 v1.8.9 continues to sanitize both `--json` and `--jsonl` agent execution output before
@@ -266,8 +300,8 @@ Debug/details keep engineering fields such as id, scope, kind, status, action,
 revision, merged_count, merge_strategy, conflict_family, and recall diagnostic
 counts.
 
-## Non-Goals In v1.9.0
+## Non-Goals In v1.9.1
 
-v1.9.0 does not add a relationship graph, proactive loop, SQLite, vector
-search, external memory runtime, cloud/marketplace/SDK surfaces, an evaluation
+v1.9.1 does not add a proactive loop, SQLite, vector search, an external graph
+database or memory runtime, cloud/marketplace/SDK surfaces, an evaluation
 harness, or a TUI memory inspector page.

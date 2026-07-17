@@ -2140,6 +2140,21 @@ fn memory_write_event_parts(
             merge_strategy: Some("conflict_requires_confirmation".to_string()),
             conflict_family: Some(conflict_family),
         },
+        MemoryPersistOutcome::Superseded {
+            id,
+            status,
+            revision,
+            merged_count,
+            supersedes,
+        } => MemoryWriteEventParts {
+            id,
+            status,
+            action: "superseded_previous_fact".to_string(),
+            revision,
+            merged_count,
+            merge_strategy: Some("supersession_chain".to_string()),
+            conflict_family: Some(format!("supersedes:{supersedes}")),
+        },
         MemoryPersistOutcome::Skipped { id, reason } => MemoryWriteEventParts {
             id,
             status: MemoryStatus::Rejected,

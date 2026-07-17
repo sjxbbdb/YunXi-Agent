@@ -4,6 +4,10 @@ use crate::memory::{
     MemorySensitivity, now_millis,
 };
 use crate::recall::{MemoryRecallEngine, RECALL_RELEVANCE_THRESHOLD, score_record};
+use crate::relationship_graph::{
+    MemoryGraphRelation, RelationshipGraphLite, is_relationship_timeline_query,
+    temporal_ordering_time,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,6 +36,10 @@ pub struct MemoryRecallExplanation {
     pub layer: MemoryLayer,
     pub scope: String,
     pub kind: MemoryKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relation: Option<MemoryGraphRelation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temporal_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -76,17 +84,31 @@ impl MemoryRecallRouter {
         request: &MemoryRecallRouterRequest,
     ) -> MemoryRecallRouterResult {
         let now = now_millis();
+        let graph = RelationshipGraphLite::from_records(records);
+        let timeline_query = is_relationship_timeline_query(&request.query);
         let mut explanations = Vec::new();
         let mut unique = BTreeMap::<String, MemoryRecord>::new();
+        let mut historical_candidates = Vec::new();
 
         for record in records {
             if !record.is_recallable_at(now) {
+                if timeline_query
+                    && is_graph_memory(record)
+                    && record.status == crate::memory::MemoryStatus::Active
+                    && record.sensitivity != MemorySensitivity::High
+                    && scope_matches(&record.scope, request.workspace_fingerprint.as_deref())
+                {
+                    historical_candidates.push(record.clone());
+                    continue;
+                }
                 explanations.push(explanation(
                     record,
                     MemoryRecallRoute::DroppedInvalid,
                     0.0,
                     false,
-                    "inactive_expired_or_invalidated",
+                    invalid_reason(record, now),
+                    &graph,
+                    Some(invalid_reason(record, now)),
                 ));
                 continue;
             }
@@ -97,6 +119,8 @@ impl MemoryRecallRouter {
                     0.0,
                     false,
                     "privacy_policy_excludes_high_sensitivity",
+                    &graph,
+                    None,
                 ));
                 continue;
             }
@@ -107,6 +131,8 @@ impl MemoryRecallRouter {
                     0.0,
                     false,
                     "workspace_scope_mismatch",
+                    &graph,
+                    None,
                 ));
                 continue;
             }
@@ -120,6 +146,8 @@ impl MemoryRecallRouter {
                         0.0,
                         false,
                         "superseded_by_newer_duplicate",
+                        &graph,
+                        Some("superseded_by_newer_fact"),
                     ));
                     *existing = record.clone();
                 }
@@ -129,6 +157,8 @@ impl MemoryRecallRouter {
                     0.0,
                     false,
                     "older_duplicate",
+                    &graph,
+                    Some("superseded_by_newer_fact"),
                 )),
                 None => {
                     unique.insert(key, record.clone());
@@ -143,7 +173,9 @@ impl MemoryRecallRouter {
             .count();
         let mut boot_candidates = unique_records
             .iter()
-            .filter(|record| is_boot_candidate(record))
+            .filter(|record| {
+                is_boot_candidate(record) && !(timeline_query && is_graph_memory(record))
+            })
             .map(|record| (boot_score(record), record.clone()))
             .collect::<Vec<_>>();
         boot_candidates.sort_by(compare_scored);
@@ -162,6 +194,8 @@ impl MemoryRecallRouter {
                     score,
                     false,
                     "boot_budget_or_record_limit",
+                    &graph,
+                    None,
                 ));
                 continue;
             }
@@ -174,7 +208,13 @@ impl MemoryRecallRouter {
                 MemoryRecallRoute::Boot,
                 score,
                 true,
-                "stable_boot_context",
+                if is_graph_memory(&record) {
+                    "active_relation_edge"
+                } else {
+                    "stable_boot_context"
+                },
+                &graph,
+                Some("active_at_recall_time"),
             ));
             boot_context.records.push(record);
         }
@@ -184,18 +224,22 @@ impl MemoryRecallRouter {
             .iter()
             .map(record_key)
             .collect::<BTreeSet<_>>();
-        let dynamic_candidates = unique_records
+        let mut dynamic_candidates = unique_records
             .iter()
             .filter(|record| !boot_keys.contains(&record_key(record)))
             .cloned()
             .collect::<Vec<_>>();
+        dynamic_candidates.extend(historical_candidates);
         let mut dynamic_request = MemoryRecallRequest::new(request.query.clone());
         dynamic_request.workspace_fingerprint = request.workspace_fingerprint.clone();
         dynamic_request.max_records = request.dynamic_max_records;
         dynamic_request.budget_chars = request.dynamic_budget_chars;
-        let mut dynamic_recall = self
-            .engine
-            .recall_prompt_relevant(&dynamic_candidates, &dynamic_request);
+        let mut dynamic_recall = if timeline_query {
+            timeline_recall(&dynamic_candidates, &dynamic_request)
+        } else {
+            self.engine
+                .recall_prompt_relevant(&dynamic_candidates, &dynamic_request)
+        };
         if request.boot_max_records == 0 {
             dynamic_recall.dropped_duplicates += duplicate_drops;
         } else {
@@ -208,22 +252,46 @@ impl MemoryRecallRouter {
             .collect::<BTreeSet<_>>();
 
         for record in &dynamic_candidates {
-            let score = score_record(record, &dynamic_request);
+            let score = if timeline_query && is_graph_memory(record) {
+                1.0
+            } else {
+                score_record(record, &dynamic_request)
+            };
             if dynamic_ids.contains(record.id.as_str()) {
                 explanations.push(explanation(
                     record,
                     MemoryRecallRoute::Dynamic,
                     score,
                     true,
-                    "prompt_relevance_match",
+                    if timeline_query {
+                        "temporal_event_match"
+                    } else if is_graph_memory(record) {
+                        "active_relation_edge"
+                    } else {
+                        "prompt_relevance_match"
+                    },
+                    &graph,
+                    Some(if timeline_query && !record.is_recallable_at(now) {
+                        invalid_reason(record, now)
+                    } else if timeline_query {
+                        "ordered_by_event_observed_updated_created_time"
+                    } else {
+                        "active_at_recall_time"
+                    }),
                 ));
-            } else if score >= RECALL_RELEVANCE_THRESHOLD {
+            } else if timeline_query || score >= RECALL_RELEVANCE_THRESHOLD {
                 explanations.push(explanation(
                     record,
                     MemoryRecallRoute::DroppedBudget,
                     score,
                     false,
                     "dynamic_budget_or_record_limit",
+                    &graph,
+                    Some(if record.is_recallable_at(now) {
+                        "active_at_recall_time"
+                    } else {
+                        invalid_reason(record, now)
+                    }),
                 ));
             } else {
                 explanations.push(explanation(
@@ -232,6 +300,8 @@ impl MemoryRecallRouter {
                     score,
                     false,
                     "below_dynamic_relevance_threshold",
+                    &graph,
+                    None,
                 ));
             }
         }
@@ -314,6 +384,8 @@ fn explanation(
     score: f32,
     selected: bool,
     reason: &str,
+    graph: &RelationshipGraphLite,
+    temporal_reason: Option<&str>,
 ) -> MemoryRecallExplanation {
     MemoryRecallExplanation {
         memory_id: record.id.clone(),
@@ -325,6 +397,66 @@ fn explanation(
         layer: record.layer,
         scope: record.scope.label(),
         kind: record.kind,
+        relation: graph.relation_for_memory(&record.id),
+        temporal_reason: temporal_reason.map(str::to_string),
+    }
+}
+
+fn timeline_recall(records: &[MemoryRecord], request: &MemoryRecallRequest) -> MemoryRecallResult {
+    let mut candidates = records
+        .iter()
+        .filter(|record| is_graph_memory(record))
+        .cloned()
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        temporal_ordering_time(right)
+            .cmp(&temporal_ordering_time(left))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let mut result = MemoryRecallResult::default();
+    for record in candidates {
+        let chars = record.content.chars().count();
+        if result.records.len() >= request.max_records
+            || result.budget_used_chars + chars > request.budget_chars
+        {
+            result.truncated = true;
+            result.dropped_by_budget += 1;
+            continue;
+        }
+        result.budget_used_chars += chars;
+        result.records.push(record);
+    }
+    result
+}
+
+fn is_graph_memory(record: &MemoryRecord) -> bool {
+    matches!(
+        record.kind,
+        MemoryKind::Preference
+            | MemoryKind::Correction
+            | MemoryKind::RelationshipNote
+            | MemoryKind::EmotionalState
+            | MemoryKind::Goal
+            | MemoryKind::ProjectContext
+            | MemoryKind::Event
+    )
+}
+
+fn invalid_reason(record: &MemoryRecord, now: u128) -> &'static str {
+    if record.invalidation.superseded_by.is_some() {
+        "superseded_by_newer_fact"
+    } else if record
+        .temporal
+        .expires_at_millis
+        .is_some_and(|expires_at| expires_at <= now)
+    {
+        "expired_relation_edge"
+    } else if record.status == crate::memory::MemoryStatus::Pending
+        && !record.invalidation.conflicts_with.is_empty()
+    {
+        "conflict_pending_confirmation"
+    } else {
+        "inactive_expired_or_invalidated"
     }
 }
 

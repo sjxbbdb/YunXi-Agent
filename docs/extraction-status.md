@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.9.0 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.9.1 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,68 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.9.1 Relationship Graph Lite
+
+YunXi Agent v1.9.1 adds a Rust-native, derived relationship graph over Memory
+Schema v3 while preserving Persona Context Blocks, the L0-L3 pipeline, and the
+v1.9.0 Boot Context/Dynamic Recall split.
+
+Constructed in this slice:
+
+- `RelationshipGraphLite`, `MemoryGraphNode`, `MemoryGraphEdge`, and
+  `MemoryGraphRelation` derive nodes and temporal relation edges directly from
+  append-only `MemoryRecord` data; no new database or external runtime is used.
+- Event order follows event, observed, updated, then created time. Active views
+  enforce status, valid-from, expiry, invalidation, and supersession.
+- Active preference/correction changes append an updated old fact and a new
+  fact with bidirectional `superseded_by`/`supersedes` linkage. Historical JSONL
+  lines remain intact.
+- Boot Context rejects superseded old facts. Relationship/emotion/change/
+  before/after timeline queries use time-ordered Dynamic Recall and expose safe
+  relation plus temporal explanation metadata.
+- Pending and high-sensitivity conflict candidates remain non-active; recall
+  explanations never contain raw memory content.
+- All 12 required v1.9.1 test names are present. The Relationship Graph suite
+  additionally covers pending conflict explanations, for 11/11 passing graph
+  integration tests.
+
+Unified verification completed on 2026-07-17 after the construction batch:
+
+- `cargo fmt`, `cargo fmt --check`, `cargo test`, and
+  `cargo check --workspace`: pass.
+- Persona: 72 integration tests pass, including graph/time/history,
+  supersession, Schema v3, L0-L3, Boot/Dynamic, privacy, compiler, extraction,
+  and policy regressions.
+- Storage: 5 unit and 22 integration tests pass. Runtime: 1 unit and 41
+  integration tests pass. CLI: 22 binary unit, 40 CLI integration, and 10
+  JSONL tests pass.
+- The isolated public-facade timeline tests return relationship events in
+  descending event/observed/update/create order. CLI black-box language change
+  emits `supersession_chain`, retains the old record, activates only the new
+  record, and leaves no false pending candidate.
+- Release build passes; both binaries return `yunxi 1.9.1`.
+- All required test names are present; owned-source secret-shape scan reports
+  zero matching files; stale v1.9.0 crate-version scan reports zero matches;
+  `git diff --check` passes with line-ending warnings only.
+- `codegraph sync .` and `codegraph status .`: pass; the index is up to date
+  with 1,171 files, 45,222 nodes, and 146,953 edges before the final docs-only
+  status writeback.
+
+One CLI regression initially expected the v1.8.x pending-conflict behavior for
+an explicit active Chinese-to-English language change. The v1.9.1 report
+requires supersession, and the runtime already emitted the correct chain; the
+test was updated to assert old-record retention plus bidirectional linkage, and
+the complete verification gate then passed.
+
+After explicit user confirmation, the validated release binaries were copied
+to `C:\Users\24763\AppData\Local\YunXi Agent\bin`. Both installed binaries
+return `yunxi 1.9.1`. The directory was already present in user PATH, so no
+duplicate PATH entry was written. Final `cargo clean` removed 13,133 files
+(about 3.6 GiB), and the repository `target` directory is absent.
+
+Publication and the immutable `v1.9.1` tag remain pending the GitHub REST
+publication gate at this writeback point.
 
 ## YunXi Agent v1.9.0 Boot Context And Recall Router
 

@@ -12,9 +12,10 @@ use yunxi_agent_multi_agent::{
     AgentGraphSessionMetadata, AgentId, AgentMetadata, AgentRole, AgentStatus,
 };
 use yunxi_agent_persona::{
-    MemoryMigrationResult, MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings,
-    dedup_key_for_record, memory_conflict_family, merge_equivalent_memory_records,
-    migrate_memory_record_value, now_millis as memory_now_millis, yunxi_home_dir,
+    MemoryKind, MemoryMigrationResult, MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings,
+    dedup_key_for_record, link_supersession_chain, memory_conflict_family,
+    merge_equivalent_memory_records, migrate_memory_record_value, now_millis as memory_now_millis,
+    yunxi_home_dir,
 };
 use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
@@ -751,6 +752,13 @@ pub enum MemoryPersistOutcome {
         merged_count: u32,
         conflict_family: String,
     },
+    Superseded {
+        id: String,
+        status: MemoryStatus,
+        revision: u32,
+        merged_count: u32,
+        supersedes: String,
+    },
     Skipped {
         id: String,
         reason: String,
@@ -820,8 +828,32 @@ impl FilePersonaMemoryStore {
             .find(|candidate| can_merge_memory_records(candidate, &incoming))
             .cloned();
         let Some(existing) = existing else {
+            if let Some(superseded) = supersession_target(&records, &incoming) {
+                let at_millis = memory_now_millis();
+                let (old, new) = link_supersession_chain(superseded, &incoming, at_millis);
+                self.append(&old)?;
+                self.append(&new)?;
+                return Ok(MemoryPersistOutcome::Superseded {
+                    id: new.id,
+                    status: new.status,
+                    revision: new.revision,
+                    merged_count: new.merged_count,
+                    supersedes: old.id,
+                });
+            }
             if let Some(conflict_family) = incoming_conflict_family(&records, &incoming) {
                 incoming.status = MemoryStatus::Pending;
+                if let Some(conflicting) = conflict_target(&records, &incoming)
+                    && !incoming
+                        .invalidation
+                        .conflicts_with
+                        .contains(&conflicting.id)
+                {
+                    incoming
+                        .invalidation
+                        .conflicts_with
+                        .push(conflicting.id.clone());
+                }
                 incoming.updated_at_millis = memory_now_millis();
                 incoming.ensure_dedup_metadata();
                 self.append(&incoming)?;
@@ -1131,6 +1163,71 @@ fn incoming_conflict_family(records: &[MemoryRecord], incoming: &MemoryRecord) -
         } else {
             None
         }
+    })
+}
+
+fn conflict_target<'a>(
+    records: &'a [MemoryRecord],
+    incoming: &MemoryRecord,
+) -> Option<&'a MemoryRecord> {
+    let incoming_family = memory_conflict_family(incoming)?;
+    records.iter().find(|record| {
+        record.status == MemoryStatus::Active
+            && record.is_recallable_at(memory_now_millis())
+            && memory_conflict_family(record).as_deref() == Some(incoming_family.as_str())
+            && record.dedup_key != incoming.dedup_key
+    })
+}
+
+fn supersession_target<'a>(
+    records: &'a [MemoryRecord],
+    incoming: &MemoryRecord,
+) -> Option<&'a MemoryRecord> {
+    if incoming.status != MemoryStatus::Active {
+        return None;
+    }
+    if let Some(explicit) = incoming.invalidation.supersedes.iter().find_map(|id| {
+        records
+            .iter()
+            .find(|record| record.id == *id && record.is_recallable_at(memory_now_millis()))
+    }) {
+        return Some(explicit);
+    }
+    if let Some(conflict) = conflict_target(records, incoming) {
+        return Some(conflict);
+    }
+    if incoming.kind != MemoryKind::Correction {
+        return None;
+    }
+
+    let candidates = records
+        .iter()
+        .filter(|record| {
+            record.scope == incoming.scope
+                && record.is_recallable_at(memory_now_millis())
+                && matches!(
+                    record.kind,
+                    MemoryKind::Preference
+                        | MemoryKind::RelationshipNote
+                        | MemoryKind::ProjectContext
+                        | MemoryKind::Goal
+                )
+        })
+        .collect::<Vec<_>>();
+    candidates
+        .iter()
+        .copied()
+        .find(|record| shares_entity(record, incoming))
+        .or_else(|| (candidates.len() == 1).then_some(candidates[0]))
+}
+
+fn shares_entity(left: &MemoryRecord, right: &MemoryRecord) -> bool {
+    left.entities.iter().any(|left_entity| {
+        !left_entity.id.is_empty()
+            && right
+                .entities
+                .iter()
+                .any(|right_entity| right_entity.id == left_entity.id)
     })
 }
 

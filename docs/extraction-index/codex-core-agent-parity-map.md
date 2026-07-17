@@ -35,7 +35,18 @@ runtime path.
 | `yunxi-agent-skills` | Skill discovery, metadata, injection and invocation boundary |
 | `yunxi-agent-storage` | Thread metadata, rollout, history, resume, archive, fork and pin |
 | `yunxi-agent-multi-agent` | Spawn, wait, message, follow-up, interrupt, list and agent graph |
+| `yunxi-agent-persona` | Persona Context Blocks, Schema v3, L0-L3 pipeline, Boot/Dynamic recall, derived Relationship Graph Lite |
 | `yunxi-agent-runtime` | Thread/session/turn loop, provider stream loop and orchestration |
+
+## Persona / Memory / Relationship Graph Lite
+
+| Design source | YunXi target | Migration mode |
+| --- | --- | --- |
+| Schema v3 `entities`, `temporal`, `invalidation` | `yunxi-agent-persona::memory` | YunXi-owned stable schema |
+| Graphiti temporal entity/relation and episode semantics | `yunxi-agent-persona::relationship_graph` | Rust semantic reimplementation; no graph runtime dependency |
+| Nocturne stable-node/content-version chain | `yunxi-agent-storage` append-only JSONL | Rust semantic reimplementation; old versions retained |
+| Boot/current-fact and relationship-history routing | `yunxi-agent-persona::recall_router` | Derived graph view plus privacy-safe explanation metadata |
+| Correction/preference supersession | `yunxi-agent-storage::append_or_merge` | Bidirectional invalidation chain; non-destructive append |
 
 ## Runtime / Thread / Turn
 

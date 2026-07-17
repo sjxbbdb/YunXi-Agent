@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentEvent, AgentRunStatus};
-use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus};
+use yunxi_agent_persona::{
+    MemoryKind, MemoryPipeline, MemoryPipelineInput, MemoryRecord, MemoryScope, MemoryStatus,
+};
 use yunxi_agent_storage::{
     FilePersonaMemoryStore, FileSessionStore, HistoryItemKind, HistoryLoadOptions,
     InMemorySessionStore, MemoryPersistOutcome, PersonaMemoryScope, RolloutRecord, SessionId,
@@ -506,7 +508,7 @@ fn file_persona_memory_store_combines_non_conflicting_same_slot_details() {
 }
 
 #[test]
-fn file_persona_memory_store_routes_language_conflict_to_pending() {
+fn new_preference_supersedes_old_preference_without_deleting_history() {
     let temp = TempDir::new().expect("temp dir");
     let store = FilePersonaMemoryStore::for_workspace(temp.path());
     let chinese = MemoryRecord::new(
@@ -531,32 +533,113 @@ fn file_persona_memory_store_routes_language_conflict_to_pending() {
     .with_status(MemoryStatus::Active);
 
     store.append_or_merge(&chinese).expect("insert chinese");
-    let conflict = store.append_or_merge(&english).expect("pending conflict");
+    let superseded = store
+        .append_or_merge(&english)
+        .expect("supersede old preference");
 
     assert!(matches!(
-        conflict,
-        MemoryPersistOutcome::ConflictPending {
-            status: MemoryStatus::Pending,
-            conflict_family,
+        superseded,
+        MemoryPersistOutcome::Superseded {
+            status: MemoryStatus::Active,
+            supersedes,
             ..
-        } if conflict_family.ends_with("|preference|language")
+        } if supersedes == "memory-zh"
     ));
-    let active = store
-        .list(PersonaMemoryScope::Workspace)
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    let active = loaded
         .records
-        .into_iter()
-        .filter(|record| record.status == MemoryStatus::Active)
+        .iter()
+        .filter(|record| record.is_recallable_at(u128::MAX))
         .collect::<Vec<_>>();
     assert_eq!(active.len(), 1);
-    assert_eq!(active[0].id, "memory-zh");
-    let pending = store
-        .list(PersonaMemoryScope::Workspace)
+    assert_eq!(active[0].id, "memory-en");
+    let old = loaded
         .records
+        .iter()
+        .find(|record| record.id == "memory-zh")
+        .expect("historical old preference");
+    let new = loaded
+        .records
+        .iter()
+        .find(|record| record.id == "memory-en")
+        .expect("new preference");
+    assert_eq!(old.invalidation.superseded_by.as_deref(), Some("memory-en"));
+    assert_eq!(new.invalidation.supersedes, vec!["memory-zh"]);
+    let jsonl = std::fs::read_to_string(
+        temp.path()
+            .join(".yunxi")
+            .join("memory")
+            .join("workspace-memory.jsonl"),
+    )
+    .expect("read append-only history");
+    assert_eq!(jsonl.lines().count(), 3);
+    assert_eq!(
+        jsonl
+            .lines()
+            .filter(|line| line.contains("\"id\":\"memory-zh\""))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn pipeline_correction_creates_supersession_chain() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let old = MemoryRecord::new(
+        "old-preference",
+        MemoryScope::Workspace {
+            root_fingerprint: store.workspace_fingerprint().to_string(),
+        },
+        MemoryKind::Preference,
+        "Prefer verbose answers",
+        1,
+    )
+    .with_status(MemoryStatus::Active);
+    store.append_or_merge(&old).expect("insert old preference");
+
+    let output = MemoryPipeline::new().run(MemoryPipelineInput {
+        prompt: "Do not use verbose answers from now on".to_string(),
+        source_session_id: Some("correction-session".to_string()),
+        workspace_fingerprint: Some(store.workspace_fingerprint().to_string()),
+        memory_enabled: true,
+        ..MemoryPipelineInput::default()
+    });
+    let mut correction = output
+        .candidates
         .into_iter()
-        .filter(|record| record.status == MemoryStatus::Pending)
-        .collect::<Vec<_>>();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].id, "memory-en");
+        .find(|candidate| candidate.proposed_record.kind == MemoryKind::Correction)
+        .expect("pipeline correction candidate")
+        .proposed_record;
+    correction.scope = old.scope.clone();
+    correction.status = MemoryStatus::Active;
+    correction.dedup_key.clear();
+    correction.ensure_dedup_metadata();
+
+    let outcome = store
+        .append_or_merge(&correction)
+        .expect("persist correction supersession");
+    assert!(matches!(
+        outcome,
+        MemoryPersistOutcome::Superseded { supersedes, .. }
+            if supersedes == "old-preference"
+    ));
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+    let old = loaded
+        .records
+        .iter()
+        .find(|record| record.id == "old-preference")
+        .expect("old record retained");
+    let correction = loaded
+        .records
+        .iter()
+        .find(|record| record.kind == MemoryKind::Correction)
+        .expect("correction retained");
+    assert_eq!(
+        old.invalidation.superseded_by.as_deref(),
+        Some(correction.id.as_str())
+    );
+    assert_eq!(correction.invalidation.supersedes, vec!["old-preference"]);
 }
 
 #[test]

@@ -44,6 +44,7 @@ mod render {
 mod terminal_mode {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/terminal_mode.rs"));
 }
+mod workspace;
 mod tui {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tui/mod.rs"));
 }
@@ -90,8 +91,8 @@ struct Cli {
     #[arg(long, conflicts_with = "backend")]
     live: bool,
 
-    #[arg(long, value_name = "PATH", default_value = ".", global = true)]
-    cwd: PathBuf,
+    #[arg(long, value_name = "PATH", global = true)]
+    cwd: Option<PathBuf>,
 
     #[arg(long, value_name = "MODEL")]
     model: Option<String>,
@@ -393,7 +394,8 @@ async fn run_cli() -> Result<()> {
 
     let backend = cli.backend.into();
 
-    let mut config = AgentConfig::new(cli.cwd.clone())
+    let cwd = workspace::resolve_cli_cwd(cli.cwd.clone())?;
+    let mut config = AgentConfig::new(cwd)
         .with_approval_mode(cli.approval.into())
         .with_sandbox_mode(cli.sandbox.into());
     if let Some(model) = cli.model.clone() {

@@ -78,7 +78,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.9.1 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.9.2 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -157,6 +157,13 @@ struct Cli {
     #[arg(long = "no-tui", global = true)]
     no_tui: bool,
 
+    #[arg(
+        long,
+        global = true,
+        help = "Enable conservative proactive companion planning"
+    )]
+    companion: bool,
+
     #[command(subcommand)]
     command: Option<CliCommand>,
 
@@ -185,6 +192,18 @@ enum CliCommand {
     Memory {
         #[command(subcommand)]
         command: MemoryCommand,
+    },
+    Companion {
+        #[command(subcommand)]
+        command: CompanionCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CompanionCommand {
+    Check {
+        #[arg(value_name = "CONTEXT")]
+        context: Vec<String>,
     },
 }
 
@@ -414,6 +433,10 @@ async fn run_cli() -> Result<()> {
         config = config.with_auto_compact_threshold_tokens(auto_compact_threshold_tokens);
     }
     config = config.with_memory_extraction_mode(cli.memory_extraction.into());
+    if cli.companion || matches!(cli.command, Some(CliCommand::Companion { .. })) {
+        config.companion.enabled = true;
+        config.companion.allow_tool_requests = true;
+    }
 
     reject_detached_codex_backend(backend)?;
 
@@ -1540,6 +1563,17 @@ async fn run_command(
         CliCommand::Parity { command } => run_parity_command(command, json).await,
         CliCommand::Persona { command } => run_persona_command(command, json).await,
         CliCommand::Memory { command } => run_memory_command(command, config, json).await,
+        CliCommand::Companion { command } => match command {
+            CompanionCommand::Check { context } => {
+                let context = context.join(" ");
+                let prompt = if context.trim().is_empty() {
+                    "long idle companion check".to_string()
+                } else {
+                    format!("companion check: {context}")
+                };
+                run_prompt(prompt, config, backend, provider_mode, json, jsonl).await
+            }
+        },
     }
 }
 
@@ -1553,16 +1587,19 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.1; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.1; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.1; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.1; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for memory management commands"
+        ),
+        CliCommand::Companion { .. } => bail!(
+            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for companion management commands"
         ),
     }
 }

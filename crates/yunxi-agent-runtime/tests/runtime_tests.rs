@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunApprovalDecision,
     AgentRunControl, AgentRunStatus, AgentRunUserInputResponse, ApprovalMode, CommandStatus,
-    FileChangeKind, MemoryExtractionMode, PatchStatus, SandboxMode,
+    CompanionSettings, FileChangeKind, MemoryExtractionMode, PatchStatus, SandboxMode,
 };
 use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus};
 use yunxi_agent_protocol::{
@@ -25,6 +25,64 @@ use yunxi_agent_storage::{
     SessionStore,
 };
 use yunxi_agent_tools::{CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime};
+
+#[tokio::test(flavor = "current_thread")]
+async fn companion_is_disabled_by_default() {
+    let workspace = TempDir::new().expect("workspace");
+    let backend = YunXiRuntimeBackend::with_parts(
+        StaticProvider::default(),
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let result = Agent::new(AgentConfig::new(workspace.path()))
+        .run_with_backend(&backend, AgentInput::text("reminder due"))
+        .await
+        .expect("runtime should complete");
+    assert!(!result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Message { content } if content.contains("[提醒]")
+    )));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn companion_check_emits_reasoned_plan_without_tool_execution() {
+    let workspace = TempDir::new().expect("workspace");
+    let backend = YunXiRuntimeBackend::with_parts(
+        StaticProvider::default(),
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let config = AgentConfig {
+        companion: CompanionSettings {
+            enabled: true,
+            allow_tool_requests: true,
+            ..CompanionSettings::default()
+        },
+        ..AgentConfig::new(workspace.path())
+    };
+    let result = Agent::new(config)
+        .run_with_backend(&backend, AgentInput::text("tool request: open notes"))
+        .await
+        .expect("runtime should complete");
+    let messages = result
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Message { content } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("需要确认的工具建议"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("不会自动执行"))
+    );
+}
 
 static MEMORY_ENV_LOCK: Mutex<()> = Mutex::new(());
 

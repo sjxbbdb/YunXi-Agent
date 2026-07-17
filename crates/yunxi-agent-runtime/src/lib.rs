@@ -9,6 +9,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use yunxi_agent_companion::{
+    CompanionAction, CompanionInput, CompanionPlan, CompanionPlanner, SafeCompanionPlanner,
+};
 use yunxi_agent_context::{
     ContextManagerState, ContextWindowBudget, ConversationMessage, ConversationRole,
     PromptAssembly, PromptDebugSnapshot, RestoredHistory, extract_file_mentions,
@@ -147,6 +150,15 @@ pub struct YunXiRuntimeBackend {
     max_turns: usize,
     max_child_depth: usize,
     child_depth: usize,
+    companion_usage: Arc<Mutex<CompanionUsage>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct CompanionUsage {
+    session_id: Option<String>,
+    session_count: u32,
+    day_number: u64,
+    day_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -217,6 +229,7 @@ impl YunXiRuntimeBackend {
             max_turns: DEFAULT_MAX_TURNS,
             max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
             child_depth: 0,
+            companion_usage: Arc::new(Mutex::new(CompanionUsage::default())),
         }
     }
 
@@ -236,6 +249,7 @@ impl YunXiRuntimeBackend {
             max_turns: DEFAULT_MAX_TURNS,
             max_child_depth: DEFAULT_MAX_CHILD_DEPTH,
             child_depth: 0,
+            companion_usage: Arc::new(Mutex::new(CompanionUsage::default())),
         }
     }
 
@@ -612,6 +626,11 @@ impl YunXiRuntimeBackend {
             .clone()
             .map(SessionId::new)
             .unwrap_or_else(SessionId::generate);
+        let companion_session_key = turn
+            .config
+            .session_id
+            .clone()
+            .unwrap_or_else(|| turn.config.cwd.display().to_string());
         let mut runtime_config = turn.config.clone();
         runtime_config.session_id = Some(session_id.0.clone());
 
@@ -1064,6 +1083,32 @@ impl YunXiRuntimeBackend {
             })
             .await?;
         }
+        let companion_plans = self.plan_companion(
+            &runtime_config,
+            prompt,
+            &initial_messages.persona,
+            &companion_session_key,
+        );
+        for plan in &companion_plans {
+            let message = render_companion_plan(plan);
+            sink.emit(AgentEvent::Message {
+                content: message.clone(),
+            })
+            .await?;
+        }
+        let final_response = if companion_plans.is_empty() {
+            final_response
+        } else {
+            format!(
+                "{}\n\n{}",
+                final_response,
+                companion_plans
+                    .iter()
+                    .map(render_companion_plan)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
         emit_memory_extraction_events(
             &sink,
             self.provider.as_ref(),
@@ -1140,6 +1185,119 @@ impl YunXiRuntimeBackend {
             events,
         })
     }
+
+    fn plan_companion(
+        &self,
+        config: &AgentConfig,
+        prompt: &str,
+        persona: &PersonaTurnContext,
+        session_key: &str,
+    ) -> Vec<CompanionPlan> {
+        let signal = companion_input_from_prompt(prompt, persona);
+        if !config.companion.enabled
+            || (signal.reminder_due
+                || signal.unfinished_task.is_some()
+                || signal.topic_continuation.is_some()
+                || signal.periodic_summary_due
+                || signal.relationship_milestone.is_some()
+                || signal.tool_request.is_some()
+                || signal.idle_minutes >= 120)
+                == false
+        {
+            return Vec::new();
+        }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or_default();
+        let day_number = now / 86_400;
+        let now_minute_of_day = ((now % 86_400) / 60) as u16;
+        let mut usage = self
+            .companion_usage
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if usage.session_id.as_deref() != Some(session_key) {
+            usage.session_id = Some(session_key.to_string());
+            usage.session_count = 0;
+        }
+        if usage.day_number != day_number {
+            usage.day_number = day_number;
+            usage.day_count = 0;
+        }
+        let input = CompanionInput {
+            now_minute_of_day,
+            proactive_in_session: usage.session_count,
+            proactive_today: usage.day_count,
+            ..signal
+        };
+        let plans = SafeCompanionPlanner::new(config.companion.clone()).plan(input);
+        if !plans.is_empty() {
+            usage.session_count = usage.session_count.saturating_add(plans.len() as u32);
+            usage.day_count = usage.day_count.saturating_add(plans.len() as u32);
+        }
+        plans
+    }
+}
+
+fn companion_input_from_prompt(prompt: &str, persona: &PersonaTurnContext) -> CompanionInput {
+    let normalized = prompt
+        .trim()
+        .strip_prefix("companion check:")
+        .map(str::trim)
+        .unwrap_or_else(|| prompt.trim());
+    let lower = normalized.to_ascii_lowercase();
+    let relationship_milestone = persona
+        .recall_explanations
+        .iter()
+        .find(|explanation| explanation.relation.is_some())
+        .map(|_| "最近的关系或上下文记录发生了变化".to_string());
+    CompanionInput {
+        reminder_due: lower.contains("reminder due") || normalized.contains("提醒到期"),
+        unfinished_task: normalized
+            .strip_prefix("unfinished task:")
+            .or_else(|| normalized.strip_prefix("未完成任务："))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string),
+        topic_continuation: normalized
+            .strip_prefix("continue topic:")
+            .or_else(|| normalized.strip_prefix("继续话题："))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string),
+        periodic_summary_due: lower.contains("periodic summary") || normalized.contains("阶段总结"),
+        relationship_milestone,
+        tool_request: normalized
+            .strip_prefix("tool request:")
+            .or_else(|| normalized.strip_prefix("工具请求："))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string),
+        idle_minutes: if lower.contains("long idle") || normalized.contains("长时间空闲") {
+            120
+        } else {
+            0
+        },
+        ..CompanionInput::default()
+    }
+}
+
+fn render_companion_plan(plan: &CompanionPlan) -> String {
+    let action = match plan.action {
+        CompanionAction::MessageOnly => "关心",
+        CompanionAction::SuggestNextStep => "下一步建议",
+        CompanionAction::SummarizeStage => "阶段总结",
+        CompanionAction::AskPermissionForTool => "需要确认的工具建议",
+    };
+    let confirmation = if plan.requires_user_confirmation {
+        "（需要你的确认，不会自动执行）"
+    } else {
+        ""
+    };
+    format!(
+        "[{action}] {}\n原因：{}{}",
+        plan.message, plan.reason, confirmation
+    )
 }
 
 #[derive(Clone, Debug, PartialEq)]

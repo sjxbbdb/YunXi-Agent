@@ -1,5 +1,27 @@
 # Extraction Status
 
+## Current Workspace Version: v1.9.2
+
+The current workspace includes the pure Rust `yunxi-agent-companion` policy
+crate and the runtime companion boundary described below. The v1.9.1 sections
+that follow are retained as historical release records.
+
+## YunXi Agent v1.9.2 Proactive Companion Loop
+
+The current workspace version is v1.9.2. `yunxi-agent-companion` is a pure Rust
+policy crate with no scheduler, cloud service, Python runtime, or background
+process. `AgentConfig.companion` is disabled by default and carries quiet-hour,
+per-session, per-day, reason, and tool-confirmation controls.
+
+The runtime calls the planner only at a turn boundary when an explicit
+companion signal is present. Plans include a bounded reason. Tool-related plans
+are confirmation messages and never enter `ToolRouter` automatically. The
+Relationship Graph Lite is consumed only as a read-only relationship signal.
+
+Covered regression paths include default-off behavior, reminder, unfinished
+task, long-idle, topic continuation, periodic summary, relationship signal,
+quiet hours, frequency limits, reason visibility, and tool confirmation.
+
 ## Current Stage
 
 The repository currently contains:

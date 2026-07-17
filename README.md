@@ -1,6 +1,6 @@
-# YunXi Agent v1.9.1
+# YunXi Agent v1.9.2
 
-YunXi Agent v1.9.1 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.9.2 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -12,6 +12,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 ## Layout
 
 - `crates/yunxi-agent-core`: reusable Agent facade and extraction boundary
+- `crates/yunxi-agent-companion`: pure Rust proactive companion policy and planner
 - `crates/yunxi-agent-provider`: YunXi-owned provider request/response boundary
 - `crates/yunxi-agent-persona`: YunXi-owned persona, transparent memory schema,
   recall, extraction, and write policy boundary
@@ -20,7 +21,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.9.1 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.9.2 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -117,6 +118,9 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Derives a Rust-native Relationship Graph Lite view from Schema v3 entities,
   relations, validity windows, and invalidation chains; relationship-history
   queries use event/observed/update/create time order without adding a graph DB
+- Provides a conservative proactive companion planner that is disabled by
+  default, explains every plan reason, respects quiet hours and per-session/day
+  limits, and turns tool ideas into confirmation requests only
 
 ## Build
 
@@ -133,7 +137,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.9.1 CLI into a user-local bin directory:
+Build and install the v1.9.2 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -147,6 +151,18 @@ yunxi --version
 yunxi
 yunxi "explain this project"
 ```
+
+Proactive companion behavior remains off unless explicitly enabled. Use the
+global `--companion` flag for a turn or the explicit check command:
+
+```powershell
+yunxi --companion "unfinished task: review the release notes"
+yunxi --companion check "continue topic: the release plan"
+```
+
+The planner never runs a tool on its own. A tool-related plan is rendered as a
+request for confirmation. Quiet hours and limits are configured through the
+`AgentConfig.companion` facade; the default is disabled and requires reasons.
 
 The installer copies both `yunxi.exe` and the compatibility
 `yunxi-agent-cli.exe`.

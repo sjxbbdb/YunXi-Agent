@@ -21,6 +21,8 @@ pub struct AgentConfig {
     pub auto_compact_threshold_tokens: Option<i64>,
     #[serde(default)]
     pub memory_extraction_mode: MemoryExtractionMode,
+    #[serde(default)]
+    pub companion: CompanionSettings,
 }
 
 impl AgentConfig {
@@ -38,6 +40,7 @@ impl AgentConfig {
             context_window_tokens: None,
             auto_compact_threshold_tokens: None,
             memory_extraction_mode: MemoryExtractionMode::Auto,
+            companion: CompanionSettings::default(),
         }
     }
 
@@ -98,6 +101,68 @@ impl AgentConfig {
         self.memory_extraction_mode = mode;
         self
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompanionSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub quiet_hours: Option<QuietHours>,
+    #[serde(default = "default_max_proactive_per_session")]
+    pub max_proactive_per_session: u32,
+    #[serde(default = "default_max_proactive_per_day")]
+    pub max_proactive_per_day: u32,
+    #[serde(default = "default_true")]
+    pub require_reason: bool,
+    #[serde(default)]
+    pub allow_tool_requests: bool,
+}
+
+impl Default for CompanionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            quiet_hours: None,
+            max_proactive_per_session: default_max_proactive_per_session(),
+            max_proactive_per_day: default_max_proactive_per_day(),
+            require_reason: true,
+            allow_tool_requests: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct QuietHours {
+    pub start_minute: u16,
+    pub end_minute: u16,
+}
+
+impl QuietHours {
+    pub fn new(start_minute: u16, end_minute: u16) -> Option<Self> {
+        (start_minute < 1440 && end_minute < 1440).then_some(Self {
+            start_minute,
+            end_minute,
+        })
+    }
+
+    pub fn contains(self, minute_of_day: u16) -> bool {
+        if self.start_minute <= self.end_minute {
+            (self.start_minute..=self.end_minute).contains(&minute_of_day)
+        } else {
+            minute_of_day >= self.start_minute || minute_of_day <= self.end_minute
+        }
+    }
+}
+
+fn default_max_proactive_per_session() -> u32 {
+    3
+}
+fn default_max_proactive_per_day() -> u32 {
+    8
+}
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

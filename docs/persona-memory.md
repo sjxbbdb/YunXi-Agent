@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.9.1 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.9.2 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -18,11 +18,11 @@ request.
 
 ## Persona Context Blocks
 
-v1.9.1 compiles the built-in persona into one bounded, XML-like context string
+v1.9.2 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="1.9.1" profile_id="yunxi_companion_strong" mode="routed_memory">
+<yunxi_persona_context version="1.9.2" profile_id="yunxi_companion_strong" mode="routed_memory">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>
@@ -300,8 +300,16 @@ Debug/details keep engineering fields such as id, scope, kind, status, action,
 revision, merged_count, merge_strategy, conflict_family, and recall diagnostic
 counts.
 
-## Non-Goals In v1.9.1
+## Proactive Companion In v1.9.2
 
-v1.9.1 does not add a proactive loop, SQLite, vector search, an external graph
+The v1.9.2 companion planner consumes persona, memory recall, and relationship
+signals as read-only context. It does not write memory, schedule background
+jobs, call tools, or bypass approval. `AgentConfig.companion.enabled` defaults
+to `false`; every generated plan includes a reason, quiet hours are honored,
+and per-session/day limits are enforced in the planner.
+
+## Non-Goals In v1.9.2
+
+v1.9.2 does not add SQLite, vector search, an external graph
 database or memory runtime, cloud/marketplace/SDK surfaces, an evaluation
 harness, or a TUI memory inspector page.

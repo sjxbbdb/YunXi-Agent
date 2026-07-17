@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.8.7 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.8.8 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -11,17 +11,18 @@ request.
 - The built-in profile is `yunxi_companion_strong`.
 - Long-term memory writes are disabled until `yunxi memory on`,
   `YUNXI_MEMORY_ENABLED=1`, or a saved config enables them.
-- Only `active` memories are recalled. `pending`, `rejected`, and `archived`
-  records are never injected into prompts.
+- Only effective `active` memories are recalled. `pending`, `rejected`,
+  `archived`, expired, invalidated, and superseded records are never injected
+  into prompts.
 - `YUNXI_HOME` overrides the default `%USERPROFILE%\.yunxi` root.
 
 ## Persona Context Blocks
 
-v1.8.7 compiles the built-in persona into one bounded, XML-like context string
+v1.8.8 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="1.8.7" profile_id="yunxi_companion_strong">
+<yunxi_persona_context version="1.8.8" profile_id="yunxi_companion_strong">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>
@@ -40,9 +41,9 @@ The `boundaries` block always states that project instructions (including
 `AGENTS.md`), the current user request, sandbox/privacy/safety/tool policies,
 and tool execution boundaries take priority over persona and memory. The
 `memory_context` block always retains its context-not-instruction notice and
-authorization boundary. The compiler filters non-active records defensively;
-`pending`, `rejected`, and `archived` records are not rendered even if a caller
-passes them directly.
+authorization boundary. The compiler filters ineffective records defensively;
+pending, rejected, archived, expired, invalidated, and superseded records are
+not rendered even if a caller passes them directly.
 
 The compiler has a 1,000-character minimum safety floor and a 1,800-character
 default budget. When the requested budget is exceeded, optional lines are
@@ -62,11 +63,31 @@ Memory is append-only JSONL:
 <workspace>\.yunxi\memory\pending.jsonl
 ```
 
-v1.8.7 continues to write `schema_version = 2`. Every record includes:
+v1.8.8 writes `schema_version = 3`. Existing v2 audit fields remain stable:
 
 - `dedup_key`: `scope + kind + normalized_content`.
 - `revision`: latest revision number for the durable memory id.
 - `merged_count`: how many equivalent candidates have been folded into it.
+
+Schema v3 adds structured metadata without replacing the transparent JSONL
+ledger:
+
+- `layer`: profile, preference, relationship, workspace, episode, tool trace,
+  or unknown; new and migrated records derive a default from `kind`.
+- `entities`: typed user, agent, workspace, project, tool, person, or
+  relationship references.
+- `temporal`: observed, event, valid-from, and expiry timestamps. Observed and
+  valid-from default to `created_at_millis`.
+- `evidence`: bounded candidate summaries plus optional session/turn/event
+  references. Secret-like source text is replaced by a fixed redaction notice.
+- `source`: primary extractor/session/workspace/provider/rule fields plus a
+  deduplicated attribution list so merges retain both sides of provenance.
+- `invalidation`: supersedes, superseded-by, conflicts, expiry reason, and
+  invalidation timestamp.
+
+`confidence` and `importance` keep their existing v2 semantics. Recall and
+Persona Context Blocks require `active` status, a valid time window, and no
+invalidation or superseding record.
 
 Equivalent active/pending records are merged before writing. The store still
 appends a new revision line, preserving the audit ledger. Archived or rejected
@@ -77,18 +98,18 @@ cannot overwrite a richer existing memory in the same `dedup_key` slot. If the
 incoming memory adds real detail, YunXi promotes or combines the content while
 preserving the durable id and `created_at_millis`.
 
-v1.8.4 keeps the single-field source audit aligned with the selected merge
-strategy. When `promote_incoming` supplies the final richer content,
-`source_session_id` follows the incoming record. When `preserve_existing` or
-`combine_non_conflicting` keeps the existing record as the primary source, the
-existing source remains preferred.
+The legacy `source_session_id` remains aligned with the selected merge strategy
+for backward compatibility. Schema v3 additionally unions evidence, source
+attributions, entities, invalidation relations, revision, and merged count, so
+the non-primary candidate's provenance is not discarded.
 
 Language preference conflicts are not auto-overwritten. For example, an active
 Chinese preference and a later English preference share the same language
 conflict family but not the same `dedup_key`; the later conflicting candidate is
 written as `pending` for explicit review.
 
-v1 JSONL records are migrated on read. Missing `schema_version` records with the
+v1 and v2 JSONL records are migrated to v3 in memory when read. The original
+append-only files are not rewritten. Missing `schema_version` records with the
 old v1 shape are treated as legacy v1 and emit a warning. Unsupported future
 schema lines are skipped with a warning instead of panicking.
 
@@ -114,6 +135,11 @@ preferences such as `以后请用中文回答`, `默认用中文交流`, and `�
 `language:zh`; English preferences such as `以后请用英文回答`, `以后请用英语回答`,
 `Please answer in English from now on`, and `use English by default` normalize
 to `language:en`.
+
+The shared dedup path also maps candidate evidence into the proposed v3 record.
+Rule candidates identify the rule extractor and rule id; provider candidates
+identify the provider extractor. Evidence is trimmed and bounded before
+persistence, and secret-like raw evidence is replaced rather than copied.
 
 In `auto` mode, provider candidates and rule candidates are folded together and
 deduplicated before persistence. This lets a provider's richer preference such
@@ -145,7 +171,7 @@ small always-on budget after dedup.
 
 ## Machine-Readable Output Redaction
 
-v1.8.7 continues to sanitize both `--json` and `--jsonl` agent execution output before
+v1.8.8 continues to sanitize both `--json` and `--jsonl` agent execution output before
 serialization. Secret-like fragments in `AgentRunResult.final_response`,
 conversation events, memory recall queries, command/tool text, provider/error
 messages, state `data` maps, child-agent messages, and nested JSONL protocol
@@ -190,8 +216,9 @@ Debug/details keep engineering fields such as id, scope, kind, status, action,
 revision, merged_count, merge_strategy, conflict_family, and recall diagnostic
 counts.
 
-## Non-Goals In v1.8.7
+## Non-Goals In v1.8.8
 
-v1.8.7 does not add Memory Schema v3, L0-L3 pipelines, SQLite, vector search,
-graph memory, relationship state
-machines, proactive triggers, or a TUI memory inspector page.
+v1.8.8 does not add a full L0-L3 pipeline, Boot Context/Recall Router,
+relationship graph, proactive loop, SQLite, vector search, external memory
+runtime, cloud/marketplace/SDK surfaces, evaluation harness, or a TUI memory
+inspector page.

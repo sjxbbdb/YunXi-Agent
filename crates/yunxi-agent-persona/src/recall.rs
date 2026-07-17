@@ -1,6 +1,6 @@
 use crate::dedup::dedup_key_for_record;
 use crate::memory::{
-    MemoryKind, MemoryRecallRequest, MemoryRecallResult, MemoryRecord, MemoryScope, MemoryStatus,
+    MemoryKind, MemoryRecallRequest, MemoryRecallResult, MemoryRecord, MemoryScope, now_millis,
 };
 use std::collections::BTreeMap;
 
@@ -88,9 +88,10 @@ fn collapse_duplicate_records(
 ) -> (Vec<MemoryRecord>, usize) {
     let mut by_key: BTreeMap<String, MemoryRecord> = BTreeMap::new();
     let mut dropped_duplicates = 0;
+    let now = now_millis();
     for record in records
         .iter()
-        .filter(|record| record.status == MemoryStatus::Active)
+        .filter(|record| record.is_recallable_at(now))
         .filter(|record| scope_matches(&record.scope, request.workspace_fingerprint.as_deref()))
     {
         let key = if record.dedup_key.trim().is_empty() {

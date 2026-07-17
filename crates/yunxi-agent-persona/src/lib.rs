@@ -18,8 +18,10 @@ pub use dedup::{
 };
 pub use extractor::MemoryRuleExtractor;
 pub use memory::{
-    MemoryCandidate, MemoryKind, MemoryRecallRequest, MemoryRecallResult, MemoryRecord,
-    MemoryScope, MemorySensitivity, MemoryStatus, SCHEMA_VERSION, now_millis,
+    MemoryCandidate, MemoryEntityRef, MemoryEntityType, MemoryEvidence, MemoryInvalidation,
+    MemoryKind, MemoryLayer, MemoryRecallRequest, MemoryRecallResult, MemoryRecord, MemoryScope,
+    MemorySensitivity, MemorySource, MemorySourceAttribution, MemoryStatus, MemoryTemporal,
+    SCHEMA_VERSION, now_millis,
 };
 pub use merge::{
     MemoryMergeResult, MemoryMergeStrategy, memory_conflict_family,

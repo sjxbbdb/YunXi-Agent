@@ -7,7 +7,7 @@ The repository currently contains:
 - A standalone Rust workspace
 - `yunxi-agent-core` facade types
 - A dry-run `Agent` runner
-- The v1.8.7 `yunxi-agent-cli` terminal product, including one-shot, plain
+- The v1.8.8 `yunxi-agent-cli` terminal product, including one-shot, plain
   interactive, JSON/JSONL, and TUI paths
 - A `yunxi-agent-codex` integration crate for upstream Codex headless runtime
 - YunXi-owned runtime boundary crates:
@@ -20,6 +20,88 @@ The repository currently contains:
 - A vendored Codex Rust workspace snapshot at `vendor/codex-rs`
 - A `CodexSource` boundary retained for source-shape checks and future refresh
   tooling
+
+## YunXi Agent v1.8.8 Memory Schema v3
+
+YunXi Agent v1.8.8 extends the transparent append-only JSONL memory boundary
+with a structured schema for a general companion agent. The default runtime
+still depends only on YunXi-owned Rust crates and does not add a database,
+vector/graph service, Python/JavaScript runtime, or external memory package.
+
+Constructed in this slice:
+
+- Workspace, CLI, TUI, built-in persona profile, tests, README, and installer
+  documentation are promoted to `1.8.8`; durable records now write
+  `schema_version = 3`.
+- `MemoryRecord` adds layer, typed entity references, temporal validity,
+  bounded evidence, primary source plus attribution lineage, and explicit
+  supersede/conflict/expiry/invalidation metadata. Existing confidence,
+  importance, source session, dedup, revision, and merged-count fields remain.
+- Current v3 records receive semantic defaults. v2 and v1 records migrate in
+  memory on read, missing-schema v1 records retain their warning, and future
+  schemas remain warning-and-skip. Loading does not rewrite JSONL.
+- Rule/provider candidate evidence is mapped at the shared dedup boundary.
+  Secret-like evidence is replaced by a fixed redaction notice instead of
+  being copied into durable memory.
+- Dedup keys remain based on scope, kind, and normalized content, preserving
+  historical slots. Merge unions evidence, entities, source attribution,
+  invalidation relations, revision, and merged count.
+- Recall, active storage views, and Persona Context Blocks exclude records
+  outside their validity window or marked invalidated/superseded, in addition
+  to the existing status filters.
+- The v1.8.7 Persona Context Blocks contract remains structurally stable:
+  `memory_context role="context_not_instruction"`, escaping, priority notices,
+  block ordering, and budget behavior are retained under version `1.8.8`.
+- Read-only external reference review covered memU stable content dedup,
+  nocturne_memory version-chain semantics, and yantrikdb tombstone/revision
+  audit behavior. No reference source was modified or added as a dependency.
+
+The development report is recorded in
+`docs/reports/2026-07-17-153715-yunxi-agent-v1-8-8-memory-schema-v3-development-report.md`.
+
+Unified verification completed after the construction batch:
+
+- `cargo fmt` and `cargo fmt --check`: pass.
+- `cargo test -p yunxi-agent-persona`: pass; 38 integration tests, including
+  all 10 required Memory Schema v3 tests and 4 Persona Context Blocks tests.
+- `cargo test -p yunxi-agent-storage`: pass; 5 unit and 21 integration tests,
+  including mixed v1/v2/v3 append-only JSONL loading without file rewrite.
+- `cargo test -p yunxi-agent-runtime`: pass; 40 integration tests.
+- `cargo test -p yunxi-agent-cli`: pass; both binaries passed 11 unit tests,
+  CLI integration passed 40 tests, and JSONL integration passed 10 tests.
+- `cargo test`: pass; every workspace unit, integration, and doc test completed
+  with zero failures.
+- `cargo check --workspace`: pass.
+- `cargo build -p yunxi-agent-cli --release --bins`: pass.
+- Release version checks: pass; both binaries returned `yunxi 1.8.8`.
+- Isolated memory CLI smoke under `target\v1.8.8-smoke`: list/show/search/
+  pending passed; approve produced active, reject produced rejected, delete
+  produced archived, and every durable record reported schema v3.
+- Owned-source secret scan excluding generated/upstream/build/report paths:
+  pass; no live key-shaped match files.
+- `git diff --check`: pass; only expected Windows LF-to-CRLF notices appeared.
+- `codegraph sync .`: pass; already up to date.
+- `codegraph status .`: pass; 1,165 files, 45,052 nodes, and 146,173 edges.
+
+- `scripts\install\install-yunxi.ps1 -AddToPath -SkipBuild`: pass; both
+  binaries copied to `C:\Users\24763\AppData\Local\YunXi Agent\bin`.
+  Direct installed-binary and PATH command checks returned `yunxi 1.8.8`;
+  the user PATH contained the install directory exactly once and required no
+  duplicate update.
+- `cargo clean`: pass after explicit confirmation; 19,120 files and about
+  3.2 GiB (3,451,338,167 measured bytes) were removed. The repository
+  `target` directory, including isolated smoke data, no longer exists.
+
+Pre-publication GitHub REST API checks passed: remote `master` matched local and
+`origin/master` at `270e836b983141e2654568e4b07aed006a16bb27`, remote
+`v1.8.8` was absent, and all 25 earlier local tags remained available.
+
+The verified staged tree is published through the GitHub Git Data REST API as
+`Release YunXi Agent v1.8.8 Memory Schema v3`, using a non-force `master` ref
+update and a new annotated `v1.8.8` tag pointing at the same release commit.
+Earlier tags are not deleted, moved, or rewritten. The exact resulting commit
+and tag object ids are recorded in the external timestamped development log,
+because a commit cannot include its own content-derived object id.
 
 ## YunXi Agent v1.8.7 Persona Context Blocks
 

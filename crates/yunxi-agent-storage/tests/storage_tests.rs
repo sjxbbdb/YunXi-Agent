@@ -290,7 +290,7 @@ fn file_persona_memory_store_skips_corrupt_jsonl_lines() {
 
     assert_eq!(loaded.records.len(), 1);
     assert_eq!(loaded.records[0].id, "memory-2");
-    assert_eq!(loaded.records[0].schema_version, 2);
+    assert_eq!(loaded.records[0].schema_version, 3);
     assert!(!loaded.records[0].dedup_key.is_empty());
     assert_eq!(loaded.warnings.len(), 1);
 }
@@ -663,7 +663,7 @@ fn file_persona_memory_store_migrates_v1_and_legacy_jsonl_records() {
     let loaded = store.list(PersonaMemoryScope::Workspace);
 
     assert!(loaded.records.iter().all(|record| {
-        record.schema_version == 2
+        record.schema_version == 3
             && !record.dedup_key.is_empty()
             && record.revision >= 1
             && record.merged_count >= 1
@@ -764,4 +764,63 @@ fn clear_workspace_archives_active_and_pending_workspace_records_only() {
     assert_eq!(summary.archived_active_records, 1);
     assert_eq!(summary.archived_pending_records, 1);
     assert_eq!(summary.remaining_pending_records, 0);
+}
+
+#[test]
+fn append_only_store_loads_mixed_v1_v2_v3_jsonl_records() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FilePersonaMemoryStore::for_workspace(temp.path());
+    let workspace_dir = temp.path().join(".yunxi").join("memory");
+    std::fs::create_dir_all(&workspace_dir).expect("workspace memory dir");
+    let fingerprint = store.workspace_fingerprint();
+    let v1 = format!(
+        "{{\"id\":\"mixed-v1\",\"schema_version\":1,\"scope\":{{\"workspace\":{{\"root_fingerprint\":\"{fingerprint}\"}}}},\"kind\":\"preference\",\"content\":\"Prefer concise answers\",\"confidence\":0.8,\"importance\":0.6,\"sensitivity\":\"low\",\"status\":\"active\",\"created_at_millis\":1,\"updated_at_millis\":1}}"
+    );
+    let v2 = format!(
+        "{{\"id\":\"mixed-v2\",\"schema_version\":2,\"scope\":{{\"workspace\":{{\"root_fingerprint\":\"{fingerprint}\"}}}},\"kind\":\"project_context\",\"content\":\"Project uses REST API\",\"source_session_id\":\"session-v2\",\"confidence\":0.9,\"importance\":0.7,\"sensitivity\":\"low\",\"status\":\"active\",\"created_at_millis\":2,\"updated_at_millis\":2,\"dedup_key\":\"\",\"revision\":2,\"merged_count\":2}}"
+    );
+    let v3_record = MemoryRecord::new(
+        "mixed-v3",
+        MemoryScope::Workspace {
+            root_fingerprint: fingerprint.to_string(),
+        },
+        MemoryKind::Goal,
+        "Ship the next release",
+        3,
+    )
+    .with_status(MemoryStatus::Active);
+    let v3 = serde_json::to_string(&v3_record).expect("serialize v3");
+    let fixture = format!("{v1}\n{v2}\n{v3}\n");
+    let path = workspace_dir.join("workspace-memory.jsonl");
+    std::fs::write(&path, &fixture).expect("write mixed fixture");
+
+    let loaded = store.list(PersonaMemoryScope::Workspace);
+
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    assert_eq!(loaded.records.len(), 3);
+    assert!(
+        loaded
+            .records
+            .iter()
+            .all(|record| record.schema_version == 3)
+    );
+    assert!(
+        loaded
+            .records
+            .iter()
+            .all(|record| !record.dedup_key.is_empty())
+    );
+    assert_eq!(
+        loaded
+            .records
+            .iter()
+            .find(|record| record.id == "mixed-v2")
+            .and_then(|record| record.source.session_id.as_deref()),
+        Some("session-v2")
+    );
+    assert_eq!(
+        std::fs::read_to_string(path).expect("read mixed fixture"),
+        fixture,
+        "loading migrations must not rewrite append-only JSONL"
+    );
 }

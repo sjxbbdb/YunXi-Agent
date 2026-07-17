@@ -785,7 +785,9 @@ impl FilePersonaMemoryStore {
     }
 
     pub fn append(&self, record: &MemoryRecord) -> AgentResult<()> {
-        let path = self.path_for_record(record);
+        let mut record = record.clone();
+        record.ensure_dedup_metadata();
+        let path = self.path_for_record(&record);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
                 message: format!(
@@ -794,7 +796,7 @@ impl FilePersonaMemoryStore {
                 ),
             })?;
         }
-        let line = serde_json::to_string(record).map_err(|error| AgentError::Execution {
+        let line = serde_json::to_string(&record).map_err(|error| AgentError::Execution {
             message: format!("failed to serialize memory {}: {error}", record.id),
         })?;
         let mut content = line;
@@ -843,8 +845,14 @@ impl FilePersonaMemoryStore {
         let mut merged = result.record;
         merged.id = existing.id.clone();
         merged.created_at_millis = existing.created_at_millis;
-        merged.revision = existing.revision.saturating_add(1).max(2);
-        merged.merged_count = existing.merged_count.saturating_add(1).max(2);
+        merged.revision = merged
+            .revision
+            .max(existing.revision.saturating_add(1))
+            .max(2);
+        merged.merged_count = merged
+            .merged_count
+            .max(existing.merged_count.saturating_add(1))
+            .max(2);
         merged.ensure_dedup_metadata();
         self.append(&merged)?;
         Ok(MemoryPersistOutcome::Merged {
@@ -935,8 +943,8 @@ impl FilePersonaMemoryStore {
 
     pub fn active_records(&self) -> PersonaMemoryLoad {
         let mut load = self.list(PersonaMemoryScope::All);
-        load.records
-            .retain(|record| record.status == MemoryStatus::Active);
+        let now = memory_now_millis();
+        load.records.retain(|record| record.is_recallable_at(now));
         load
     }
 

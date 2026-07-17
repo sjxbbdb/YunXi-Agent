@@ -1,5 +1,8 @@
 use crate::dedup::{max_policy, status_for_policy};
-use crate::memory::{MemoryCandidate, MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus};
+use crate::memory::{
+    MemoryCandidate, MemoryInvalidation, MemoryKind, MemoryRecord, MemorySensitivity, MemorySource,
+    MemoryStatus, MemoryTemporal,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MemoryMergeStrategy {
@@ -44,7 +47,22 @@ pub fn merge_equivalent_memory_records(
     merged.sensitivity = max_sensitivity(existing.sensitivity, incoming.sensitivity);
     merged.status = merged_status(existing.status, incoming.status, merged.sensitivity);
     merged.source_session_id = merge_source_session_id(decision.strategy, existing, incoming);
+    merged.entities = merge_unique(&existing.entities, &incoming.entities);
+    merged.evidence = merge_unique(&existing.evidence, &incoming.evidence);
+    merged.source = merge_source(decision.strategy, existing, incoming);
+    merged.temporal = merge_temporal(existing, incoming);
+    merged.invalidation = merge_invalidation(existing, incoming);
+    merged.created_at_millis = existing.created_at_millis.min(incoming.created_at_millis);
     merged.updated_at_millis = now_millis;
+    merged.revision = existing
+        .revision
+        .max(incoming.revision)
+        .saturating_add(1)
+        .max(2);
+    merged.merged_count = existing
+        .merged_count
+        .saturating_add(incoming.merged_count)
+        .max(2);
     merged.ensure_dedup_metadata();
 
     MemoryMergeResult {
@@ -55,6 +73,14 @@ pub fn merge_equivalent_memory_records(
 }
 
 pub fn merge_memory_candidates(existing: &mut MemoryCandidate, incoming: MemoryCandidate) {
+    let candidate_revision = existing
+        .proposed_record
+        .revision
+        .max(incoming.proposed_record.revision);
+    let candidate_merged_count = existing
+        .proposed_record
+        .merged_count
+        .max(incoming.proposed_record.merged_count);
     let now = existing
         .proposed_record
         .updated_at_millis
@@ -62,6 +88,10 @@ pub fn merge_memory_candidates(existing: &mut MemoryCandidate, incoming: MemoryC
     let result =
         merge_equivalent_memory_records(&existing.proposed_record, &incoming.proposed_record, now);
     existing.proposed_record = result.record;
+    // Candidate dedup happens before durable persistence, so it must not
+    // consume a storage revision or inflate the persisted merge counter.
+    existing.proposed_record.revision = candidate_revision.max(1);
+    existing.proposed_record.merged_count = candidate_merged_count.max(1);
     existing.write_policy = max_policy(existing.write_policy, incoming.write_policy);
     existing.proposed_record.status = status_for_policy(existing.write_policy);
     existing.evidence = merge_short(&existing.evidence, &incoming.evidence, 240);
@@ -217,6 +247,120 @@ fn merge_source_session_id(
             .source_session_id
             .clone()
             .or_else(|| incoming.source_session_id.clone()),
+    }
+}
+
+fn merge_source(
+    strategy: MemoryMergeStrategy,
+    existing: &MemoryRecord,
+    incoming: &MemoryRecord,
+) -> MemorySource {
+    let (primary, secondary) = match strategy {
+        MemoryMergeStrategy::PromoteIncoming => (&incoming.source, &existing.source),
+        MemoryMergeStrategy::PreserveExisting
+        | MemoryMergeStrategy::CombineNonConflicting
+        | MemoryMergeStrategy::ConflictRequiresConfirmation => (&existing.source, &incoming.source),
+    };
+    let mut merged = primary.clone();
+    if merged.extractor.is_none() {
+        merged.extractor.clone_from(&secondary.extractor);
+    }
+    if merged.session_id.is_none() {
+        merged.session_id.clone_from(&secondary.session_id);
+    }
+    if merged.workspace_fingerprint.is_none() {
+        merged
+            .workspace_fingerprint
+            .clone_from(&secondary.workspace_fingerprint);
+    }
+    if merged.provider.is_none() {
+        merged.provider.clone_from(&secondary.provider);
+    }
+    if merged.rule_id.is_none() {
+        merged.rule_id.clone_from(&secondary.rule_id);
+    }
+    merged.attributions = merge_unique(&primary.attributions, &secondary.attributions);
+    for attribution in [
+        primary.primary_attribution(),
+        secondary.primary_attribution(),
+    ] {
+        if !merged.attributions.contains(&attribution)
+            && (attribution.extractor.is_some()
+                || attribution.session_id.is_some()
+                || attribution.workspace_fingerprint.is_some()
+                || attribution.provider.is_some()
+                || attribution.rule_id.is_some())
+        {
+            merged.attributions.push(attribution);
+        }
+    }
+    merged.ensure_primary_attribution();
+    merged
+}
+
+fn merge_temporal(existing: &MemoryRecord, incoming: &MemoryRecord) -> MemoryTemporal {
+    MemoryTemporal {
+        observed_at_millis: existing
+            .temporal
+            .observed_at_millis
+            .min(incoming.temporal.observed_at_millis),
+        event_at_millis: existing
+            .temporal
+            .event_at_millis
+            .or(incoming.temporal.event_at_millis),
+        valid_from_millis: min_option(
+            existing.temporal.valid_from_millis,
+            incoming.temporal.valid_from_millis,
+        ),
+        expires_at_millis: min_option(
+            existing.temporal.expires_at_millis,
+            incoming.temporal.expires_at_millis,
+        ),
+    }
+}
+
+fn merge_invalidation(existing: &MemoryRecord, incoming: &MemoryRecord) -> MemoryInvalidation {
+    MemoryInvalidation {
+        supersedes: merge_unique(
+            &existing.invalidation.supersedes,
+            &incoming.invalidation.supersedes,
+        ),
+        superseded_by: existing
+            .invalidation
+            .superseded_by
+            .clone()
+            .or_else(|| incoming.invalidation.superseded_by.clone()),
+        conflicts_with: merge_unique(
+            &existing.invalidation.conflicts_with,
+            &incoming.invalidation.conflicts_with,
+        ),
+        expires_reason: existing
+            .invalidation
+            .expires_reason
+            .clone()
+            .or_else(|| incoming.invalidation.expires_reason.clone()),
+        invalidated_at_millis: min_option(
+            existing.invalidation.invalidated_at_millis,
+            incoming.invalidation.invalidated_at_millis,
+        ),
+    }
+}
+
+fn merge_unique<T: Clone + PartialEq>(left: &[T], right: &[T]) -> Vec<T> {
+    let mut merged = left.to_vec();
+    for item in right {
+        if !merged.contains(item) {
+            merged.push(item.clone());
+        }
+    }
+    merged
+}
+
+fn min_option<T: Ord + Copy>(left: Option<T>, right: Option<T>) -> Option<T> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
     }
 }
 

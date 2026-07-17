@@ -57,6 +57,7 @@ pub fn deduplicate_candidates(candidates: Vec<MemoryCandidate>) -> Vec<MemoryCan
     let mut by_key: BTreeMap<String, MemoryCandidate> = BTreeMap::new();
     let mut order = Vec::new();
     for mut candidate in candidates {
+        candidate.ensure_v3_provenance();
         ensure_record_dedup_metadata(&mut candidate.proposed_record);
         let key = candidate.proposed_record.dedup_key.clone();
         if let Some(existing) = by_key.get_mut(&key) {

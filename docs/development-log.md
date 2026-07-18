@@ -411,3 +411,35 @@ peeled commit 仍为 `7b99ae5422cdf904aef9a5893ee7c1cfc601435c` /
 docs-only 收尾提交继续 non-force 推送，旧 tag 不改动。
 
 署名：开发者
+
+## 2026-07-18 16:06:53 +08:00
+
+工作目标：按用户明确授权，将 PATH 中现有 YunXi 安装从 1.9.1 升级到
+v2.0.0，并消除 C/D 两个现有安装目录的版本差异。
+
+执行流程：
+1. 核对 Machine/User/当前进程 PATH、官方安装脚本和两个现有安装副本。
+2. 从已发布且工作树干净的 v2.0.0 源码重新构建 release 双二进制。
+3. 使用 `scripts/install/install-yunxi.ps1` 覆盖 C 盘 User PATH 安装目录与
+   当前进程仍命中的 D 盘安装目录；未新增重复 PATH 项。
+4. 刷新 Machine+User PATH 后验证解析路径、四个二进制版本和 SHA-256。
+5. 严格核验 `D:\YunXi Agent\target` 后执行 `cargo clean`。
+
+修改文件与路径：
+- 安装：`C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi.exe`
+- 安装：`C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi-agent-cli.exe`
+- 安装：`D:\Apps\YunXi Agent\bin\yunxi.exe`
+- 安装：`D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe`
+- 日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：刷新持久 PATH 后 `yunxi` 解析到
+`C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi.exe`，返回
+`yunxi 2.0.0`。C/D 两处 `yunxi.exe` 与 `yunxi-agent-cli.exe` 均返回
+2.0.0；两组 SHA-256 分别与 release 源文件完全一致。User PATH 中安装目录
+计数为 1。`cargo clean` 删除 1,527 个文件、529.4 MiB，最终 `target` 不存在。
+
+提交和推送状态：本次仅更新安装二进制与日志，不移动或重写 `v2.0.0` 及旧
+tag；本日志变更将以 docs-only 提交并 non-force 推送。
+
+署名：开发者

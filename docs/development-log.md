@@ -382,3 +382,32 @@ tag object 仍为 `7b99ae5422cdf904aef9a5893ee7c1cfc601435c`，解析提交仍�
 提交，随后与 `v2.0.0` 一起以 non-force 方式推送。
 
 署名：开发者
+
+## 2026-07-18 15:56:32 +08:00
+
+工作目标：完成 v2.0.0 GitHub 发布与远程引用核验，并记录旧 tag 保持不变。
+
+执行流程：
+1. 从 `C:\Users\24763\Desktop\GitHub apikey.txt` 将 API key 读入内存，
+   未打印、未写入仓库或 Git 配置。
+2. 使用临时 Basic Authorization header 非强制推送 `master` 和 `v2.0.0`。
+3. 通过 `git ls-remote` 核验远程 master、新 annotated tag、peeled commit、
+   `v1.9.4` 和 `v1.9.3` 旧 tag 对象。
+4. 将远程证据写回开发报告和本日志，准备最后一个 docs-only 状态提交。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\reports\2026-07-18-144921-yunxi-agent-v2-0-0-general-companion-agent-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：GitHub 返回 `fdb1793..30de692 master -> master` 与
+`[new tag] v2.0.0 -> v2.0.0`。远程 `v2.0.0` tag object 为
+`e8537bc89433512ce03eae71eafd85f571e88ec3`，peeled commit 为
+`4cf890b86889e72c47f0e56881152053c47d76ae`。远程 `v1.9.4` tag object/
+peeled commit 仍为 `7b99ae5422cdf904aef9a5893ee7c1cfc601435c` /
+`051002125158535023fa8bf7dbe41b430b398648`，`v1.9.3` tag object 仍为
+`8d036d5ddc202a2b10c4c8edd6523cc9425e5d01`。
+
+提交和推送状态：实现、tag 和首轮远程推送均成功；本条远程证据将作为
+docs-only 收尾提交继续 non-force 推送，旧 tag 不改动。
+
+署名：开发者

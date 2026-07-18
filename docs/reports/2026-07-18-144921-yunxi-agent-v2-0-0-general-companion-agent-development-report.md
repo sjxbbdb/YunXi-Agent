@@ -293,7 +293,17 @@ v2.0.0 开发过程中，以下文档需要与代码状态保持一致：
 - 旧 `v1.9.4` tag object 仍为
   `7b99ae5422cdf904aef9a5893ee7c1cfc601435c`，解析到
   `051002125158535023fa8bf7dbe41b430b398648`；未删除、移动或重写。
-- GitHub non-force 推送与远程核验结果将在推送成功后回写；最终远程
-  `master` 以 Git 历史为准，`v2.0.0` 保持指向实现提交。
+- GitHub 已接受 non-force 推送：`fdb1793..30de692 master -> master`，并创建
+  `[new tag] v2.0.0 -> v2.0.0`；认证 token 仅从用户指定文件读入内存，
+  未输出或写入 Git 配置。
+- 远程 `v2.0.0` tag object 为
+  `e8537bc89433512ce03eae71eafd85f571e88ec3`，peeled commit 为
+  `4cf890b86889e72c47f0e56881152053c47d76ae`，与本地一致。
+- 远程旧 `v1.9.4` tag object/peeled commit 仍分别为
+  `7b99ae5422cdf904aef9a5893ee7c1cfc601435c` 和
+  `051002125158535023fa8bf7dbe41b430b398648`；远程 `v1.9.3` tag object 仍为
+  `8d036d5ddc202a2b10c4c8edd6523cc9425e5d01`。
+- 本远程发布证据作为最后一个 docs-only 状态提交推送；最终远程 `master`
+  以 Git 历史为准，`v2.0.0` 始终保持指向已验证的实现提交。
 
 署名：开发者

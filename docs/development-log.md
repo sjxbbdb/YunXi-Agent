@@ -107,6 +107,32 @@ planner 的安全边界。
 - `cargo clean` 已执行并清理 `D:\YunXi Agent\target`；尚未提交、创建
   v1.9.3 tag 或推送。
 
-提交和推送状态：实现和文档已完成并通过验证，发布闭环待执行。
+提交和推送状态：实现和文档已完成并通过验证；实现提交已创建，annotated
+`v1.9.3` tag 已固定到实现提交，旧 tag 未改动。最后的 docs-only 发布状态
+收尾提交和 GitHub non-force 推送待执行。
+
+署名：开发者
+
+## 2026-07-18 10:04:02 +08:00
+
+工作目标：完成 v1.9.3 实现 tag 后的发布状态收尾，确保项目报告和项目日志
+不再停留在“待提交/待清理”的初始撰写状态。
+
+执行流程：
+1. 提交 v1.9.3 实现与文档，创建 annotated `v1.9.3` tag。
+2. 核对实现 tag 指向、旧 tag ref、`target` 清理状态和工作树内容。
+3. 将最终发布状态写入本报告和项目日志；随后执行 docs-only 收尾提交和远程
+   non-force 推送。
+
+修改文件：
+- `D:\YunXi Agent\docs\reports\2026-07-18-091620-yunxi-agent-v1-9-3-companion-ux-controls-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：实现提交为 `3bcd02146f03c430574a8d55110894d5247546b7`；
+`v1.9.3` annotated tag object 为 `8d036d5ddc202a2b10c4c8edd6523cc9425e5d01`，
+解析到实现提交；`D:\YunXi Agent\target` 不存在。旧 tag 未删除、移动或重写。
+
+提交和推送状态：本轮发布闭环包含 docs-only 收尾提交与 GitHub non-force
+推送；最终远程状态以 Git 历史核验结果为准。
 
 署名：开发者

@@ -304,6 +304,16 @@ v1.9.3 开发过程中，以下文档需要与代码状态保持一致：
 - 冒烟临时目录已从 `D:\YunXi Agent\.tmp\v193-control-smoke` 清理；阶段结束已
   执行 `cargo clean`，`D:\YunXi Agent\target` 不存在。
 
-本节完成后仍需执行：清理 `target`、核验工作树、提交 v1.9.3、创建新的
-`v1.9.3` tag、使用 GitHub API key non-force 推送，并在日志末尾补写最终
-提交/tag/推送状态。旧版本 tag 不得删除或移动。
+本节的实现、统一验证和 `target` 清理已完成；当前实现提交已创建新的
+annotated `v1.9.3` tag（tag 固定解析到实现提交，不移动旧 tag）。最后的
+docs-only 发布状态收尾提交将与 master 和该 tag 一并使用 GitHub API key
+以 non-force 方式推送，桌面日志随后补写最终提交/tag/推送状态。
+
+## 十三、发布状态（实现 tag）
+
+- 实现提交：`3bcd02146f03c430574a8d55110894d5247546b7`。
+- annotated `v1.9.3` tag object：`8d036d5ddc202a2b10c4c8edd6523cc9425e5d01`，
+  解析到上述实现提交。
+- `v1.9.2`、`v1.9.1`、`v1.9.1-hotfix.1` 等旧 tag 保持原 ref，未删除、移动或重写。
+- 本地工作树在 docs-only 发布状态收尾提交后应与远程 `master` 对齐；最终远程
+  master 以 Git 历史为准，避免在报告中制造提交哈希自引用。

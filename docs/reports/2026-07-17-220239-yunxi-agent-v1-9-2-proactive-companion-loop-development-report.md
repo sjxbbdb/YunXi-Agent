@@ -284,5 +284,8 @@ v1.9.2 开发过程中，以下文档需要与代码状态保持一致：
 
 - 本地 commit：`61ef2d3008faa9bf75b1247a238369037b25c24d`。
 - 本地 annotated `v1.9.2` tag object：`77e08a2f3b6982c37f6e86de2a96e3b016ea879e`，解析到上述 commit。
-- 两次使用 GitHub API key 的 non-force 远程连接均在 `github.com:443` 连接阶段失败，无法读取远程 master，因此本轮尚未推送；没有执行 force push，也没有修改旧 tag。
-- 本地工作树在提交后干净；当前相对远程为 `master...origin/master [ahead 1]`。
+- 前三次 GitHub 连接尝试因 `github.com:443` 网络不可达失败；随后网络恢复，使用 API key 以 non-force 方式成功推送 master 和 `v1.9.2` tag。
+- 最终远程 master：`9d86e179813c78e53c7df1c29d467e45bf3ae465`。
+- 最终远程 `v1.9.2` tag object：`77e08a2f3b6982c37f6e86de2a96e3b016ea879e`。
+- `v1.9.2` 解析到实现提交 `61ef2d3008faa9bf75b1247a238369037b25c24d`；审计文档提交为 `9d86e179813c78e53c7df1c29d467e45bf3ae465`。
+- 本地工作树在审计提交后干净，`master` 与 `origin/master` 对齐；没有执行 force push，也没有修改旧 tag。

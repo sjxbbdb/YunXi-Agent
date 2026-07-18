@@ -287,7 +287,13 @@ v2.0.0 开发过程中，以下文档需要与代码状态保持一致：
 - 已删除仅由本轮 CLI 测试生成的
   `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`；未触碰项目根 `.yunxi`、
   用户配置、已安装二进制或 PATH。
-- 实现提交、annotated `v2.0.0` tag 与 GitHub non-force 推送将在发布收口后
-  把实际 commit/tag object/远程核验结果回写到本节。
+- 实现提交为 `4cf890b86889e72c47f0e56881152053c47d76ae`。
+- annotated `v2.0.0` tag object 为
+  `e8537bc89433512ce03eae71eafd85f571e88ec3`，解析到上述实现提交。
+- 旧 `v1.9.4` tag object 仍为
+  `7b99ae5422cdf904aef9a5893ee7c1cfc601435c`，解析到
+  `051002125158535023fa8bf7dbe41b430b398648`；未删除、移动或重写。
+- GitHub non-force 推送与远程核验结果将在推送成功后回写；最终远程
+  `master` 以 Git 历史为准，`v2.0.0` 保持指向实现提交。
 
 署名：开发者

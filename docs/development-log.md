@@ -356,3 +356,29 @@ non-force 推送待执行。
 提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag。
 
 署名：开发报告撰写者
+
+## 2026-07-18 15:54:00 +08:00
+
+工作目标：冻结 v2.0.0 已验证实现，创建新的 annotated tag，并在 GitHub
+推送前记录可核验的提交与 tag 对象。
+
+执行流程：
+1. 暂存本次源码、测试、版本和文档变更，修正开发报告头部 4 处行尾空白。
+2. `git diff --cached --check` 通过后创建实现提交。
+3. 确认本地不存在同名 tag，创建 annotated `v2.0.0`，并核对对象类型为 tag。
+4. 核对 `v1.9.4` tag 对象和解析提交未变化，旧 tag 未删除、移动或重写。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\reports\2026-07-18-144921-yunxi-agent-v2-0-0-general-companion-agent-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：实现提交为 `4cf890b86889e72c47f0e56881152053c47d76ae`；
+annotated `v2.0.0` tag object 为
+`e8537bc89433512ce03eae71eafd85f571e88ec3`，解析到实现提交；旧 `v1.9.4`
+tag object 仍为 `7b99ae5422cdf904aef9a5893ee7c1cfc601435c`，解析提交仍为
+`051002125158535023fa8bf7dbe41b430b398648`。
+
+提交和推送状态：实现提交和新 tag 已完成；本次发布状态文档将作为 docs-only
+提交，随后与 `v2.0.0` 一起以 non-force 方式推送。
+
+署名：开发者

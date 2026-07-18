@@ -1,5 +1,6 @@
 use crate::bottom_pane::{ApprovalRequestView, BottomPane, UserInputRequestView};
 use crate::chat::Transcript;
+use crate::presentation::{TuiEvent, TuiPresentation};
 use crate::viewport::TranscriptViewport;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use yunxi_agent_core::{AgentEvent, ControlSnapshot};
@@ -18,6 +19,7 @@ pub struct YunxiTuiBanner {
 pub(crate) struct YunxiTuiApp {
     version: String,
     banner: Option<YunxiTuiBanner>,
+    presentation: TuiPresentation,
     transcript: Transcript,
     viewport: TranscriptViewport,
     bottom_pane: BottomPane,
@@ -27,8 +29,9 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.0".to_string(),
+            version: "v2.0.1".to_string(),
             banner: None,
+            presentation: TuiPresentation::default(),
             transcript: Transcript::default(),
             viewport: TranscriptViewport::default(),
             bottom_pane: BottomPane::default(),
@@ -39,6 +42,7 @@ impl Default for YunxiTuiApp {
 
 impl YunxiTuiApp {
     pub(crate) fn set_banner(&mut self, banner: YunxiTuiBanner) {
+        self.presentation.set_offline_label(!banner.provider_live);
         self.banner = Some(banner);
     }
 
@@ -196,43 +200,52 @@ impl YunxiTuiApp {
 
     pub(crate) fn push_user(&mut self, value: impl Into<String>) {
         self.show_transcript();
-        self.transcript.push_user(value);
-        self.on_transcript_changed();
+        let event = self.presentation.present_user(value);
+        self.push_tui_event(event);
     }
 
     pub(crate) fn push_agent_event(&mut self, event: &AgentEvent) {
-        self.transcript.push_agent_event(event);
+        let event = self.presentation.present_agent_event(event);
+        self.push_tui_event(event);
+    }
+
+    pub(crate) fn push_tui_event(&mut self, event: TuiEvent) {
+        self.transcript.push_tui_event(event);
         self.on_transcript_changed();
     }
 
     pub(crate) fn set_debug_events(&mut self, enabled: bool) {
         self.transcript.set_debug_events(enabled);
-        self.on_transcript_changed();
+        let event = self.presentation.present_notice(
+            "debug",
+            if enabled {
+                "event debug enabled"
+            } else {
+                "event debug disabled"
+            },
+        );
+        self.push_tui_event(event);
     }
 
     pub(crate) fn show_details(&mut self, id: Option<usize>) {
-        self.transcript.push_details(id);
-        self.on_transcript_changed();
-    }
-
-    pub(crate) fn push_assistant(&mut self, content: &str) {
-        self.transcript.push_assistant(content);
-        self.on_transcript_changed();
+        let detail = self.transcript.detail_text(id);
+        let event = self.presentation.present_details(detail);
+        self.push_tui_event(event);
     }
 
     pub(crate) fn push_notice(&mut self, kind: &str, message: &str) {
-        self.transcript.push_notice(kind, message);
-        self.on_transcript_changed();
+        let event = self.presentation.present_notice(kind, message);
+        self.push_tui_event(event);
     }
 
     pub(crate) fn push_warning(&mut self, message: &str) {
-        self.transcript.push_warning(message);
-        self.on_transcript_changed();
+        let event = self.presentation.present_warning(message);
+        self.push_tui_event(event);
     }
 
     pub(crate) fn push_error(&mut self, message: &str) {
-        self.transcript.push_error(message);
-        self.on_transcript_changed();
+        let event = self.presentation.present_error(message);
+        self.push_tui_event(event);
     }
 
     pub(crate) fn clear_transcript(&mut self) {
@@ -408,7 +421,7 @@ mod tests {
         assert!(display_width(&header) <= 58);
         assert!(display_width(&subheader) <= 58);
         assert!(display_width(&footer) <= 58);
-        assert!(header.contains("YunXi v2.0.0"));
+        assert!(header.contains("YunXi v2.0.1"));
         assert!(header.contains("offline"));
         assert!(header.contains("static"));
         assert!(subheader.contains("provider=static"));
@@ -425,7 +438,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.0"));
+        assert!(header.contains("YunXi Agent v2.0.1"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));

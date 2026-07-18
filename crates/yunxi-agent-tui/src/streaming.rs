@@ -91,6 +91,7 @@ impl MarkdownStreamCollector {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn append_fragment(target: &mut String, fragment: &str) {
     let fragment = fragment.trim_matches('\r');
     if fragment.is_empty() {
@@ -114,6 +115,7 @@ pub(crate) fn append_fragment(target: &mut String, fragment: &str) {
     target.push_str(trimmed);
 }
 
+#[cfg(test)]
 fn should_insert_space(left: char, right: char) -> bool {
     if left.is_whitespace() || right.is_whitespace() {
         return false;
@@ -133,6 +135,7 @@ fn should_insert_space(left: char, right: char) -> bool {
     left.is_alphanumeric() && right.is_alphanumeric()
 }
 
+#[cfg(test)]
 fn is_cjk(ch: char) -> bool {
     matches!(
         ch as u32,
@@ -200,5 +203,45 @@ mod tests {
             }
         );
         assert_eq!(controller.finalize(), Some("hello\nworld\n".to_string()));
+    }
+
+    #[test]
+    fn finalize_clears_live_tail_before_the_next_message() {
+        let mut controller = MarkdownStreamController::default();
+        controller.push_delta("first response");
+
+        assert_eq!(controller.finalize(), Some("first response\n".to_string()));
+        assert_eq!(
+            controller.push_delta("next response"),
+            MarkdownStreamFrame {
+                stable_source: String::new(),
+                live_tail: "next response".to_string(),
+                committed: false,
+            }
+        );
+    }
+
+    #[test]
+    fn committed_source_never_remains_in_the_live_tail() {
+        let mut controller = MarkdownStreamController::default();
+
+        let frame = controller.push_delta("stable line\nlive tail");
+
+        assert_eq!(frame.stable_source, "stable line\n");
+        assert_eq!(frame.live_tail, "live tail");
+        assert!(frame.committed);
+        assert!(!frame.live_tail.contains("stable line"));
+    }
+
+    #[test]
+    fn repeated_delta_payload_is_preserved_until_message_ids_enable_deduplication() {
+        let mut controller = MarkdownStreamController::default();
+
+        let frame = controller.push_delta("ha");
+        assert_eq!(frame.live_tail, "ha");
+        let frame = controller.push_delta("ha");
+
+        assert_eq!(frame.live_tail, "haha");
+        assert_eq!(controller.finalize(), Some("haha\n".to_string()));
     }
 }

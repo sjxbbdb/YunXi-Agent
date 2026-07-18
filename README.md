@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.0
+# YunXi Agent v2.0.1
 
-YunXi Agent v2.0.0 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.1 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -21,11 +21,12 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-storage`: YunXi-owned session, control-audit, and companion-history storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
-- `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
+- `crates/yunxi-agent-cli`: v2.0.1 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
+- `docs/tui-presentation.md`: v2.0.1 TUI presentation and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -45,13 +46,15 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Keeps the TUI composer fixed while the transcript can scroll through history
   without losing new streamed output below
 - Scrolls the TUI transcript by pre-wrapped screen rows, so long Chinese,
-  English, tool, and reasoning output keeps the title, viewport, and scrollbar
-  in sync
-- Throttles TUI streaming redraws to keep long reasoning/model output readable
-- Merges reasoning deltas into transcript cells instead of rendering one line per token
-- Filters the TUI transcript so raw tool protocol JSON, stdout token noise,
-  context/session bookkeeping, and long skill/tool outputs stay out of the
-  normal view
+  English, assistant, tool-summary, and detail output keeps the title,
+  viewport, and scrollbar in sync
+- Routes every runtime event through one TUI presentation boundary before it
+  can become a transcript cell
+- Keeps the default transcript quiet: raw reasoning, memory/context internals,
+  hidden prompts, provider wire data, tool arguments, full stdout/stderr, and
+  exception stacks remain in debug/details only
+- Preserves one stable assistant cell id across streamed deltas and keeps
+  committed Markdown source separate from the live tail
 - Shows tool work as compact timeline cells with approval, running,
   completion, output-summary, and details references
 - Provides `/debug events on|off` and `/details [id]` for TUI diagnostics
@@ -132,6 +135,23 @@ with `[offline]` and `/cost` reports that no model call was made.
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
 
+## Quiet TUI Presentation v2.0.1
+
+v2.0.1 introduces `yunxi-agent-tui::presentation` as the only semantic mapping
+from `AgentEvent` to transcript-facing `TuiEvent`. The transcript and renderer
+consume already-classified cells with stable cell and detail IDs; filtering is
+now a pure visibility decision. Tool lifecycle events expose only compact state
+and output-size summaries by default, while redacted arguments, complete output,
+provider errors, reasoning, and memory/context diagnostics remain available via
+`/debug events on` and `/details [id]`.
+
+The TUI assistant stream now passes through `MarkdownStreamController` inside
+the presentation layer. A contiguous message keeps one cell ID and separates
+committed source from its live tail; a non-message boundary starts a new cell.
+Plain CLI, JSON, JSONL, runtime event ordering, approvals, user input, and
+cancellation retain their existing contracts. See `docs/tui-presentation.md`
+for the boundary and visibility rules.
+
 ## General Companion Agent v2.0.0
 
 v2.0.0 closes the local runtime chain across persona, transparent memory,
@@ -186,7 +206,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v2.0.0 CLI into a user-local bin directory:
+Build and install the v2.0.1 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

@@ -173,6 +173,80 @@ planner 的安全边界。
 
 署名：开发报告撰写者
 
+## 2026-07-18 21:13:29 +08:00
+
+工作目标：在唯一发布提交前完成 v2.0.1 日志时序封口，明确上方报告生成记录
+属于开发前状态，实际开发、验证和清理结果以 21:09:56 记录及本版本开发报告
+为准。
+
+执行流程与修改路径：复核 `D:\YunXi Agent\docs\development-log.md`、
+`docs\reports\2026-07-18-203508-yunxi-agent-v2-0-1-presentation-quiet-transcript-development-report.md`
+和最终 Git diff；确认完整实现、验证证据、清理结果、文件路径和发布规则均已
+落盘，且 `target` 与冒烟临时状态不存在。
+
+验证结果：`git diff --check` 通过；v2.0.1 完整验证结果保持为 workspace
+fmt/check/test/build/release 全部通过、release `yunxi 2.0.1`、Evaluation
+Harness 31/31 通过、JSONL 一行、TUI 60 项回归通过。
+
+提交和推送状态：准备创建唯一 v2.0.1 发布提交并立即创建 annotated tag，
+随后 non-force 推送 master 与 tag；最终远程状态以 Git refs 为准，旧 tag 保持
+不变，不追加同版本 docs-only/hotfix 提交。
+
+署名：开发者
+
+## 2026-07-18 21:09:56 +08:00
+
+工作目标：依据 v2.0.1 呈现边界与安静 transcript 开发报告，建立 TUI
+`AgentEvent -> TuiEvent` 唯一映射、稳定 cell/detail ID、安静默认对话和
+debug/details 分层，并完成验证、清理与单提交发布准备。
+
+执行流程：
+1. 完整读取 v2.0.1 开发报告和 v2.0.0 基线审核报告，以 CodeGraph 核对
+   CLI/TUI/core 调用链，并只读参考本机 Codex TUI 的 render、chatwidget、
+   approval overlay 与 width 边界。
+2. 新增 `presentation.rs`，将 runtime event 分类、稳定 ID、安全摘要、详情和
+   Markdown stream state 集中到唯一 presentation 入口。
+3. 将 event filter 收窄为纯 visibility gate；重构 chat/debug/host/render，
+   使 transcript 仅消费已分类 cell，CLI TUI bridge 不再旁路 assistant。
+4. 默认隐藏 thinking、memory/context、hidden prompt、provider wire、
+   `arguments_json`、完整 stdout/stderr、stack 和未脱敏参数，并通过稳定
+   details ID 保留脱敏诊断能力。
+5. 增加 presentation、streaming、renderer、quiet transcript 与 details
+   回归，升级 workspace/CLI/TUI/persona/eval/current docs 至 2.0.1。
+6. 统一执行 fmt/check/test/build/release、二进制版本和 evaluation JSON/JSONL
+   冒烟；经用户授权核验路径后执行清理。
+
+修改文件与路径：
+- `D:\YunXi Agent\Cargo.toml`、`Cargo.lock`、`README.md`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`、`src\render.rs`、
+  `src\tui\mod.rs`、`tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\presentation.rs`、`app.rs`、
+  `chat.rs`、`debug.rs`、`event_filter.rs`、`host.rs`、`lib.rs`、
+  `output_summary.rs`、`render.rs`、`streaming.rs`、`timeline.rs`、
+  `transcript_layout.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-eval\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-persona\src\compiler.rs`、`src\profile.rs`、
+  `tests\evaluation_regression_tests.rs`、`tests\persona_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\general_companion_tests.rs`
+- `D:\YunXi Agent\evals\companion\README.md`
+- `D:\YunXi Agent\docs\extraction-status.md`、`persona-memory.md`、
+  `tui-presentation.md`、本版本开发报告及本日志。
+
+验证结果：`cargo fmt --all`、fmt check、workspace check/test/build、release 双
+二进制构建全部成功。TUI 60 项、CLI integration 44 项、CLI JSONL 10 项及其余
+workspace 测试全部通过。release 返回 `yunxi 2.0.1`；Evaluation Harness
+31/31 通过，golden 为 true，关键成功率均为 1.0，false positive/missed/
+forbidden/proactive violation/tool bypass 均为 0；JSON 可解析，JSONL 恰好一行。
+`cargo clean` 清除 9,556 个文件、2.9 GiB，`target` 和本次冒烟生成的临时
+`.yunxi` 状态目录最终均不存在。
+
+提交和推送状态：全部源码、测试、版本、文档、报告、状态和日志将形成唯一
+v2.0.1 发布提交；提交后立即创建 annotated `v2.0.1` tag 并 non-force 推送
+master 与新 tag。不会追加 v2.0.1 docs-only/hotfix 提交，旧 tag 不删除、不
+移动、不重写；最终远程 master 以 Git 历史为准。
+
+署名：开发者
+
 ## 2026-07-18 15:50:31 +08:00
 
 工作目标：依据 v2.0.0 General Companion Agent 开发报告，闭合 persona、
@@ -461,5 +535,61 @@ object 与 peeled 实现提交。
 
 提交和推送状态：安装审计已提交并 non-force 推送；本条远程核验作为最后的
 docs-only 状态提交推送，最终远程 master 以 Git 历史为准，所有 tag 保持不变。
+
+署名：开发者
+
+## 2026-07-18 20:35:08 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-18-203016-YunXi-Agent-v2.0.0-基线源码审核报告.md` 撰写 YunXi Agent v2.0.1 呈现边界与安静对话基线开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：
+1. 读取 v2.0.0 基线源码审核报告，确认 v2.0.0 基线通过，可以进入 v2.0.1 开发报告撰写。
+2. 核对当前项目 Git 状态：`master...origin/master`，工作树在报告撰写前干净。
+3. 使用 CodeGraph 参考 TUI `streaming.rs`、CLI `tui/mod.rs`、core `stream.rs` 等当前源码结构，确认 v2.0.1 应以 TUI、事件呈现、流式输出和 details/debug 分层重构为核心。
+4. 按固定流程在开发报告前部写入 14 条硬性约束。
+5. 围绕 v2.0.1 呈现边界与安静对话基线撰写开发目标、TUI 与流式输出重构方向、源码接入点、普通 transcript 与 details 边界、参考源码抽取建议、实现顺序、验收标准、统一验证要求和文档同步要求。
+6. 将开发报告保存到项目内报告目录，并复制到桌面开发报告目录。
+7. 追加项目内开发日志和桌面开发日志，记录本次报告撰写与文件同步状态。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-18-203508-yunxi-agent-v2-0-1-presentation-quiet-transcript-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-18-203508-yunxi-agent-v2-0-1-presentation-quiet-transcript-development-report.md`
+- 追加桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成开发报告撰写，并已同步到桌面开发报告目录。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 后续仍需按固定流程完成实际开发、统一验证、清理和发布闭环后，才能宣称完成。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag。
+
+署名：开发报告撰写者
+
+## 2026-07-18 21:15:00 +08:00
+
+工作目标：封口 v2.0.1 实际开发记录，并明确本条之前的 20:35:08 记录仅是
+开发报告生成时的开发前状态。
+
+执行流程与修改路径：复核 `D:\YunXi Agent\docs\development-log.md`、
+`docs\reports\2026-07-18-203508-yunxi-agent-v2-0-1-presentation-quiet-transcript-development-report.md`
+和最终 Git diff；实际源码、测试、版本、设计、状态、报告、验证与清理详情见
+21:09:56 记录及本版本开发报告。
+
+验证结果：fmt/check/test/build/release 全部通过，release 为 `yunxi 2.0.1`，
+Evaluation Harness 31/31 通过且 JSONL 恰好一行，TUI 60 项回归通过；
+`git diff --check` 通过，`target` 和本次冒烟临时状态均不存在。
+
+提交和推送状态：准备创建唯一 v2.0.1 发布提交及 annotated tag，随后
+non-force 推送 master 与 tag；旧 tag 保持不变，不追加同版本 docs-only 或
+hotfix 提交，最终远程状态以 Git refs 为准。
 
 署名：开发者

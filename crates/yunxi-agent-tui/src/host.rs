@@ -1,3 +1,4 @@
+use crate::TuiEvent;
 use crate::app::{YunxiTuiApp, YunxiTuiBanner};
 use crate::bottom_pane::{
     ApprovalAction, ApprovalDecision, ApprovalRequestView, ComposerAction, UserInputAction,
@@ -64,8 +65,8 @@ impl YunxiTui {
         self.request_draw()
     }
 
-    pub fn push_assistant(&mut self, content: &str) -> Result<()> {
-        self.app.push_assistant(content);
+    pub fn push_tui_event(&mut self, event: TuiEvent) -> Result<()> {
+        self.app.push_tui_event(event);
         self.request_draw()
     }
 
@@ -475,7 +476,9 @@ mod tests {
     #[test]
     fn transcript_metrics_uses_wrapped_content_height() {
         let mut app = YunxiTuiApp::default();
-        app.push_assistant("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz");
+        app.push_agent_event(&yunxi_agent_core::AgentEvent::Message {
+            content: "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz".to_string(),
+        });
 
         let metrics = transcript_metrics_for_size(
             Size {

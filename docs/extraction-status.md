@@ -1,10 +1,31 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.0
+## Current Workspace Version: v2.0.1
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## YunXi Agent v2.0.1 Quiet TUI Presentation
+
+The TUI now owns a single `AgentEvent -> TuiEvent` presentation boundary in
+`crates/yunxi-agent-tui/src/presentation.rs`. `event_filter.rs` applies only
+pure transcript/debug/hidden visibility rules; `chat.rs` stores classified
+cells and stable details references; `render.rs` renders those cells without
+interpreting runtime events. The CLI TUI bridge no longer special-cases
+assistant visibility.
+
+The default transcript permits user and assistant messages, safe progress and
+tool-state summaries, approvals, notices, and sanitized error summaries. Raw
+reasoning, memory/context decisions, hidden prompts, provider wire content,
+`arguments_json`, complete stdout/stderr, stack traces, and unredacted tool
+parameters are excluded from the default view and retained only as redacted,
+stable-ID debug/details entries. Assistant deltas pass through the Markdown
+stream controller with separate stable source and live tail state.
+
+This is a TUI-only presentation change. Core event order and structure, plain
+CLI, JSON/JSONL, approval, user-input, and cancellation contracts are unchanged.
+No upstream TUI crate or non-Rust runtime was added.
 
 ## YunXi Agent v2.0.0 General Companion Agent
 

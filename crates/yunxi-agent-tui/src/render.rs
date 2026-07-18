@@ -513,7 +513,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.0"));
+        assert!(rendered.contains("YunXi v2.0.1"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }
@@ -595,14 +595,84 @@ mod tests {
     #[test]
     fn transcript_scroll_uses_wrapped_rows_for_title_and_tail() {
         let mut app = YunxiTuiApp::default();
-        app.push_assistant(
-            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
-        );
+        app.push_agent_event(&yunxi_agent_core::AgentEvent::Message {
+            content:
+                "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+                    .to_string(),
+        });
 
         let rendered = render_app(&app, 28, 12);
 
         assert!(rendered.contains("Transcript"));
         assert!(rendered.contains("tail"));
         assert!(rendered.contains("/"));
+    }
+
+    #[test]
+    fn quiet_transcript_hides_internal_payloads_until_details_are_requested() {
+        use yunxi_agent_core::{AgentEvent, CommandStatus};
+
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        for event in [
+            AgentEvent::Reasoning {
+                content: "raw private thinking".to_string(),
+            },
+            AgentEvent::MemoryRecall {
+                schema_version: 3,
+                enabled: true,
+                scope: "global".to_string(),
+                query: "private memory query".to_string(),
+                count: 1,
+                budget_used_chars: 20,
+                truncated: false,
+                always_on_count: 0,
+                dropped_unrelated: 0,
+                dropped_by_budget: 0,
+                dropped_duplicates: 0,
+            },
+            AgentEvent::ToolCallStarted {
+                id: Some("render-tool".to_string()),
+                name: "shell".to_string(),
+                arguments_json: Some("{\"token\":\"private-argument\"}".to_string()),
+            },
+            AgentEvent::ToolCallCompleted {
+                id: Some("render-tool".to_string()),
+                name: "shell".to_string(),
+                output: "complete stdout payload".to_string(),
+                status: CommandStatus::Completed,
+            },
+            AgentEvent::ProviderError {
+                provider: "deepseek".to_string(),
+                status: Some(500),
+                classification: "server_error".to_string(),
+                message: "provider wire body\nprivate stack frame".to_string(),
+            },
+        ] {
+            app.push_agent_event(&event);
+        }
+
+        let rendered = render_app(&app, 110, 28);
+        for forbidden in [
+            "raw private thinking",
+            "private memory query",
+            "private-argument",
+            "complete stdout payload",
+            "provider wire body",
+            "private stack frame",
+        ] {
+            assert!(
+                !rendered.contains(forbidden),
+                "default transcript leaked {forbidden}"
+            );
+        }
+        assert!(rendered.contains("shell"));
+        assert!(rendered.contains("output captured"));
+        assert!(rendered.contains("provider deepseek failed"));
+
+        app.show_details(None);
+        let rendered = render_app(&app, 110, 32);
+        assert!(rendered.contains("provider wire body"));
+        assert!(rendered.contains("private stack frame"));
     }
 }

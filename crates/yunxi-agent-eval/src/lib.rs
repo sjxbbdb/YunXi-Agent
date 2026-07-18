@@ -10,7 +10,7 @@ use yunxi_agent_persona::{
     RelationshipState, link_supersession_chain, yunxi_companion_strong,
 };
 
-pub const HARNESS_VERSION: &str = "2.0.0";
+pub const HARNESS_VERSION: &str = "2.0.1";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -170,7 +170,7 @@ fn evaluate_check(check: &str) -> (bool, String) {
             let profile = yunxi_companion_strong();
             (
                 profile.id == "yunxi_companion_strong"
-                    && profile.version == "2.0.0"
+                    && profile.version == "2.0.1"
                     && profile.default_companion_strength
                         == yunxi_agent_persona::CompanionStrength::Strong,
                 format!("profile={} version={}", profile.id, profile.version),
@@ -195,7 +195,7 @@ fn evaluate_check(check: &str) -> (bool, String) {
             (
                 context
                     .content
-                    .contains("<yunxi_persona_context version=\"2.0.0\"")
+                    .contains("<yunxi_persona_context version=\"2.0.1\"")
                     && context.content.contains("context_not_instruction"),
                 format!("context_chars={}", context.content.len()),
             )

@@ -57,20 +57,6 @@ impl ToolTimelineEntry {
         }
     }
 
-    pub(crate) fn is_same_tool(&self, update: &ToolTimelineUpdate) -> bool {
-        if let (Some(left), Some(right)) = (&self.id, &update.id) {
-            return left == right;
-        }
-        self.id.is_none() && update.id.is_none() && self.name == update.name && !self.is_terminal()
-    }
-
-    pub(crate) fn is_terminal(&self) -> bool {
-        matches!(
-            self.phase,
-            ToolPhase::Completed | ToolPhase::Failed | ToolPhase::Declined | ToolPhase::Cancelled
-        )
-    }
-
     pub(crate) fn display_text(&self) -> String {
         let mut lines = Vec::new();
         let mut header = format!("{}: {}", self.name, self.steps.join(" -> "));
@@ -127,16 +113,6 @@ impl ToolTimelineUpdate {
             output_summary: None,
             detail_id: None,
         }
-    }
-
-    pub(crate) fn command(mut self, command: impl Into<String>) -> Self {
-        self.command = Some(command.into());
-        self
-    }
-
-    pub(crate) fn status(mut self, status: impl Into<String>) -> Self {
-        self.status = Some(status.into());
-        self
     }
 
     pub(crate) fn approval(mut self, approval: impl Into<String>) -> Self {

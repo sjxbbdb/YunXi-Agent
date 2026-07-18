@@ -8,6 +8,7 @@ mod frame;
 mod host;
 mod layout;
 mod output_summary;
+mod presentation;
 mod render;
 mod scrollbar;
 pub mod streaming;
@@ -20,3 +21,4 @@ pub use bottom_pane::{
     ApprovalDecision, ApprovalRequestView, UserInputRequestView, UserInputResponse,
 };
 pub use host::YunxiTui;
+pub use presentation::{PresentationDetail, TuiCellId, TuiCellKind, TuiEvent, TuiStreamState};

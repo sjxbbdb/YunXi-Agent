@@ -130,7 +130,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v2.0.0 interactive CLI");
+    println!("YunXi Agent v2.0.1 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -168,6 +168,12 @@ impl RenderState {
 
     pub(crate) fn saw_assistant_message(&self) -> bool {
         self.saw_assistant_message
+    }
+
+    pub(crate) fn observe_event(&mut self, event: &AgentEvent) {
+        if matches!(event, AgentEvent::Message { .. }) {
+            self.saw_assistant_message = true;
+        }
     }
 
     pub(crate) fn render_assistant_content(&self, content: &str) -> String {

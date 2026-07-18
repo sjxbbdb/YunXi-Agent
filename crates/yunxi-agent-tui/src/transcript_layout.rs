@@ -1,4 +1,4 @@
-use crate::chat::HistoryCell;
+use crate::chat::{HistoryCell, HistoryCellKind};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -31,33 +31,26 @@ pub(crate) fn build_wrapped_transcript(cells: &[HistoryCell], width: usize) -> W
 }
 
 fn push_cell_rows(rows: &mut Vec<Line<'static>>, cell: &HistoryCell, width: usize) {
-    match cell {
-        HistoryCell::User(content) => push_labeled(rows, "user", Color::Green, content, width),
-        HistoryCell::Assistant { content, active } => {
+    match cell.kind() {
+        HistoryCellKind::User(content) => push_labeled(rows, "user", Color::Green, content, width),
+        HistoryCellKind::Assistant { content, active } => {
             let label = if *active { "assistant*" } else { "assistant" };
             push_labeled(rows, label, Color::LightGreen, content, width);
         }
-        HistoryCell::Reasoning { content, active } => {
-            let label = if *active { "thinking*" } else { "thinking" };
-            push_labeled(rows, label, Color::Blue, content, width);
-        }
-        HistoryCell::Tool(entry) => {
+        HistoryCellKind::Tool(entry) => {
             push_labeled(rows, "tool", Color::Magenta, &entry.display_text(), width)
         }
-        HistoryCell::Event { kind, message } => {
+        HistoryCellKind::Event { kind, message } => {
             push_labeled(rows, kind, label_color(kind), message, width)
         }
-        HistoryCell::Debug { id, label, message } => push_labeled(
+        HistoryCellKind::Debug { id, label, message } => push_labeled(
             rows,
             "debug",
             Color::DarkGray,
             &format!("#{id} {label}: {message}"),
             width,
         ),
-        HistoryCell::Warning(message) => {
-            push_labeled(rows, "warning", Color::Yellow, message, width)
-        }
-        HistoryCell::Error(message) => push_labeled(rows, "error", Color::Red, message, width),
+        HistoryCellKind::Error(message) => push_labeled(rows, "error", Color::Red, message, width),
     }
 }
 
@@ -242,6 +235,15 @@ fn label_color(label: &str) -> Color {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::presentation::TuiCellId;
+
+    fn cell(kind: HistoryCellKind) -> HistoryCell {
+        HistoryCell {
+            id: TuiCellId::from_test("layout-test"),
+            kind,
+            detail_id: None,
+        }
+    }
 
     fn row_text(line: &Line<'static>) -> String {
         line.spans
@@ -252,10 +254,10 @@ mod tests {
 
     #[test]
     fn wraps_long_cjk_text_into_screen_rows() {
-        let cells = vec![HistoryCell::Assistant {
+        let cells = vec![cell(HistoryCellKind::Assistant {
             content: "你好世界你好世界你好世界".to_string(),
             active: false,
-        }];
+        })];
 
         let wrapped = build_wrapped_transcript(&cells, 12);
 
@@ -266,7 +268,9 @@ mod tests {
 
     #[test]
     fn wraps_long_ascii_token_without_paragraph_wrap() {
-        let cells = vec![HistoryCell::User("abcdefghijklmnopqrstuvwxyz".to_string())];
+        let cells = vec![cell(HistoryCellKind::User(
+            "abcdefghijklmnopqrstuvwxyz".to_string(),
+        ))];
 
         let wrapped = build_wrapped_transcript(&cells, 14);
 
@@ -277,23 +281,23 @@ mod tests {
 
     #[test]
     fn preserves_multiline_continuation_gutter() {
-        let cells = vec![HistoryCell::Reasoning {
-            content: "first\nsecond".to_string(),
-            active: true,
-        }];
+        let cells = vec![cell(HistoryCellKind::Event {
+            kind: "progress".to_string(),
+            message: "first\nsecond".to_string(),
+        })];
 
         let wrapped = build_wrapped_transcript(&cells, 80);
 
-        assert_eq!(row_text(&wrapped.rows[0]), "[thinking*] first");
+        assert_eq!(row_text(&wrapped.rows[0]), "[progress] first");
         assert_eq!(row_text(&wrapped.rows[1]), "    second");
     }
 
     #[test]
     fn wraps_ascii_on_word_boundaries_when_possible() {
-        let cells = vec![HistoryCell::Assistant {
+        let cells = vec![cell(HistoryCellKind::Assistant {
             content: "Tool output summaries stay readable".to_string(),
             active: false,
-        }];
+        })];
 
         let wrapped = build_wrapped_transcript(&cells, 28);
         let rendered = wrapped.rows.iter().map(row_text).collect::<Vec<_>>();
@@ -308,9 +312,9 @@ mod tests {
 
     #[test]
     fn preserves_cjk_english_without_inserting_spaces() {
-        let cells = vec![HistoryCell::User(
+        let cells = vec![cell(HistoryCellKind::User(
             "Summarize this 中文 and English mixed terminal output.".to_string(),
-        )];
+        ))];
 
         let wrapped = build_wrapped_transcript(&cells, 44);
         let rendered = wrapped.rows.iter().map(row_text).collect::<Vec<_>>();

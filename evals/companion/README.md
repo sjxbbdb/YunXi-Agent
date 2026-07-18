@@ -1,6 +1,6 @@
 # YunXi Companion Evaluation Harness
 
-This directory contains the offline, deterministic v2.0.0 release corpus. It
+This directory contains the offline, deterministic v2.0.1 release corpus. It
 retains all 31 v1.9.4 scenarios and their golden thresholds as the v2 quality
 gate.
 

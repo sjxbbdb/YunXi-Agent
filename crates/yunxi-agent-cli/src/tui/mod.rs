@@ -102,14 +102,7 @@ impl InteractiveRenderer for TuiInteractiveRenderer {
     }
 
     fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()> {
-        if let AgentEvent::Message { content } = event {
-            if let Some(rendered) = state.observe_assistant_content(content) {
-                return self
-                    .handle
-                    .with_mut(|tui| tui.push_assistant(&rendered));
-            }
-            return Ok(());
-        }
+        state.observe_event(event);
         self.handle.with_mut(|tui| tui.push_agent_event(event))
     }
 

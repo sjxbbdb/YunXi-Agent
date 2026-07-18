@@ -1,4 +1,6 @@
+#[cfg(test)]
 const SHORT_OUTPUT_MAX_CHARS: usize = 240;
+#[cfg(test)]
 const SHORT_OUTPUT_MAX_LINES: usize = 3;
 const DETAIL_DISPLAY_MAX_LINES: usize = 40;
 const MAX_DEBUG_INLINE_CHARS: usize = 180;
@@ -12,6 +14,7 @@ pub(crate) struct OutputSummary {
     pub(crate) hidden: bool,
 }
 
+#[cfg(test)]
 pub(crate) fn summarize_tool_output(tool_name: &str, output: &str) -> Option<OutputSummary> {
     let detail = redact_secrets(output.trim());
     if detail.is_empty() {
@@ -128,6 +131,7 @@ fn is_secret_token_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.')
 }
 
+#[cfg(test)]
 fn is_document_like(tool_name: &str, detail: &str) -> bool {
     let tool_name = tool_name.to_ascii_lowercase();
     tool_name.contains("skill")
@@ -137,6 +141,7 @@ fn is_document_like(tool_name: &str, detail: &str) -> bool {
         || detail.contains("description: Use when starting any conversation")
 }
 
+#[cfg(test)]
 fn looks_like_protocol_json(detail: &str) -> bool {
     let trimmed = detail.trim();
     if trimmed == "{" || trimmed == "}" || trimmed == "[" || trimmed == "]" {

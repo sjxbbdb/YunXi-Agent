@@ -1,10 +1,12 @@
 use crate::output_summary::{debug_inline_summary, detail_display, redact_secrets};
+use crate::presentation::{PresentationDetail, TuiCellId};
 
 const MAX_DEBUG_ENTRIES: usize = 200;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DebugEntry {
     pub(crate) id: usize,
+    pub(crate) stable_id: TuiCellId,
     pub(crate) label: String,
     pub(crate) detail: String,
 }
@@ -39,15 +41,26 @@ impl DebugBuffer {
         self.enabled = enabled;
     }
 
-    pub(crate) fn add(&mut self, label: impl Into<String>, detail: impl Into<String>) -> usize {
+    pub(crate) fn add(&mut self, detail: PresentationDetail) -> usize {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.stable_id == detail.id)
+        {
+            entry.label = detail.label;
+            entry.detail = redact_secrets(&detail.content);
+            return entry.id;
+        }
+
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         self.hidden_count = self.hidden_count.saturating_add(1);
 
         self.entries.push(DebugEntry {
             id,
-            label: label.into(),
-            detail: redact_secrets(&detail.into()),
+            stable_id: detail.id,
+            label: detail.label,
+            detail: redact_secrets(&detail.content),
         });
         if self.entries.len() > MAX_DEBUG_ENTRIES {
             let overflow = self.entries.len() - MAX_DEBUG_ENTRIES;
@@ -104,10 +117,34 @@ mod tests {
     #[test]
     fn stores_debug_entries_with_redaction() {
         let mut buffer = DebugBuffer::default();
-        let id = buffer.add("stdout", "token sk-secret-value");
+        let id = buffer.add(PresentationDetail {
+            id: TuiCellId::from_test("detail:stdout"),
+            label: "stdout".to_string(),
+            content: "token sk-secret-value".to_string(),
+        });
 
         let text = buffer.detail_text(Some(id));
         assert!(text.contains("sk-[redacted]"));
         assert!(!text.contains("secret-value"));
+    }
+
+    #[test]
+    fn stable_detail_id_updates_in_place_without_growing_hidden_count() {
+        let mut buffer = DebugBuffer::default();
+        let stable_id = TuiCellId::from_test("detail:stream");
+        let first = buffer.add(PresentationDetail {
+            id: stable_id.clone(),
+            label: "stream".to_string(),
+            content: "first".to_string(),
+        });
+        let second = buffer.add(PresentationDetail {
+            id: stable_id,
+            label: "stream".to_string(),
+            content: "second".to_string(),
+        });
+
+        assert_eq!(first, second);
+        assert!(buffer.detail_text(Some(first)).contains("second"));
+        assert_eq!(buffer.status(), "debug=off hidden=1");
     }
 }

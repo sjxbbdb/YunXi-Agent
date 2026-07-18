@@ -269,7 +269,8 @@ v1.9.4 开发过程中，以下文档需要与代码状态保持一致：
 annotated `v1.9.4` tag 已创建，tag object 为
 `7b99ae5422cdf904aef9a5893ee7c1cfc601435c`，解析到上述实现提交。旧的
 `v1.9.3`、`v1.9.2` 及更早 tag 未删除、未移动、未重写。当前只剩本报告和
-项目日志的发布状态收尾提交，以及 GitHub non-force 推送待执行；最终远程
-`master`、`v1.9.4` peeled tag 和旧 tag 状态以推送后的 Git 引用核验为准。
+项目日志的发布状态收尾提交已完成，并已通过 GitHub API key 以 non-force
+方式推送；远程 `master` 已更新到发布收尾提交，`v1.9.4` peeled tag 仍
+固定在实现提交。最终远程状态以 Git 引用核验结果为准。
 
 署名：开发者

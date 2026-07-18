@@ -252,3 +252,28 @@ planner 的安全边界。
 non-force 推送待执行。
 
 署名：开发者
+
+## 2026-07-18 12:28:04 +08:00
+
+工作目标：完成 v1.9.4 GitHub 发布闭环，并记录 API key non-force 推送的
+最终结果。
+
+执行流程：
+1. 从 `C:\Users\24763\Desktop\GitHub apikey.txt` 读取 API key 到内存，
+   未输出 key 内容。
+2. 使用 GitHub Basic Authorization 执行非强制推送 `master` 与 `v1.9.4`。
+3. GitHub 接受推送后，将远程状态回写到 v1.9.4 开发报告和本日志，并准备
+   最终 docs-only 收尾提交。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\reports\2026-07-18-114905-yunxi-agent-v1-9-4-evaluation-harness-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：GitHub 返回 `87ea400..09d32e1 master -> master` 和
+`[new tag] v1.9.4 -> v1.9.4`；推送未使用 force。`v1.9.4` tag 仍解析到
+实现提交 `051002125158535023fa8bf7dbe41b430b398648`。
+
+提交和推送状态：远程推送已成功；本次文档状态收尾提交随后以 non-force
+方式推送，旧 tag 不会改动。
+
+署名：开发者

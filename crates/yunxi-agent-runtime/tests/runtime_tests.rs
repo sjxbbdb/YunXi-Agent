@@ -19,10 +19,12 @@ use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
     ProviderStream, ProviderStreamEventSink, ProviderToolCall, StaticProvider,
 };
-use yunxi_agent_runtime::{YunXiRuntimeBackend, protocol_stream_events_to_agent_events};
+use yunxi_agent_runtime::{
+    YunXiRuntimeBackend, control_snapshot, protocol_stream_events_to_agent_events,
+};
 use yunxi_agent_storage::{
-    FilePersonaMemoryStore, InMemorySessionStore, PersonaMemoryScope, SessionId, SessionRecord,
-    SessionStore,
+    FileControlStore, FilePersonaMemoryStore, InMemorySessionStore, PersonaMemoryScope, SessionId,
+    SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{CompositeToolRuntime, NoopToolRuntime, ShellToolRuntime};
 
@@ -84,7 +86,60 @@ async fn companion_check_emits_reasoned_plan_without_tool_execution() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn companion_plan_is_recorded_and_visible_in_control_snapshot() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    let snapshot = with_yunxi_home(home.path(), async move {
+        let backend = YunXiRuntimeBackend::with_parts(
+            StaticProvider::default(),
+            NoopToolRuntime,
+            InMemorySessionStore::default(),
+        );
+        let config = AgentConfig {
+            companion: CompanionSettings {
+                enabled: true,
+                ..CompanionSettings::default()
+            },
+            ..AgentConfig::new(&workspace_path)
+        };
+        Agent::new(config.clone())
+            .run_with_backend(&backend, AgentInput::text("reminder due"))
+            .await
+            .expect("runtime should complete");
+        let history = FileControlStore::for_workspace(&workspace_path)
+            .companion_history()
+            .expect("companion history");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].trigger, "reminder_due");
+        control_snapshot(&config).expect("control snapshot")
+    })
+    .await;
+
+    assert!(snapshot.companion_enabled);
+    assert!(
+        snapshot
+            .scope(yunxi_agent_core::ControlScope::Companion)
+            .is_some_and(|state| state.summary == "history_records=1")
+    );
+}
+
 static MEMORY_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+async fn with_yunxi_home<T>(home: &Path, future: impl Future<Output = T>) -> T {
+    let _guard = MEMORY_ENV_LOCK.lock().expect("memory env lock");
+    let previous_home = std::env::var_os("YUNXI_HOME");
+    let previous_companion = std::env::var_os("YUNXI_COMPANION_ENABLED");
+    unsafe {
+        std::env::set_var("YUNXI_HOME", home);
+        std::env::remove_var("YUNXI_COMPANION_ENABLED");
+    }
+    let output = future.await;
+    restore_env_var("YUNXI_HOME", previous_home);
+    restore_env_var("YUNXI_COMPANION_ENABLED", previous_companion);
+    output
+}
 
 async fn with_memory_enabled_home<T>(home: &Path, future: impl Future<Output = T>) -> T {
     let _guard = MEMORY_ENV_LOCK.lock().expect("memory env lock");

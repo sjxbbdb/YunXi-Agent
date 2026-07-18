@@ -117,6 +117,10 @@ pub struct CompanionSettings {
     pub require_reason: bool,
     #[serde(default)]
     pub allow_tool_requests: bool,
+    #[serde(default)]
+    pub cloud_control_enabled: bool,
+    #[serde(default = "default_true")]
+    pub clear_requires_confirmation: bool,
 }
 
 impl Default for CompanionSettings {
@@ -128,6 +132,8 @@ impl Default for CompanionSettings {
             max_proactive_per_day: default_max_proactive_per_day(),
             require_reason: true,
             allow_tool_requests: false,
+            cloud_control_enabled: false,
+            clear_requires_confirmation: true,
         }
     }
 }

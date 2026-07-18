@@ -5,6 +5,8 @@ use std::path::PathBuf;
 pub struct PersonaSettings {
     pub persona_enabled: bool,
     pub memory_enabled: bool,
+    pub companion_enabled: bool,
+    pub cloud_control_enabled: bool,
     pub active_profile: String,
 }
 
@@ -13,6 +15,8 @@ impl Default for PersonaSettings {
         Self {
             persona_enabled: true,
             memory_enabled: false,
+            companion_enabled: false,
+            cloud_control_enabled: false,
             active_profile: "yunxi_companion_strong".to_string(),
         }
     }
@@ -30,6 +34,12 @@ impl PersonaSettings {
         }
         if let Ok(value) = std::env::var("YUNXI_MEMORY_ENABLED") {
             settings.memory_enabled = env_bool(&value, settings.memory_enabled);
+        }
+        if let Ok(value) = std::env::var("YUNXI_COMPANION_ENABLED") {
+            settings.companion_enabled = env_bool(&value, settings.companion_enabled);
+        }
+        if let Ok(value) = std::env::var("YUNXI_CLOUD_CONTROL_ENABLED") {
+            settings.cloud_control_enabled = env_bool(&value, settings.cloud_control_enabled);
         }
         settings
     }
@@ -60,6 +70,12 @@ impl PersonaSettings {
                 "memory_enabled" => {
                     settings.memory_enabled = env_bool(value, settings.memory_enabled)
                 }
+                "companion_enabled" => {
+                    settings.companion_enabled = env_bool(value, settings.companion_enabled)
+                }
+                "cloud_control_enabled" => {
+                    settings.cloud_control_enabled = env_bool(value, settings.cloud_control_enabled)
+                }
                 "active_profile" if !value.is_empty() => {
                     settings.active_profile = value.to_string()
                 }
@@ -71,8 +87,12 @@ impl PersonaSettings {
 
     fn to_config_string(&self) -> String {
         format!(
-            "persona_enabled = {}\nmemory_enabled = {}\nactive_profile = \"{}\"\n",
-            self.persona_enabled, self.memory_enabled, self.active_profile
+            "persona_enabled = {}\nmemory_enabled = {}\ncompanion_enabled = {}\ncloud_control_enabled = {}\nactive_profile = \"{}\"\n",
+            self.persona_enabled,
+            self.memory_enabled,
+            self.companion_enabled,
+            self.cloud_control_enabled,
+            self.active_profile
         )
     }
 }

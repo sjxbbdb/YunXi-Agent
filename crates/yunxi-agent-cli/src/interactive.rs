@@ -12,10 +12,14 @@ use std::io::{self, IsTerminal};
 use std::time::Duration;
 use yunxi_agent_core::{
     AgentConfig, AgentEvent, AgentRunControl, AgentRunResult, AgentRunStatus, BackendKind,
-    TokenUsage,
+    ControlRequest, ControlScope, ControlVerb, TokenUsage,
 };
+use yunxi_agent_persona::PersonaSettings;
+use yunxi_agent_runtime::control_snapshot;
 use yunxi_agent_mcp::{McpTransport, load_workspace_mcp_configs};
-use yunxi_agent_storage::{FileSessionStore, SessionId, SessionStore};
+use yunxi_agent_storage::{
+    FileControlStore, FilePersonaMemoryStore, FileSessionStore, SessionId, SessionStore,
+};
 use yunxi_agent_tools::workspace_tool_registry;
 
 #[derive(Clone, Debug)]
@@ -112,7 +116,7 @@ impl InteractiveSession {
             }
 
             if let Some(command) = parse_interactive_command(input_line) {
-                if !self.handle_command(command, renderer).await? {
+                if !self.handle_command(command, input, renderer).await? {
                     renderer.notice("session", "YunXi interactive session ended.")?;
                     return Ok(());
                 }
@@ -131,6 +135,7 @@ impl InteractiveSession {
     async fn handle_command(
         &mut self,
         command: InteractiveCommand,
+        input: &mut dyn InteractiveInput,
         renderer: &mut dyn InteractiveRenderer,
     ) -> Result<bool> {
         match command {
@@ -153,12 +158,187 @@ impl InteractiveSession {
             }
             InteractiveCommand::Debug(debug) => self.handle_debug_command(debug, renderer)?,
             InteractiveCommand::Details(id) => renderer.show_details(id)?,
+            InteractiveCommand::Controls(action) => {
+                self.handle_control_command(action.as_deref(), input, renderer)?;
+            }
+            InteractiveCommand::Companion(action) => {
+                let action = match action.as_deref() {
+                    None | Some("status") => Some("show companion"),
+                    Some("on") => Some("enable companion"),
+                    Some("off") => Some("disable companion"),
+                    Some("clear") => Some("clear companion"),
+                    Some(other) => {
+                        renderer.notice(
+                            "companion",
+                            &format!("unknown companion action: {other}; use on|off|status|clear"),
+                        )?;
+                        None
+                    }
+                };
+                if let Some(action) = action {
+                    self.handle_control_command(Some(action), input, renderer)?;
+                }
+            }
             InteractiveCommand::Resume(session_id) => {
                 self.resume_session(session_id, renderer).await?;
             }
             InteractiveCommand::Unknown(message) => renderer.notice("command", &message)?,
         }
         Ok(true)
+    }
+
+    fn handle_control_command(
+        &mut self,
+        action: Option<&str>,
+        input: &mut dyn InteractiveInput,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<()> {
+        let store = FileControlStore::for_workspace(&self.config.cwd);
+        let mut settings = PersonaSettings::load();
+        let mut parts = action.unwrap_or("status").split_whitespace();
+        let verb = parts.next().unwrap_or("status").to_ascii_lowercase();
+        match verb.as_str() {
+            "status" | "show" | "refresh" => {
+                let scope = parts.next().map(parse_control_scope).transpose()?;
+                let request = ControlRequest::new(
+                    scope.unwrap_or(ControlScope::Companion),
+                    if verb == "refresh" {
+                        ControlVerb::Refresh
+                    } else {
+                        ControlVerb::Show
+                    },
+                );
+                crate::append_control_audit(
+                    &store,
+                    &request,
+                    "completed",
+                    "interactive control snapshot",
+                )?;
+                renderer.controls(&control_snapshot(&self.config)?)?;
+            }
+            "enable" | "disable" => {
+                let scope = parse_control_scope(parts.next().unwrap_or("companion"))?;
+                let enabled = verb == "enable";
+                let request = ControlRequest::new(
+                    scope,
+                    if enabled {
+                        ControlVerb::Enable
+                    } else {
+                        ControlVerb::Disable
+                    },
+                );
+                match scope {
+                    ControlScope::Companion => {
+                        settings.companion_enabled = enabled;
+                        self.config.companion.enabled = enabled;
+                    }
+                    ControlScope::Memory => settings.memory_enabled = enabled,
+                    ControlScope::Persona => settings.persona_enabled = enabled,
+                    ControlScope::Relationship => {
+                        crate::append_control_audit(
+                            &store,
+                            &request,
+                            "rejected",
+                            "relationship is a read-only derived view",
+                        )?;
+                        renderer.notice("controls", "relationship controls are read-only")?;
+                        return Ok(());
+                    }
+                }
+                settings
+                    .save()
+                    .context("failed to persist interactive control settings")?;
+                crate::append_control_audit(
+                    &store,
+                    &request,
+                    "completed",
+                    "interactive persisted state change",
+                )?;
+                renderer.controls(&control_snapshot(&self.config)?)?;
+            }
+            "clear" => {
+                let scope = parse_control_scope(parts.next().unwrap_or("companion"))?;
+                let request = ControlRequest::new(scope, ControlVerb::Clear);
+                if matches!(scope, ControlScope::Persona | ControlScope::Relationship) {
+                    crate::append_control_audit(
+                        &store,
+                        &request,
+                        "rejected",
+                        "scope is read-only and cannot be cleared",
+                    )?;
+                    renderer.notice(
+                        "controls",
+                        &format!("{} is read-only and cannot be cleared", scope.as_str()),
+                    )?;
+                    return Ok(());
+                }
+                let token = format!("CLEAR {}", scope.as_str().to_ascii_uppercase());
+                let response = input.read_response(&format!(
+                    "Clear {} scope? Type {token} to confirm:",
+                    scope.as_str()
+                ))?;
+                if response.as_deref() != Some(token.as_str()) {
+                    crate::append_control_audit(
+                        &store,
+                        &request,
+                        "rejected",
+                        "interactive confirmation missing or mismatched",
+                    )?;
+                    renderer.notice("controls", "clear cancelled; confirmation did not match")?;
+                    return Ok(());
+                }
+                let request = request.confirmed();
+                let detail = match scope {
+                    ControlScope::Companion => format!(
+                        "cleared local companion history records={}",
+                        store.clear_companion_history()?
+                    ),
+                    ControlScope::Memory => {
+                        let summary = FilePersonaMemoryStore::for_workspace(&self.config.cwd)
+                            .clear_workspace()?;
+                        format!(
+                            "archived workspace memory active={} pending={}",
+                            summary.archived_active_records, summary.archived_pending_records
+                        )
+                    }
+                    ControlScope::Persona | ControlScope::Relationship => unreachable!(),
+                };
+                crate::append_control_audit(&store, &request, "completed", &detail)?;
+                renderer.notice("controls", &detail)?;
+                renderer.controls(&control_snapshot(&self.config)?)?;
+            }
+            "audit" => {
+                let records = store.audit_records()?;
+                let text = if records.is_empty() {
+                    "control audit: empty".to_string()
+                } else {
+                    records
+                        .iter()
+                        .rev()
+                        .take(20)
+                        .map(|record| {
+                            format!(
+                                "{} {} {} {} - {}",
+                                record.timestamp_millis,
+                                record.scope.as_str(),
+                                record.verb.as_str(),
+                                record.outcome,
+                                record.detail
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                renderer.notice("control audit", &text)?;
+            }
+            other => renderer.notice(
+                "controls",
+                &format!(
+                    "unknown control action: {other}; use status|show|enable|disable|clear|refresh|audit"
+                ),
+            )?,
+        }
+        Ok(())
     }
 
     fn session_summary_text(&self) -> String {
@@ -502,6 +682,18 @@ impl InteractiveSession {
     fn refresh_provider_selection(&mut self) -> Result<()> {
         self.provider_selection = self.provider_mode.resolve(self.backend, &self.config)?;
         Ok(())
+    }
+}
+
+fn parse_control_scope(value: &str) -> Result<ControlScope> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "companion" => Ok(ControlScope::Companion),
+        "memory" => Ok(ControlScope::Memory),
+        "persona" => Ok(ControlScope::Persona),
+        "relationship" => Ok(ControlScope::Relationship),
+        other => anyhow::bail!(
+            "unknown control scope: {other}; use companion|memory|persona|relationship"
+        ),
     }
 }
 

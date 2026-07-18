@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.9.2"));
+        .stdout(predicate::str::contains("yunxi 1.9.3"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.9.2"));
+        .stdout(predicate::str::contains("yunxi 1.9.3"));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.2 interactive CLI",
+            "YunXi Agent v1.9.3 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +411,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.2 interactive CLI",
+            "YunXi Agent v1.9.3 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +431,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.2 interactive CLI",
+            "YunXi Agent v1.9.3 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
@@ -517,6 +517,76 @@ fn cli_persona_commands_manage_local_settings() {
         .assert()
         .success()
         .stdout(predicate::str::contains("persona_enabled: true"));
+}
+
+#[test]
+fn cli_controls_share_snapshot_and_persist_companion_switch() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    let initial = run_json_command_with_env(&home, &["--cwd", cwd, "--json", "controls", "status"]);
+    assert_eq!(initial["companion_enabled"].as_bool(), Some(false));
+    assert_eq!(initial["cloud_control_enabled"].as_bool(), Some(false));
+    assert_eq!(initial["scopes"].as_array().map(Vec::len), Some(4));
+
+    let enabled = run_json_command_with_env(
+        &home,
+        &["--cwd", cwd, "--json", "controls", "enable", "companion"],
+    );
+    assert_eq!(enabled["enabled"].as_bool(), Some(true));
+
+    let persisted =
+        run_json_command_with_env(&home, &["--cwd", cwd, "--json", "controls", "status"]);
+    assert_eq!(persisted["companion_enabled"].as_bool(), Some(true));
+
+    let audit = run_json_command_with_env(&home, &["--cwd", cwd, "--json", "controls", "audit"]);
+    assert!(audit.as_array().is_some_and(|records| {
+        records.iter().any(|record| {
+            record["scope"].as_str() == Some("companion")
+                && record["verb"].as_str() == Some("enable")
+                && record["outcome"].as_str() == Some("completed")
+        })
+    }));
+}
+
+#[test]
+fn cli_clear_controls_require_confirmation_and_keep_read_only_scopes_protected() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    let mut missing_confirmation =
+        Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    missing_confirmation
+        .env("YUNXI_HOME", home.path())
+        .args(["--cwd", cwd, "controls", "clear", "memory"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires --confirm"));
+
+    let mut read_only = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    read_only
+        .env("YUNXI_HOME", home.path())
+        .args([
+            "--cwd",
+            cwd,
+            "controls",
+            "clear",
+            "relationship",
+            "--confirm",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("read-only"));
+
+    let audit = run_json_command_with_env(&home, &["--cwd", cwd, "--json", "controls", "audit"]);
+    assert!(audit.as_array().is_some_and(|records| {
+        records
+            .iter()
+            .filter(|record| record["verb"].as_str() == Some("clear"))
+            .all(|record| record["outcome"].as_str() == Some("rejected"))
+    }));
 }
 
 #[test]

@@ -6,6 +6,7 @@ use std::rc::Rc;
 use yunxi_agent_core::{
     AgentEvent, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunUserInputRequest,
     AgentRunUserInputResponse,
+    ControlSnapshot,
 };
 use yunxi_agent_tui::{ApprovalRequestView, UserInputRequestView, YunxiTui, YunxiTuiBanner};
 
@@ -93,6 +94,11 @@ impl InteractiveRenderer for TuiInteractiveRenderer {
 
     fn clear(&mut self) -> Result<()> {
         self.handle.with_mut(YunxiTui::clear_transcript)
+    }
+
+    fn controls(&mut self, snapshot: &ControlSnapshot) -> Result<()> {
+        self.handle
+            .with_mut(|tui| tui.show_control_snapshot(snapshot.clone()))
     }
 
     fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()> {

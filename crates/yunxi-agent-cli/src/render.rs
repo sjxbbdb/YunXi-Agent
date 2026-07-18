@@ -3,7 +3,7 @@ use anyhow::Result;
 use std::io::{self, Write};
 use yunxi_agent_core::{
     AgentEvent, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunResult, AgentRunStatus,
-    AgentRunUserInputRequest, AgentRunUserInputResponse, CommandStatus,
+    AgentRunUserInputRequest, AgentRunUserInputResponse, CommandStatus, ControlSnapshot,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,6 +21,7 @@ pub(crate) trait InteractiveRenderer {
     fn warning(&mut self, message: &str) -> Result<()>;
     fn notice(&mut self, label: &str, message: &str) -> Result<()>;
     fn clear(&mut self) -> Result<()>;
+    fn controls(&mut self, snapshot: &ControlSnapshot) -> Result<()>;
     fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()>;
     fn approval_request(
         &mut self,
@@ -68,6 +69,24 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
         Ok(())
     }
 
+    fn controls(&mut self, snapshot: &ControlSnapshot) -> Result<()> {
+        println!("companion_enabled: {}", snapshot.companion_enabled);
+        println!("cloud_control_enabled: {}", snapshot.cloud_control_enabled);
+        for state in &snapshot.scopes {
+            println!(
+                "[{}] enabled={} source={} summary={}",
+                state.scope.as_str(),
+                state
+                    .enabled
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "read-only".to_string()),
+                state.source.as_str(),
+                state.summary
+            );
+        }
+        Ok(())
+    }
+
     fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()> {
         render_agent_event(event, state)
     }
@@ -111,7 +130,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v1.9.2 interactive CLI");
+    println!("YunXi Agent v1.9.3 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(

@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.9.2 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.9.3 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -11,6 +11,10 @@ request.
 - The built-in profile is `yunxi_companion_strong`.
 - Long-term memory writes are disabled until `yunxi memory on`,
   `YUNXI_MEMORY_ENABLED=1`, or a saved config enables them.
+- Proactive companion planning is disabled until `yunxi companion on`, the
+  one-turn `--companion` flag, or `YUNXI_COMPANION_ENABLED=1` enables it.
+- Cloud control is a distinct persisted status field, defaults to false, and
+  does not activate any cloud runtime.
 - Only effective `active` memories are recalled. `pending`, `rejected`,
   `archived`, expired, invalidated, and superseded records are never injected
   into prompts.
@@ -18,11 +22,11 @@ request.
 
 ## Persona Context Blocks
 
-v1.9.2 compiles the built-in persona into one bounded, XML-like context string
+v1.9.3 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="1.9.2" profile_id="yunxi_companion_strong" mode="routed_memory">
+<yunxi_persona_context version="1.9.3" profile_id="yunxi_companion_strong" mode="routed_memory">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>
@@ -299,6 +303,43 @@ Normal TUI memory notices are intentionally short:
 Debug/details keep engineering fields such as id, scope, kind, status, action,
 revision, merged_count, merge_strategy, conflict_family, and recall diagnostic
 counts.
+
+## Companion UX & Controls In v1.9.3
+
+CLI and TUI use the same runtime-generated control snapshot. It exposes local
+companion state, the separate default-off cloud-control field, quiet hours,
+persona profile summary, transparent memory counts, Relationship Graph Lite
+counts, each scope's source, clear effects, and the most recent audited change.
+
+```powershell
+yunxi controls status
+yunxi controls show companion
+yunxi controls show memory
+yunxi controls show persona
+yunxi controls show relationship
+yunxi controls enable companion
+yunxi controls disable companion
+yunxi controls clear companion --confirm
+yunxi controls clear memory --confirm
+yunxi controls audit
+```
+
+In interactive/TUI mode, `/controls` opens the shared control panel.
+`/controls clear companion` and `/controls clear memory` open an explicit
+confirmation input and require `CLEAR COMPANION` or `CLEAR MEMORY`. Persona and
+relationship scopes are review-only and cannot be cleared through the UI.
+
+Control audit and companion plan history are separate local JSONL ledgers:
+
+```text
+<workspace>/.yunxi/controls/audit.jsonl
+<workspace>/.yunxi/controls/companion-history.jsonl
+```
+
+Memory clear remains append-only by writing archived revisions for active and
+pending workspace records. Companion clear truncates only the companion
+history ledger. Neither operation changes persona profile definitions or the
+derived relationship graph directly.
 
 ## Proactive Companion In v1.9.2
 

@@ -14,6 +14,8 @@ pub(crate) enum InteractiveCommand {
     Resume(String),
     Debug(Option<String>),
     Details(Option<usize>),
+    Controls(Option<String>),
+    Companion(Option<String>),
     Unknown(String),
 }
 
@@ -51,6 +53,8 @@ pub(crate) fn parse_interactive_command(input: &str) -> Option<InteractiveComman
             },
             None => None,
         }),
+        "/controls" => InteractiveCommand::Controls(rest.map(ToOwned::to_owned)),
+        "/companion" => InteractiveCommand::Companion(rest.map(ToOwned::to_owned)),
         "/resume" => match rest {
             Some(session_id) => InteractiveCommand::Resume(session_id.to_string()),
             None => InteractiveCommand::Unknown("/resume requires a session id".to_string()),
@@ -72,7 +76,30 @@ pub(crate) fn help_text() -> &'static str {
      /provider [name]      Show or switch the provider field\n\
      /debug events on|off  Show or hide TUI raw debug event summaries\n\
      /details [id]         Show the latest or selected TUI debug detail\n\
+     /controls [action]    Show or update the unified control panel\n\
+     /companion [on|off]   Show or persist the local companion switch\n\
+     /controls clear <scope> asks for explicit confirmation\n\
      /cwd                  Show the active working directory\n\
      /clear                Clear the terminal\n\
      /exit, /quit          Leave YunXi interactive mode"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_shared_control_and_companion_commands() {
+        assert_eq!(
+            parse_interactive_command("/controls clear memory"),
+            Some(InteractiveCommand::Controls(Some(
+                "clear memory".to_string()
+            )))
+        );
+        assert_eq!(
+            parse_interactive_command("/companion off"),
+            Some(InteractiveCommand::Companion(Some("off".to_string())))
+        );
+        assert!(help_text().contains("explicit confirmation"));
+    }
 }

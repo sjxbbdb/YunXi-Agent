@@ -2,6 +2,7 @@ mod backend;
 mod cancellation;
 mod codex_source;
 mod config;
+mod control;
 mod error;
 mod event;
 mod input;
@@ -13,6 +14,10 @@ pub use cancellation::AgentCancellationToken;
 pub use codex_source::{CodexSource, CodexSourceStatus};
 pub use config::{
     AgentConfig, ApprovalMode, CompanionSettings, MemoryExtractionMode, QuietHours, SandboxMode,
+};
+pub use control::{
+    CompanionHistoryRecord, ControlAuditRecord, ControlRequest, ControlScope, ControlScopeSnapshot,
+    ControlSnapshot, ControlSource, ControlVerb,
 };
 pub use error::{AgentError, AgentResult};
 pub use event::{

@@ -2,7 +2,7 @@ use crate::bottom_pane::{ApprovalRequestView, BottomPane, UserInputRequestView};
 use crate::chat::Transcript;
 use crate::viewport::TranscriptViewport;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-use yunxi_agent_core::AgentEvent;
+use yunxi_agent_core::{AgentEvent, ControlSnapshot};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct YunxiTuiBanner {
@@ -21,16 +21,18 @@ pub(crate) struct YunxiTuiApp {
     transcript: Transcript,
     viewport: TranscriptViewport,
     bottom_pane: BottomPane,
+    control_snapshot: Option<ControlSnapshot>,
 }
 
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v1.9.2".to_string(),
+            version: "v1.9.3".to_string(),
             banner: None,
             transcript: Transcript::default(),
             viewport: TranscriptViewport::default(),
             bottom_pane: BottomPane::default(),
+            control_snapshot: None,
         }
     }
 }
@@ -54,6 +56,18 @@ impl YunxiTuiApp {
 
     pub(crate) fn bottom_pane_mut(&mut self) -> &mut BottomPane {
         &mut self.bottom_pane
+    }
+
+    pub(crate) fn control_snapshot(&self) -> Option<&ControlSnapshot> {
+        self.control_snapshot.as_ref()
+    }
+
+    pub(crate) fn show_control_snapshot(&mut self, snapshot: ControlSnapshot) {
+        self.control_snapshot = Some(snapshot);
+    }
+
+    pub(crate) fn show_transcript(&mut self) {
+        self.control_snapshot = None;
     }
 
     pub(crate) fn footer_for_width(&self, width: usize) -> String {
@@ -181,6 +195,7 @@ impl YunxiTuiApp {
     }
 
     pub(crate) fn push_user(&mut self, value: impl Into<String>) {
+        self.show_transcript();
         self.transcript.push_user(value);
         self.on_transcript_changed();
     }
@@ -393,7 +408,7 @@ mod tests {
         assert!(display_width(&header) <= 58);
         assert!(display_width(&subheader) <= 58);
         assert!(display_width(&footer) <= 58);
-        assert!(header.contains("YunXi v1.9.2"));
+        assert!(header.contains("YunXi v1.9.3"));
         assert!(header.contains("offline"));
         assert!(header.contains("static"));
         assert!(subheader.contains("provider=static"));
@@ -410,7 +425,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v1.9.2"));
+        assert!(header.contains("YunXi Agent v1.9.3"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));

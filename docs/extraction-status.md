@@ -1,10 +1,38 @@
 # Extraction Status
 
-## Current Workspace Version: v1.9.2
+## Current Workspace Version: v1.9.3
 
-The current workspace includes the pure Rust `yunxi-agent-companion` policy
-crate and the runtime companion boundary described below. The v1.9.1 sections
-that follow are retained as historical release records.
+The current workspace includes Companion UX & Controls on top of the pure Rust
+`yunxi-agent-companion` policy crate. Earlier sections are retained as
+historical release records.
+
+## YunXi Agent v1.9.3 Companion UX & Controls
+
+v1.9.3 adds shared `ControlRequest`, `ControlScope`, `ControlVerb`,
+`ControlSnapshot`, and audit/history facade types in `yunxi-agent-core`.
+`yunxi-agent-runtime::control_snapshot` derives one read-only view from current
+configuration, persisted persona settings, transparent memory records, and
+Relationship Graph Lite. CLI and TUI consume that same snapshot.
+
+The CLI exposes `yunxi controls ...` plus companion-specific status/on/off/
+history/clear commands. Local companion state persists in the existing persona
+settings file. Future cloud control is represented separately, remains false
+by default, and has no network or service dependency. Persona and relationship
+views remain read-only.
+
+The TUI renders the shared snapshot as a status-focused controls panel. Its
+interactive `/controls clear companion|memory` path opens an explicit input
+confirmation and requires the scope-specific `CLEAR ...` token. Scripted CLI
+clear operations require `--confirm`. Workspace memory clear retains the
+append-only model by archiving active/pending records; companion clear affects
+only the local companion history ledger.
+
+All show, refresh, enable, disable, update, clear, rejected-clear, and legacy
+persona/memory control mutations append JSONL audit records under
+`<workspace>/.yunxi/controls/audit.jsonl`. Runtime companion plans append a
+separate privacy-bounded `companion-history.jsonl` record containing trigger,
+reason, message, and confirmation flag. No scheduler, cloud backend, desktop
+app, web console, SDK, marketplace, or upstream Codex dependency was added.
 
 ## YunXi Agent v1.9.2 Proactive Companion Loop
 

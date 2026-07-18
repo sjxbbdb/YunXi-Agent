@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use yunxi_agent_companion::{
-    CompanionAction, CompanionInput, CompanionPlan, CompanionPlanner, SafeCompanionPlanner,
+    CompanionAction, CompanionInput, CompanionPlan, CompanionPlanner, CompanionTrigger,
+    SafeCompanionPlanner,
 };
 use yunxi_agent_context::{
     ContextManagerState, ContextWindowBudget, ConversationMessage, ConversationRole,
@@ -20,7 +21,8 @@ use yunxi_agent_context::{
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
     AgentResult, AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus,
-    CommandStatus, FileChangeKind, MemoryExtractionMode, ThreadRuntimeState, TokenUsage,
+    CommandStatus, CompanionHistoryRecord, ControlScope, ControlScopeSnapshot, ControlSnapshot,
+    ControlSource, FileChangeKind, MemoryExtractionMode, ThreadRuntimeState, TokenUsage,
     TurnRuntimeMetadata, TurnRuntimeState,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
@@ -32,7 +34,8 @@ use yunxi_agent_persona::{
     CompiledPersonaContext, HumanProfile, MemoryKind, MemoryPipeline, MemoryPipelineInput,
     MemoryRecallExplanation, MemoryRecallResult, MemoryRecallRouter, MemoryRecallRouterRequest,
     MemorySensitivity, MemoryStatus, MemoryWritePolicy, PersonaPromptCompiler, PersonaSettings,
-    RelationshipState, SCHEMA_VERSION, yunxi_companion_strong,
+    RelationshipGraphLite, RelationshipState, SCHEMA_VERSION, now_millis as persona_now_millis,
+    yunxi_companion_strong,
 };
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
@@ -45,9 +48,9 @@ use yunxi_agent_provider::{
 };
 use yunxi_agent_sandbox::{ApprovalRequirement, SandboxRequirement};
 use yunxi_agent_storage::{
-    FilePersonaMemoryStore, FileSessionStore, HistoryItemKind, HistoryLoadOptions,
-    InMemorySessionStore, MemoryPersistOutcome, PersonaMemoryScope, SessionHistory, SessionId,
-    SessionRecord, SessionStore,
+    FileControlStore, FilePersonaMemoryStore, FileSessionStore, HistoryItemKind,
+    HistoryLoadOptions, InMemorySessionStore, MemoryPersistOutcome, PersonaMemoryScope,
+    SessionHistory, SessionId, SessionRecord, SessionStore,
 };
 use yunxi_agent_tools::{
     ApprovalDecision, CompositeToolRuntime, SandboxPolicy, ToolDispatch, ToolDispatchTrace,
@@ -63,6 +66,101 @@ const DEFAULT_MAX_TURNS: usize = 8;
 const DEFAULT_MAX_CHILD_DEPTH: usize = 2;
 const MAX_MENTIONED_FILE_CONTEXT_FILES: usize = 8;
 const MAX_MENTIONED_FILE_CONTEXT_BYTES: u64 = 32 * 1024;
+
+pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
+    let settings = PersonaSettings::load();
+    let memory_store = FilePersonaMemoryStore::for_workspace(&config.cwd);
+    let memory_load = memory_store.list(PersonaMemoryScope::All);
+    let active_memory = memory_load
+        .records
+        .iter()
+        .filter(|record| record.status == MemoryStatus::Active)
+        .count();
+    let pending_memory = memory_load
+        .records
+        .iter()
+        .filter(|record| record.status == MemoryStatus::Pending)
+        .count();
+    let graph = RelationshipGraphLite::from_records(&memory_load.records);
+    let active_relationships = graph.active_edges_at(persona_now_millis()).len();
+    let profile = yunxi_companion_strong();
+    let control_store = FileControlStore::for_workspace(&config.cwd);
+    let companion_history_count = control_store.companion_history()?.len();
+    let recent_change = control_store.audit_records()?.last().map(|record| {
+        format!(
+            "{} {} {}: {}",
+            record.timestamp_millis,
+            record.scope.as_str(),
+            record.verb.as_str(),
+            record.outcome
+        )
+    });
+    let quiet_hours = config.companion.quiet_hours.map(|hours| {
+        format!(
+            "{:02}:{:02}-{:02}:{:02}",
+            hours.start_minute / 60,
+            hours.start_minute % 60,
+            hours.end_minute / 60,
+            hours.end_minute % 60
+        )
+    });
+    let persona_summary = format!(
+        "profile={} display_name={} version={}",
+        profile.id, profile.display_name, profile.version
+    );
+    let memory_summary = format!(
+        "records={} active={} pending={} warnings={}",
+        memory_load.records.len(),
+        active_memory,
+        pending_memory,
+        memory_load.warnings.len()
+    );
+    let relationship_summary = format!(
+        "nodes={} edges={} active_edges={}",
+        graph.nodes.len(),
+        graph.edges.len(),
+        active_relationships
+    );
+    Ok(ControlSnapshot {
+        companion_enabled: config.companion.enabled,
+        cloud_control_enabled: config.companion.cloud_control_enabled,
+        quiet_hours,
+        persona_summary: persona_summary.clone(),
+        memory_summary: memory_summary.clone(),
+        relationship_summary: relationship_summary.clone(),
+        scopes: vec![
+            ControlScopeSnapshot {
+                scope: ControlScope::Companion,
+                enabled: Some(config.companion.enabled),
+                summary: format!("history_records={companion_history_count}"),
+                source: ControlSource::CurrentConfig,
+                clear_effect: Some("clears local companion history only".to_string()),
+            },
+            ControlScopeSnapshot {
+                scope: ControlScope::Memory,
+                enabled: Some(settings.memory_enabled),
+                summary: memory_summary,
+                source: ControlSource::ReadOnlyHistory,
+                clear_effect: Some("archives active and pending workspace memory".to_string()),
+            },
+            ControlScopeSnapshot {
+                scope: ControlScope::Persona,
+                enabled: Some(settings.persona_enabled),
+                summary: persona_summary,
+                source: ControlSource::PersistedSettings,
+                clear_effect: None,
+            },
+            ControlScopeSnapshot {
+                scope: ControlScope::Relationship,
+                enabled: None,
+                summary: relationship_summary,
+                source: ControlSource::ReadOnlyHistory,
+                clear_effect: None,
+            },
+        ],
+        recent_change,
+    })
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentTurn {
@@ -1091,6 +1189,20 @@ impl YunXiRuntimeBackend {
         );
         for plan in &companion_plans {
             let message = render_companion_plan(plan);
+            let history = CompanionHistoryRecord::new(
+                companion_trigger_label(plan.trigger),
+                plan.reason.clone(),
+                plan.message.clone(),
+                plan.requires_user_confirmation,
+            );
+            if let Err(error) = FileControlStore::for_workspace(&runtime_config.cwd)
+                .append_companion_history(&history)
+            {
+                sink.emit(AgentEvent::Warning {
+                    message: format!("failed to audit companion history: {error}"),
+                })
+                .await?;
+            }
             sink.emit(AgentEvent::Message {
                 content: message.clone(),
             })
@@ -1298,6 +1410,17 @@ fn render_companion_plan(plan: &CompanionPlan) -> String {
         "[{action}] {}\n原因：{}{}",
         plan.message, plan.reason, confirmation
     )
+}
+
+fn companion_trigger_label(trigger: CompanionTrigger) -> &'static str {
+    match trigger {
+        CompanionTrigger::ReminderDue => "reminder_due",
+        CompanionTrigger::UnfinishedTask => "unfinished_task",
+        CompanionTrigger::LongIdleCheckIn => "long_idle_check_in",
+        CompanionTrigger::TopicContinuation => "topic_continuation",
+        CompanionTrigger::PeriodicSummary => "periodic_summary",
+        CompanionTrigger::RelationshipMilestone => "relationship_milestone",
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -24,6 +24,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Rect, Size};
 use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
+use yunxi_agent_core::ControlSnapshot;
 
 pub struct YunxiTui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
@@ -90,6 +91,11 @@ impl YunxiTui {
 
     pub fn show_details(&mut self, id: Option<usize>) -> Result<()> {
         self.app.show_details(id);
+        self.request_draw_now()
+    }
+
+    pub fn show_control_snapshot(&mut self, snapshot: ControlSnapshot) -> Result<()> {
+        self.app.show_control_snapshot(snapshot);
         self.request_draw_now()
     }
 

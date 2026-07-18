@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use yunxi_agent_core::{AgentError, AgentEvent, AgentResult, AgentRunStatus};
+use yunxi_agent_core::{
+    AgentError, AgentEvent, AgentResult, AgentRunStatus, CompanionHistoryRecord, ControlAuditRecord,
+};
 use yunxi_agent_multi_agent::{
     AgentGraphSessionMetadata, AgentId, AgentMetadata, AgentRole, AgentStatus,
 };
@@ -720,6 +722,112 @@ pub struct ClearWorkspaceMemorySummary {
     pub archived_active_records: usize,
     pub archived_pending_records: usize,
     pub remaining_pending_records: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileControlStore {
+    root: PathBuf,
+}
+
+impl FileControlStore {
+    pub fn for_workspace(cwd: impl AsRef<Path>) -> Self {
+        Self {
+            root: cwd.as_ref().join(".yunxi").join("controls"),
+        }
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn append_audit(&self, record: &ControlAuditRecord) -> AgentResult<()> {
+        append_jsonl(&self.root.join("audit.jsonl"), record, "control audit")
+    }
+
+    pub fn audit_records(&self) -> AgentResult<Vec<ControlAuditRecord>> {
+        read_jsonl(&self.root.join("audit.jsonl"), "control audit")
+    }
+
+    pub fn append_companion_history(&self, record: &CompanionHistoryRecord) -> AgentResult<()> {
+        append_jsonl(
+            &self.root.join("companion-history.jsonl"),
+            record,
+            "companion history",
+        )
+    }
+
+    pub fn companion_history(&self) -> AgentResult<Vec<CompanionHistoryRecord>> {
+        read_jsonl(
+            &self.root.join("companion-history.jsonl"),
+            "companion history",
+        )
+    }
+
+    pub fn clear_companion_history(&self) -> AgentResult<usize> {
+        let path = self.root.join("companion-history.jsonl");
+        let count = self.companion_history()?.len();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
+                message: format!(
+                    "failed to create control directory {}: {error}",
+                    parent.display()
+                ),
+            })?;
+        }
+        std::fs::write(&path, "").map_err(|error| AgentError::Execution {
+            message: format!(
+                "failed to clear companion history {}: {error}",
+                path.display()
+            ),
+        })?;
+        Ok(count)
+    }
+}
+
+fn append_jsonl<T: Serialize>(path: &Path, value: &T, label: &str) -> AgentResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| AgentError::Execution {
+            message: format!(
+                "failed to create {label} directory {}: {error}",
+                parent.display()
+            ),
+        })?;
+    }
+    let mut line = serde_json::to_string(value).map_err(|error| AgentError::Execution {
+        message: format!("failed to serialize {label}: {error}"),
+    })?;
+    line.push('\n');
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, line.as_bytes()))
+        .map_err(|error| AgentError::Execution {
+            message: format!("failed to append {label} {}: {error}", path.display()),
+        })
+}
+
+fn read_jsonl<T>(path: &Path, label: &str) -> AgentResult<Vec<T>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return Ok(Vec::new());
+    };
+    content
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+        .map(|(index, line)| {
+            serde_json::from_str(line).map_err(|error| AgentError::Execution {
+                message: format!(
+                    "failed to parse {label} {} line {}: {error}",
+                    path.display(),
+                    index + 1
+                ),
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1591,5 +1699,37 @@ mod tests {
         assert!(metadata.iter().any(|item| item.session_id == "child"
             && item.parent_session_id.as_deref() == Some("root")
             && item.agent.task == "child task"));
+    }
+
+    #[test]
+    fn control_store_round_trips_audit_and_companion_history() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = FileControlStore::for_workspace(temp.path());
+        let request = yunxi_agent_core::ControlRequest::new(
+            yunxi_agent_core::ControlScope::Companion,
+            yunxi_agent_core::ControlVerb::Disable,
+        );
+        let audit = ControlAuditRecord::new(&request, "completed", "disabled", "test");
+        let history = CompanionHistoryRecord::new(
+            "reminder_due",
+            "reminder reached its due time",
+            "check in",
+            false,
+        );
+
+        store.append_audit(&audit).expect("append audit");
+        store
+            .append_companion_history(&history)
+            .expect("append companion history");
+
+        assert_eq!(store.audit_records().expect("audit"), vec![audit]);
+        assert_eq!(store.companion_history().expect("history"), vec![history]);
+        assert_eq!(store.clear_companion_history().expect("clear"), 1);
+        assert!(
+            store
+                .companion_history()
+                .expect("history after clear")
+                .is_empty()
+        );
     }
 }

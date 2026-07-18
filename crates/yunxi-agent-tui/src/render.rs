@@ -21,14 +21,103 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     );
 
     render_header(frame, app, layout.header);
-    render_transcript(
-        frame,
-        app,
-        layout.transcript,
-        layout.transcript_inner,
-        layout.transcript_scrollbar,
-    );
+    if app.control_snapshot().is_some() {
+        render_controls(frame, app, layout.transcript);
+    } else {
+        render_transcript(
+            frame,
+            app,
+            layout.transcript,
+            layout.transcript_inner,
+            layout.transcript_scrollbar,
+        );
+    }
     render_bottom_pane(frame, app, layout.bottom_pane);
+}
+
+fn render_controls(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
+    let Some(snapshot) = app.control_snapshot() else {
+        return;
+    };
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Local companion: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                if snapshot.companion_enabled {
+                    "ON"
+                } else {
+                    "OFF"
+                },
+                Style::default()
+                    .fg(if snapshot.companion_enabled {
+                        Color::Green
+                    } else {
+                        Color::Yellow
+                    })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            Span::styled("Cloud control: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                if snapshot.cloud_control_enabled {
+                    "ON"
+                } else {
+                    "OFF"
+                },
+                Style::default().fg(if snapshot.cloud_control_enabled {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                }),
+            ),
+        ]),
+        Line::from(format!(
+            "Quiet hours: {}",
+            snapshot.quiet_hours.as_deref().unwrap_or("none")
+        )),
+        Line::from(""),
+    ];
+    for state in &snapshot.scopes {
+        let enabled = state
+            .enabled
+            .map(|value| if value { "on" } else { "off" })
+            .unwrap_or("read-only");
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{:<13}", state.scope.as_str()),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(" {enabled:<9} source={} ", state.source.as_str())),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("  {}", state.summary),
+            Style::default().fg(Color::Gray),
+        )));
+        if let Some(effect) = &state.clear_effect {
+            lines.push(Line::from(Span::styled(
+                format!("  clear scope: {effect}"),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+    }
+    lines.push(Line::from(""));
+    if let Some(change) = &snapshot.recent_change {
+        lines.push(Line::from(format!("Recent change: {change}")));
+    }
+    lines.push(Line::from(Span::styled(
+        "/controls refresh | /companion on|off | /controls clear memory",
+        Style::default().fg(Color::DarkGray),
+    )));
+    let panel = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title("Companion UX & Controls")
+                .borders(Borders::ALL),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(panel, area);
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
@@ -307,6 +396,49 @@ mod tests {
     }
 
     #[test]
+    fn renders_shared_control_snapshot_with_scope_and_clear_effects() {
+        use yunxi_agent_core::{
+            ControlScope, ControlScopeSnapshot, ControlSnapshot, ControlSource,
+        };
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        app.show_control_snapshot(ControlSnapshot {
+            companion_enabled: false,
+            cloud_control_enabled: false,
+            quiet_hours: Some("23:00-07:00".to_string()),
+            persona_summary: "profile=yunxi_companion_strong".to_string(),
+            memory_summary: "records=2 active=1 pending=1".to_string(),
+            relationship_summary: "nodes=2 edges=1 active_edges=1".to_string(),
+            scopes: vec![
+                ControlScopeSnapshot {
+                    scope: ControlScope::Companion,
+                    enabled: Some(false),
+                    summary: "history_records=0".to_string(),
+                    source: ControlSource::CurrentConfig,
+                    clear_effect: Some("clears local companion history only".to_string()),
+                },
+                ControlScopeSnapshot {
+                    scope: ControlScope::Relationship,
+                    enabled: None,
+                    summary: "nodes=2 edges=1".to_string(),
+                    source: ControlSource::ReadOnlyHistory,
+                    clear_effect: None,
+                },
+            ],
+            recent_change: Some("companion disable completed".to_string()),
+        });
+
+        let rendered = render_app(&app, 100, 26);
+
+        assert!(rendered.contains("Companion UX & Controls"));
+        assert!(rendered.contains("Local companion: OFF"));
+        assert!(rendered.contains("Cloud control: OFF"));
+        assert!(rendered.contains("clear scope: clears local companion history only"));
+        assert!(rendered.contains("relationship"));
+        assert!(rendered.contains("read-only"));
+    }
+
+    #[test]
     fn composer_cursor_uses_display_width_for_cjk_text() {
         let area = Rect::new(0, 0, 58, 6);
         let position = composer_cursor_position(area, "yunxi> ", "你好abc", "你好abc".len());
@@ -381,7 +513,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v1.9.2"));
+        assert!(rendered.contains("YunXi v1.9.3"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }

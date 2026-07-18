@@ -4,7 +4,8 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunControl, AgentRunResult,
-    ApprovalMode, BackendKind, CommandStatus, MemoryExtractionMode, SandboxMode,
+    ApprovalMode, BackendKind, CommandStatus, ControlAuditRecord, ControlRequest, ControlScope,
+    ControlSnapshot, ControlVerb, MemoryExtractionMode, SandboxMode,
 };
 use yunxi_agent_persona::{
     MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus, PersonaSettings,
@@ -14,10 +15,11 @@ use yunxi_agent_protocol::{
     FunctionCallOutput, ProtocolRole, ResponseItem, ResponseItemDelta, RuntimeEvent, ThreadId,
     ThreadState, ToolCall, ToolCallStatus, TurnId, TurnMetadata, TurnState, to_jsonl_line,
 };
+use yunxi_agent_runtime::control_snapshot;
 use yunxi_agent_storage::{
-    FilePersonaMemoryStore, FileSessionStore, HistoryLoadOptions, PersonaMemoryScope,
-    RolloutRecord, SessionGraphView, SessionHistory, SessionId, SessionRecord, SessionStore,
-    SessionSummary,
+    FileControlStore, FilePersonaMemoryStore, FileSessionStore, HistoryLoadOptions,
+    PersonaMemoryScope, RolloutRecord, SessionGraphView, SessionHistory, SessionId, SessionRecord,
+    SessionStore, SessionSummary,
 };
 
 mod commands {
@@ -78,7 +80,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v1.9.2 interactive terminal CLI")]
+#[command(about = "YunXi Agent v1.9.3 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -197,14 +199,70 @@ enum CliCommand {
         #[command(subcommand)]
         command: CompanionCommand,
     },
+    Controls {
+        #[command(subcommand)]
+        command: ControlCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 enum CompanionCommand {
+    Status,
+    On,
+    Off,
+    History,
+    Clear {
+        #[arg(long)]
+        confirm: bool,
+    },
     Check {
         #[arg(value_name = "CONTEXT")]
         context: Vec<String>,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ControlCommand {
+    Status,
+    Show {
+        #[arg(value_enum)]
+        scope: CliControlScope,
+    },
+    Enable {
+        #[arg(value_enum)]
+        scope: CliControlScope,
+    },
+    Disable {
+        #[arg(value_enum)]
+        scope: CliControlScope,
+    },
+    Clear {
+        #[arg(value_enum)]
+        scope: CliControlScope,
+        #[arg(long)]
+        confirm: bool,
+    },
+    Refresh,
+    Audit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CliControlScope {
+    Companion,
+    Memory,
+    Persona,
+    Relationship,
+}
+
+impl From<CliControlScope> for ControlScope {
+    fn from(scope: CliControlScope) -> Self {
+        match scope {
+            CliControlScope::Companion => Self::Companion,
+            CliControlScope::Memory => Self::Memory,
+            CliControlScope::Persona => Self::Persona,
+            CliControlScope::Relationship => Self::Relationship,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -433,7 +491,17 @@ async fn run_cli() -> Result<()> {
         config = config.with_auto_compact_threshold_tokens(auto_compact_threshold_tokens);
     }
     config = config.with_memory_extraction_mode(cli.memory_extraction.into());
-    if cli.companion || matches!(cli.command, Some(CliCommand::Companion { .. })) {
+    let persisted_settings = PersonaSettings::load();
+    config.companion.enabled = persisted_settings.companion_enabled;
+    config.companion.cloud_control_enabled = persisted_settings.cloud_control_enabled;
+    if cli.companion
+        || matches!(
+            cli.command,
+            Some(CliCommand::Companion {
+                command: CompanionCommand::Check { .. }
+            })
+        )
+    {
         config.companion.enabled = true;
         config.companion.allow_tool_requests = true;
     }
@@ -1561,19 +1629,12 @@ async fn run_command(
             run_session_command(command, config, backend, provider_mode, json, jsonl).await
         }
         CliCommand::Parity { command } => run_parity_command(command, json).await,
-        CliCommand::Persona { command } => run_persona_command(command, json).await,
+        CliCommand::Persona { command } => run_persona_command(command, &config, json).await,
         CliCommand::Memory { command } => run_memory_command(command, config, json).await,
-        CliCommand::Companion { command } => match command {
-            CompanionCommand::Check { context } => {
-                let context = context.join(" ");
-                let prompt = if context.trim().is_empty() {
-                    "long idle companion check".to_string()
-                } else {
-                    format!("companion check: {context}")
-                };
-                run_prompt(prompt, config, backend, provider_mode, json, jsonl).await
-            }
-        },
+        CliCommand::Companion { command } => {
+            run_companion_command(command, config, backend, provider_mode, json, jsonl).await
+        }
+        CliCommand::Controls { command } => run_control_command(command, config, json).await,
     }
 }
 
@@ -1587,19 +1648,22 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v1.9.3; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v1.9.3; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v1.9.3; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v1.9.3; use --json for memory management commands"
         ),
         CliCommand::Companion { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v1.9.2; use --json for companion management commands"
+            "--jsonl is only supported for agent execution commands in v1.9.3; use --json for companion management commands"
+        ),
+        CliCommand::Controls { .. } => bail!(
+            "--jsonl is only supported for agent execution commands in v1.9.3; use --json for control commands"
         ),
     }
 }
@@ -1623,27 +1687,370 @@ async fn run_parity_command(command: ParityCommand, json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn run_persona_command(command: PersonaCommand, json: bool) -> Result<()> {
+async fn run_companion_command(
+    command: CompanionCommand,
+    mut config: AgentConfig,
+    backend: BackendKind,
+    provider_mode: provider_mode::ProviderMode,
+    json: bool,
+    jsonl: bool,
+) -> Result<()> {
+    match command {
+        CompanionCommand::Check { context } => {
+            config.companion.enabled = true;
+            config.companion.allow_tool_requests = true;
+            let context = context.join(" ");
+            let prompt = if context.trim().is_empty() {
+                "long idle companion check".to_string()
+            } else {
+                format!("companion check: {context}")
+            };
+            run_prompt(prompt, config, backend, provider_mode, json, jsonl).await
+        }
+        CompanionCommand::Status => {
+            run_control_command(
+                ControlCommand::Show {
+                    scope: CliControlScope::Companion,
+                },
+                config,
+                json,
+            )
+            .await
+        }
+        CompanionCommand::On => {
+            run_control_command(
+                ControlCommand::Enable {
+                    scope: CliControlScope::Companion,
+                },
+                config,
+                json,
+            )
+            .await
+        }
+        CompanionCommand::Off => {
+            run_control_command(
+                ControlCommand::Disable {
+                    scope: CliControlScope::Companion,
+                },
+                config,
+                json,
+            )
+            .await
+        }
+        CompanionCommand::Clear { confirm } => {
+            run_control_command(
+                ControlCommand::Clear {
+                    scope: CliControlScope::Companion,
+                    confirm,
+                },
+                config,
+                json,
+            )
+            .await
+        }
+        CompanionCommand::History => {
+            let store = FileControlStore::for_workspace(&config.cwd);
+            let request = ControlRequest::new(ControlScope::Companion, ControlVerb::Show);
+            let records = store.companion_history()?;
+            append_control_audit(
+                &store,
+                &request,
+                "completed",
+                format!("records={}", records.len()),
+            )?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&records)?);
+            } else if records.is_empty() {
+                println!("companion history: empty");
+            } else {
+                for record in records {
+                    println!(
+                        "{} trigger={} confirm={} reason={} message={}",
+                        record.timestamp_millis,
+                        record.trigger,
+                        record.requires_user_confirmation,
+                        record.reason,
+                        record.message
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn run_control_command(
+    command: ControlCommand,
+    mut config: AgentConfig,
+    json: bool,
+) -> Result<()> {
+    let store = FileControlStore::for_workspace(&config.cwd);
     let mut settings = PersonaSettings::load();
     match command {
-        PersonaCommand::Status => print_persona_status(&settings, json)?,
-        PersonaCommand::Profile => print_persona_profile(json)?,
+        ControlCommand::Status => {
+            let request = ControlRequest::new(ControlScope::Companion, ControlVerb::Show);
+            let snapshot = control_snapshot(&config)?;
+            append_control_audit(&store, &request, "completed", "unified control snapshot")?;
+            print_control_snapshot(&snapshot, None, json)?;
+        }
+        ControlCommand::Refresh => {
+            let request = ControlRequest::new(ControlScope::Companion, ControlVerb::Refresh);
+            let snapshot = control_snapshot(&config)?;
+            append_control_audit(&store, &request, "completed", "refreshed unified snapshot")?;
+            print_control_snapshot(&snapshot, None, json)?;
+        }
+        ControlCommand::Show { scope } => {
+            let scope = scope.into();
+            let request = ControlRequest::new(scope, ControlVerb::Show);
+            let snapshot = control_snapshot(&config)?;
+            append_control_audit(&store, &request, "completed", "scope snapshot")?;
+            print_control_snapshot(&snapshot, Some(scope), json)?;
+        }
+        ControlCommand::Enable { scope } => {
+            let scope = scope.into();
+            let request = ControlRequest::new(scope, ControlVerb::Enable);
+            match scope {
+                ControlScope::Companion => {
+                    settings.companion_enabled = true;
+                    config.companion.enabled = true;
+                }
+                ControlScope::Memory => settings.memory_enabled = true,
+                ControlScope::Persona => settings.persona_enabled = true,
+                ControlScope::Relationship => {
+                    append_control_audit(
+                        &store,
+                        &request,
+                        "rejected",
+                        "relationship is a read-only derived view",
+                    )?;
+                    bail!("relationship controls are read-only");
+                }
+            }
+            settings
+                .save()
+                .context("failed to persist control settings")?;
+            append_control_audit(&store, &request, "completed", "persisted enabled state")?;
+            print_control_snapshot(&control_snapshot(&config)?, Some(scope), json)?;
+        }
+        ControlCommand::Disable { scope } => {
+            let scope = scope.into();
+            let request = ControlRequest::new(scope, ControlVerb::Disable);
+            match scope {
+                ControlScope::Companion => {
+                    settings.companion_enabled = false;
+                    config.companion.enabled = false;
+                }
+                ControlScope::Memory => settings.memory_enabled = false,
+                ControlScope::Persona => settings.persona_enabled = false,
+                ControlScope::Relationship => {
+                    append_control_audit(
+                        &store,
+                        &request,
+                        "rejected",
+                        "relationship is a read-only derived view",
+                    )?;
+                    bail!("relationship controls are read-only");
+                }
+            }
+            settings
+                .save()
+                .context("failed to persist control settings")?;
+            append_control_audit(&store, &request, "completed", "persisted disabled state")?;
+            print_control_snapshot(&control_snapshot(&config)?, Some(scope), json)?;
+        }
+        ControlCommand::Clear { scope, confirm } => {
+            let scope = scope.into();
+            let request = if confirm {
+                ControlRequest::new(scope, ControlVerb::Clear).confirmed()
+            } else {
+                ControlRequest::new(scope, ControlVerb::Clear)
+            };
+            if !request.confirmation_satisfied() {
+                append_control_audit(
+                    &store,
+                    &request,
+                    "rejected",
+                    "explicit confirmation missing",
+                )?;
+                bail!(
+                    "{} clear requires --confirm; scope impact must be acknowledged",
+                    scope.as_str()
+                );
+            }
+            let detail = match scope {
+                ControlScope::Companion => {
+                    let cleared = store.clear_companion_history()?;
+                    format!("cleared local companion history records={cleared}")
+                }
+                ControlScope::Memory => {
+                    let summary = FilePersonaMemoryStore::for_workspace(&config.cwd)
+                        .clear_workspace()
+                        .context("failed to clear workspace memory")?;
+                    format!(
+                        "archived workspace memory active={} pending={} remaining_pending={}",
+                        summary.archived_active_records,
+                        summary.archived_pending_records,
+                        summary.remaining_pending_records
+                    )
+                }
+                ControlScope::Persona | ControlScope::Relationship => {
+                    append_control_audit(
+                        &store,
+                        &request,
+                        "rejected",
+                        "scope is read-only and has no clear operation",
+                    )?;
+                    bail!("{} is read-only and cannot be cleared", scope.as_str());
+                }
+            };
+            append_control_audit(&store, &request, "completed", &detail)?;
+            if json {
+                println!("{}", serde_json::json!({"scope": scope, "result": detail}));
+            } else {
+                println!("scope: {}", scope.as_str());
+                println!("result: {detail}");
+            }
+        }
+        ControlCommand::Audit => {
+            let records = store.audit_records()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&records)?);
+            } else if records.is_empty() {
+                println!("control audit: empty");
+            } else {
+                for record in records {
+                    println!(
+                        "{} scope={} verb={} outcome={} source={} detail={}",
+                        record.timestamp_millis,
+                        record.scope.as_str(),
+                        record.verb.as_str(),
+                        record.outcome,
+                        record.source,
+                        record.detail
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn append_control_audit(
+    store: &FileControlStore,
+    request: &ControlRequest,
+    outcome: impl Into<String>,
+    detail: impl Into<String>,
+) -> Result<()> {
+    store
+        .append_audit(&ControlAuditRecord::new(
+            request,
+            outcome,
+            detail,
+            "yunxi-cli",
+        ))
+        .context("failed to append control audit")
+}
+
+fn print_control_snapshot(
+    snapshot: &ControlSnapshot,
+    scope: Option<ControlScope>,
+    json: bool,
+) -> Result<()> {
+    if json {
+        if let Some(scope) = scope {
+            println!("{}", serde_json::to_string_pretty(&snapshot.scope(scope))?);
+        } else {
+            println!("{}", serde_json::to_string_pretty(snapshot)?);
+        }
+        return Ok(());
+    }
+    println!("companion_enabled: {}", snapshot.companion_enabled);
+    println!("cloud_control_enabled: {}", snapshot.cloud_control_enabled);
+    println!(
+        "quiet_hours: {}",
+        snapshot.quiet_hours.as_deref().unwrap_or("none")
+    );
+    for state in snapshot
+        .scopes
+        .iter()
+        .filter(|state| scope.is_none_or(|scope| state.scope == scope))
+    {
+        println!("scope: {}", state.scope.as_str());
+        if let Some(enabled) = state.enabled {
+            println!("enabled: {enabled}");
+        }
+        println!("source: {}", state.source.as_str());
+        println!("summary: {}", state.summary);
+        if let Some(effect) = &state.clear_effect {
+            println!("clear_effect: {effect}");
+        }
+    }
+    if let Some(change) = &snapshot.recent_change {
+        println!("recent_change: {change}");
+    }
+    Ok(())
+}
+
+async fn run_persona_command(
+    command: PersonaCommand,
+    config: &AgentConfig,
+    json: bool,
+) -> Result<()> {
+    let mut settings = PersonaSettings::load();
+    let store = FileControlStore::for_workspace(&config.cwd);
+    match command {
+        PersonaCommand::Status => {
+            append_control_audit(
+                &store,
+                &ControlRequest::new(ControlScope::Persona, ControlVerb::Show),
+                "completed",
+                "persona status",
+            )?;
+            print_persona_status(&settings, json)?;
+        }
+        PersonaCommand::Profile => {
+            append_control_audit(
+                &store,
+                &ControlRequest::new(ControlScope::Persona, ControlVerb::Show),
+                "completed",
+                "persona profile",
+            )?;
+            print_persona_profile(json)?;
+        }
         PersonaCommand::Set { profile } => {
             if profile != "yunxi_companion_strong" {
                 bail!("unknown persona profile: {profile}");
             }
             settings.active_profile = profile;
             settings.save().context("failed to save persona settings")?;
+            append_control_audit(
+                &store,
+                &ControlRequest::new(ControlScope::Persona, ControlVerb::Update),
+                "completed",
+                "active profile changed",
+            )?;
             print_persona_status(&settings, json)?;
         }
         PersonaCommand::On => {
             settings.persona_enabled = true;
             settings.save().context("failed to save persona settings")?;
+            append_control_audit(
+                &store,
+                &ControlRequest::new(ControlScope::Persona, ControlVerb::Enable),
+                "completed",
+                "persona enabled",
+            )?;
             print_persona_status(&settings, json)?;
         }
         PersonaCommand::Off => {
             settings.persona_enabled = false;
             settings.save().context("failed to save persona settings")?;
+            append_control_audit(
+                &store,
+                &ControlRequest::new(ControlScope::Persona, ControlVerb::Disable),
+                "completed",
+                "persona disabled",
+            )?;
             print_persona_status(&settings, json)?;
         }
     }
@@ -1652,14 +2059,27 @@ async fn run_persona_command(command: PersonaCommand, json: bool) -> Result<()> 
 
 async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: bool) -> Result<()> {
     let store = FilePersonaMemoryStore::for_workspace(&config.cwd);
+    let control_store = FileControlStore::for_workspace(&config.cwd);
     let mut settings = PersonaSettings::load();
     match command {
         MemoryCommand::Status => {
             let load = store.list(PersonaMemoryScope::All);
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Show),
+                "completed",
+                "memory status",
+            )?;
             print_memory_status(&settings, &load.records, &load.warnings, json)?;
         }
         MemoryCommand::List { global, workspace } => {
             let load = store.list(memory_scope_from_flags(global, workspace));
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Show),
+                "completed",
+                format!("memory list records={}", load.records.len()),
+            )?;
             print_memory_records(&load.records, &load.warnings, json)?;
         }
         MemoryCommand::Show { id } => {
@@ -1668,6 +2088,12 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
                 .records
                 .first()
                 .ok_or_else(|| anyhow::anyhow!("memory not found: {id}"))?;
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Show),
+                "completed",
+                format!("memory show id={id}"),
+            )?;
             print_memory_record(record, &load.warnings, json)?;
         }
         MemoryCommand::Search {
@@ -1676,10 +2102,22 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
             workspace,
         } => {
             let load = store.search(&query.join(" "), memory_scope_from_flags(global, workspace));
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Show),
+                "completed",
+                format!("memory search records={}", load.records.len()),
+            )?;
             print_memory_records(&load.records, &load.warnings, json)?;
         }
         MemoryCommand::Pending => {
             let load = store.pending_records();
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Show),
+                "completed",
+                format!("memory pending records={}", load.records.len()),
+            )?;
             print_memory_records(&load.records, &load.warnings, json)?;
         }
         MemoryCommand::Approve { id } => {
@@ -1687,6 +2125,12 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
                 .update_status(&id, MemoryStatus::Active)
                 .context("failed to approve memory")?
                 .ok_or_else(|| anyhow::anyhow!("memory not found: {id}"))?;
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Update),
+                "completed",
+                format!("approved memory id={id}"),
+            )?;
             print_memory_record(&record, &[], json)?;
         }
         MemoryCommand::Reject { id } => {
@@ -1694,6 +2138,12 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
                 .update_status(&id, MemoryStatus::Rejected)
                 .context("failed to reject memory")?
                 .ok_or_else(|| anyhow::anyhow!("memory not found: {id}"))?;
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Update),
+                "completed",
+                format!("rejected memory id={id}"),
+            )?;
             print_memory_record(&record, &[], json)?;
         }
         MemoryCommand::Delete { id } => {
@@ -1701,15 +2151,43 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
                 .update_status(&id, MemoryStatus::Archived)
                 .context("failed to archive memory")?
                 .ok_or_else(|| anyhow::anyhow!("memory not found: {id}"))?;
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Update),
+                "completed",
+                format!("archived memory id={id}"),
+            )?;
             print_memory_record(&record, &[], json)?;
         }
         MemoryCommand::Clear { workspace, confirm } => {
+            let request = if workspace && confirm {
+                ControlRequest::new(ControlScope::Memory, ControlVerb::Clear).confirmed()
+            } else {
+                ControlRequest::new(ControlScope::Memory, ControlVerb::Clear)
+            };
             if !workspace || !confirm {
+                append_control_audit(
+                    &control_store,
+                    &request,
+                    "rejected",
+                    "memory clear requires workspace scope and confirmation",
+                )?;
                 bail!("memory clear requires --workspace --confirm");
             }
             let summary = store
                 .clear_workspace()
                 .context("failed to clear workspace memory")?;
+            append_control_audit(
+                &control_store,
+                &request,
+                "completed",
+                format!(
+                    "archived active={} pending={} remaining_pending={}",
+                    summary.archived_active_records,
+                    summary.archived_pending_records,
+                    summary.remaining_pending_records
+                ),
+            )?;
             if json {
                 println!(
                     "{}",
@@ -1739,6 +2217,12 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
             let first_enable_notice_shown = !settings.memory_enabled;
             settings.memory_enabled = true;
             settings.save().context("failed to save memory settings")?;
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Enable),
+                "completed",
+                "memory enabled",
+            )?;
             let load = store.list(PersonaMemoryScope::All);
             print_memory_on_status(
                 &settings,
@@ -1752,6 +2236,12 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
         MemoryCommand::Off => {
             settings.memory_enabled = false;
             settings.save().context("failed to save memory settings")?;
+            append_control_audit(
+                &control_store,
+                &ControlRequest::new(ControlScope::Memory, ControlVerb::Disable),
+                "completed",
+                "memory disabled",
+            )?;
             let load = store.list(PersonaMemoryScope::All);
             print_memory_status(&settings, &load.records, &load.warnings, json)?;
         }
@@ -1767,6 +2257,8 @@ fn print_persona_status(settings: &PersonaSettings, json: bool) -> Result<()> {
             serde_json::to_string_pretty(&serde_json::json!({
                 "persona_enabled": settings.persona_enabled,
                 "memory_enabled": settings.memory_enabled,
+                "companion_enabled": settings.companion_enabled,
+                "cloud_control_enabled": settings.cloud_control_enabled,
                 "active_profile": settings.active_profile,
                 "profile": {
                     "id": profile.id,
@@ -1778,6 +2270,8 @@ fn print_persona_status(settings: &PersonaSettings, json: bool) -> Result<()> {
     } else {
         println!("persona_enabled: {}", settings.persona_enabled);
         println!("memory_enabled: {}", settings.memory_enabled);
+        println!("companion_enabled: {}", settings.companion_enabled);
+        println!("cloud_control_enabled: {}", settings.cloud_control_enabled);
         println!("active_profile: {}", settings.active_profile);
         println!("display_name: {}", profile.display_name);
         println!("profile_version: {}", profile.version);

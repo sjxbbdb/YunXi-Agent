@@ -1,6 +1,6 @@
-# YunXi Agent v1.9.2
+# YunXi Agent v1.9.3
 
-YunXi Agent v1.9.2 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.9.3 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -17,11 +17,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-persona`: YunXi-owned persona, transparent memory schema,
   recall, extraction, and write policy boundary
 - `crates/yunxi-agent-tools`: YunXi-owned tool execution boundary
-- `crates/yunxi-agent-storage`: YunXi-owned session storage boundary
+- `crates/yunxi-agent-storage`: YunXi-owned session, control-audit, and companion-history storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.9.2 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.9.3 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -121,6 +121,12 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Provides a conservative proactive companion planner that is disabled by
   default, explains every plan reason, respects quiet hours and per-session/day
   limits, and turns tool ideas into confirmation requests only
+- Provides one shared Companion UX & Controls snapshot across CLI and TUI for
+  companion, memory, persona, and read-only relationship state
+- Persists local companion enable/disable state while keeping cloud control a
+  separate, visible, default-off field with no cloud runtime dependency
+- Requires explicit confirmation for companion-history and workspace-memory
+  clear operations, and appends control actions to a local JSONL audit ledger
 
 ## Build
 
@@ -137,7 +143,7 @@ YunXi checkouts.
 
 ## Install On Windows
 
-Build and install the v1.9.2 CLI into a user-local bin directory:
+Build and install the v1.9.3 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -158,6 +164,9 @@ global `--companion` flag for a turn or the explicit check command:
 ```powershell
 yunxi --companion "unfinished task: review the release notes"
 yunxi --companion check "continue topic: the release plan"
+yunxi companion status
+yunxi companion on
+yunxi companion off
 ```
 
 The planner never runs a tool on its own. A tool-related plan is rendered as a
@@ -196,6 +205,11 @@ Useful interactive commands:
 - `/provider [name]`: show or switch the provider field
 - `/debug events on|off`: show or hide raw debug event summaries in the TUI
 - `/details [id]`: show the latest or selected TUI debug detail
+- `/controls`: show the shared control panel with source and clear-scope details
+- `/controls refresh`: refresh the control snapshot and audit the action
+- `/controls enable|disable <scope>`: persist a local companion, memory, or persona switch
+- `/controls clear <companion|memory>`: open an explicit confirmation dialog
+- `/companion on|off|status|clear`: companion-specific control shortcuts
 - `/cwd`: show the active working directory
 - `/clear`: clear the terminal
 - `/exit` or `/quit`: leave interactive mode
@@ -237,6 +251,14 @@ yunxi memory approve <id>
 yunxi memory reject <id>
 yunxi memory delete <id>
 yunxi memory off
+
+yunxi controls status
+yunxi controls show relationship
+yunxi controls enable companion
+yunxi controls disable companion
+yunxi controls clear companion --confirm
+yunxi controls clear memory --confirm
+yunxi controls audit
 ```
 
 Memory is stored as local append-only JSONL under `%USERPROFILE%\.yunxi\memory`
@@ -245,7 +267,13 @@ evidence, source-lineage, and invalidation metadata while migrating v1/v2
 records on read without rewriting their files. See `docs/persona-memory.md` for
 schema, privacy, expiry/invalidation, and pending-review details.
 
-`--jsonl` is reserved for agent execution streams in v1.9.1. Metadata
+The unified snapshot identifies each scope's source as current config,
+persisted settings, runtime snapshot, or read-only history. Persona and
+relationship review remain read-only; memory clear archives only workspace
+active/pending records, while companion clear affects only local companion
+history. Audit and history files live under `<workspace>\.yunxi\controls`.
+
+`--jsonl` is reserved for agent execution streams in v1.9.3. Metadata
 subcommands such as `sessions list`, `parity map`, `persona status`, and
 `memory status` reject `--jsonl`; use `--json` for their machine-readable
 output.

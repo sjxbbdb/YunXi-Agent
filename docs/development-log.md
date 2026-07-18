@@ -443,3 +443,23 @@ v2.0.0，并消除 C/D 两个现有安装目录的版本差异。
 tag；本日志变更将以 docs-only 提交并 non-force 推送。
 
 署名：开发者
+
+## 2026-07-18 16:08:56 +08:00
+
+工作目标：核验 v2.0.0 PATH 升级日志已发布，并确认安装操作未改变 release tag。
+
+执行流程：创建 docs-only 安装审计提交，使用指定 API key 临时认证执行
+non-force master 推送，再以 `git ls-remote` 核验远程 master、annotated tag
+object 与 peeled 实现提交。
+
+修改文件与路径：`D:\YunXi Agent\docs\development-log.md`。
+
+验证结果：远程 master 已接受 `c1b80e3..9b59165`；安装审计提交为
+`9b5916523d8f7271ba5308bedd718e07a9c23f60`。远程 `v2.0.0` tag object 仍为
+`e8537bc89433512ce03eae71eafd85f571e88ec3`，peeled 实现提交仍为
+`4cf890b86889e72c47f0e56881152053c47d76ae`。
+
+提交和推送状态：安装审计已提交并 non-force 推送；本条远程核验作为最后的
+docs-only 状态提交推送，最终远程 master 以 Git 历史为准，所有 tag 保持不变。
+
+署名：开发者

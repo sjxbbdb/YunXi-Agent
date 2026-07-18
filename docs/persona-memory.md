@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.9.3 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v1.9.4 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -22,11 +22,11 @@ request.
 
 ## Persona Context Blocks
 
-v1.9.3 compiles the built-in persona into one bounded, XML-like context string
+v1.9.4 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="1.9.3" profile_id="yunxi_companion_strong" mode="routed_memory">
+<yunxi_persona_context version="1.9.4" profile_id="yunxi_companion_strong" mode="routed_memory">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>
@@ -340,6 +340,24 @@ Memory clear remains append-only by writing archived revisions for active and
 pending workspace records. Companion clear truncates only the companion
 history ledger. Neither operation changes persona profile definitions or the
 derived relationship graph directly.
+
+## Evaluation Harness In v1.9.4
+
+`yunxi eval companion` runs the local persona, memory, relationship, proactive,
+and control regression suite from `evals/companion`. The suite is deterministic
+and offline: no provider API key, live model, cloud judge, Python runtime, or
+external service is used.
+
+The memory metrics distinguish correct writes, false-positive writes, missed
+writes, and forbidden secret-like writes. Relationship checks cover
+supersession links, retained history, expiry, future validity, timeline order,
+and read-only control state. Proactive checks cover default/explicit silence,
+quiet hours, session/day limits, reason visibility, and tool confirmation.
+
+Use `--json` for a complete structured report or `--jsonl` for one compact
+report line. The golden thresholds and scenario/result schemas remain small,
+reviewable files under `evals/companion`; generated result files are not
+committed.
 
 ## Proactive Companion In v1.9.2
 

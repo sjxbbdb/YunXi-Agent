@@ -1,0 +1,6 @@
+{"id":"relationship-001","category":"relationship","description":"replacement links connect old and new facts","checks":["relationship_supersession_chain"]}
+{"id":"relationship-002","category":"relationship","description":"historical graph edges remain inspectable","checks":["relationship_history_retained"]}
+{"id":"relationship-003","category":"relationship","description":"expired relationship edges are inactive","checks":["relationship_expiry"]}
+{"id":"relationship-004","category":"relationship","description":"future relationship edges are not recalled early","checks":["relationship_future_valid_from"]}
+{"id":"relationship-005","category":"relationship","description":"relationship events use temporal ordering","checks":["relationship_timeline_order"]}
+{"id":"relationship-006","category":"relationship","description":"relationship control scope is read-only","checks":["relationship_read_only_scope"]}

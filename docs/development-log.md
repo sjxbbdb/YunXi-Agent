@@ -136,3 +136,92 @@ planner 的安全边界。
 推送；最终远程状态以 Git 历史核验结果为准。
 
 署名：开发者
+
+## 2026-07-18 11:49:05 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-18-104346-YunXi-Agent-v1.9.3-源码审核报告.md` 撰写 YunXi Agent v1.9.4 Evaluation Harness 开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：
+1. 读取 v1.9.3 源码审核报告，确认 v1.9.3 审核通过，可以进入 v1.9.4 开发报告撰写。
+2. 核对当前项目 Git 状态：`master...origin/master`，工作树在报告撰写前干净。
+3. 使用 CodeGraph 参考 persona tests、CLI tests、companion planner、memory record 等现有结构，确认 v1.9.4 应以 `evals/companion` 和现有测试入口为主要落点。
+4. 按固定流程在开发报告前部写入 14 条硬性约束。
+5. 围绕 v1.9.4 Evaluation Harness 撰写开发目标、范围边界、源码接入点、评测模型、参考源码抽取建议、实现顺序、验收标准、统一验证要求和文档同步要求。
+6. 将开发报告保存到项目内报告目录，并复制到桌面开发报告目录。
+7. 追加项目内开发日志和桌面开发日志，记录本次报告撰写与文件同步状态。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-18-114905-yunxi-agent-v1-9-4-evaluation-harness-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-18-114905-yunxi-agent-v1-9-4-evaluation-harness-development-report.md`
+- 追加桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成开发报告撰写，并已同步到桌面开发报告目录。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 后续仍需按固定流程完成实际开发、统一验证、清理和发布闭环后，才能宣称完成。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag。
+
+署名：开发报告撰写者
+
+## 2026-07-18 12:20:29 +08:00
+
+工作目标：依据 v1.9.4 Evaluation Harness 开发报告，在 `D:\YunXi Agent`
+完成可复现、可量化、默认离线的陪伴型 Agent 评测框架，并按固定流程完成
+统一验证、编译产物清理和发布准备。
+
+执行流程：
+1. 读取开发报告与 v1.9.3 审核结论，保留报告中的 14 条硬性约束；核对
+   `master`/`origin/master` 基线、v1.9.3 annotated tag 与干净的初始构建状态。
+2. 使用仓库 `.codegraph` 定位 persona、memory、relationship、companion、
+   CLI 与测试边界；只读参考 yantrikdb、mem0、cognee 的评测组织方式，使用
+   Rust 复刻场景加载、规则 judge、指标聚合与 golden comparison。
+3. 新增 `yunxi-agent-eval` crate 和 `evals/companion` 数据集，实现 31 条
+   persona、memory、relationship、proactive 与 controls 场景。
+4. 新增 `yunxi eval companion` 及 JSON/JSONL 输出，接入 CLI 集成测试和
+   persona 自动化 regression tests；统一更新 workspace 版本为 `1.9.4`。
+5. 同步 README、extraction-status、persona-memory、评测 README、本开发
+   报告和本日志。
+6. 完成统一格式化、检查、测试、构建、Release 冒烟与场景计数检查；确认
+   路径后执行 `cargo clean`，并清理 CLI 测试生成的 crate 局部状态目录。
+
+修改文件与路径：
+- `D:\YunXi Agent\crates\yunxi-agent-eval\Cargo.toml`、`src\lib.rs`
+- `D:\YunXi Agent\evals\companion\README.md`
+- `D:\YunXi Agent\evals\companion\scenarios\*.jsonl`
+- `D:\YunXi Agent\evals\companion\schemas\*.json`
+- `D:\YunXi Agent\evals\companion\golden\companion_expected_metrics.json`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\Cargo.toml`、`src\main.rs`、
+  `src\render.rs`、`tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-persona\src\compiler.rs`、`src\profile.rs`、
+  `tests\persona_tests.rs`、`tests\evaluation_regression_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`、`src\render.rs`
+- `D:\YunXi Agent\Cargo.toml`、`Cargo.lock`、`README.md`
+- `D:\YunXi Agent\docs\extraction-status.md`、`docs\persona-memory.md`
+- `D:\YunXi Agent\docs\reports\2026-07-18-114905-yunxi-agent-v1-9-4-evaluation-harness-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：
+- `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo check --workspace`、
+  `cargo test --workspace`、`cargo build --workspace`、
+  `cargo build -p yunxi-agent-cli --release --bins` 全部通过。
+- Release 冒烟确认 `yunxi 1.9.4`，31/31 场景通过，golden 通过；persona、
+  memory precision/recall、relationship、control 指标均为 `1.0`，误写、
+  漏写、禁止写入、主动越界和工具审批绕过均为 `0`。
+- JSON 可解析，JSONL 恰好一行；31 条场景分类计数为 6/8/6/6/5。
+- `git diff --check` 通过；`cargo clean` 清理 10,430 个文件、约 3.1 GiB；
+  `D:\YunXi Agent\target` 与测试生成的 crate 局部 `.yunxi` 均不存在。
+
+提交和推送状态：实现、文档、验证与清理已完成；实现提交、annotated
+`v1.9.4` tag 与 GitHub non-force 推送待执行，旧 tag 不会改动。
+
+署名：开发者

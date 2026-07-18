@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.9.3"));
+        .stdout(predicate::str::contains("yunxi 1.9.4"));
 }
 
 #[test]
@@ -94,7 +94,45 @@ fn compatibility_binary_prints_v1_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.9.3"));
+        .stdout(predicate::str::contains("yunxi 1.9.4"));
+}
+
+#[test]
+fn cli_companion_eval_emits_reproducible_json_and_jsonl_summaries() {
+    let mut json = Command::cargo_bin("yunxi").expect("binary should build");
+    let value = json
+        .args(["--json", "eval", "companion"])
+        .output()
+        .expect("evaluation should run");
+    assert!(value.status.success());
+    let report: Value = serde_json::from_slice(&value.stdout).expect("JSON report");
+    assert!(
+        report["metrics"]["scenario_count"]
+            .as_u64()
+            .unwrap_or_default()
+            >= 30
+    );
+    assert_eq!(
+        report["metrics"]["tool_approval_bypass_count"].as_u64(),
+        Some(0)
+    );
+    assert_eq!(report["metrics"]["failed_scenarios"].as_u64(), Some(0));
+    assert_eq!(report["golden_passed"].as_bool(), Some(true));
+
+    let mut jsonl = Command::cargo_bin("yunxi").expect("binary should build");
+    let output = jsonl
+        .args(["--jsonl", "eval", "companion"])
+        .output()
+        .expect("JSONL evaluation should run");
+    assert!(output.status.success());
+    assert_eq!(
+        output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -252,7 +290,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.3 interactive CLI",
+            "YunXi Agent v1.9.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -411,7 +449,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.3 interactive CLI",
+            "YunXi Agent v1.9.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -431,7 +469,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.3 interactive CLI",
+            "YunXi Agent v1.9.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

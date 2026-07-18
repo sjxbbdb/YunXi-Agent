@@ -1,0 +1,6 @@
+{"id":"proactive-001","category":"proactive","description":"default companion planner remains silent","checks":["proactive_default_off"]}
+{"id":"proactive-002","category":"proactive","description":"explicit companion disable remains silent","checks":["proactive_explicit_disable"]}
+{"id":"proactive-003","category":"proactive","description":"quiet hours suppress proactive plans","checks":["proactive_quiet_hours"]}
+{"id":"proactive-004","category":"proactive","description":"session frequency limit suppresses plans","checks":["proactive_session_limit"]}
+{"id":"proactive-005","category":"proactive","description":"daily frequency limit suppresses plans","checks":["proactive_day_limit"]}
+{"id":"proactive-006","category":"proactive","description":"tool suggestions require confirmation and a reason","checks":["proactive_tool_confirmation","proactive_reason_required"]}

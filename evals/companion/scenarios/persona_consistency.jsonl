@@ -1,0 +1,6 @@
+{"id":"persona-001","category":"persona","description":"built-in profile identity remains stable","checks":["persona_profile_stable"]}
+{"id":"persona-002","category":"persona","description":"project and tool boundaries remain explicit","checks":["persona_boundaries"]}
+{"id":"persona-003","category":"persona","description":"compiled context keeps the safety wrapper","checks":["persona_context_block"]}
+{"id":"persona-004","category":"persona","description":"memory overclaim constraint remains present","checks":["persona_constraints"]}
+{"id":"persona-005","category":"persona","description":"persona is enabled by default","checks":["persona_default_enabled"]}
+{"id":"persona-006","category":"persona","description":"profile has stable structured serialization","checks":["persona_profile_serializes"]}

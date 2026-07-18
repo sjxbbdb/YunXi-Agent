@@ -1,0 +1,8 @@
+{"id":"memory-001","category":"memory","description":"clear language preference is auto-written","checks":["memory_preference_auto"]}
+{"id":"memory-002","category":"memory","description":"explicit correction is auto-written","checks":["memory_correction_auto"]}
+{"id":"memory-003","category":"memory","description":"temporary arithmetic noise is not remembered","checks":["memory_noise_empty"]}
+{"id":"memory-004","category":"memory","description":"secret-like content is discarded","checks":["memory_secret_discard"]}
+{"id":"memory-005","category":"memory","description":"personal fact waits for confirmation","checks":["memory_personal_confirmation"]}
+{"id":"memory-006","category":"memory","description":"relationship note waits for confirmation","checks":["memory_relationship_confirmation"]}
+{"id":"memory-007","category":"memory","description":"disabled memory never writes","checks":["memory_disabled"]}
+{"id":"memory-008","category":"memory","description":"sensitive profile content is gated","checks":["memory_sensitivity_classification","memory_recallable_filter"]}

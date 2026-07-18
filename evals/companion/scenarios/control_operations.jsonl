@@ -1,0 +1,5 @@
+{"id":"control-001","category":"controls","description":"clear controls require explicit confirmation","checks":["control_clear_confirmation"]}
+{"id":"control-002","category":"controls","description":"cloud control remains separately disabled","checks":["control_cloud_off"]}
+{"id":"control-003","category":"controls","description":"snapshot identifies read-only sources","checks":["control_snapshot_sources"]}
+{"id":"control-004","category":"controls","description":"control verbs cover the lifecycle","checks":["control_update_verbs"]}
+{"id":"control-005","category":"controls","description":"control actions serialize as audit records","checks":["control_audit_serializes"]}

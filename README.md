@@ -1,6 +1,6 @@
-# YunXi Agent v1.9.3
+# YunXi Agent v1.9.4
 
-YunXi Agent v1.9.3 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v1.9.4 is a terminal-first Rust Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -13,6 +13,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 
 - `crates/yunxi-agent-core`: reusable Agent facade and extraction boundary
 - `crates/yunxi-agent-companion`: pure Rust proactive companion policy and planner
+- `crates/yunxi-agent-eval`: offline companion scenario runner and metric aggregator
 - `crates/yunxi-agent-provider`: YunXi-owned provider request/response boundary
 - `crates/yunxi-agent-persona`: YunXi-owned persona, transparent memory schema,
   recall, extraction, and write policy boundary
@@ -21,7 +22,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.9.3 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v1.9.4 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -127,6 +128,9 @@ with `[offline]` and `/cost` reports that no model call was made.
   separate, visible, default-off field with no cloud runtime dependency
 - Requires explicit confirmation for companion-history and workspace-memory
   clear operations, and appends control actions to a local JSONL audit ledger
+- Runs 31 deterministic companion evaluation scenarios without a live provider
+  or cloud judge, with persona, memory, relationship, proactive, tool-approval,
+  and control metrics available as text, JSON, or one-line JSONL
 
 ## Build
 
@@ -141,9 +145,31 @@ The `codex-native` feature reads Codex Rust source from `vendor/codex-rs`.
 `external/codex-rs` is only a local refresh aid and is not required for normal
 YunXi checkouts.
 
+## Evaluation Harness
+
+Run the complete offline companion quality gate with one command:
+
+```powershell
+yunxi eval companion
+yunxi --json eval companion
+yunxi --jsonl eval companion
+```
+
+The 31 versioned scenarios live under `evals/companion`. They cover persona
+consistency, memory precision/false positives/missed and forbidden writes,
+relationship replacement and validity, proactive silence/quiet hours/limits,
+tool confirmation, and CLI/control semantics. The default evaluator uses Rust
+rules and fixed fixtures only; it does not read provider credentials or call a
+live model, Python runtime, cloud service, or external judge.
+
+The command exits unsuccessfully when any scenario fails. Structured output
+contains per-scenario checks plus aggregate metrics, including
+`memory_precision`, `relationship_continuity_rate`,
+`proactive_boundary_violation_count`, and `tool_approval_bypass_count`.
+
 ## Install On Windows
 
-Build and install the v1.9.3 CLI into a user-local bin directory:
+Build and install the v1.9.4 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

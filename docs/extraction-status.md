@@ -1,10 +1,30 @@
 # Extraction Status
 
-## Current Workspace Version: v1.9.3
+## Current Workspace Version: v1.9.4
 
-The current workspace includes Companion UX & Controls on top of the pure Rust
-`yunxi-agent-companion` policy crate. Earlier sections are retained as
-historical release records.
+The current workspace includes an offline Evaluation Harness over Companion UX
+& Controls and the pure Rust companion/persona/memory/relationship boundaries.
+Earlier sections are retained as historical release records.
+
+## YunXi Agent v1.9.4 Evaluation Harness
+
+The `yunxi-agent-eval` crate loads 31 small JSONL scenarios from
+`evals/companion/scenarios` and evaluates them with deterministic Rust rule
+judges. The dataset covers persona consistency, memory precision and false
+positives, relationship replacement/validity/history, proactive default-off/
+quiet-hour/frequency limits, tool confirmation, and control confirmation/
+read-only boundaries.
+
+`yunxi eval companion` emits a compact text summary. `--json` emits the full
+structured report and `--jsonl` emits one report object for audit tools.
+Metrics include explicit correct writes, false positives, missed writes,
+forbidden writes, memory precision, recall accuracy, relationship continuity,
+proactive boundary violations, tool approval bypasses, and control regression.
+
+The default path has no live provider, external judge, Python runtime, cloud
+service, scheduler, or upstream Codex dependency. Scenario/result schemas and
+golden thresholds are small reviewable files; no generated result snapshots are
+committed.
 
 ## YunXi Agent v1.9.3 Companion UX & Controls
 

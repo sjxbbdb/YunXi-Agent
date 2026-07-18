@@ -1,0 +1,12 @@
+[package]
+name = "yunxi-agent-eval"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+yunxi-agent-companion = { path = "../yunxi-agent-companion" }
+yunxi-agent-core = { path = "../yunxi-agent-core" }
+yunxi-agent-persona = { path = "../yunxi-agent-persona" }

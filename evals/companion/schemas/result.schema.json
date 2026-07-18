@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "YunXi Companion Evaluation Result",
+  "type": "object",
+  "required": ["harness_version", "golden_passed", "golden_failures", "metrics", "results"],
+  "properties": {
+    "harness_version": {"type": "string"},
+    "golden_passed": {"type": "boolean"},
+    "golden_failures": {"type": "array", "items": {"type": "string"}},
+    "metrics": {"type": "object"},
+    "results": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

@@ -1,6 +1,6 @@
-# YunXi Agent v1.9.4
+# YunXi Agent v2.0.0
 
-YunXi Agent v1.9.4 is a terminal-first Rust Agent CLI and reusable core library
+YunXi Agent v2.0.0 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,7 +22,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned Codex-style terminal TUI host, transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v1.9.4 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
@@ -132,6 +132,23 @@ with `[offline]` and `/cost` reports that no model call was made.
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
 
+## General Companion Agent v2.0.0
+
+v2.0.0 closes the local runtime chain across persona, transparent memory,
+relationship continuity, proactive companion policy, controls, and evaluation.
+`yunxi-agent-runtime::general_companion_snapshot` exposes one auditable view of
+that chain: the runtime owner is YunXi, the default path does not require
+upstream Codex, relationships remain read-only, cloud control stays off, and
+proactive behavior remains disabled until the user explicitly enables it.
+
+Cross-session integration coverage verifies that a saved preference is recalled
+in a later independent session and that a superseded relationship fact is kept
+in append-only history but excluded from active context and active-memory
+counts. Offline execution remains deterministic; live execution is selected
+only when provider credentials are configured. CLI and TUI consume the same
+runtime/control boundaries, while the existing 31-scenario offline evaluation
+corpus remains the v2 release quality gate with unchanged golden thresholds.
+
 ## Build
 
 ```powershell
@@ -169,7 +186,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v1.9.4 CLI into a user-local bin directory:
+Build and install the v2.0.0 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

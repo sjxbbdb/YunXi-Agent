@@ -1,6 +1,9 @@
+mod general_companion;
 mod runtime_state;
 mod session_driver;
 mod turn_driver;
+
+pub use general_companion::{GeneralCompanionSnapshot, general_companion_snapshot};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -71,10 +74,11 @@ pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
     let settings = PersonaSettings::load();
     let memory_store = FilePersonaMemoryStore::for_workspace(&config.cwd);
     let memory_load = memory_store.list(PersonaMemoryScope::All);
+    let snapshot_at_millis = persona_now_millis();
     let active_memory = memory_load
         .records
         .iter()
-        .filter(|record| record.status == MemoryStatus::Active)
+        .filter(|record| record.is_recallable_at(snapshot_at_millis))
         .count();
     let pending_memory = memory_load
         .records
@@ -82,7 +86,7 @@ pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
         .filter(|record| record.status == MemoryStatus::Pending)
         .count();
     let graph = RelationshipGraphLite::from_records(&memory_load.records);
-    let active_relationships = graph.active_edges_at(persona_now_millis()).len();
+    let active_relationships = graph.active_edges_at(snapshot_at_millis).len();
     let profile = yunxi_companion_strong();
     let control_store = FileControlStore::for_workspace(&config.cwd);
     let companion_history_count = control_store.companion_history()?.len();

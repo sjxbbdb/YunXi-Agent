@@ -1,6 +1,9 @@
 # YunXi Companion Evaluation Harness
 
-This directory contains the offline, deterministic v1.9.4 evaluation corpus.
+This directory contains the offline, deterministic v2.0.0 release corpus. It
+retains all 31 v1.9.4 scenarios and their golden thresholds as the v2 quality
+gate.
+
 It is intentionally small and reviewable: JSONL scenarios are embedded by the
 `yunxi-agent-eval` crate, evaluated with Rust rule judges, and emitted as a
 structured JSON/JSONL summary by `yunxi eval companion`.

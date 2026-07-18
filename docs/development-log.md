@@ -173,6 +173,49 @@ planner 的安全边界。
 
 署名：开发报告撰写者
 
+## 2026-07-18 15:50:31 +08:00
+
+工作目标：依据 v2.0.0 General Companion Agent 开发报告，闭合 persona、
+memory、relationship、proactive companion、controls 与 evaluation 的本地运行链，
+完成统一验证和编译产物清理，并准备不可变 tag 发布。
+
+执行流程：
+1. 以 CodeGraph 核对 turn boundary、persona recall、Relationship Graph Lite、
+   companion planner、ControlSnapshot 与 CLI/eval 入口，确认默认运行链已经由
+   YunXi Rust workspace 持有。
+2. 新增 `GeneralCompanionSnapshot` 公共 runtime facade，并修正 active memory
+   统计，使过期、失效、被替代记录不再作为活动事实计数。
+3. 新增两会话总集成测试，验证语言偏好跨会话召回、新关系事实替代旧事实、
+   append-only 历史保留、主动与云控制默认关闭以及关系控制只读。
+4. 将 workspace/CLI/TUI/persona/eval 版本同步为 2.0.0，增加 CLI 发布门禁，
+   保留 31 条场景和原 golden 阈值。
+5. 同步 README、extraction status、persona-memory、evaluation README 与开发报告。
+6. 一次性执行 fmt/check/test/build/release 和真实 CLI text/JSON/JSONL 冒烟。
+7. 审计默认 CLI 依赖树无 Codex 运行依赖，随后核验路径并清理 target 与测试状态。
+
+修改文件与路径：
+- workspace/版本：`D:\YunXi Agent\Cargo.toml`、`D:\YunXi Agent\Cargo.lock`
+- runtime：`D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`、
+  `D:\YunXi Agent\crates\yunxi-agent-runtime\src\general_companion.rs`、
+  `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\general_companion_tests.rs`
+- CLI/eval/persona/TUI：`D:\YunXi Agent\crates` 下对应 v2 版本源文件与测试文件
+- 文档：`D:\YunXi Agent\README.md`、`D:\YunXi Agent\docs\extraction-status.md`、
+  `D:\YunXi Agent\docs\persona-memory.md`、`D:\YunXi Agent\evals\companion\README.md`、
+  `D:\YunXi Agent\docs\reports\2026-07-18-144921-yunxi-agent-v2-0-0-general-companion-agent-development-report.md`
+
+验证结果：fmt/check/test/build/release 全部通过；release 输出 `yunxi 2.0.0`；
+离线 one-shot 正常；eval 31/31、golden 通过，五项比例指标均为 1.0，主动边界
+违规和工具审批绕过均为 0；JSON 可解析，JSONL 恰好一行；CLI 正常依赖树
+`codex-*`/`yunxi-agent-codex` 匹配为 0；`git diff --check` 通过。
+
+清理结果：`cargo clean` 删除 9,540 个文件、约 2.9 GiB；项目 `target` 和
+测试生成的 `crates\yunxi-agent-cli\.yunxi` 均不存在。
+
+提交和推送状态：验证与清理已完成；实现提交、annotated `v2.0.0` tag、
+GitHub non-force 推送及远程核验待发布收口后回写。
+
+署名：开发者
+
 ## 2026-07-18 12:20:29 +08:00
 
 工作目标：依据 v1.9.4 Evaluation Harness 开发报告，在 `D:\YunXi Agent`
@@ -277,3 +320,39 @@ non-force 推送待执行。
 方式推送，旧 tag 不会改动。
 
 署名：开发者
+
+## 2026-07-18 14:49:21 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-18-143223-YunXi-Agent-v1.9.4-源码审核报告.md` 撰写 YunXi Agent v2.0.0 General Companion Agent 开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：
+1. 读取 v1.9.4 源码审核报告，确认 v1.9.4 审核通过，可以进入 v2.0.0 开发报告撰写。
+2. 核对当前项目 Git 状态：`master...origin/master`，工作树在报告撰写前干净。
+3. 使用 CodeGraph 参考 `yunxi-agent-eval`、`ControlSnapshot`、control facade 等当前源码结构，确认 v2.0.0 应做全 workspace 总集成和发布闭环。
+4. 按固定流程在开发报告前部写入 14 条硬性约束。
+5. 围绕 v2.0.0 General Companion Agent 撰写开发目标、范围边界、源码接入范围、总集成模型、参考源码抽取建议、实现顺序、验收标准、统一验证要求和文档同步要求。
+6. 将开发报告保存到项目内报告目录，并复制到桌面开发报告目录。
+7. 追加项目内开发日志和桌面开发日志，记录本次报告撰写与文件同步状态。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-18-144921-yunxi-agent-v2-0-0-general-companion-agent-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增复制：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-18-144921-yunxi-agent-v2-0-0-general-companion-agent-development-report.md`
+- 追加桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成开发报告撰写，并已同步到桌面开发报告目录。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 后续仍需按固定流程完成实际开发、统一验证、清理和发布闭环后，才能宣称完成。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag。
+
+署名：开发报告撰写者

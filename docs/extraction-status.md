@@ -1,10 +1,32 @@
 # Extraction Status
 
-## Current Workspace Version: v1.9.4
+## Current Workspace Version: v2.0.0
 
-The current workspace includes an offline Evaluation Harness over Companion UX
-& Controls and the pure Rust companion/persona/memory/relationship boundaries.
-Earlier sections are retained as historical release records.
+The current workspace integrates the pure Rust persona, memory, relationship,
+companion, control, and evaluation boundaries into one auditable general
+companion runtime. Earlier sections are retained as historical release records.
+
+## YunXi Agent v2.0.0 General Companion Agent
+
+`yunxi-agent-runtime` now exposes `GeneralCompanionSnapshot` and
+`general_companion_snapshot`. This public facade reports the effective persona,
+memory schema, read-only relationship state, proactive defaults, cloud-control
+state, and shared control snapshot without leaking upstream Codex internals.
+The default runtime remains YunXi-owned and requires no upstream Codex runtime,
+cloud service, Python process, or external scheduler.
+
+The v2 integration regression runs two independent sessions against isolated
+local state. It verifies that an extracted language preference survives the
+session boundary, the latest relationship fact enters persona context, the
+superseded fact remains auditable but is not recalled, and control summaries do
+not count invalidated/superseded records as active. Proactive behavior and cloud
+control remain default-off, relationship controls remain read-only, and tool
+approval is not bypassed.
+
+The 31 deterministic v1.9.4 evaluation scenarios and their golden thresholds
+are retained unchanged as the v2.0.0 release gate. CLI black-box coverage also
+checks the v2 version, offline one-shot execution, shared controls, full JSON
+evaluation output, and zero tool-approval bypasses.
 
 ## YunXi Agent v1.9.4 Evaluation Harness
 

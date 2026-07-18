@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v1.9.4 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v2.0.0 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -22,11 +22,11 @@ request.
 
 ## Persona Context Blocks
 
-v1.9.4 compiles the built-in persona into one bounded, XML-like context string
+v2.0.0 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="1.9.4" profile_id="yunxi_companion_strong" mode="routed_memory">
+<yunxi_persona_context version="2.0.0" profile_id="yunxi_companion_strong" mode="routed_memory">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>
@@ -340,6 +340,27 @@ Memory clear remains append-only by writing archived revisions for active and
 pending workspace records. Companion clear truncates only the companion
 history ledger. Neither operation changes persona profile definitions or the
 derived relationship graph directly.
+
+## General Companion Integration In v2.0.0
+
+The runtime exposes one `GeneralCompanionSnapshot` over persona, Memory Schema
+v3, read-only relationship history, proactive settings, cloud-control state,
+and the shared control snapshot. It explicitly identifies the runtime as
+YunXi-owned and records that the default path does not require upstream Codex.
+Companion planning and cloud control remain disabled by default.
+
+The v2 cross-session regression writes an auditable preference in one session,
+then starts an independent session and verifies that the preference is recalled
+through the persona context. It also links an older relationship fact to its
+replacement: the old revision remains in append-only storage, while only the
+new fact is recalled and counted as active. This keeps memory review, reject,
+archive, confirmation, validity, and supersession semantics visible instead of
+collapsing history into an opaque current-state record.
+
+CLI/TUI controls continue to consume the same runtime boundary. Relationship
+operations remain review-only, proactive tool ideas remain confirmation
+requests, and the 31-scenario offline evaluation harness continues to enforce
+the unchanged golden thresholds.
 
 ## Evaluation Harness In v1.9.4
 

@@ -78,23 +78,23 @@ fn spawn_sequence_http_server(responses: Vec<(u16, String)>) -> String {
 }
 
 #[test]
-fn yunxi_primary_binary_prints_v1_version() {
+fn yunxi_primary_binary_prints_v2_version() {
     let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
 
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.9.4"));
+        .stdout(predicate::str::contains("yunxi 2.0.0"));
 }
 
 #[test]
-fn compatibility_binary_prints_v1_version() {
+fn compatibility_binary_prints_v2_version() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
 
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 1.9.4"));
+        .stdout(predicate::str::contains("yunxi 2.0.0"));
 }
 
 #[test]
@@ -132,6 +132,52 @@ fn cli_companion_eval_emits_reproducible_json_and_jsonl_summaries() {
             .filter(|line| !line.is_empty())
             .count(),
         1
+    );
+}
+
+#[test]
+fn cli_v2_general_companion_release_gate_is_local_safe_and_auditable() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    let controls =
+        run_json_command_with_env(&home, &["--cwd", cwd, "--json", "controls", "status"]);
+    assert_eq!(controls["companion_enabled"].as_bool(), Some(false));
+    assert_eq!(controls["cloud_control_enabled"].as_bool(), Some(false));
+    let scopes = controls["scopes"].as_array().expect("control scopes");
+    assert_eq!(scopes.len(), 4);
+    assert!(scopes.iter().any(|scope| {
+        scope["scope"].as_str() == Some("relationship")
+            && scope["source"].as_str() == Some("read_only_history")
+            && scope["enabled"].is_null()
+    }));
+
+    let mut offline = Command::cargo_bin("yunxi").expect("binary should build");
+    offline
+        .env("YUNXI_HOME", home.path())
+        .env_remove("YUNXI_PERSONA_ENABLED")
+        .env_remove("YUNXI_MEMORY_ENABLED")
+        .args([
+            "--offline",
+            "--no-tui",
+            "--cwd",
+            cwd,
+            "run",
+            "general companion release smoke",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[offline]"))
+        .stdout(predicate::str::contains("general companion release smoke"));
+
+    let evaluation = run_json_command_with_env(&home, &["--json", "eval", "companion"]);
+    assert_eq!(evaluation["harness_version"].as_str(), Some("2.0.0"));
+    assert_eq!(evaluation["golden_passed"].as_bool(), Some(true));
+    assert_eq!(evaluation["metrics"]["scenario_count"].as_u64(), Some(31));
+    assert_eq!(
+        evaluation["metrics"]["tool_approval_bypass_count"].as_u64(),
+        Some(0)
     );
 }
 
@@ -290,7 +336,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.4 interactive CLI",
+            "YunXi Agent v2.0.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -449,7 +495,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.4 interactive CLI",
+            "YunXi Agent v2.0.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -469,7 +515,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v1.9.4 interactive CLI",
+            "YunXi Agent v2.0.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

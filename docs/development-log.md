@@ -225,3 +225,30 @@ planner 的安全边界。
 `v1.9.4` tag 与 GitHub non-force 推送待执行，旧 tag 不会改动。
 
 署名：开发者
+
+## 2026-07-18 12:24:54 +08:00
+
+工作目标：完成 v1.9.4 实现提交和 annotated tag，并更新项目文档中的发布
+状态，准备执行 GitHub non-force 推送。
+
+执行流程：
+1. 暂存并检查全部 v1.9.4 源码、评测场景、测试、文档和日志变更；修正
+   新报告头部 4 处 Markdown 尾随空格后，`git diff --cached --check` 通过。
+2. 创建实现提交 `051002125158535023fa8bf7dbe41b430b398648`。
+3. 创建 annotated `v1.9.4` tag，tag object 为
+   `7b99ae5422cdf904aef9a5893ee7c1cfc601435c`，解析到实现提交；核对旧
+   `v1.9.3`、`v1.9.2` tag 对象未变化。
+4. 更新 v1.9.4 开发报告和本日志，准备 docs-only 发布状态收尾提交。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\reports\2026-07-18-114905-yunxi-agent-v1-9-4-evaluation-harness-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：实现提交和 annotated tag 已存在，`v1.9.4^{commit}` 为
+`051002125158535023fa8bf7dbe41b430b398648`；旧 tag 未删除、未移动、未重写；
+`D:\YunXi Agent\target` 仍不存在。
+
+提交和推送状态：实现提交与 tag 已完成；docs-only 收尾提交和 GitHub
+non-force 推送待执行。
+
+署名：开发者

@@ -16,6 +16,12 @@ pub(crate) struct InteractiveBanner {
     pub provider: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InteractiveRenderAction {
+    None,
+    CancelCurrentTurn,
+}
+
 pub(crate) trait InteractiveRenderer {
     fn banner(&mut self, banner: &InteractiveBanner) -> Result<()>;
     fn warning(&mut self, message: &str) -> Result<()>;
@@ -33,8 +39,8 @@ pub(crate) trait InteractiveRenderer {
         request: AgentRunUserInputRequest,
         input: &mut dyn InteractiveInput,
     ) -> Result<()>;
-    fn tick(&mut self) -> Result<()> {
-        Ok(())
+    fn tick(&mut self) -> Result<InteractiveRenderAction> {
+        Ok(InteractiveRenderAction::None)
     }
     fn flush(&mut self) -> Result<()> {
         Ok(())
@@ -130,7 +136,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v2.0.2 interactive CLI");
+    println!("YunXi Agent v2.0.2-hotfix.1 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(

@@ -2,7 +2,8 @@ use crate::output_summary::{OutputSummary, redact_secrets, truncate_chars};
 use crate::timeline::{ToolPhase, ToolTimelineUpdate, phase_from_command_status, status_label};
 use std::fmt;
 use yunxi_agent_core::{
-    AgentEvent, AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus, McpToolStatus,
+    AgentEvent, AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus,
+    McpToolStatus,
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -66,8 +67,30 @@ pub struct TuiStreamIdentity {
     pub thread_id: String,
     pub turn_id: String,
     pub stream_id: String,
-    pub source_sequence: u64,
+    pub event_id: String,
+    pub source_sequence: TuiSourceSequence,
     pub phase: TuiStreamPhase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TuiSourceSequence {
+    ProviderReliable(u64),
+    LocalFallback(u64),
+}
+
+impl TuiSourceSequence {
+    pub(crate) fn value(self) -> u64 {
+        match self {
+            Self::ProviderReliable(value) | Self::LocalFallback(value) => value,
+        }
+    }
+
+    pub(crate) fn reliable_value(self) -> Option<u64> {
+        match self {
+            Self::ProviderReliable(value) => Some(value),
+            Self::LocalFallback(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -558,7 +581,7 @@ impl TuiPresentation {
         let id = TuiCellId::assistant_for_turn(&identity.turn_id);
         self.next_local_source_sequence = self
             .next_local_source_sequence
-            .max(identity.source_sequence);
+            .max(identity.source_sequence.value());
         self.active_stream = Some(identity.clone());
         TuiEvent {
             id,
@@ -730,9 +753,13 @@ impl TuiPresentation {
             .unwrap_or_else(|| format!("{turn_id}:assistant"));
         TuiStreamIdentity {
             thread_id: "local".to_string(),
+            event_id: format!(
+                "fallback:local:{}:{}:{}",
+                turn_id, stream_id, self.next_local_source_sequence
+            ),
             turn_id,
             stream_id,
-            source_sequence: self.next_local_source_sequence,
+            source_sequence: TuiSourceSequence::LocalFallback(self.next_local_source_sequence),
             phase: TuiStreamPhase::Delta,
         }
     }
@@ -741,9 +768,14 @@ impl TuiPresentation {
         let mut identity = self.active_stream.clone()?;
         self.next_local_source_sequence = self
             .next_local_source_sequence
-            .max(identity.source_sequence)
+            .max(identity.source_sequence.value())
             .saturating_add(1);
-        identity.source_sequence = self.next_local_source_sequence;
+        identity.event_id = format!(
+            "fallback:local:{}:{}:{:?}:{}",
+            identity.turn_id, identity.stream_id, phase, self.next_local_source_sequence
+        );
+        identity.source_sequence =
+            TuiSourceSequence::LocalFallback(self.next_local_source_sequence);
         identity.phase = phase;
         if matches!(phase, TuiStreamPhase::Cancel | TuiStreamPhase::Finish) {
             self.active_stream = None;
@@ -763,7 +795,13 @@ fn stream_identity_from_core(stream: &AgentMessageStream) -> TuiStreamIdentity {
         thread_id: stream.thread_id.clone(),
         turn_id: stream.turn_id.clone(),
         stream_id: stream.stream_id.clone(),
-        source_sequence: stream.source_sequence,
+        event_id: stream.event_id.clone(),
+        source_sequence: match stream.source_sequence {
+            AgentMessageSequence::ProviderReliable(value) => {
+                TuiSourceSequence::ProviderReliable(value)
+            }
+            AgentMessageSequence::LocalFallback(value) => TuiSourceSequence::LocalFallback(value),
+        },
         phase: match stream.phase {
             AgentMessageStreamPhase::Started => TuiStreamPhase::Started,
             AgentMessageStreamPhase::Delta => TuiStreamPhase::Delta,
@@ -903,7 +941,10 @@ mod tests {
             first_stream.identity.stream_id,
             second_stream.identity.stream_id
         );
-        assert!(first_stream.identity.source_sequence < second_stream.identity.source_sequence);
+        assert!(
+            first_stream.identity.source_sequence.value()
+                < second_stream.identity.source_sequence.value()
+        );
     }
 
     #[test]

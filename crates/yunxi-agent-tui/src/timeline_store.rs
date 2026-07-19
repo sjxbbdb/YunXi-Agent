@@ -1,15 +1,15 @@
-use crate::presentation::{TuiCellId, TuiEvent, TuiStreamPhase};
+use crate::presentation::{TuiCellId, TuiEvent, TuiSourceSequence, TuiStreamPhase};
 use crate::streaming::MarkdownStreamController;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+const ARCHIVED_SESSION_LIMIT: usize = 256;
+const SEEN_EVENT_LIMIT: usize = 8_192;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct TurnId(String);
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct StreamSessionId(String);
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct SourceSequence(u64);
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct StreamKey {
@@ -29,11 +29,19 @@ enum StreamSessionState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StreamSession {
     cell_id: TuiCellId,
-    last_sequence: SourceSequence,
+    last_reliable_sequence: Option<u64>,
     controller: MarkdownStreamController,
     content: String,
     state: StreamSessionState,
     offline_label: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ArchivedStreamSession {
+    cell_id: TuiCellId,
+    last_reliable_sequence: Option<u64>,
+    terminal_event_hash: u64,
+    state: StreamSessionState,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,128 +55,90 @@ pub(crate) struct AssistantTimelineUpdate {
 pub(crate) struct TimelineStore {
     sessions: BTreeMap<StreamKey, StreamSession>,
     last_by_turn: BTreeMap<TurnId, StreamKey>,
+    archived: BTreeMap<StreamKey, ArchivedStreamSession>,
+    archive_order: VecDeque<StreamKey>,
+    seen_event_ids: BTreeSet<String>,
+    seen_event_order: VecDeque<String>,
+    duplicate_event_count: u64,
 }
 
 impl TimelineStore {
     pub(crate) fn apply(&mut self, event: &mut TuiEvent) -> Option<AssistantTimelineUpdate> {
-        let stream = event.stream.as_ref()?;
-        let key = StreamKey {
-            turn_id: TurnId(stream.identity.turn_id.clone()),
-            stream_id: StreamSessionId(stream.identity.stream_id.clone()),
-        };
-        let sequence = SourceSequence(stream.identity.source_sequence);
-        let phase = stream.identity.phase;
+        let identity = event.stream.as_ref()?.identity.clone();
+        if !self.record_event_id(&identity.event_id) {
+            self.duplicate_event_count = self.duplicate_event_count.saturating_add(1);
+            return None;
+        }
 
-        match phase {
-            TuiStreamPhase::Started => self.start(event, key, sequence, false),
-            TuiStreamPhase::Delta => self.delta(event, key, sequence),
-            TuiStreamPhase::Retry => self.start(event, key, sequence, true),
-            TuiStreamPhase::Final => self.finalize(event, key, sequence),
-            TuiStreamPhase::Finish => self.finish(key, sequence, StreamSessionState::Finalized),
-            TuiStreamPhase::Cancel => self.finish(key, sequence, StreamSessionState::Cancelled),
+        let key = StreamKey {
+            turn_id: TurnId(identity.turn_id),
+            stream_id: StreamSessionId(identity.stream_id),
+        };
+        if self.archived.contains_key(&key) {
+            return None;
+        }
+
+        match identity.phase {
+            TuiStreamPhase::Started => self.start(event, key, identity.source_sequence, false),
+            TuiStreamPhase::Delta => self.delta(event, key, identity.source_sequence),
+            TuiStreamPhase::Retry => self.start(event, key, identity.source_sequence, true),
+            TuiStreamPhase::Final => {
+                self.finalize(event, key, identity.source_sequence, &identity.event_id)
+            }
+            TuiStreamPhase::Finish => self.finish(
+                key,
+                identity.source_sequence,
+                StreamSessionState::Finalized,
+                &identity.event_id,
+            ),
+            TuiStreamPhase::Cancel => self.finish(
+                key,
+                identity.source_sequence,
+                StreamSessionState::Cancelled,
+                &identity.event_id,
+            ),
         }
     }
 
     pub(crate) fn finish_active(&mut self) -> Vec<AssistantTimelineUpdate> {
-        let keys = self
-            .last_by_turn
-            .values()
-            .filter(|key| {
-                self.sessions.get(*key).is_some_and(|session| {
-                    matches!(
-                        session.state,
-                        StreamSessionState::Active | StreamSessionState::Retrying
-                    )
-                })
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        self.finish_all(StreamSessionState::Finalized)
+    }
 
-        keys.into_iter()
-            .filter_map(|key| {
-                let next = self
-                    .sessions
-                    .get(&key)
-                    .map(|session| SourceSequence(session.last_sequence.0.saturating_add(1)))?;
-                self.finish(key, next, StreamSessionState::Finalized)
-            })
-            .collect()
+    pub(crate) fn cancel_active(&mut self) -> Vec<AssistantTimelineUpdate> {
+        self.finish_all(StreamSessionState::Cancelled)
+    }
+
+    pub(crate) fn has_active_sessions(&self) -> bool {
+        !self.sessions.is_empty()
+    }
+
+    pub(crate) fn duplicate_event_count(&self) -> u64 {
+        self.duplicate_event_count
     }
 
     pub(crate) fn clear(&mut self) {
         self.sessions.clear();
         self.last_by_turn.clear();
+        self.archived.clear();
+        self.archive_order.clear();
+        self.seen_event_ids.clear();
+        self.seen_event_order.clear();
+        self.duplicate_event_count = 0;
     }
 
     fn start(
         &mut self,
         event: &mut TuiEvent,
         key: StreamKey,
-        sequence: SourceSequence,
+        sequence: TuiSourceSequence,
         explicit_retry: bool,
     ) -> Option<AssistantTimelineUpdate> {
-        if let Some(session) = self.sessions.get(&key) {
-            if sequence <= session.last_sequence
-                || matches!(
-                    session.state,
-                    StreamSessionState::Finalized
-                        | StreamSessionState::Cancelled
-                        | StreamSessionState::Superseded
-                )
-            {
-                return None;
-            }
+        self.ensure_session(event, &key, explicit_retry);
+        let session = self.sessions.get_mut(&key)?;
+        if reliable_sequence_is_late(session.last_reliable_sequence, sequence) {
+            return None;
         }
-
-        if !self.sessions.contains_key(&key) {
-            let previous = self.last_by_turn.get(&key.turn_id).cloned();
-            let cell_id = match previous.as_ref().and_then(|key| self.sessions.get(key)) {
-                Some(session)
-                    if matches!(
-                        session.state,
-                        StreamSessionState::Active | StreamSessionState::Retrying
-                    ) =>
-                {
-                    session.cell_id.clone()
-                }
-                Some(_) => event
-                    .id
-                    .with_suffix(&format!("stream-{:016x}", stable_hash(&key.stream_id.0))),
-                None => event.id.clone(),
-            };
-
-            if let Some(previous) = previous
-                && let Some(session) = self.sessions.get_mut(&previous)
-                && matches!(
-                    session.state,
-                    StreamSessionState::Active | StreamSessionState::Retrying
-                )
-            {
-                session.state = StreamSessionState::Superseded;
-            }
-
-            self.sessions.insert(
-                key.clone(),
-                StreamSession {
-                    cell_id,
-                    last_sequence: SourceSequence(0),
-                    controller: MarkdownStreamController::default(),
-                    content: String::new(),
-                    state: if explicit_retry {
-                        StreamSessionState::Retrying
-                    } else {
-                        StreamSessionState::Active
-                    },
-                    offline_label: event
-                        .stream
-                        .as_ref()
-                        .is_some_and(|stream| stream.offline_label),
-                },
-            );
-        }
-
-        let session = self.sessions.get_mut(&key).expect("inserted session");
-        session.last_sequence = sequence;
+        observe_reliable_sequence(&mut session.last_reliable_sequence, sequence);
         session.state = if explicit_retry {
             StreamSessionState::Retrying
         } else {
@@ -193,19 +163,11 @@ impl TimelineStore {
         &mut self,
         event: &mut TuiEvent,
         key: StreamKey,
-        sequence: SourceSequence,
+        sequence: TuiSourceSequence,
     ) -> Option<AssistantTimelineUpdate> {
-        if !self.sessions.contains_key(&key) {
-            let _ = self.start(event, key.clone(), sequence, false);
-            return self
-                .sessions
-                .get(&key)
-                .filter(|session| !session.content.is_empty())
-                .map(|session| update_for(session, true));
-        }
-
+        self.ensure_session(event, &key, false);
         let session = self.sessions.get_mut(&key)?;
-        if sequence <= session.last_sequence
+        if reliable_sequence_is_late(session.last_reliable_sequence, sequence)
             || !matches!(
                 session.state,
                 StreamSessionState::Active | StreamSessionState::Retrying
@@ -213,7 +175,7 @@ impl TimelineStore {
         {
             return None;
         }
-        session.last_sequence = sequence;
+        observe_reliable_sequence(&mut session.last_reliable_sequence, sequence);
         let frame = session.controller.push_delta(&event.visible_text);
         session.content = format!("{}{}", frame.stable_source, frame.live_tail);
         apply_offline_label(session);
@@ -223,6 +185,7 @@ impl TimelineStore {
             &frame.live_tail,
             frame.committed,
         );
+        self.last_by_turn.insert(key.turn_id.clone(), key);
         Some(update_for(session, true))
     }
 
@@ -230,25 +193,15 @@ impl TimelineStore {
         &mut self,
         event: &mut TuiEvent,
         key: StreamKey,
-        sequence: SourceSequence,
+        sequence: TuiSourceSequence,
+        event_id: &str,
     ) -> Option<AssistantTimelineUpdate> {
-        if !self.sessions.contains_key(&key) {
-            let initial_sequence = SourceSequence(sequence.0.saturating_sub(1));
-            let _ = self.start(event, key.clone(), initial_sequence, false);
-        }
+        self.ensure_session(event, &key, false);
         let session = self.sessions.get_mut(&key)?;
-        if sequence <= session.last_sequence
-            || matches!(
-                session.state,
-                StreamSessionState::Finalized
-                    | StreamSessionState::Cancelled
-                    | StreamSessionState::Superseded
-            )
-        {
+        if reliable_sequence_is_late(session.last_reliable_sequence, sequence) {
             return None;
         }
-
-        session.last_sequence = sequence;
+        observe_reliable_sequence(&mut session.last_reliable_sequence, sequence);
         session.controller.clear();
         if !event.visible_text.is_empty() {
             let frame = session.controller.push_delta(&event.visible_text);
@@ -263,30 +216,166 @@ impl TimelineStore {
         let _ = session.controller.finalize();
         apply_offline_label(session);
         session.state = StreamSessionState::Finalized;
-        Some(update_for(session, false))
+        let update = update_for(session, false);
+        let session = self.sessions.remove(&key).expect("finalized session");
+        self.archive_session(key, session, StreamSessionState::Finalized, event_id);
+        Some(update)
     }
 
     fn finish(
         &mut self,
         key: StreamKey,
-        sequence: SourceSequence,
+        sequence: TuiSourceSequence,
         state: StreamSessionState,
+        event_id: &str,
     ) -> Option<AssistantTimelineUpdate> {
         let session = self.sessions.get_mut(&key)?;
-        if sequence <= session.last_sequence
-            || matches!(
-                session.state,
-                StreamSessionState::Finalized
-                    | StreamSessionState::Cancelled
-                    | StreamSessionState::Superseded
-            )
-        {
+        if reliable_sequence_is_late(session.last_reliable_sequence, sequence) {
             return None;
         }
-        session.last_sequence = sequence;
+        observe_reliable_sequence(&mut session.last_reliable_sequence, sequence);
         let _ = session.controller.finalize();
         session.state = state;
-        Some(update_for(session, false))
+        let update = update_for(session, false);
+        let session = self.sessions.remove(&key).expect("finished session");
+        self.archive_session(key, session, state, event_id);
+        Some(update)
+    }
+
+    fn finish_all(&mut self, state: StreamSessionState) -> Vec<AssistantTimelineUpdate> {
+        let keys = self.sessions.keys().cloned().collect::<Vec<_>>();
+        keys.into_iter()
+            .filter_map(|key| {
+                let mut session = self.sessions.remove(&key)?;
+                let _ = session.controller.finalize();
+                session.state = state;
+                let update = update_for(&session, false);
+                let terminal_id =
+                    format!("internal:{}:{}:{state:?}", key.turn_id.0, key.stream_id.0);
+                self.archive_session(key, session, state, &terminal_id);
+                Some(update)
+            })
+            .collect()
+    }
+
+    fn ensure_session(&mut self, event: &TuiEvent, key: &StreamKey, explicit_retry: bool) {
+        if self.sessions.contains_key(key) {
+            return;
+        }
+
+        let previous = self.last_by_turn.get(&key.turn_id).cloned();
+        let previous_cell = previous
+            .as_ref()
+            .and_then(|previous| self.sessions.get(previous))
+            .map(|session| session.cell_id.clone());
+        let has_archived_turn = self
+            .archived
+            .keys()
+            .any(|archived| archived.turn_id == key.turn_id);
+        let cell_id = previous_cell.clone().unwrap_or_else(|| {
+            if has_archived_turn {
+                event
+                    .id
+                    .with_suffix(&format!("stream-{:016x}", stable_hash(&key.stream_id.0)))
+            } else {
+                event.id.clone()
+            }
+        });
+
+        if let Some(previous) = previous
+            && previous != *key
+            && let Some(session) = self.sessions.remove(&previous)
+        {
+            self.archive_session(
+                previous,
+                session,
+                StreamSessionState::Superseded,
+                "internal:stream-superseded",
+            );
+        }
+
+        self.sessions.insert(
+            key.clone(),
+            StreamSession {
+                cell_id,
+                last_reliable_sequence: None,
+                controller: MarkdownStreamController::default(),
+                content: String::new(),
+                state: if explicit_retry {
+                    StreamSessionState::Retrying
+                } else {
+                    StreamSessionState::Active
+                },
+                offline_label: event
+                    .stream
+                    .as_ref()
+                    .is_some_and(|stream| stream.offline_label),
+            },
+        );
+    }
+
+    fn archive_session(
+        &mut self,
+        key: StreamKey,
+        session: StreamSession,
+        state: StreamSessionState,
+        terminal_event_id: &str,
+    ) {
+        if self.last_by_turn.get(&key.turn_id) == Some(&key) {
+            self.last_by_turn.remove(&key.turn_id);
+        }
+        if !self.archived.contains_key(&key) {
+            self.archive_order.push_back(key.clone());
+        }
+        self.archived.insert(
+            key,
+            ArchivedStreamSession {
+                cell_id: session.cell_id,
+                last_reliable_sequence: session.last_reliable_sequence,
+                terminal_event_hash: stable_hash(terminal_event_id),
+                state,
+            },
+        );
+        while self.archive_order.len() > ARCHIVED_SESSION_LIMIT {
+            if let Some(expired) = self.archive_order.pop_front() {
+                self.archived.remove(&expired);
+            }
+        }
+    }
+
+    fn record_event_id(&mut self, event_id: &str) -> bool {
+        if self.seen_event_ids.contains(event_id) {
+            return false;
+        }
+        let event_id = event_id.to_string();
+        self.seen_event_ids.insert(event_id.clone());
+        self.seen_event_order.push_back(event_id);
+        while self.seen_event_order.len() > SEEN_EVENT_LIMIT {
+            if let Some(expired) = self.seen_event_order.pop_front() {
+                self.seen_event_ids.remove(&expired);
+            }
+        }
+        true
+    }
+
+    #[cfg(test)]
+    fn retained_content_bytes(&self) -> usize {
+        self.sessions
+            .values()
+            .map(|session| session.content.len())
+            .sum()
+    }
+}
+
+fn reliable_sequence_is_late(last: Option<u64>, sequence: TuiSourceSequence) -> bool {
+    sequence
+        .reliable_value()
+        .is_some_and(|sequence| last.is_some_and(|last| sequence <= last))
+}
+
+fn observe_reliable_sequence(last: &mut Option<u64>, sequence: TuiSourceSequence) {
+    if let Some(sequence) = sequence.reliable_value() {
+        *last = Some(sequence);
     }
 }
 
@@ -333,7 +422,8 @@ mod tests {
     fn event(
         turn: &str,
         stream: &str,
-        sequence: u64,
+        event_id: &str,
+        sequence: TuiSourceSequence,
         phase: TuiStreamPhase,
         content: &str,
     ) -> TuiEvent {
@@ -350,6 +440,7 @@ mod tests {
                     thread_id: "thread".to_string(),
                     turn_id: turn.to_string(),
                     stream_id: stream.to_string(),
+                    event_id: event_id.to_string(),
                     source_sequence: sequence,
                     phase,
                 },
@@ -360,27 +451,46 @@ mod tests {
         }
     }
 
+    fn local_event(
+        turn: &str,
+        stream: &str,
+        sequence: u64,
+        phase: TuiStreamPhase,
+        content: &str,
+    ) -> TuiEvent {
+        event(
+            turn,
+            stream,
+            &format!("fallback:{turn}:{stream}:{sequence}:{phase:?}"),
+            TuiSourceSequence::LocalFallback(sequence),
+            phase,
+            content,
+        )
+    }
+
     #[test]
-    fn delta_then_final_replaces_one_canonical_cell() {
+    fn delta_then_final_replaces_one_canonical_cell_and_releases_session() {
         let mut store = TimelineStore::default();
-        let mut delta = event("turn-1", "message-1", 1, TuiStreamPhase::Delta, "你");
+        let mut delta = local_event("turn-1", "message-1", 1, TuiStreamPhase::Delta, "你");
         let first = store.apply(&mut delta).expect("delta");
-        let mut final_event = event("turn-1", "message-1", 2, TuiStreamPhase::Final, "你好");
+        let mut final_event = local_event("turn-1", "message-1", 2, TuiStreamPhase::Final, "你好");
         let final_update = store.apply(&mut final_event).expect("final");
 
         assert_eq!(first.cell_id, final_update.cell_id);
         assert_eq!(final_update.content, "你好");
         assert!(!final_update.active);
+        assert!(store.sessions.is_empty());
+        assert_eq!(store.retained_content_bytes(), 0);
     }
 
     #[test]
     fn retry_reuses_active_cell_and_resets_partial_content() {
         let mut store = TimelineStore::default();
-        let mut first = event("turn-1", "attempt-1", 1, TuiStreamPhase::Delta, "old");
+        let mut first = local_event("turn-1", "attempt-1", 1, TuiStreamPhase::Delta, "old");
         let first = store.apply(&mut first).expect("first attempt");
-        let mut retry = event("turn-1", "attempt-2", 2, TuiStreamPhase::Retry, "new");
+        let mut retry = local_event("turn-1", "attempt-2", 2, TuiStreamPhase::Retry, "new");
         let retry = store.apply(&mut retry).expect("retry");
-        let mut final_event = event(
+        let mut final_event = local_event(
             "turn-1",
             "attempt-2",
             3,
@@ -395,44 +505,124 @@ mod tests {
     }
 
     #[test]
-    fn cancel_freezes_session_and_late_delta_cannot_rebind_it() {
+    fn cancel_releases_session_and_late_delta_cannot_rebind_it() {
         let mut store = TimelineStore::default();
-        let mut delta = event("turn-1", "attempt-1", 1, TuiStreamPhase::Delta, "partial");
+        let mut delta = local_event("turn-1", "attempt-1", 1, TuiStreamPhase::Delta, "partial");
         let first = store.apply(&mut delta).expect("delta");
-        let mut cancel = event("turn-1", "attempt-1", 2, TuiStreamPhase::Cancel, "");
+        let mut cancel = local_event("turn-1", "attempt-1", 2, TuiStreamPhase::Cancel, "");
         let cancelled = store.apply(&mut cancel).expect("cancel");
-        let mut late = event("turn-1", "attempt-1", 3, TuiStreamPhase::Delta, " late");
+        let mut late = local_event("turn-1", "attempt-1", 3, TuiStreamPhase::Delta, " late");
 
         assert_eq!(first.cell_id, cancelled.cell_id);
         assert!(!cancelled.active);
+        assert!(store.sessions.is_empty());
         assert_eq!(store.apply(&mut late), None);
 
-        let mut retry = event("turn-1", "attempt-2", 4, TuiStreamPhase::Started, "retry");
+        let mut retry = local_event("turn-1", "attempt-2", 4, TuiStreamPhase::Started, "retry");
         let retry = store.apply(&mut retry).expect("new retry session");
         assert_ne!(retry.cell_id, cancelled.cell_id);
     }
 
     #[test]
-    fn duplicate_final_is_structurally_idempotent() {
+    fn duplicate_event_id_is_ignored_and_counted() {
         let mut store = TimelineStore::default();
-        let mut delta = event("turn-1", "message-1", 1, TuiStreamPhase::Delta, "answer");
-        store.apply(&mut delta).expect("delta");
-        let mut final_one = event("turn-1", "message-1", 2, TuiStreamPhase::Final, "answer");
-        store.apply(&mut final_one).expect("first final");
-        let mut final_two = event("turn-1", "message-1", 3, TuiStreamPhase::Final, "answer");
+        let mut first = event(
+            "turn-1",
+            "message-1",
+            "provider:event-7",
+            TuiSourceSequence::ProviderReliable(7),
+            TuiStreamPhase::Delta,
+            "answer",
+        );
+        let mut replay = first.clone();
 
-        assert_eq!(store.apply(&mut final_two), None);
+        store.apply(&mut first).expect("first event");
+        assert_eq!(store.apply(&mut replay), None);
+        assert_eq!(store.duplicate_event_count(), 1);
     }
 
     #[test]
-    fn repeated_payload_with_new_sequence_is_not_deduplicated() {
+    fn reliable_sequence_rejects_late_but_local_fallback_order_does_not() {
+        let mut reliable_store = TimelineStore::default();
+        let mut reliable = event(
+            "turn",
+            "reliable",
+            "provider:9",
+            TuiSourceSequence::ProviderReliable(9),
+            TuiStreamPhase::Delta,
+            "new",
+        );
+        reliable_store.apply(&mut reliable).expect("reliable");
+        let mut late = event(
+            "turn",
+            "reliable",
+            "provider:8",
+            TuiSourceSequence::ProviderReliable(8),
+            TuiStreamPhase::Delta,
+            "old",
+        );
+        assert_eq!(reliable_store.apply(&mut late), None);
+
+        let mut fallback_store = TimelineStore::default();
+        let mut arrived_first = event(
+            "turn",
+            "fallback",
+            "fallback:9",
+            TuiSourceSequence::LocalFallback(9),
+            TuiStreamPhase::Delta,
+            "甲",
+        );
+        fallback_store
+            .apply(&mut arrived_first)
+            .expect("first fallback");
+        let mut arrived_second = event(
+            "turn",
+            "fallback",
+            "fallback:1",
+            TuiSourceSequence::LocalFallback(1),
+            TuiStreamPhase::Delta,
+            "乙",
+        );
+        assert_eq!(
+            fallback_store
+                .apply(&mut arrived_second)
+                .expect("second fallback")
+                .content,
+            "甲乙"
+        );
+    }
+
+    #[test]
+    fn repeated_payload_with_distinct_event_ids_is_preserved() {
         let mut store = TimelineStore::default();
-        let mut first = event("turn-1", "message-1", 1, TuiStreamPhase::Delta, "哈");
+        let mut first = local_event("turn-1", "message-1", 1, TuiStreamPhase::Delta, "哈");
         store.apply(&mut first).expect("first");
-        let mut second = event("turn-1", "message-1", 2, TuiStreamPhase::Delta, "哈");
+        let mut second = local_event("turn-1", "message-1", 2, TuiStreamPhase::Delta, "哈");
         let update = store.apply(&mut second).expect("second");
 
         assert_eq!(update.content, "哈哈");
+    }
+
+    #[test]
+    fn completed_sessions_are_bounded_and_retain_no_stream_content() {
+        let mut store = TimelineStore::default();
+        let payload = "x".repeat(16 * 1024);
+        for index in 0..(ARCHIVED_SESSION_LIMIT + 40) {
+            let mut final_event = local_event(
+                &format!("turn-{index}"),
+                &format!("stream-{index}"),
+                index as u64 + 1,
+                TuiStreamPhase::Final,
+                &payload,
+            );
+            store.apply(&mut final_event).expect("final event");
+        }
+
+        assert!(store.sessions.is_empty());
+        assert!(store.last_by_turn.is_empty());
+        assert_eq!(store.retained_content_bytes(), 0);
+        assert_eq!(store.archived.len(), ARCHIVED_SESSION_LIMIT);
+        assert_eq!(store.archive_order.len(), ARCHIVED_SESSION_LIMIT);
     }
 
     #[test]
@@ -456,9 +646,9 @@ mod tests {
         ];
         for (index, (left, right, expected)) in payloads.iter().enumerate() {
             let mut store = TimelineStore::default();
-            let mut first = event("turn", "message", 1, TuiStreamPhase::Delta, left);
+            let mut first = local_event("turn", "message", 1, TuiStreamPhase::Delta, left);
             store.apply(&mut first).expect("first delta");
-            let mut second = event("turn", "message", 2, TuiStreamPhase::Delta, right);
+            let mut second = local_event("turn", "message", 2, TuiStreamPhase::Delta, right);
             let update = store.apply(&mut second).expect("second delta");
             assert_eq!(update.content, *expected, "payload {index}");
         }

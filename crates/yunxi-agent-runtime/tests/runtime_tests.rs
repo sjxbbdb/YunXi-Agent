@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentMessageStreamPhase,
-    AgentRunApprovalDecision, AgentRunControl, AgentRunStatus, AgentRunUserInputResponse,
-    ApprovalMode, CommandStatus, CompanionSettings, FileChangeKind, MemoryExtractionMode,
-    PatchStatus, SandboxMode,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentMessageSequence,
+    AgentMessageStreamPhase, AgentRunApprovalDecision, AgentRunControl, AgentRunStatus,
+    AgentRunUserInputResponse, ApprovalMode, CommandStatus, CompanionSettings, FileChangeKind,
+    MemoryExtractionMode, PatchStatus, SandboxMode,
 };
 use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus};
 use yunxi_agent_protocol::{
@@ -789,6 +789,7 @@ impl AgentProvider for IncrementalStreamingProvider {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             delta: yunxi_agent_protocol::response_text_delta("hel"),
+            metadata: None,
         };
         if let Some(sink) = sink.as_mut() {
             sink.emit(first.clone()).await?;
@@ -799,6 +800,7 @@ impl AgentProvider for IncrementalStreamingProvider {
             thread_id: thread_id.clone(),
             turn_id: turn_id.clone(),
             delta: yunxi_agent_protocol::response_text_delta("lo"),
+            metadata: None,
         });
         events.push(StreamEvent::ResponseCompleted {
             thread_id,
@@ -1074,6 +1076,57 @@ async fn run_stream_emits_provider_delta_before_provider_completes() {
             .all(|pair| pair[0].1.stream_id == pair[1].1.stream_id)
     );
     assert_eq!(assistant_stream[2].1.phase, AgentMessageStreamPhase::Final);
+}
+
+#[tokio::test]
+async fn cancellation_drops_active_provider_stream_and_preserves_partial_text() {
+    let backend = YunXiRuntimeBackend::with_parts(
+        IncrementalStreamingProvider,
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let agent =
+        Agent::new(AgentConfig::new(PathBuf::from(".")).with_approval_mode(ApprovalMode::Never));
+    let (control, mut stream) = AgentRunControl::streaming();
+    let run_control = control.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run_with_backend_stream(
+                &backend,
+                AgentInput::text("cancel incremental stream"),
+                run_control,
+            )
+            .await
+    });
+
+    while let Some(event) = stream.events.recv().await {
+        if matches!(event, AgentEvent::Message { content, .. } if content == "hel") {
+            break;
+        }
+    }
+    control.cancel();
+
+    let result = tokio::time::timeout(Duration::from_millis(100), handle)
+        .await
+        .expect("provider future should be dropped immediately")
+        .expect("join cancelled provider run")
+        .expect("cancelled provider run");
+
+    assert_eq!(result.status, AgentRunStatus::Cancelled);
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Message { content, .. } if content == "hel"
+    )));
+    assert!(!result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Message { content, .. } if content == "lo" || content == "hello"
+    )));
+    assert!(
+        result
+            .events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Cancelled { .. }))
+    );
 }
 
 #[tokio::test]
@@ -2138,6 +2191,7 @@ fn protocol_stream_events_map_to_agent_events() {
                 item_id: None,
                 delta: "reason".to_string(),
             },
+            metadata: None,
         },
         yunxi_agent_protocol::StreamEvent::ItemDelta {
             thread_id: yunxi_agent_protocol::ThreadId("thread-1".to_string()),
@@ -2146,6 +2200,10 @@ fn protocol_stream_events_map_to_agent_events() {
                 item_id: Some("message-1".to_string()),
                 delta: "hel".to_string(),
             },
+            metadata: Some(yunxi_agent_protocol::StreamEventMetadata {
+                event_id: "provider-message-17".to_string(),
+                sequence: yunxi_agent_protocol::StreamEventSequence::ProviderReliable(17),
+            }),
         },
         yunxi_agent_protocol::StreamEvent::ItemCompleted {
             thread_id: yunxi_agent_protocol::ThreadId("thread-1".to_string()),
@@ -2182,7 +2240,15 @@ fn protocol_stream_events_map_to_agent_events() {
     assert_eq!(messages[0].1.phase, AgentMessageStreamPhase::Delta);
     assert_eq!(messages[1].0, "hello");
     assert_eq!(messages[1].1.phase, AgentMessageStreamPhase::Final);
-    assert!(messages[0].1.source_sequence < messages[1].1.source_sequence);
+    assert_eq!(messages[0].1.event_id, "provider-message-17");
+    assert_eq!(
+        messages[0].1.source_sequence,
+        AgentMessageSequence::ProviderReliable(17)
+    );
+    assert_eq!(
+        messages[1].1.source_sequence,
+        AgentMessageSequence::LocalFallback(1)
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

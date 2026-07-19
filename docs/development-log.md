@@ -668,3 +668,185 @@ hotfix 提交，最终远程状态以 Git refs 为准。
 提交和推送状态：所有 v2.0.2 实现与文档已准备纳入唯一发布提交；该提交后立即创建 annotated `v2.0.2` tag，并以 non-force 方式推送 `master` 和 tag。发布后不追加同版本 docs-only/hotfix 提交，最终远程状态以 Git refs 为准。
 
 署名：开发者
+
+## 2026-07-19 10:06:11 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-19-094830-YunXi-Agent-v2.0.2-源码与TUI视觉审核报告.md` 撰写 YunXi Agent v2.0.2 流式状态机整改开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：1. 读取 v2.0.2 源码与 TUI 视觉审核报告，确认审核结论为不通过，不可进入 v2.0.3 开发。2. 核对当前 Git 状态为 `master...origin/master`，并确认项目内最近报告为 v2.0.2 流式状态机与消息幂等化开发报告。3. 将审核报告中的四项硬性缺口转化为开发者整改要求：稳定 `event_id` 与 reliable/fallback sequence、Markdown/grapheme 安全提交边界、completed session 归档释放、真实 live provider 下 active stream `Ctrl+C` 取消。4. 在报告前部写入固定 14 条硬性约束，并明确现有 `v2.0.2` tag 不得移动或删除，修复发布版本号/tag 必须由用户确认。5. 在项目内新增整改开发报告。6. 追加项目内开发日志，将报告复制到桌面开发报告目录，并追加桌面开发日志。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-100611-yunxi-agent-v2-0-2-streaming-remediation-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-100611-yunxi-agent-v2-0-2-streaming-remediation-development-report.md`
+- 追加桌面日志目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成 v2.0.2 整改开发报告撰写，并同步到桌面开发报告目录。
+- 本次仅生成文档和追加日志，未修改 Rust 源码。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 后续必须先完成报告要求的整改、统一验证、真实 live provider 取消复核和重新审核；审核通过前不得宣称完成，也不得进入 v2.0.3。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag；现有 `v2.0.2` tag 不得移动或删除，修复发布版本号/tag 需用户确认。
+
+署名：开发报告撰写者
+
+## 2026-07-19 10:45:34 +08:00
+
+工作目标：严格依据
+`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-100611-yunxi-agent-v2-0-2-streaming-remediation-development-report.md`
+实施 v2.0.2 审核失败后的流式状态机整改候选，保留现有 `v2.0.2`
+annotated tag，不自行确定修复版本号或 tag，并在真实 live 与重新审核通过前
+不宣称整改完成。
+
+执行流程：1. 读取整改报告和对应审核报告，核对 `master`、`origin/master`
+与现有 `v2.0.2` tag 基线。2. 使用 CodeGraph 定位 provider 协议映射、runtime
+流 future、TUI presentation/timeline、Markdown collector 与 raw-mode Ctrl+C
+路径。3. 实施稳定 event ID、可靠/本地序列来源、event ID 幂等去重、debug
+重复计数、有界最小归档与 active session 释放。4. 重构 Markdown 行、段落、
+fence 与 grapheme 提交边界。5. 将 raw TUI Ctrl+C 接入共享取消 token，并让
+runtime 在取消时立即丢弃 provider future。6. 增加 provider、runtime、TUI、
+Unicode、回收与取消回归测试。7. 统一执行格式化、检查、全工作区测试、
+workspace/release 构建、版本、Evaluation Harness、offline TUI 与 Git diff
+检查。8. 尝试真实 DeepSeek live 门禁；因缺少知情后的外部请求授权，被安全
+审查阻止，未绕过。9. 同步 README、状态文档、TUI 文档和本整改报告。
+
+修改文件：
+- workspace 依赖：`D:\YunXi Agent\Cargo.toml`、`D:\YunXi Agent\Cargo.lock`
+- core：`D:\YunXi Agent\crates\yunxi-agent-core\src\cancellation.rs`、
+  `event.rs`、`lib.rs`、`tests\event_tests.rs`
+- protocol/provider：`D:\YunXi Agent\crates\yunxi-agent-protocol\src\lib.rs`、
+  `D:\YunXi Agent\crates\yunxi-agent-provider\src\lib.rs`、
+  `tests\provider_tests.rs`
+- runtime：`D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`、
+  `tests\runtime_tests.rs`
+- TUI：`D:\YunXi Agent\crates\yunxi-agent-tui\Cargo.toml`、
+  `src\app.rs`、`host.rs`、`lib.rs`、`presentation.rs`、`streaming.rs`、
+  `timeline_store.rs`
+- CLI：`D:\YunXi Agent\crates\yunxi-agent-cli\src\interactive.rs`、
+  `jsonl_redaction.rs`、`render.rs`、`tui\mod.rs`
+- 文档：`D:\YunXi Agent\README.md`、`docs\extraction-status.md`、
+  `docs\tui-presentation.md`、`docs\development-log.md`、
+  `docs\reports\2026-07-19-100611-yunxi-agent-v2-0-2-streaming-remediation-development-report.md`
+
+验证结果：
+- fmt、fmt check、workspace check、workspace tests、workspace build、release
+  build 全部通过；release 输出 `yunxi 2.0.2`。
+- TUI 76 条、runtime 45 条、provider 44 条测试通过；取消测试验证 provider
+  future 在首个 delta 后 100ms 门限内退出，保留 partial 且不接收 late delta。
+- Evaluation Harness 31/31、golden 通过，JSON 可解析，JSONL 恰好一行，
+  persona/memory/relationship/control 均 1.0，违规/绕过计数为 0。
+- release offline TUI 普通输入、PageUp/PageDown 与空闲 Ctrl+C 退出通过。
+- 经用户明确授权，在隔离空白目录执行真实 DeepSeek TUI：短流式只产生一个
+  `LIVE_OK` assistant cell；长流活跃时 Ctrl+C 成功取消并保留 partial；同一
+  TUI 随后接受下一次输入并返回 `NEXT_OK`，空闲 Ctrl+C 退出码为 0。
+- 重新审核和发布门禁仍未完成。
+
+清理状态：用户已授权。清理前 `target` 为 12,319 项、约 3.50 GB，CLI
+测试状态为 3 项、1,248 字节；`cargo clean` 实际移除 11,373 个文件、
+3.3 GiB。随后递归删除 CLI `.yunxi` 状态目录。最终 `target`、
+`D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 与
+`C:\Users\24763\.codex\visualizations\2026\07\17\019f6dd0-e0ac-7fd3-bf9-90654d52170e\yunxi-live-smoke`
+均不存在。
+
+提交和推送状态：未提交、未推送、未创建新 tag、未安装整改候选。现有
+annotated `v2.0.2` tag 保持不变。待重新审核通过，并由用户
+确认修复版本号/tag 后再进入发布流程。
+
+署名：开发者
+
+## 2026-07-19 11:11:51 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-19-110509-YunXi-Agent-v2.0.2-整改候选源码预审报告.md` 撰写 YunXi Agent v2.0.2 整改候选发布门禁开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：1. 读取 v2.0.2 整改候选源码预审报告，确认结论为预审通过，但不构成正式版本审核通过，不允许进入 v2.0.3 开发。2. 核对当前 Git 状态为 `master...origin/master`，且存在多项未提交整改候选源码改动。3. 依据预审报告将下一阶段目标收敛为用户确认修复版本号/tag、统一验证、清理、单一发布提交、新 annotated tag、non-force 推送和正式复审准备。4. 在报告前部写入固定 14 条硬性约束，并明确旧 `v2.0.2` tag 不得移动、删除或覆盖。5. 在项目内新增发布门禁开发报告。6. 追加项目内开发日志，将报告复制到桌面开发报告目录，并追加桌面开发日志。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-111151-yunxi-agent-v2-0-2-remediation-release-gate-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-111151-yunxi-agent-v2-0-2-remediation-release-gate-development-report.md`
+- 追加桌面日志目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成 v2.0.2 整改候选发布门禁开发报告撰写，并同步到桌面开发报告目录。
+- 本次仅生成文档和追加日志，未修改 Rust 源码。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 后续必须先由用户确认修复版本号/tag，再统一验证、清理、发布并进入正式复审；正式审核通过前不得宣称完成，也不得进入 v2.0.3。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag；现有 `v2.0.2` tag 不得移动或删除。
+
+署名：开发报告撰写者
+
+## 2026-07-19 11:34:41 +08:00
+
+工作目标：依据
+`D:\YunXi Agent\docs\reports\2026-07-19-111151-yunxi-agent-v2-0-2-remediation-release-gate-development-report.md`
+和用户确认，将流式状态机整改候选发布为 `2.0.2-hotfix.1` / annotated
+`v2.0.2-hotfix.1`，严格保留旧 `v2.0.2` tag，并为独立正式复审提供固定发布对象。
+
+执行流程：1. 核对 `master` 与 `origin/master` 基线均为
+`ef7f43f97a783b3ee37d47ab034b709180d0c82e`，核对旧 `v2.0.2` tag object
+`3f60445680211c27e1f6fe4e3b5c85a471fe5513` 和 peeled commit
+`ef7f43f97a783b3ee37d47ab034b709180d0c82e`。2. 按用户确认将 workspace、
+Cargo.lock、CLI/TUI、persona context、Evaluation Harness、测试期望、README
+与状态文档同步到 `2.0.2-hotfix.1`。3. 统一执行 fmt、check、workspace tests、
+workspace/release build、版本冒烟、Evaluation Harness 文本/JSON/JSONL、offline
+TUI 与真实 DeepSeek live TUI。4. 用固定短提示核验唯一 `LIVE_OK` canonical cell；
+用正常长篇 Rust 教程在 `[assistant*]` 活跃时触发 Ctrl+C，核验 turn 取消、partial
+保留、程序不退出，并在同一进程得到 `NEXT_OK`。5. 执行 diff/status 检查。
+6. 经用户授权和绝对路径校验，清理编译产物、CLI 测试状态与隔离 smoke 临时目录。
+7. 将全部整改、版本和文档纳入单一 hotfix 发布提交；提交后创建新 annotated tag，
+以 GitHub API key 临时认证 non-force 推送并核验新旧远程 refs。8. 发布后只通知正式
+审核者复审，不宣称正式审核通过，不进入 v2.0.3。
+
+主要修改文件与路径：
+
+- 版本与锁文件：`D:\YunXi Agent\Cargo.toml`、`D:\YunXi Agent\Cargo.lock`。
+- CLI：`D:\YunXi Agent\crates\yunxi-agent-cli\src`、
+  `D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`。
+- core/protocol/provider/runtime：`D:\YunXi Agent\crates\yunxi-agent-core`、
+  `D:\YunXi Agent\crates\yunxi-agent-protocol`、
+  `D:\YunXi Agent\crates\yunxi-agent-provider`、
+  `D:\YunXi Agent\crates\yunxi-agent-runtime`。
+- persona/evaluation：`D:\YunXi Agent\crates\yunxi-agent-persona`、
+  `D:\YunXi Agent\crates\yunxi-agent-eval`。
+- TUI：`D:\YunXi Agent\crates\yunxi-agent-tui`。
+- 文档：`D:\YunXi Agent\README.md`、`D:\YunXi Agent\docs\extraction-status.md`、
+  `D:\YunXi Agent\docs\tui-presentation.md`、
+  `D:\YunXi Agent\docs\development-log.md`、
+  `D:\YunXi Agent\docs\reports\2026-07-19-100611-yunxi-agent-v2-0-2-streaming-remediation-development-report.md`、
+  `D:\YunXi Agent\docs\reports\2026-07-19-111151-yunxi-agent-v2-0-2-remediation-release-gate-development-report.md`。
+
+验证结果：`cargo fmt --all`、fmt check、workspace check、workspace tests、
+workspace build 与 release build 全部通过；CLI 集成 44、provider 44、runtime 45、
+TUI 76 条关键测试全部通过；release 输出 `yunxi 2.0.2-hotfix.1`；Evaluation
+Harness 31/31、golden 通过，JSON 可解析，JSONL 恰好一行，质量率均为 1.0，
+违规与绕过计数为 0；offline TUI 和真实 DeepSeek live 短流/取消/下一轮/退出门禁通过；
+`git diff --check` 通过，仅有 Windows 行尾提示。
+
+清理状态：清理前 `D:\YunXi Agent\target` 有 10,503 项、文件合计
+3,133,098,236 字节；`cargo clean` 移除 9,593 个文件、2.9 GiB。最终 `target`、
+CLI `.yunxi` 与本次隔离 smoke 目录均不存在。
+
+提交与推送边界：本记录随单一 `2.0.2-hotfix.1` 发布提交入库；随后立即创建
+annotated `v2.0.2-hotfix.1` tag，并 non-force 推送 `master` 与新 tag。最终 commit、
+tag object、远程 refs 与 API key 推送结果记录在 Git 历史和桌面最终开发日志中。
+旧 `v2.0.2` tag 全程保持不变。候选发布不等于正式审核通过。
+
+署名：开发者

@@ -35,6 +35,12 @@ pub struct YunxiTui {
     _guard: TerminalGuard,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TuiTickAction {
+    None,
+    CancelCurrentTurn,
+}
+
 impl YunxiTui {
     pub fn enter() -> Result<Self> {
         let guard = TerminalGuard::enter()?;
@@ -100,9 +106,10 @@ impl YunxiTui {
         self.request_draw_now()
     }
 
-    pub fn tick(&mut self) -> Result<()> {
-        self.drain_navigation_events()?;
-        self.flush_frame(Instant::now())
+    pub fn tick(&mut self) -> Result<TuiTickAction> {
+        let action = self.drain_turn_events()?;
+        self.flush_frame(Instant::now())?;
+        Ok(action)
     }
 
     pub fn flush(&mut self) -> Result<()> {
@@ -228,16 +235,21 @@ impl YunxiTui {
         Ok(())
     }
 
-    fn drain_navigation_events(&mut self) -> Result<()> {
+    fn drain_turn_events(&mut self) -> Result<TuiTickAction> {
         let mut changed = false;
+        let mut action = TuiTickAction::None;
         while poll(Duration::ZERO)? {
             let event = read()?;
+            if is_ctrl_c_event(&event) {
+                action = TuiTickAction::CancelCurrentTurn;
+                continue;
+            }
             changed |= self.handle_navigation_event(&event)?;
         }
         if changed {
             self.frame.force();
         }
-        Ok(())
+        Ok(action)
     }
 
     fn handle_navigation_event(&mut self, event: &Event) -> Result<bool> {
@@ -409,6 +421,16 @@ fn is_ctrl_d(key: KeyEvent) -> bool {
         && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+fn is_ctrl_c_event(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(key)
+            if key.kind == KeyEventKind::Press
+                && key.code == KeyCode::Char('c')
+                && key.modifiers.contains(KeyModifiers::CONTROL)
+    )
+}
+
 struct TerminalGuard;
 
 impl TerminalGuard {
@@ -471,6 +493,17 @@ mod tests {
             .visible_height,
             1
         );
+    }
+
+    #[test]
+    fn raw_mode_ctrl_c_is_classified_as_turn_cancellation() {
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+
+        assert!(is_ctrl_c_event(&event));
+        assert!(!is_ctrl_c_event(&Event::Key(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::NONE,
+        ))));
     }
 
     #[test]

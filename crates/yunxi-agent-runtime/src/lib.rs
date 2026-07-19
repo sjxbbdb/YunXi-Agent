@@ -23,10 +23,11 @@ use yunxi_agent_context::{
 };
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
-    AgentMessageStream, AgentMessageStreamPhase, AgentResult, AgentRunApprovalDecision,
-    AgentRunControl, AgentRunResult, AgentRunStatus, CommandStatus, CompanionHistoryRecord,
-    ControlScope, ControlScopeSnapshot, ControlSnapshot, ControlSource, FileChangeKind,
-    MemoryExtractionMode, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata, TurnRuntimeState,
+    AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase, AgentResult,
+    AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus, CommandStatus,
+    CompanionHistoryRecord, ControlScope, ControlScopeSnapshot, ControlSnapshot, ControlSource,
+    FileChangeKind, MemoryExtractionMode, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata,
+    TurnRuntimeState,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_multi_agent::{
@@ -41,8 +42,8 @@ use yunxi_agent_persona::{
     yunxi_companion_strong,
 };
 use yunxi_agent_protocol::{
-    ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
-    TurnId,
+    ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent,
+    StreamEventMetadata, StreamEventSequence, ThreadId, ToolCall, TurnId,
 };
 use yunxi_agent_provider::{
     AgentProvider, ProviderBootstrap, ProviderConfig, ProviderFeatureMatrix, ProviderMessage,
@@ -1020,9 +1021,9 @@ impl YunXiRuntimeBackend {
                 sink: &sink,
                 mapper: ProtocolStreamEventMapper::for_attempt(turn_index),
             };
-            let provider_stream = match self
-                .provider
-                .stream_with_sink(
+            let cancellation = control.cancellation_token();
+            let provider_stream_result = {
+                let provider_stream_future = self.provider.stream_with_sink(
                     ProviderRequest::with_messages(
                         runtime_config.clone(),
                         AgentInput::text(prompt),
@@ -1031,9 +1032,16 @@ impl YunXiRuntimeBackend {
                     ThreadId(thread_id.clone()),
                     TurnId(turn_id.clone()),
                     Some(&mut provider_event_sink),
-                )
-                .await
-            {
+                );
+                tokio::pin!(provider_stream_future);
+                tokio::select! {
+                    result = &mut provider_stream_future => result,
+                    _ = cancellation.cancelled() => {
+                        return cancelled_turn_result(&sink, "current turn cancelled").await;
+                    }
+                }
+            };
+            let provider_stream = match provider_stream_result {
                 Ok(stream) => stream,
                 Err(error) => {
                     turn_driver
@@ -3156,7 +3164,7 @@ pub fn protocol_stream_events_to_agent_events(
 
 #[derive(Default)]
 struct ProtocolStreamEventMapper {
-    next_source_sequence: u64,
+    next_fallback_sequence: u64,
     response_generation: u64,
     last_message_stream: Option<AgentMessageStream>,
 }
@@ -3164,7 +3172,7 @@ struct ProtocolStreamEventMapper {
 impl ProtocolStreamEventMapper {
     fn for_attempt(attempt: usize) -> Self {
         Self {
-            next_source_sequence: 0,
+            next_fallback_sequence: 0,
             response_generation: u64::try_from(attempt).unwrap_or(u64::MAX),
             last_message_stream: None,
         }
@@ -3209,6 +3217,7 @@ impl ProtocolStreamEventMapper {
             yunxi_agent_protocol::StreamEvent::ItemDelta {
                 thread_id,
                 turn_id,
+                metadata,
                 delta,
             } => match delta {
                 yunxi_agent_protocol::ResponseItemDelta::MessageContent { item_id, delta } => {
@@ -3222,6 +3231,7 @@ impl ProtocolStreamEventMapper {
                                     .clone()
                                     .unwrap_or_else(|| self.fallback_assistant_stream_id(turn_id)),
                                 AgentMessageStreamPhase::Delta,
+                                metadata.as_ref(),
                             ),
                         ),
                     });
@@ -3317,7 +3327,20 @@ impl ProtocolStreamEventMapper {
         phase: AgentMessageStreamPhase,
     ) -> Option<AgentMessageStream> {
         self.response_item_stream_id(item, turn_id)
-            .map(|stream_id| self.message_stream(thread_id, turn_id, stream_id, phase))
+            .map(|stream_id| {
+                let event_id = format!(
+                    "fallback:{}:{}:{}:{:?}",
+                    thread_id.0, turn_id.0, stream_id, phase
+                );
+                self.message_stream_with_fallback_id(
+                    thread_id,
+                    turn_id,
+                    stream_id,
+                    phase,
+                    None,
+                    Some(event_id),
+                )
+            })
     }
 
     fn message_stream(
@@ -3326,13 +3349,52 @@ impl ProtocolStreamEventMapper {
         turn_id: &TurnId,
         stream_id: String,
         phase: AgentMessageStreamPhase,
+        metadata: Option<&StreamEventMetadata>,
     ) -> AgentMessageStream {
-        self.next_source_sequence = self.next_source_sequence.saturating_add(1);
+        self.message_stream_with_fallback_id(thread_id, turn_id, stream_id, phase, metadata, None)
+    }
+
+    fn message_stream_with_fallback_id(
+        &mut self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        stream_id: String,
+        phase: AgentMessageStreamPhase,
+        metadata: Option<&StreamEventMetadata>,
+        stable_fallback_event_id: Option<String>,
+    ) -> AgentMessageStream {
+        let (event_id, source_sequence) = match metadata {
+            Some(metadata) => (
+                metadata.event_id.clone(),
+                match metadata.sequence {
+                    StreamEventSequence::ProviderReliable(value) => {
+                        AgentMessageSequence::ProviderReliable(value)
+                    }
+                    StreamEventSequence::LocalFallback(value) => {
+                        AgentMessageSequence::LocalFallback(value)
+                    }
+                },
+            ),
+            None => {
+                self.next_fallback_sequence = self.next_fallback_sequence.saturating_add(1);
+                let sequence = self.next_fallback_sequence;
+                (
+                    stable_fallback_event_id.unwrap_or_else(|| {
+                        format!(
+                            "fallback:{}:{}:{}:{:?}:{}",
+                            thread_id.0, turn_id.0, stream_id, phase, sequence
+                        )
+                    }),
+                    AgentMessageSequence::LocalFallback(sequence),
+                )
+            }
+        };
         let stream = AgentMessageStream {
             thread_id: thread_id.0.clone(),
             turn_id: turn_id.0.clone(),
             stream_id,
-            source_sequence: self.next_source_sequence,
+            event_id,
+            source_sequence,
             phase,
         };
         self.last_message_stream = Some(stream.clone());
@@ -3362,10 +3424,17 @@ impl ProtocolStreamEventMapper {
         format!("{}:assistant:{}", turn_id.0, self.response_generation)
     }
 
-    fn final_message_identity(&self) -> Option<AgentMessageStream> {
+    fn final_message_identity(&mut self) -> Option<AgentMessageStream> {
         self.last_message_stream.clone().map(|mut stream| {
-            stream.source_sequence = stream.source_sequence.saturating_add(1);
+            self.next_fallback_sequence = self.next_fallback_sequence.saturating_add(1);
+            stream.event_id = format!(
+                "fallback:{}:{}:{}:synthetic-final:{}",
+                stream.thread_id, stream.turn_id, stream.stream_id, self.next_fallback_sequence
+            );
+            stream.source_sequence =
+                AgentMessageSequence::LocalFallback(self.next_fallback_sequence);
             stream.phase = AgentMessageStreamPhase::Final;
+            self.last_message_stream = Some(stream.clone());
             stream
         })
     }

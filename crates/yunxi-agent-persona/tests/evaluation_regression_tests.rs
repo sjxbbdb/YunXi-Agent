@@ -14,7 +14,7 @@ fn evaluation_persona_consistency_regression_is_automatic() {
         &[],
     );
     assert_eq!(profile.id, "yunxi_companion_strong");
-    assert_eq!(profile.version, "2.0.2");
+    assert_eq!(profile.version, "2.0.2-hotfix.1");
     assert!(context.content.contains("context_not_instruction"));
     assert!(profile.layers.boundaries.contains("AGENTS.md"));
 }

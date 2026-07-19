@@ -1,6 +1,6 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.2 keeps the v2.0.1 presentation boundary and adds a structured
+YunXi Agent v2.0.2-hotfix.1 keeps the v2.0.1 presentation boundary and adds a structured
 streaming timeline between presentation and transcript storage.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
 maps them into user-facing cells.
@@ -13,7 +13,7 @@ The data path is:
 AgentEvent
   -> TuiPresentation::present_agent_event
   -> TuiEvent { kind, safe text, optional detail, stream identity }
-  -> TimelineStore { turn, stream session, source sequence, canonical cell }
+  -> TimelineStore { event ID, sequence source, active session, canonical cell }
   -> pure visibility filter
   -> Transcript / HistoryCell
   -> renderer
@@ -53,13 +53,18 @@ detail IDs are reused instead of creating protocol-noise cells.
 ## Streaming
 
 Provider-backed `AgentEvent::Message` values carry non-serialized thread ID,
-turn ID, stream/message ID, source sequence, and started/delta/final phase.
-Legacy producers receive a TUI-local turn and stream identity. This metadata is
-not part of the JSON or JSONL wire shape.
+turn ID, stream/message ID, stable event ID, sequence source, and phase.
+`ProviderReliable(n)` means the provider supplied an authoritative sequence;
+`LocalFallback(n)` is explicitly a local identity component and is never treated
+as provider ordering. Legacy producers receive fallback identity. This metadata
+is not part of the AgentEvent JSON or JSONL wire shape.
 
 `timeline_store.rs` owns `StreamSession`. Each session contains its canonical
-cell ID, last accepted source sequence, state, accumulated content, and
-`MarkdownStreamController`. The transitions are:
+cell ID, last accepted reliable sequence, state, active content, and
+`MarkdownStreamController`. Event IDs are recorded in a bounded seen set before
+state application. A repeated event ID is ignored and increments the duplicate
+debug counter. Only reliable provider sequences can reject a late event.
+The transitions are:
 
 - started/delta: insert or update the active canonical cell;
 - retry: reset partial content while reusing the active turn cell;
@@ -67,19 +72,37 @@ cell ID, last accepted source sequence, state, accumulated content, and
 - cancel: freeze the active cell and reject late events for that session;
 - finish: commit an active delta-only provider response at the turn boundary.
 
-Idempotency depends on turn, stream, sequence, and state, never on payload text.
-A repeated final cannot create a second cell, while equal deltas with increasing
-sequences are appended as legitimate content. A new stream after cancellation
-receives a different cell so retry cannot bind to the frozen response.
+Final and cancel remove the full session, including content and collector buffer,
+from the active map. The store retains only bounded minimal archive metadata for
+canonical-cell continuity and rejects late events for archived stream keys. A
+new stream after cancellation receives a different cell so retry cannot bind to
+the frozen response. Equal text with distinct event IDs remains legitimate.
+
+`MarkdownStreamController` separates stable source from the live tail. It
+commits complete lines and paragraphs, holds open fenced code blocks until the
+matching fence closes, and otherwise commits only through a safe grapheme
+boundary while retaining the last grapheme for possible cross-delta joining.
+Final drain preserves the exact source without inserting a newline.
 
 Viewport state remains independent of stream state. Updating or finalizing a
 cell calls `on_content_changed`, which marks new output below when the user is
 reviewing history but preserves the offset instead of forcing follow-tail.
 
-## Unchanged Interfaces
+## Active-Turn Cancellation
+
+Raw-mode terminal input does not reach the process-level Ctrl+C signal handler,
+so `YunxiTui::tick` polls crossterm events and returns
+`CancelCurrentTurn` for Ctrl+C during the active render loop. The CLI invokes
+`AgentRunControl::cancel`; the runtime races the provider stream future against
+the cancellation notification and drops the provider future immediately when
+cancelled. `Cancelled` freezes the current assistant cell as inactive, and the
+REPL remains available for the next prompt. Ctrl+C outside an active turn keeps
+the existing exit behavior.
+
+## Compatibility
 
 This boundary applies only to TUI presentation/storage. Core stream identity is
-serde-skipped and does not alter plain CLI, JSON, or JSONL output. Approval,
-user-input, cancel channels, tick, flush, resize, follow-tail, and bottom-pane
-behavior retain their existing owners and contracts. The CLI TUI renderer only
-forwards events; it does not deduplicate text.
+serde-skipped and does not alter plain CLI, JSON, or JSONL AgentEvent output.
+Approval, user-input, resize, follow-tail, and bottom-pane owners remain intact.
+The CLI TUI renderer forwards events and cancellation actions; it does not
+deduplicate text.

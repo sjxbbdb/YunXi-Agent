@@ -1,33 +1,46 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.2
+## Current Workspace Version: v2.0.2-hotfix.1
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
 
-## YunXi Agent v2.0.2 Streaming Timeline And Message Idempotency
+## v2.0.2-hotfix.1 Streaming Audit Remediation Candidate
 
-Provider stream messages now carry TUI-only structured identity from
-`yunxi-agent-runtime`: thread ID, turn ID, stream/message ID, source sequence,
-and started/delta/final phase. The metadata is skipped by serde, so the existing
-plain, JSON, and JSONL event contracts remain unchanged.
+This is the explicitly selected hotfix re-audit candidate for the new annotated
+`v2.0.2-hotfix.1` tag. The published annotated `v2.0.2` tag remains unchanged.
+Provider stream messages now carry TUI-only structured
+identity from `yunxi-agent-runtime`: thread ID, turn ID, stream/message ID,
+stable event ID, explicit provider-reliable/local-fallback sequence, and phase.
+The core message identity remains skipped by serde, so existing AgentEvent JSON
+and JSONL contracts remain unchanged.
 
 `crates/yunxi-agent-tui/src/timeline_store.rs` owns the stream lifecycle and the
 mapping from a stream session to its canonical `TuiCellId`. Its state machine
-handles delta, retry, final, finish, and cancel. Final replaces the active
-canonical cell, duplicate or late events are rejected by stream state and
-sequence, and equal payloads with newer sequences remain valid. The
-`MarkdownStreamController` is scoped to each stream session rather than the
-presentation layer.
+handles delta, retry, final, finish, and cancel. Event IDs are the idempotency
+key; only provider-reliable sequences participate in late-event rejection, and
+distinct local-fallback events are accepted regardless of local numeric arrival
+order. Duplicate event IDs increment a bounded diagnostic counter. Final and
+cancel remove full content/controllers from the active map and retain at most
+256 minimal archive records; seen event IDs are also bounded.
+
+`MarkdownStreamController` is scoped to each active session and commits complete
+lines, paragraph boundaries, closed Markdown fences, or safe Unicode grapheme
+boundaries. Emoji ZWJ, combining marks, CJK, kana, fences, repeated payloads,
+and long tokens have state-level exactness coverage.
 
 `presentation.rs` supplies identity and visibility, `chat.rs` applies explicit
-assistant timeline updates, and the host bridge still only forwards runtime
-events. Provider-shaped integration coverage proves that one user turn plus a
-delta/final response leaves exactly one assistant cell. Additional regressions
-cover retry, cancel, repeated final, legal repeated payloads, CJK, Japanese
-kana, Emoji ZWJ, Markdown fences, long tokens, and a final update while the
-viewport is in history mode.
+assistant timeline updates, and the raw TUI host now classifies Ctrl+C during an
+active turn. The CLI cancels the shared run token, while the runtime selects
+between provider completion and cancellation so the in-flight provider future
+is dropped immediately. Automated coverage proves partial text is preserved,
+late deltas cannot rebind a cancelled session, and the next user input is
+accepted. Offline TUI, workspace tests, release build, and Evaluation Harness
+pass. An authorized isolated DeepSeek live TUI run returned one canonical
+`LIVE_OK` cell, cancelled an active long stream while retaining partial text,
+accepted a following prompt, and returned `NEXT_OK`. Formal independent re-audit
+remains pending after the candidate is published.
 
 ## YunXi Agent v2.0.1 Quiet TUI Presentation
 

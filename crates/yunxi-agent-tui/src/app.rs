@@ -31,7 +31,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.2".to_string(),
+            version: "v2.0.2-hotfix.1".to_string(),
             banner: None,
             presentation: TuiPresentation::default(),
             timeline: TimelineStore::default(),
@@ -78,6 +78,13 @@ impl YunxiTuiApp {
     }
 
     pub(crate) fn footer_for_width(&self, width: usize) -> String {
+        if self.timeline.has_active_sessions() {
+            return if width < 56 {
+                "streaming | Ctrl+C cancel".to_string()
+            } else {
+                "streaming current turn | Ctrl+C cancel | history scroll available".to_string()
+            };
+        }
         match self.viewport.scroll_status() {
             "new output below" => fit_line(
                 &[
@@ -159,7 +166,11 @@ impl YunxiTuiApp {
             Some(banner) => {
                 let cells = format!("cells={}", self.transcript.cells().len());
                 let view = self.viewport.scroll_status();
-                let debug = compact_debug_status(&self.transcript.debug_status());
+                let mut debug = compact_debug_status(&self.transcript.debug_status());
+                let duplicate_events = self.timeline.duplicate_event_count();
+                if duplicate_events > 0 {
+                    debug.push_str(&format!("/stream-dupes={duplicate_events}"));
+                }
                 if width < 64 {
                     let provider = format!("provider={}", truncate_end(&banner.provider, 18));
                     return fit_line(&[&provider, view, &cells, &debug], width);
@@ -215,6 +226,7 @@ impl YunxiTuiApp {
     }
 
     pub(crate) fn push_agent_event(&mut self, event: &AgentEvent) {
+        let cancelled = matches!(event, AgentEvent::Cancelled { .. });
         let terminal = matches!(
             event,
             AgentEvent::Completed { .. }
@@ -226,7 +238,12 @@ impl YunxiTuiApp {
         self.push_tui_event(event);
         if terminal {
             let mut changed = false;
-            for update in self.timeline.finish_active() {
+            let updates = if cancelled {
+                self.timeline.cancel_active()
+            } else {
+                self.timeline.finish_active()
+            };
+            for update in updates {
                 changed |= self.transcript.apply_assistant_update(update);
             }
             if changed {
@@ -437,7 +454,8 @@ mod tests {
     use super::*;
     use crate::chat::HistoryCellKind;
     use yunxi_agent_core::{
-        AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus, TokenUsage,
+        AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus,
+        TokenUsage,
     };
 
     fn banner() -> YunxiTuiBanner {
@@ -458,7 +476,8 @@ mod tests {
                 thread_id: "thread-live".to_string(),
                 turn_id: "turn-live".to_string(),
                 stream_id: "message-live".to_string(),
-                source_sequence: sequence,
+                event_id: format!("fallback:app-test:{sequence}"),
+                source_sequence: AgentMessageSequence::LocalFallback(sequence),
                 phase,
             }),
         }
@@ -476,7 +495,7 @@ mod tests {
         assert!(display_width(&header) <= 58);
         assert!(display_width(&subheader) <= 58);
         assert!(display_width(&footer) <= 58);
-        assert!(header.contains("YunXi v2.0.2"));
+        assert!(header.contains("YunXi v2.0.2-hotfix.1"));
         assert!(header.contains("offline"));
         assert!(header.contains("static"));
         assert!(subheader.contains("provider=static"));
@@ -493,7 +512,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.2"));
+        assert!(header.contains("YunXi Agent v2.0.2-hotfix.1"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));
@@ -569,5 +588,32 @@ mod tests {
 
         assert_eq!(app.viewport().view_start(30, 10), before);
         assert_eq!(app.viewport().scroll_status(), "new output below");
+    }
+
+    #[test]
+    fn cancellation_freezes_partial_assistant_cell_and_accepts_next_input() {
+        let mut app = YunxiTuiApp::default();
+        app.push_user("first prompt");
+        app.push_agent_event(&assistant_event(
+            "partial 中文 👨‍👩‍👧‍👦",
+            1,
+            AgentMessageStreamPhase::Delta,
+        ));
+
+        app.push_agent_event(&AgentEvent::Cancelled {
+            reason: Some("current turn cancelled".to_string()),
+        });
+        app.push_user("next prompt");
+
+        assert!(app.transcript().cells().iter().any(|cell| matches!(
+            cell.kind(),
+            HistoryCellKind::Assistant { content, active }
+                if content == "partial 中文 👨‍👩‍👧‍👦" && !active
+        )));
+        assert!(app.transcript().cells().iter().any(|cell| matches!(
+            cell.kind(),
+            HistoryCellKind::User(content) if content == "next prompt"
+        )));
+        assert!(!app.timeline.has_active_sessions());
     }
 }

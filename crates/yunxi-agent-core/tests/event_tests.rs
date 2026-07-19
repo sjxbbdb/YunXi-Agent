@@ -1,6 +1,6 @@
 use yunxi_agent_core::{
-    AgentEvent, AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus, CommandStatus,
-    FileChangeKind, McpToolStatus, PatchStatus, TodoStatus, TokenUsage,
+    AgentEvent, AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus,
+    CommandStatus, FileChangeKind, McpToolStatus, PatchStatus, TodoStatus, TokenUsage,
 };
 
 #[test]
@@ -11,7 +11,8 @@ fn message_stream_identity_does_not_change_json_contract() {
             thread_id: "thread-1".to_string(),
             turn_id: "turn-1".to_string(),
             stream_id: "message-1".to_string(),
-            source_sequence: 7,
+            event_id: "provider-event-7".to_string(),
+            source_sequence: AgentMessageSequence::ProviderReliable(7),
             phase: AgentMessageStreamPhase::Delta,
         }),
     };

@@ -1,5 +1,7 @@
 use crate::input::InteractiveInput;
-use crate::render::{InteractiveBanner, InteractiveRenderer, RenderState};
+use crate::render::{
+    InteractiveBanner, InteractiveRenderAction, InteractiveRenderer, RenderState,
+};
 use anyhow::Result;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -8,7 +10,9 @@ use yunxi_agent_core::{
     AgentRunUserInputResponse,
     ControlSnapshot,
 };
-use yunxi_agent_tui::{ApprovalRequestView, UserInputRequestView, YunxiTui, YunxiTuiBanner};
+use yunxi_agent_tui::{
+    ApprovalRequestView, TuiTickAction, UserInputRequestView, YunxiTui, YunxiTuiBanner,
+};
 
 #[derive(Clone)]
 pub(crate) struct TuiHandle {
@@ -145,8 +149,13 @@ impl InteractiveRenderer for TuiInteractiveRenderer {
         Ok(())
     }
 
-    fn tick(&mut self) -> Result<()> {
-        self.handle.with_mut(YunxiTui::tick)
+    fn tick(&mut self) -> Result<InteractiveRenderAction> {
+        self.handle.with_mut(|tui| {
+            Ok(match tui.tick()? {
+                TuiTickAction::None => InteractiveRenderAction::None,
+                TuiTickAction::CancelCurrentTurn => InteractiveRenderAction::CancelCurrentTurn,
+            })
+        })
     }
 
     fn flush(&mut self) -> Result<()> {

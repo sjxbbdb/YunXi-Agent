@@ -290,12 +290,31 @@ pub enum AgentMessageStreamPhase {
     Final,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentMessageSequence {
+    ProviderReliable(u64),
+    LocalFallback(u64),
+}
+
+impl AgentMessageSequence {
+    pub fn value(self) -> u64 {
+        match self {
+            Self::ProviderReliable(value) | Self::LocalFallback(value) => value,
+        }
+    }
+
+    pub fn is_provider_reliable(self) -> bool {
+        matches!(self, Self::ProviderReliable(_))
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentMessageStream {
     pub thread_id: String,
     pub turn_id: String,
     pub stream_id: String,
-    pub source_sequence: u64,
+    pub event_id: String,
+    pub source_sequence: AgentMessageSequence,
     pub phase: AgentMessageStreamPhase,
 }
 

@@ -2,7 +2,8 @@ use crate::commands::{InteractiveCommand, help_text, parse_interactive_command};
 use crate::input::{InteractiveInput, PlainInput};
 use crate::provider_mode::{ProviderMode, ProviderSelection};
 use crate::render::{
-    InteractiveBanner, InteractiveRenderer, PlainInteractiveRenderer, RenderState,
+    InteractiveBanner, InteractiveRenderAction, InteractiveRenderer, PlainInteractiveRenderer,
+    RenderState,
 };
 use crate::terminal_mode::ResolvedTerminalMode;
 use crate::tui::{TuiHandle, TuiInput, TuiInteractiveRenderer};
@@ -634,7 +635,12 @@ impl InteractiveSession {
                     }
                 }
                 _ = ui_tick.tick() => {
-                    renderer.tick()?;
+                    if renderer.tick()? == InteractiveRenderAction::CancelCurrentTurn
+                        && let Some(control) = &control_slot
+                    {
+                        control.cancel();
+                        renderer.warning("[cancelled] cancellation requested")?;
+                    }
                 }
                 signal = tokio::signal::ctrl_c(), if control_slot.is_some() => {
                     match signal {

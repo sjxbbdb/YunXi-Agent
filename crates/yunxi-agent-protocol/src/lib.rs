@@ -308,6 +308,8 @@ pub enum StreamEvent {
     ItemDelta {
         thread_id: ThreadId,
         turn_id: TurnId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        metadata: Option<StreamEventMetadata>,
         delta: ResponseItemDelta,
     },
     ItemCompleted {
@@ -330,6 +332,19 @@ pub enum StreamEvent {
         turn_id: TurnId,
         message: String,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StreamEventMetadata {
+    pub event_id: String,
+    pub sequence: StreamEventSequence,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "source", content = "value", rename_all = "snake_case")]
+pub enum StreamEventSequence {
+    ProviderReliable(u64),
+    LocalFallback(u64),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -739,6 +754,10 @@ mod tests {
         let stream = StreamEvent::ItemDelta {
             thread_id: ThreadId("thread-stream".to_string()),
             turn_id: TurnId("turn-stream".to_string()),
+            metadata: Some(StreamEventMetadata {
+                event_id: "provider:event-7".to_string(),
+                sequence: StreamEventSequence::ProviderReliable(7),
+            }),
             delta: ResponseItemDelta::MessageContent {
                 item_id: Some("message-1".to_string()),
                 delta: "hello".to_string(),

@@ -7,8 +7,9 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime};
 use yunxi_agent_core::{AgentConfig, AgentError, AgentInput, AgentResult, TokenUsage};
 use yunxi_agent_protocol::{
-    ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall,
-    ToolCallStatus, TurnId, response_text_delta,
+    ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent,
+    StreamEventMetadata, StreamEventSequence, ThreadId, ToolCall, ToolCallStatus, TurnId,
+    response_text_delta,
 };
 use yunxi_agent_tools::workspace_tool_registry;
 
@@ -402,6 +403,7 @@ pub struct OpenAiStreamAccumulator {
     turn_id: TurnId,
     events: Vec<StreamEvent>,
     chat_tool_calls: BTreeMap<usize, ChatToolCallDelta>,
+    next_local_event_sequence: u64,
     completed: bool,
 }
 
@@ -419,6 +421,7 @@ impl OpenAiStreamAccumulator {
             turn_id,
             events,
             chat_tool_calls: BTreeMap::new(),
+            next_local_event_sequence: 0,
             completed: false,
         }
     }
@@ -438,6 +441,7 @@ impl OpenAiStreamAccumulator {
                     &value,
                     &mut self.events,
                     &mut self.chat_tool_calls,
+                    &mut self.next_local_event_sequence,
                 );
                 if self.events[before..]
                     .iter()
@@ -2351,9 +2355,17 @@ fn parse_stream_value(
     value: &Value,
     events: &mut Vec<StreamEvent>,
     chat_tool_calls: &mut BTreeMap<usize, ChatToolCallDelta>,
+    next_local_event_sequence: &mut u64,
 ) {
     if let Some(event_type) = value.get("type").and_then(Value::as_str) {
-        parse_responses_api_stream_value(thread_id, turn_id, event_type, value, events);
+        parse_responses_api_stream_value(
+            thread_id,
+            turn_id,
+            event_type,
+            value,
+            events,
+            next_local_event_sequence,
+        );
         return;
     }
 
@@ -2365,20 +2377,29 @@ fn parse_stream_value(
         return;
     };
     if let Some(delta) = choice.pointer("/delta/content").and_then(Value::as_str) {
-        push_delta(thread_id, turn_id, response_text_delta(delta), events);
+        push_local_delta(
+            thread_id,
+            turn_id,
+            "chat.message.delta",
+            response_text_delta(delta),
+            events,
+            next_local_event_sequence,
+        );
     }
     if let Some(delta) = choice
         .pointer("/delta/reasoning_content")
         .and_then(Value::as_str)
     {
-        push_delta(
+        push_local_delta(
             thread_id,
             turn_id,
+            "chat.reasoning.delta",
             ResponseItemDelta::ReasoningContent {
                 item_id: None,
                 delta: delta.to_string(),
             },
             events,
+            next_local_event_sequence,
         );
     }
     if let Some(tool_calls) = choice
@@ -2397,14 +2418,16 @@ fn parse_stream_value(
             }
             if let Some(name) = tool_call.pointer("/function/name").and_then(Value::as_str) {
                 accumulator.name = Some(name.to_string());
-                push_delta(
+                push_local_delta(
                     thread_id,
                     turn_id,
+                    "chat.tool_name.delta",
                     ResponseItemDelta::ToolCallName {
                         call_id: accumulator.id.clone(),
                         name: name.to_string(),
                     },
                     events,
+                    next_local_event_sequence,
                 );
             }
             let call_id = accumulator.id.clone().or_else(|| {
@@ -2418,14 +2441,16 @@ fn parse_stream_value(
                 .and_then(Value::as_str)
             {
                 accumulator.arguments.push_str(delta);
-                push_delta(
+                push_local_delta(
                     thread_id,
                     turn_id,
+                    "chat.tool_arguments.delta",
                     ResponseItemDelta::ToolCallArguments {
                         call_id,
                         delta: delta.to_string(),
                     },
                     events,
+                    next_local_event_sequence,
                 );
             }
         }
@@ -2498,11 +2523,30 @@ fn parse_responses_api_stream_value(
     event_type: &str,
     value: &Value,
     events: &mut Vec<StreamEvent>,
+    next_local_event_sequence: &mut u64,
 ) {
     match event_type {
         "response.output_text.delta" | "response.refusal.delta" => {
             if let Some(delta) = value.get("delta").and_then(Value::as_str) {
-                push_delta(thread_id, turn_id, response_text_delta(delta), events);
+                push_delta(
+                    thread_id,
+                    turn_id,
+                    ResponseItemDelta::MessageContent {
+                        item_id: value
+                            .get("item_id")
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string),
+                        delta: delta.to_string(),
+                    },
+                    provider_or_fallback_metadata(
+                        thread_id,
+                        turn_id,
+                        event_type,
+                        value,
+                        next_local_event_sequence,
+                    ),
+                    events,
+                );
             }
         }
         "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
@@ -2517,6 +2561,13 @@ fn parse_responses_api_stream_value(
                             .map(ToString::to_string),
                         delta: delta.to_string(),
                     },
+                    provider_or_fallback_metadata(
+                        thread_id,
+                        turn_id,
+                        event_type,
+                        value,
+                        next_local_event_sequence,
+                    ),
                     events,
                 );
             }
@@ -2533,6 +2584,13 @@ fn parse_responses_api_stream_value(
                             .map(ToString::to_string),
                         delta: delta.to_string(),
                     },
+                    provider_or_fallback_metadata(
+                        thread_id,
+                        turn_id,
+                        event_type,
+                        value,
+                        next_local_event_sequence,
+                    ),
                     events,
                 );
             }
@@ -2562,6 +2620,13 @@ fn parse_responses_api_stream_value(
                     .map(ToString::to_string),
                 status: ToolCallStatus::Completed,
             },
+            provider_or_fallback_metadata(
+                thread_id,
+                turn_id,
+                event_type,
+                value,
+                next_local_event_sequence,
+            ),
             events,
         ),
         "response.output_item.added" | "response.output_item.done" => {
@@ -2695,13 +2760,74 @@ fn push_delta(
     thread_id: &ThreadId,
     turn_id: &TurnId,
     delta: ResponseItemDelta,
+    metadata: StreamEventMetadata,
     events: &mut Vec<StreamEvent>,
 ) {
     events.push(StreamEvent::ItemDelta {
         thread_id: thread_id.clone(),
         turn_id: turn_id.clone(),
+        metadata: Some(metadata),
         delta,
     });
+}
+
+fn push_local_delta(
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    event_type: &str,
+    delta: ResponseItemDelta,
+    events: &mut Vec<StreamEvent>,
+    next_local_event_sequence: &mut u64,
+) {
+    *next_local_event_sequence = next_local_event_sequence.saturating_add(1);
+    let sequence = *next_local_event_sequence;
+    push_delta(
+        thread_id,
+        turn_id,
+        delta,
+        StreamEventMetadata {
+            event_id: format!(
+                "fallback:{}:{}:{}:{}",
+                thread_id.0, turn_id.0, event_type, sequence
+            ),
+            sequence: StreamEventSequence::LocalFallback(sequence),
+        },
+        events,
+    );
+}
+
+fn provider_or_fallback_metadata(
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    event_type: &str,
+    value: &Value,
+    next_local_event_sequence: &mut u64,
+) -> StreamEventMetadata {
+    if let Some(sequence) = value.get("sequence_number").and_then(Value::as_u64) {
+        let provider_id = value
+            .get("event_id")
+            .and_then(Value::as_str)
+            .or_else(|| value.get("id").and_then(Value::as_str))
+            .or_else(|| value.pointer("/response/id").and_then(Value::as_str))
+            .unwrap_or("event");
+        return StreamEventMetadata {
+            event_id: format!(
+                "provider:{}:{}:{}:{}:{}",
+                thread_id.0, turn_id.0, provider_id, event_type, sequence
+            ),
+            sequence: StreamEventSequence::ProviderReliable(sequence),
+        };
+    }
+
+    *next_local_event_sequence = next_local_event_sequence.saturating_add(1);
+    let sequence = *next_local_event_sequence;
+    StreamEventMetadata {
+        event_id: format!(
+            "fallback:{}:{}:{}:{}",
+            thread_id.0, turn_id.0, event_type, sequence
+        ),
+        sequence: StreamEventSequence::LocalFallback(sequence),
+    }
 }
 
 fn parse_openai_tool_call(

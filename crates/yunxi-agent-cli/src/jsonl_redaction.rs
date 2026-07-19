@@ -686,10 +686,12 @@ fn redact_stream_event(event: StreamEvent) -> StreamEvent {
         StreamEvent::ItemDelta {
             thread_id,
             turn_id,
+            metadata,
             delta,
         } => StreamEvent::ItemDelta {
             thread_id,
             turn_id,
+            metadata,
             delta: redact_response_delta(delta),
         },
         StreamEvent::ItemCompleted {

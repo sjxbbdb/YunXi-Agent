@@ -59,7 +59,13 @@ impl MarkdownStreamCollector {
     }
 
     pub fn commit_complete_source(&mut self) -> Option<String> {
-        let commit_end = self.buffer.rfind('\n').map(|idx| idx + 1)?;
+        let uncommitted = &self.buffer[self.committed_source_len..];
+        let commit_offset = match markdown_boundary(uncommitted) {
+            MarkdownBoundary::Commit(offset) => Some(offset),
+            MarkdownBoundary::OpenFence => None,
+            MarkdownBoundary::None => safe_grapheme_commit_end(uncommitted),
+        }?;
+        let commit_end = self.committed_source_len.saturating_add(commit_offset);
         if commit_end <= self.committed_source_len {
             return None;
         }
@@ -77,10 +83,7 @@ impl MarkdownStreamCollector {
             self.clear();
             return String::new();
         }
-        let mut out = self.buffer[self.committed_source_len..].to_string();
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
+        let out = self.buffer[self.committed_source_len..].to_string();
         self.clear();
         out
     }
@@ -89,6 +92,87 @@ impl MarkdownStreamCollector {
         self.buffer.clear();
         self.committed_source_len = 0;
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MarkdownBoundary {
+    Commit(usize),
+    OpenFence,
+    None,
+}
+
+fn markdown_boundary(source: &str) -> MarkdownBoundary {
+    let mut offset = 0usize;
+    let mut last_safe = 0usize;
+    let mut fence_marker = None;
+
+    for line in source.split_inclusive('\n') {
+        offset = offset.saturating_add(line.len());
+        let trimmed = line.trim_start();
+        let marker = fence_line_marker(trimmed);
+        match (fence_marker, marker) {
+            (None, Some(marker)) => fence_marker = Some(marker),
+            (Some(open), Some(close)) if open == close => {
+                fence_marker = None;
+                last_safe = offset;
+            }
+            (None, None) if line.ends_with('\n') => last_safe = offset,
+            _ => {}
+        }
+    }
+
+    if last_safe > 0 {
+        MarkdownBoundary::Commit(last_safe)
+    } else if fence_marker.is_some() {
+        MarkdownBoundary::OpenFence
+    } else {
+        MarkdownBoundary::None
+    }
+}
+
+fn fence_line_marker(line: &str) -> Option<char> {
+    let marker = line.chars().next()?;
+    if !matches!(marker, '`' | '~') {
+        return None;
+    }
+    (line
+        .chars()
+        .take_while(|character| *character == marker)
+        .count()
+        >= 3)
+        .then_some(marker)
+}
+
+fn safe_grapheme_commit_end(source: &str) -> Option<usize> {
+    let mut starts = source
+        .grapheme_indices(true)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if starts.len() < 2 {
+        return None;
+    }
+    let mut commit_end = starts.pop().unwrap_or_default();
+    if let Some(marker_start) = trailing_partial_fence_start(source) {
+        commit_end = commit_end.min(marker_start);
+    }
+    (commit_end > 0).then_some(commit_end)
+}
+
+fn trailing_partial_fence_start(source: &str) -> Option<usize> {
+    let (last_index, marker) = source.char_indices().next_back()?;
+    if !matches!(marker, '`' | '~') {
+        return None;
+    }
+    let mut start = last_index;
+    let mut count = 1usize;
+    for (index, character) in source[..last_index].char_indices().rev() {
+        if character != marker {
+            break;
+        }
+        start = index;
+        count = count.saturating_add(1);
+    }
+    (count < 3).then_some(start)
 }
 
 #[cfg(test)]
@@ -154,14 +238,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn collector_commits_only_newline_boundaries() {
+    fn collector_commits_complete_lines_and_preserves_exact_tail() {
         let mut stream = MarkdownStreamCollector::default();
         stream.push_delta("hello");
-        assert_eq!(stream.commit_complete_source(), None);
+        assert_eq!(stream.commit_complete_source(), Some("hell".to_string()));
+        assert_eq!(stream.live_tail(), "o");
         stream.push_delta("\nworld");
-        assert_eq!(stream.commit_complete_source(), Some("hello\n".to_string()));
+        assert_eq!(stream.commit_complete_source(), Some("o\n".to_string()));
         assert_eq!(stream.live_tail(), "world");
-        assert_eq!(stream.finalize_and_drain_source(), "world\n");
+        assert_eq!(stream.finalize_and_drain_source(), "world");
     }
 
     #[test]
@@ -187,9 +272,9 @@ mod tests {
         assert_eq!(
             first,
             MarkdownStreamFrame {
-                stable_source: String::new(),
-                live_tail: "hello".to_string(),
-                committed: false,
+                stable_source: "hell".to_string(),
+                live_tail: "o".to_string(),
+                committed: true,
             }
         );
 
@@ -202,7 +287,7 @@ mod tests {
                 committed: true,
             }
         );
-        assert_eq!(controller.finalize(), Some("hello\nworld\n".to_string()));
+        assert_eq!(controller.finalize(), Some("hello\nworld".to_string()));
     }
 
     #[test]
@@ -210,13 +295,13 @@ mod tests {
         let mut controller = MarkdownStreamController::default();
         controller.push_delta("first response");
 
-        assert_eq!(controller.finalize(), Some("first response\n".to_string()));
+        assert_eq!(controller.finalize(), Some("first response".to_string()));
         assert_eq!(
             controller.push_delta("next response"),
             MarkdownStreamFrame {
-                stable_source: String::new(),
-                live_tail: "next response".to_string(),
-                committed: false,
+                stable_source: "next respons".to_string(),
+                live_tail: "e".to_string(),
+                committed: true,
             }
         );
     }
@@ -238,10 +323,68 @@ mod tests {
         let mut controller = MarkdownStreamController::default();
 
         let frame = controller.push_delta("ha");
-        assert_eq!(frame.live_tail, "ha");
+        assert_eq!(format!("{}{}", frame.stable_source, frame.live_tail), "ha");
         let frame = controller.push_delta("ha");
 
-        assert_eq!(frame.live_tail, "haha");
-        assert_eq!(controller.finalize(), Some("haha\n".to_string()));
+        assert_eq!(
+            format!("{}{}", frame.stable_source, frame.live_tail),
+            "haha"
+        );
+        assert_eq!(controller.finalize(), Some("haha".to_string()));
+    }
+
+    #[test]
+    fn paragraph_boundary_commits_before_the_next_paragraph() {
+        let mut controller = MarkdownStreamController::default();
+        let frame = controller.push_delta("first paragraph\n\nnext");
+
+        assert_eq!(frame.stable_source, "first paragraph\n\n");
+        assert_eq!(frame.live_tail, "next");
+        assert!(frame.committed);
+    }
+
+    #[test]
+    fn markdown_fence_commits_only_after_the_closing_fence() {
+        let mut controller = MarkdownStreamController::default();
+        let open = controller.push_delta("```rust\nfn ");
+        assert_eq!(open.stable_source, "");
+        assert_eq!(open.live_tail, "```rust\nfn ");
+        assert!(!open.committed);
+
+        let closed = controller.push_delta("main() {}\n```");
+        assert_eq!(closed.stable_source, "```rust\nfn main() {}\n```");
+        assert_eq!(closed.live_tail, "");
+        assert!(closed.committed);
+    }
+
+    #[test]
+    fn safe_grapheme_boundary_holds_emoji_zwj_and_combining_tail() {
+        let mut emoji = MarkdownStreamController::default();
+        let partial = emoji.push_delta("👩‍");
+        assert_eq!(partial.stable_source, "");
+        assert_eq!(partial.live_tail, "👩‍");
+        let joined = emoji.push_delta("💻x");
+        assert_eq!(joined.stable_source, "👩‍💻");
+        assert_eq!(joined.live_tail, "x");
+
+        let mut combining = MarkdownStreamController::default();
+        assert_eq!(combining.push_delta("e").live_tail, "e");
+        let joined = combining.push_delta("\u{301}x");
+        assert_eq!(joined.stable_source, "e\u{301}");
+        assert_eq!(joined.live_tail, "x");
+    }
+
+    #[test]
+    fn safe_grapheme_boundary_keeps_cjk_kana_and_partial_fence_exact() {
+        let mut controller = MarkdownStreamController::default();
+        let frame = controller.push_delta("中文かなカナx");
+        assert_eq!(frame.stable_source, "中文かなカナ");
+        assert_eq!(frame.live_tail, "x");
+
+        let mut fence = MarkdownStreamController::default();
+        let frame = fence.push_delta("``");
+        assert_eq!(frame.stable_source, "");
+        assert_eq!(frame.live_tail, "``");
     }
 }
+use unicode_segmentation::UnicodeSegmentation;

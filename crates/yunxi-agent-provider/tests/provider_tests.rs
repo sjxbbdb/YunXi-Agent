@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 use yunxi_agent_core::{AgentConfig, AgentError, AgentInput, AgentResult};
 use yunxi_agent_protocol::{
-    ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, ThreadId, ToolCall, TurnId,
+    ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent, StreamEventSequence, ThreadId,
+    ToolCall, TurnId,
 };
 use yunxi_agent_provider::{
     AgentProvider, FixtureTransport, OpenAiCompatibleProvider, OpenAiStreamAccumulator,
@@ -1115,6 +1116,82 @@ data: [DONE]
             ..
         }
     )));
+}
+
+#[test]
+fn chat_stream_assigns_stable_distinct_local_fallback_event_ids() {
+    let fixture = r#"data: {"choices":[{"delta":{"content":"same"}}]}
+data: {"choices":[{"delta":{"content":"same"}}]}
+data: [DONE]
+"#;
+    let first = parse_openai_stream_events("thread-chat", "turn-chat", fixture)
+        .expect("first stream events");
+    let replay = parse_openai_stream_events("thread-chat", "turn-chat", fixture)
+        .expect("replayed stream events");
+
+    let metadata = |events: &[StreamEvent]| {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                StreamEvent::ItemDelta {
+                    metadata: Some(metadata),
+                    ..
+                } => Some(metadata.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let first_metadata = metadata(&first);
+    let replay_metadata = metadata(&replay);
+
+    assert_eq!(first_metadata.len(), 2);
+    assert_ne!(first_metadata[0].event_id, first_metadata[1].event_id);
+    assert_eq!(first_metadata, replay_metadata);
+    assert_eq!(
+        first_metadata
+            .iter()
+            .map(|metadata| metadata.sequence)
+            .collect::<Vec<_>>(),
+        vec![
+            StreamEventSequence::LocalFallback(1),
+            StreamEventSequence::LocalFallback(2)
+        ]
+    );
+}
+
+#[test]
+fn responses_stream_preserves_provider_reliable_sequence_in_event_identity() {
+    let fixture = r#"data: {"type":"response.output_text.delta","event_id":"evt-a","sequence_number":41,"item_id":"message-1","delta":"same"}
+data: {"type":"response.output_text.delta","event_id":"evt-b","sequence_number":42,"item_id":"message-1","delta":"same"}
+data: {"type":"response.completed"}
+"#;
+    let events = parse_openai_stream_events("thread-response", "turn-response", fixture)
+        .expect("responses stream events");
+    let metadata = events
+        .iter()
+        .filter_map(|event| match event {
+            StreamEvent::ItemDelta {
+                metadata: Some(metadata),
+                ..
+            } => Some(metadata),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(metadata.len(), 2);
+    assert_ne!(metadata[0].event_id, metadata[1].event_id);
+    assert_eq!(
+        metadata
+            .iter()
+            .map(|metadata| metadata.sequence)
+            .collect::<Vec<_>>(),
+        vec![
+            StreamEventSequence::ProviderReliable(41),
+            StreamEventSequence::ProviderReliable(42)
+        ]
+    );
+    assert!(metadata[0].event_id.contains("evt-a"));
+    assert!(metadata[1].event_id.contains("evt-b"));
 }
 
 #[test]

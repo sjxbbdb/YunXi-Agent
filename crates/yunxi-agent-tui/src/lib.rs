@@ -21,8 +21,8 @@ pub use app::YunxiTuiBanner;
 pub use bottom_pane::{
     ApprovalDecision, ApprovalRequestView, UserInputRequestView, UserInputResponse,
 };
-pub use host::YunxiTui;
+pub use host::{TuiTickAction, YunxiTui};
 pub use presentation::{
-    PresentationDetail, TuiCellId, TuiCellKind, TuiEvent, TuiStreamIdentity, TuiStreamPhase,
-    TuiStreamState,
+    PresentationDetail, TuiCellId, TuiCellKind, TuiEvent, TuiSourceSequence, TuiStreamIdentity,
+    TuiStreamPhase, TuiStreamState,
 };

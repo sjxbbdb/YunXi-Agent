@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.2-hotfix.1
+# YunXi Agent v2.0.3
 
-YunXi Agent v2.0.2-hotfix.1 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.3 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.2-hotfix.1 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.3 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.2-hotfix.1 TUI presentation, streaming timeline, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.3 TUI presentation, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -48,6 +48,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Scrolls the TUI transcript by pre-wrapped screen rows, so long Chinese,
   English, assistant, tool-summary, and detail output keeps the title,
   viewport, and scrollbar in sync
+- Coalesces high-rate stream deltas on a 33 ms frame cadence while input,
+  history navigation, resize, cancellation, and errors remain immediately visible
+- Anchors history review to a stable transcript cell and wrapped-line offset, so
+  stream finalization and terminal width/height changes do not force the view
+  back to the tail
 - Routes every runtime event through one TUI presentation boundary before it
   can become a transcript cell
 - Keeps the default transcript quiet: raw reasoning, memory/context internals,
@@ -141,6 +146,21 @@ with `[offline]` and `/cost` reports that no model call was made.
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
 
+## Redraw, Scroll, And Resize Stability v2.0.3
+
+v2.0.3 replaces the dirty/force frame flag with a reason-aware redraw scheduler.
+Stream deltas and ordinary status events are coalesced, final/control updates are
+consumed on the next host tick, and input, scroll, resize, cancellation, and
+errors bypass the throttle. Pending reasons are cleared only after a successful
+draw.
+
+The transcript viewport now records `FollowTail`, stable cell/line `Pinned`, or
+`NewOutputBelow` state. Every wrapped screen row maps back to its canonical
+`TuiCellId`, allowing append, final replacement, and narrow/wide or short/tall
+resize to resolve the same logical history content. Unicode long-token wrapping
+uses grapheme clusters, and saturating small-terminal layout keeps the composer
+visible without overlapping regions or panicking.
+
 ## Streaming Audit Remediation Hotfix Candidate
 
 The `2.0.2-hotfix.1` audit remediation keeps the published `v2.0.2` tag immutable
@@ -216,7 +236,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v2.0.2-hotfix.1 CLI into a user-local bin directory:
+Build and install the v2.0.3 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

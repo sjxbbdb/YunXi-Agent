@@ -1,94 +1,136 @@
+use crate::presentation::TuiCellId;
+use crate::transcript_layout::WrappedTranscript;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ViewportAnchor {
+    FollowTail,
+    Pinned {
+        cell_id: TuiCellId,
+        line_offset: usize,
+        fallback_start: usize,
+    },
+    NewOutputBelow {
+        cell_id: TuiCellId,
+        line_offset: usize,
+        fallback_start: usize,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TranscriptViewport {
-    scroll_offset_from_bottom: usize,
-    new_content_below: bool,
+    anchor: ViewportAnchor,
 }
 
 impl Default for TranscriptViewport {
     fn default() -> Self {
         Self {
-            scroll_offset_from_bottom: 0,
-            new_content_below: false,
+            anchor: ViewportAnchor::FollowTail,
         }
     }
 }
 
 impl TranscriptViewport {
     pub(crate) fn is_following_tail(&self) -> bool {
-        self.scroll_offset_from_bottom == 0
+        matches!(self.anchor, ViewportAnchor::FollowTail)
     }
 
     pub(crate) fn reset(&mut self) {
-        self.scroll_offset_from_bottom = 0;
-        self.new_content_below = false;
+        self.anchor = ViewportAnchor::FollowTail;
     }
 
     pub(crate) fn on_content_changed(&mut self) {
-        if self.is_following_tail() {
-            self.new_content_below = false;
-        } else {
-            self.new_content_below = true;
+        if let ViewportAnchor::Pinned {
+            cell_id,
+            line_offset,
+            fallback_start,
+        } = &self.anchor
+        {
+            self.anchor = ViewportAnchor::NewOutputBelow {
+                cell_id: cell_id.clone(),
+                line_offset: *line_offset,
+                fallback_start: *fallback_start,
+            };
         }
     }
 
     pub(crate) fn scroll_up(
         &mut self,
         lines: usize,
-        content_height: usize,
+        wrapped: &WrappedTranscript,
         viewport_height: usize,
     ) {
-        let max_offset = max_start(content_height, viewport_height);
-        self.scroll_offset_from_bottom = self
-            .scroll_offset_from_bottom
+        let start = self.view_start(wrapped, viewport_height);
+        self.set_view_start(start.saturating_sub(lines), wrapped, viewport_height);
+    }
+
+    pub(crate) fn scroll_down(
+        &mut self,
+        lines: usize,
+        wrapped: &WrappedTranscript,
+        viewport_height: usize,
+    ) {
+        let max_start = max_start(wrapped.rows.len(), viewport_height);
+        let start = self
+            .view_start(wrapped, viewport_height)
             .saturating_add(lines)
-            .min(max_offset);
+            .min(max_start);
+        self.set_view_start(start, wrapped, viewport_height);
     }
 
-    pub(crate) fn scroll_down(&mut self, lines: usize) {
-        self.scroll_offset_from_bottom = self.scroll_offset_from_bottom.saturating_sub(lines);
-        if self.is_following_tail() {
-            self.new_content_below = false;
-        }
+    pub(crate) fn page_up(&mut self, wrapped: &WrappedTranscript, viewport_height: usize) {
+        self.scroll_up(viewport_height.max(1), wrapped, viewport_height);
     }
 
-    pub(crate) fn page_up(&mut self, content_height: usize, viewport_height: usize) {
-        self.scroll_up(viewport_height.max(1), content_height, viewport_height);
+    pub(crate) fn page_down(&mut self, wrapped: &WrappedTranscript, viewport_height: usize) {
+        self.scroll_down(viewport_height.max(1), wrapped, viewport_height);
     }
 
-    pub(crate) fn page_down(&mut self, viewport_height: usize) {
-        self.scroll_down(viewport_height.max(1));
-    }
-
-    pub(crate) fn jump_top(&mut self, content_height: usize, viewport_height: usize) {
-        self.scroll_offset_from_bottom = max_start(content_height, viewport_height);
+    pub(crate) fn jump_top(&mut self, wrapped: &WrappedTranscript, viewport_height: usize) {
+        self.set_view_start(0, wrapped, viewport_height);
     }
 
     pub(crate) fn follow_tail(&mut self) {
-        self.scroll_offset_from_bottom = 0;
-        self.new_content_below = false;
+        self.anchor = ViewportAnchor::FollowTail;
     }
 
-    pub(crate) fn view_start(&self, content_height: usize, viewport_height: usize) -> usize {
-        let viewport_height = viewport_height.max(1);
-        if content_height <= viewport_height {
-            return 0;
+    pub(crate) fn view_start(&self, wrapped: &WrappedTranscript, viewport_height: usize) -> usize {
+        let max_start = max_start(wrapped.rows.len(), viewport_height);
+        match &self.anchor {
+            ViewportAnchor::FollowTail => max_start,
+            ViewportAnchor::Pinned {
+                cell_id,
+                line_offset,
+                fallback_start,
+            }
+            | ViewportAnchor::NewOutputBelow {
+                cell_id,
+                line_offset,
+                fallback_start,
+            } => wrapped
+                .resolve_anchor(cell_id, *line_offset)
+                .unwrap_or(*fallback_start)
+                .min(max_start),
         }
-        let max_start = max_start(content_height, viewport_height);
-        let offset = self.scroll_offset_from_bottom.min(max_start);
-        max_start.saturating_sub(offset)
     }
 
     pub(crate) fn set_view_start(
         &mut self,
         start: usize,
-        content_height: usize,
+        wrapped: &WrappedTranscript,
         viewport_height: usize,
     ) {
-        let max_start = max_start(content_height, viewport_height);
+        let max_start = max_start(wrapped.rows.len(), viewport_height);
         let start = start.min(max_start);
-        self.scroll_offset_from_bottom = max_start.saturating_sub(start);
-        if self.is_following_tail() {
-            self.new_content_below = false;
+        if start == max_start {
+            self.follow_tail();
+            return;
+        }
+        if let Some(anchor) = wrapped.anchor_at(start) {
+            self.anchor = ViewportAnchor::Pinned {
+                cell_id: anchor.cell_id.clone(),
+                line_offset: anchor.line_offset,
+                fallback_start: start,
+            };
         }
     }
 
@@ -96,34 +138,46 @@ impl TranscriptViewport {
         &mut self,
         numerator: usize,
         denominator: usize,
-        content_height: usize,
+        wrapped: &WrappedTranscript,
         viewport_height: usize,
     ) {
-        let max_start = max_start(content_height, viewport_height);
+        let max_start = max_start(wrapped.rows.len(), viewport_height);
         let start = if denominator == 0 {
             0
         } else {
             ((numerator.min(denominator) * max_start) + (denominator / 2)) / denominator
         };
-        self.set_view_start(start, content_height, viewport_height);
+        self.set_view_start(start, wrapped, viewport_height);
     }
 
-    pub(crate) fn clamp(&mut self, content_height: usize, viewport_height: usize) {
-        self.scroll_offset_from_bottom = self
-            .scroll_offset_from_bottom
-            .min(max_start(content_height, viewport_height));
+    pub(crate) fn reanchor(&mut self, wrapped: &WrappedTranscript, viewport_height: usize) {
         if self.is_following_tail() {
-            self.new_content_below = false;
+            return;
+        }
+        let start = self.view_start(wrapped, viewport_height);
+        let was_new_output = matches!(self.anchor, ViewportAnchor::NewOutputBelow { .. });
+        if let Some(anchor) = wrapped.anchor_at(start) {
+            self.anchor = if was_new_output {
+                ViewportAnchor::NewOutputBelow {
+                    cell_id: anchor.cell_id.clone(),
+                    line_offset: anchor.line_offset,
+                    fallback_start: start,
+                }
+            } else {
+                ViewportAnchor::Pinned {
+                    cell_id: anchor.cell_id.clone(),
+                    line_offset: anchor.line_offset,
+                    fallback_start: start,
+                }
+            };
         }
     }
 
     pub(crate) fn scroll_status(&self) -> &'static str {
-        if self.new_content_below {
-            "new output below"
-        } else if self.is_following_tail() {
-            "tail"
-        } else {
-            "history"
+        match self.anchor {
+            ViewportAnchor::FollowTail => "tail",
+            ViewportAnchor::Pinned { .. } => "history",
+            ViewportAnchor::NewOutputBelow { .. } => "new output below",
         }
     }
 }
@@ -135,72 +189,81 @@ pub(crate) fn max_start(content_height: usize, viewport_height: usize) -> usize 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::{HistoryCell, HistoryCellKind};
+    use crate::presentation::TuiCellId;
+    use crate::transcript_layout::build_wrapped_transcript;
+
+    fn cells(count: usize) -> Vec<HistoryCell> {
+        (0..count)
+            .map(|index| HistoryCell {
+                id: TuiCellId::from_test(&format!("cell-{index}")),
+                kind: HistoryCellKind::User(format!(
+                    "line {index} with enough content to wrap on narrow terminals"
+                )),
+                detail_id: None,
+            })
+            .collect()
+    }
 
     #[test]
-    fn follows_tail_until_user_scrolls_history() {
+    fn pinned_cell_survives_append_and_reports_new_output() {
+        let mut source = cells(8);
+        let wrapped = build_wrapped_transcript(&source, 24);
         let mut viewport = TranscriptViewport::default();
-        viewport.on_content_changed();
-        assert!(viewport.is_following_tail());
-        assert_eq!(viewport.scroll_status(), "tail");
+        viewport.set_view_start(3, &wrapped, 5);
+        let before = wrapped.anchor_at(viewport.view_start(&wrapped, 5)).cloned();
 
-        viewport.scroll_up(3, 20, 5);
-        assert_eq!(viewport.scroll_offset_from_bottom, 3);
+        source.extend(cells(2).into_iter().map(|mut cell| {
+            cell.id = cell.id.with_suffix("appended");
+            cell
+        }));
+        let appended = build_wrapped_transcript(&source, 24);
         viewport.on_content_changed();
+        let after = appended
+            .anchor_at(viewport.view_start(&appended, 5))
+            .cloned();
+
+        assert_eq!(after, before);
         assert_eq!(viewport.scroll_status(), "new output below");
-
-        viewport.follow_tail();
-        assert_eq!(viewport.scroll_offset_from_bottom, 0);
-        assert_eq!(viewport.scroll_status(), "tail");
     }
 
     #[test]
-    fn calculates_start_from_bottom_offset() {
+    fn pinned_cell_survives_narrow_and_wide_resize() {
+        let source = cells(12);
+        let narrow = build_wrapped_transcript(&source, 20);
         let mut viewport = TranscriptViewport::default();
-        assert_eq!(viewport.view_start(30, 10), 20);
+        viewport.set_view_start(8, &narrow, 6);
+        let expected_cell = narrow
+            .anchor_at(viewport.view_start(&narrow, 6))
+            .unwrap()
+            .cell_id
+            .clone();
 
-        viewport.scroll_up(4, 30, 10);
-        assert_eq!(viewport.view_start(30, 10), 16);
+        let wide = build_wrapped_transcript(&source, 70);
+        viewport.reanchor(&wide, 6);
+        let actual_cell = wide
+            .anchor_at(viewport.view_start(&wide, 6))
+            .unwrap()
+            .cell_id
+            .clone();
 
-        viewport.jump_top(30, 10);
-        assert_eq!(viewport.view_start(30, 10), 0);
+        assert_eq!(actual_cell, expected_cell);
+        assert_eq!(viewport.scroll_status(), "history");
     }
 
     #[test]
-    fn clamps_scroll_when_content_is_short() {
+    fn end_returns_to_follow_tail() {
+        let wrapped = build_wrapped_transcript(&cells(10), 24);
         let mut viewport = TranscriptViewport::default();
-        viewport.scroll_up(10, 3, 10);
-        assert_eq!(viewport.scroll_offset_from_bottom, 0);
-        assert_eq!(viewport.view_start(3, 10), 0);
-    }
-
-    #[test]
-    fn set_view_start_clamps_and_updates_tail() {
-        let mut viewport = TranscriptViewport::default();
-
-        viewport.set_view_start(5, 30, 10);
-        assert_eq!(viewport.view_start(30, 10), 5);
+        viewport.jump_top(&wrapped, 5);
         assert_eq!(viewport.scroll_status(), "history");
 
-        viewport.on_content_changed();
-        assert_eq!(viewport.scroll_status(), "new output below");
+        viewport.follow_tail();
 
-        viewport.set_view_start(99, 30, 10);
-        assert_eq!(viewport.view_start(30, 10), 20);
-        assert_eq!(viewport.scroll_status(), "tail");
-    }
-
-    #[test]
-    fn set_scroll_fraction_maps_top_middle_and_bottom() {
-        let mut viewport = TranscriptViewport::default();
-
-        viewport.set_scroll_fraction(0, 10, 110, 10);
-        assert_eq!(viewport.view_start(110, 10), 0);
-
-        viewport.set_scroll_fraction(5, 10, 110, 10);
-        assert_eq!(viewport.view_start(110, 10), 50);
-
-        viewport.set_scroll_fraction(10, 10, 110, 10);
-        assert_eq!(viewport.view_start(110, 10), 100);
-        assert_eq!(viewport.scroll_status(), "tail");
+        assert!(viewport.is_following_tail());
+        assert_eq!(
+            viewport.view_start(&wrapped, 5),
+            max_start(wrapped.rows.len(), 5)
+        );
     }
 }

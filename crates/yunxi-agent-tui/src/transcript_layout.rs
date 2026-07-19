@@ -1,7 +1,9 @@
 use crate::chat::{HistoryCell, HistoryCellKind};
+use crate::presentation::TuiCellId;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 const CONTINUATION_GUTTER: &str = "    ";
 
@@ -9,24 +11,62 @@ const CONTINUATION_GUTTER: &str = "    ";
 pub(crate) struct WrappedTranscript {
     pub(crate) rows: Vec<Line<'static>>,
     pub(crate) logical_cells: usize,
+    row_anchors: Vec<Option<TranscriptRowAnchor>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TranscriptRowAnchor {
+    pub(crate) cell_id: TuiCellId,
+    pub(crate) line_offset: usize,
+}
+
+impl WrappedTranscript {
+    pub(crate) fn anchor_at(&self, row: usize) -> Option<&TranscriptRowAnchor> {
+        self.row_anchors.get(row).and_then(Option::as_ref)
+    }
+
+    pub(crate) fn resolve_anchor(&self, cell_id: &TuiCellId, line_offset: usize) -> Option<usize> {
+        self.row_anchors
+            .iter()
+            .enumerate()
+            .filter_map(|(row, anchor)| {
+                let anchor = anchor.as_ref()?;
+                (anchor.cell_id == *cell_id)
+                    .then_some((row, anchor.line_offset.abs_diff(line_offset)))
+            })
+            .min_by_key(|(_, distance)| *distance)
+            .map(|(row, _)| row)
+    }
 }
 
 pub(crate) fn build_wrapped_transcript(cells: &[HistoryCell], width: usize) -> WrappedTranscript {
     let mut rows = Vec::new();
+    let mut row_anchors = Vec::new();
     let width = width.max(1);
     for cell in cells {
+        let first_row = rows.len();
         push_cell_rows(&mut rows, cell, width);
+        row_anchors.extend(
+            (0..rows.len().saturating_sub(first_row)).map(|line_offset| {
+                Some(TranscriptRowAnchor {
+                    cell_id: cell.id().clone(),
+                    line_offset,
+                })
+            }),
+        );
     }
     if rows.is_empty() {
         rows.push(Line::from(Span::styled(
             "Ready.",
             Style::default().fg(Color::DarkGray),
         )));
+        row_anchors.push(None);
     }
 
     WrappedTranscript {
         rows,
         logical_cells: cells.len(),
+        row_anchors,
     }
 }
 
@@ -205,16 +245,16 @@ fn split_long_token(token: &str, first_width: usize, rest_width: usize) -> Vec<S
     let mut current_width = 0usize;
     let mut capacity = first_width.max(1);
 
-    for ch in token.chars() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if !current.is_empty() && current_width.saturating_add(ch_width) > capacity {
+    for grapheme in token.graphemes(true) {
+        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        if !current.is_empty() && current_width.saturating_add(grapheme_width) > capacity {
             chunks.push(std::mem::take(&mut current));
             current = String::new();
             current_width = 0;
             capacity = rest_width.max(1);
         }
-        current.push(ch);
-        current_width = current_width.saturating_add(ch_width);
+        current.push_str(grapheme);
+        current_width = current_width.saturating_add(grapheme_width);
     }
     if !current.is_empty() {
         chunks.push(current);
@@ -321,5 +361,45 @@ mod tests {
 
         assert!(rendered.iter().any(|row| row.contains("中文 and")));
         assert!(!rendered.iter().any(|row| row.contains("中 文")));
+    }
+
+    #[test]
+    fn maps_wrapped_rows_back_to_stable_cells() {
+        let first = cell(HistoryCellKind::User(
+            "abcdefghijklmnopqrstuvwxyz".to_string(),
+        ));
+        let first_id = first.id().clone();
+        let second = HistoryCell {
+            id: TuiCellId::from_test("layout-second"),
+            kind: HistoryCellKind::Assistant {
+                content: "answer".to_string(),
+                active: false,
+            },
+            detail_id: None,
+        };
+
+        let wrapped = build_wrapped_transcript(&[first, second], 14);
+        let anchored_row = wrapped
+            .resolve_anchor(&first_id, 1)
+            .expect("second wrapped row");
+
+        assert_eq!(wrapped.anchor_at(anchored_row).unwrap().cell_id, first_id);
+        assert_eq!(wrapped.anchor_at(anchored_row).unwrap().line_offset, 1);
+    }
+
+    #[test]
+    fn never_splits_emoji_or_combining_graphemes() {
+        let emoji = "👩‍💻";
+        let combining = "e\u{301}";
+        let cells = vec![cell(HistoryCellKind::User(format!(
+            "{emoji}{emoji}{combining}{combining}"
+        )))];
+
+        for width in 1..=12 {
+            let wrapped = build_wrapped_transcript(&cells, width);
+            let body = wrapped.rows.iter().map(row_text).collect::<String>();
+            assert_eq!(body.matches(emoji).count(), 2, "width={width}");
+            assert_eq!(body.matches(combining).count(), 2, "width={width}");
+        }
     }
 }

@@ -2,6 +2,7 @@ use crate::bottom_pane::{ApprovalRequestView, BottomPane, UserInputRequestView};
 use crate::chat::Transcript;
 use crate::presentation::{TuiEvent, TuiPresentation};
 use crate::timeline_store::TimelineStore;
+use crate::transcript_layout::WrappedTranscript;
 use crate::viewport::TranscriptViewport;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use yunxi_agent_core::{AgentEvent, ControlSnapshot};
@@ -31,7 +32,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.2-hotfix.1".to_string(),
+            version: "v2.0.3".to_string(),
             banner: None,
             presentation: TuiPresentation::default(),
             timeline: TimelineStore::default(),
@@ -78,13 +79,6 @@ impl YunxiTuiApp {
     }
 
     pub(crate) fn footer_for_width(&self, width: usize) -> String {
-        if self.timeline.has_active_sessions() {
-            return if width < 56 {
-                "streaming | Ctrl+C cancel".to_string()
-            } else {
-                "streaming current turn | Ctrl+C cancel | history scroll available".to_string()
-            };
-        }
         match self.viewport.scroll_status() {
             "new output below" => fit_line(
                 &[
@@ -110,6 +104,12 @@ impl YunxiTuiApp {
                 ],
                 width,
             ),
+            _ if self.timeline.has_active_sessions() && width < 56 => {
+                "streaming | Ctrl+C cancel".to_string()
+            }
+            _ if self.timeline.has_active_sessions() => {
+                "streaming current turn | Ctrl+C cancel | history scroll available".to_string()
+            }
             _ if width < 56 => "Enter | /help | Ctrl+C".to_string(),
             _ if width < 86 => "Enter submit | /help | wheel scroll | Ctrl+C exit".to_string(),
             _ => "Enter submit | Alt+Enter newline | /help commands | wheel/drag scroll | Ctrl+C exit"
@@ -308,26 +308,38 @@ impl YunxiTuiApp {
         self.viewport.reset();
     }
 
-    pub(crate) fn scroll_up(&mut self, lines: usize, content_height: usize, visible_height: usize) {
-        self.viewport
-            .scroll_up(lines, content_height, visible_height);
+    pub(crate) fn scroll_up(
+        &mut self,
+        lines: usize,
+        wrapped: &WrappedTranscript,
+        visible_height: usize,
+    ) {
+        self.viewport.scroll_up(lines, wrapped, visible_height);
     }
 
-    pub(crate) fn scroll_down(&mut self, lines: usize, visible_height: usize) {
-        self.viewport
-            .scroll_down(lines.max(1).min(visible_height.max(1)));
+    pub(crate) fn scroll_down(
+        &mut self,
+        lines: usize,
+        wrapped: &WrappedTranscript,
+        visible_height: usize,
+    ) {
+        self.viewport.scroll_down(
+            lines.max(1).min(visible_height.max(1)),
+            wrapped,
+            visible_height,
+        );
     }
 
-    pub(crate) fn page_up(&mut self, content_height: usize, visible_height: usize) {
-        self.viewport.page_up(content_height, visible_height);
+    pub(crate) fn page_up(&mut self, wrapped: &WrappedTranscript, visible_height: usize) {
+        self.viewport.page_up(wrapped, visible_height);
     }
 
-    pub(crate) fn page_down(&mut self, visible_height: usize) {
-        self.viewport.page_down(visible_height);
+    pub(crate) fn page_down(&mut self, wrapped: &WrappedTranscript, visible_height: usize) {
+        self.viewport.page_down(wrapped, visible_height);
     }
 
-    pub(crate) fn jump_top(&mut self, content_height: usize, visible_height: usize) {
-        self.viewport.jump_top(content_height, visible_height);
+    pub(crate) fn jump_top(&mut self, wrapped: &WrappedTranscript, visible_height: usize) {
+        self.viewport.jump_top(wrapped, visible_height);
     }
 
     pub(crate) fn follow_tail(&mut self) {
@@ -338,15 +350,15 @@ impl YunxiTuiApp {
         &mut self,
         numerator: usize,
         denominator: usize,
-        content_height: usize,
+        wrapped: &WrappedTranscript,
         visible_height: usize,
     ) {
         self.viewport
-            .set_scroll_fraction(numerator, denominator, content_height, visible_height);
+            .set_scroll_fraction(numerator, denominator, wrapped, visible_height);
     }
 
-    pub(crate) fn clamp_viewport(&mut self, content_height: usize, visible_height: usize) {
-        self.viewport.clamp(content_height, visible_height);
+    pub(crate) fn reanchor_viewport(&mut self, wrapped: &WrappedTranscript, visible_height: usize) {
+        self.viewport.reanchor(wrapped, visible_height);
     }
 
     fn on_transcript_changed(&mut self) {
@@ -495,7 +507,7 @@ mod tests {
         assert!(display_width(&header) <= 58);
         assert!(display_width(&subheader) <= 58);
         assert!(display_width(&footer) <= 58);
-        assert!(header.contains("YunXi v2.0.2-hotfix.1"));
+        assert!(header.contains("YunXi v2.0.3"));
         assert!(header.contains("offline"));
         assert!(header.contains("static"));
         assert!(subheader.contains("provider=static"));
@@ -512,7 +524,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.2-hotfix.1"));
+        assert!(header.contains("YunXi Agent v2.0.3"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));
@@ -571,14 +583,21 @@ mod tests {
     #[test]
     fn final_update_preserves_history_scroll_position() {
         let mut app = YunxiTuiApp::default();
+        for index in 0..30 {
+            app.push_notice("history", &format!("history line {index}"));
+        }
         app.push_user("history test");
         app.push_agent_event(&assistant_event(
             "partial",
             1,
             AgentMessageStreamPhase::Delta,
         ));
-        app.scroll_up(4, 30, 10);
-        let before = app.viewport().view_start(30, 10);
+        let wrapped_before =
+            crate::transcript_layout::build_wrapped_transcript(app.transcript().cells(), 80);
+        app.scroll_up(4, &wrapped_before, 10);
+        let anchor_before = wrapped_before
+            .anchor_at(app.viewport().view_start(&wrapped_before, 10))
+            .cloned();
 
         app.push_agent_event(&assistant_event(
             "final answer",
@@ -586,8 +605,75 @@ mod tests {
             AgentMessageStreamPhase::Final,
         ));
 
-        assert_eq!(app.viewport().view_start(30, 10), before);
+        let wrapped_after =
+            crate::transcript_layout::build_wrapped_transcript(app.transcript().cells(), 80);
+        let anchor_after = wrapped_after
+            .anchor_at(app.viewport().view_start(&wrapped_after, 10))
+            .cloned();
+        assert_eq!(anchor_after, anchor_before);
         assert_eq!(app.viewport().scroll_status(), "new output below");
+    }
+
+    #[test]
+    fn active_stream_footer_reports_history_instead_of_claiming_tail() {
+        let mut app = YunxiTuiApp::default();
+        for index in 0..30 {
+            app.push_notice("history", &format!("history line {index}"));
+        }
+        app.push_agent_event(&assistant_event(
+            "partial",
+            1,
+            AgentMessageStreamPhase::Delta,
+        ));
+        let wrapped =
+            crate::transcript_layout::build_wrapped_transcript(app.transcript().cells(), 80);
+        app.scroll_up(5, &wrapped, 10);
+
+        let footer = app.footer_for_width(100);
+
+        assert!(footer.contains("history view"));
+        assert!(!footer.starts_with("streaming current turn"));
+    }
+
+    #[test]
+    fn active_stream_resize_then_cancel_preserves_pinned_cell() {
+        let mut app = YunxiTuiApp::default();
+        for index in 0..24 {
+            app.push_notice(
+                "history",
+                &format!("history line {index} with wrapped text"),
+            );
+        }
+        app.push_agent_event(&assistant_event(
+            "partial 中文 👨‍👩‍👧‍👦",
+            1,
+            AgentMessageStreamPhase::Delta,
+        ));
+        let narrow =
+            crate::transcript_layout::build_wrapped_transcript(app.transcript().cells(), 28);
+        app.scroll_up(8, &narrow, 8);
+
+        let wide = crate::transcript_layout::build_wrapped_transcript(app.transcript().cells(), 90);
+        app.reanchor_viewport(&wide, 12);
+        let expected_after_resize = wide
+            .anchor_at(app.viewport().view_start(&wide, 12))
+            .unwrap()
+            .cell_id
+            .clone();
+        app.push_agent_event(&AgentEvent::Cancelled {
+            reason: Some("current turn cancelled".to_string()),
+        });
+        let cancelled =
+            crate::transcript_layout::build_wrapped_transcript(app.transcript().cells(), 90);
+        let actual = cancelled
+            .anchor_at(app.viewport().view_start(&cancelled, 12))
+            .unwrap()
+            .cell_id
+            .clone();
+
+        assert_eq!(actual, expected_after_resize);
+        assert_eq!(app.viewport().scroll_status(), "new output below");
+        assert!(!app.timeline.has_active_sessions());
     }
 
     #[test]

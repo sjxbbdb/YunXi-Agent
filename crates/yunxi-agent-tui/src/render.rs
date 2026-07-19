@@ -20,8 +20,12 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
             .desired_height_for_width(area.width as usize),
     );
 
-    render_header(frame, app, layout.header);
-    if app.control_snapshot().is_some() {
+    if layout.header.width > 0 && layout.header.height > 0 {
+        render_header(frame, app, layout.header);
+    }
+    if layout.transcript.width == 0 || layout.transcript.height == 0 {
+        // The bottom pane gets priority on extremely small terminals.
+    } else if app.control_snapshot().is_some() {
         render_controls(frame, app, layout.transcript);
     } else {
         render_transcript(
@@ -32,7 +36,9 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
             layout.transcript_scrollbar,
         );
     }
-    render_bottom_pane(frame, app, layout.bottom_pane);
+    if layout.bottom_pane.width > 0 && layout.bottom_pane.height > 0 {
+        render_bottom_pane(frame, app, layout.bottom_pane);
+    }
 }
 
 fn render_controls(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
@@ -146,7 +152,7 @@ fn render_transcript(
 ) {
     let wrapped = build_wrapped_transcript(app.transcript().cells(), inner.width as usize);
     let visible = inner.height.max(1) as usize;
-    let start = app.viewport().view_start(wrapped.rows.len(), visible);
+    let start = app.viewport().view_start(&wrapped, visible);
     let end = start.saturating_add(visible).min(wrapped.rows.len());
     let title = transcript_title(app, start, end, wrapped.rows.len(), visible);
     let transcript = Paragraph::new(wrapped.rows[start..end].to_vec())
@@ -279,8 +285,10 @@ fn render_composer(
         .wrap(Wrap { trim: false });
     frame.render_widget(pane, area);
 
-    let cursor_position = composer_cursor_position(area, prompt, buffer, cursor);
-    frame.set_cursor_position(cursor_position);
+    if area.width > 2 && area.height > 2 {
+        let cursor_position = composer_cursor_position(area, prompt, buffer, cursor);
+        frame.set_cursor_position(cursor_position);
+    }
 }
 
 fn composer_cursor_position(area: Rect, prompt: &str, buffer: &str, cursor: usize) -> Position {
@@ -458,6 +466,18 @@ mod tests {
         assert!(position.y > 1);
     }
 
+    #[test]
+    fn tiny_and_narrow_terminals_render_without_panicking() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        app.push_notice("unicode", "中文 👩‍💻 e\u{301} verylongtokenwithoutbreaks");
+
+        for (width, height) in [(1, 1), (2, 3), (8, 4), (20, 6), (40, 7)] {
+            let rendered = render_app(&app, width, height);
+            assert!(!rendered.is_empty(), "{width}x{height}");
+        }
+    }
+
     fn approval_app() -> YunxiTuiApp {
         let mut app = YunxiTuiApp::default();
         app.set_banner(banner());
@@ -513,7 +533,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.2-hotfix.1"));
+        assert!(rendered.contains("YunXi v2.0.3"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }
@@ -567,7 +587,8 @@ mod tests {
         for idx in 0..30 {
             app.push_notice("event", &format!("line-{idx:02}"));
         }
-        app.jump_top(30, 8);
+        let wrapped = build_wrapped_transcript(app.transcript().cells(), 98);
+        app.jump_top(&wrapped, 8);
 
         let rendered = render_app(&app, 100, 18);
 
@@ -583,7 +604,8 @@ mod tests {
         for idx in 0..30 {
             app.push_notice("event", &format!("line-{idx:02}"));
         }
-        app.scroll_up(8, 30, 10);
+        let wrapped = build_wrapped_transcript(app.transcript().cells(), 98);
+        app.scroll_up(8, &wrapped, 10);
         app.push_notice("event", "fresh-line");
 
         let rendered = render_app(&app, 100, 18);

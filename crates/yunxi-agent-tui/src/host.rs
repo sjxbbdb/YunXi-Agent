@@ -4,11 +4,11 @@ use crate::bottom_pane::{
     ApprovalAction, ApprovalDecision, ApprovalRequestView, ComposerAction, UserInputAction,
     UserInputRequestView, UserInputResponse,
 };
-use crate::frame::FrameScheduler;
+use crate::frame::{RedrawPriority, RedrawReason, RedrawScheduler};
 use crate::layout::{compute_layout, rect_contains};
 use crate::render::render_tui_frame;
 use crate::scrollbar::{ScrollbarHit, TranscriptScrollbarGeometry};
-use crate::transcript_layout::build_wrapped_transcript;
+use crate::transcript_layout::{WrappedTranscript, build_wrapped_transcript};
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
@@ -25,12 +25,12 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Rect, Size};
 use std::io::{self, Stdout};
 use std::time::{Duration, Instant};
-use yunxi_agent_core::ControlSnapshot;
+use yunxi_agent_core::{AgentEvent, AgentMessageStreamPhase, ControlSnapshot};
 
 pub struct YunxiTui {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     app: YunxiTuiApp,
-    frame: FrameScheduler,
+    frame: RedrawScheduler,
     scroll_drag: Option<TranscriptScrollDrag>,
     _guard: TerminalGuard,
 }
@@ -50,7 +50,7 @@ impl YunxiTui {
         Ok(Self {
             terminal,
             app: YunxiTuiApp::default(),
-            frame: FrameScheduler::default(),
+            frame: RedrawScheduler::default(),
             scroll_drag: None,
             _guard: guard,
         })
@@ -58,52 +58,54 @@ impl YunxiTui {
 
     pub fn set_banner(&mut self, banner: YunxiTuiBanner) -> Result<()> {
         self.app.set_banner(banner);
-        self.request_draw_now()
+        self.request_redraw(RedrawReason::StatusChanged)
     }
 
     pub fn clear_transcript(&mut self) -> Result<()> {
         self.app.clear_transcript();
-        self.request_draw_now()
+        self.request_redraw(RedrawReason::InputChanged)
     }
 
-    pub fn push_agent_event(&mut self, event: &yunxi_agent_core::AgentEvent) -> Result<()> {
+    pub fn push_agent_event(&mut self, event: &AgentEvent) -> Result<()> {
+        let reason = redraw_reason_for_agent_event(event);
         self.app.push_agent_event(event);
-        self.request_draw()
+        self.request_redraw(reason)
     }
 
     pub fn push_tui_event(&mut self, event: TuiEvent) -> Result<()> {
+        let reason = redraw_reason_for_tui_event(&event);
         self.app.push_tui_event(event);
-        self.request_draw()
+        self.request_redraw(reason)
     }
 
     pub fn push_notice(&mut self, kind: &str, message: &str) -> Result<()> {
         self.app.push_notice(kind, message);
-        self.request_draw_now()
+        self.request_redraw(RedrawReason::StatusChanged)
     }
 
     pub fn push_warning(&mut self, message: &str) -> Result<()> {
         self.app.push_warning(message);
-        self.request_draw_now()
+        self.request_redraw(RedrawReason::Error)
     }
 
     pub fn push_error(&mut self, message: &str) -> Result<()> {
         self.app.push_error(message);
-        self.request_draw_now()
+        self.request_redraw(RedrawReason::Error)
     }
 
     pub fn set_debug_events(&mut self, enabled: bool) -> Result<()> {
         self.app.set_debug_events(enabled);
-        self.request_draw_now()
+        self.request_redraw(RedrawReason::ControlChanged)
     }
 
     pub fn show_details(&mut self, id: Option<usize>) -> Result<()> {
         self.app.show_details(id);
-        self.request_draw_now()
+        self.request_redraw(RedrawReason::ControlChanged)
     }
 
     pub fn show_control_snapshot(&mut self, snapshot: ControlSnapshot) -> Result<()> {
         self.app.show_control_snapshot(snapshot);
-        self.request_draw_now()
+        self.request_redraw(RedrawReason::ControlChanged)
     }
 
     pub fn tick(&mut self) -> Result<TuiTickAction> {
@@ -210,14 +212,16 @@ impl YunxiTui {
         }
     }
 
-    fn request_draw(&mut self) -> Result<()> {
-        self.frame.mark_dirty();
-        self.flush_frame(Instant::now())
+    fn request_draw_now(&mut self) -> Result<()> {
+        self.request_redraw(RedrawReason::InputChanged)
     }
 
-    fn request_draw_now(&mut self) -> Result<()> {
-        self.frame.force();
-        self.flush_frame(Instant::now())
+    fn request_redraw(&mut self, reason: RedrawReason) -> Result<()> {
+        let priority = self.frame.request(reason);
+        if priority == RedrawPriority::Immediate {
+            self.flush_frame(Instant::now())?;
+        }
+        Ok(())
     }
 
     fn flush_frame(&mut self, now: Instant) -> Result<()> {
@@ -236,18 +240,25 @@ impl YunxiTui {
     }
 
     fn drain_turn_events(&mut self) -> Result<TuiTickAction> {
-        let mut changed = false;
+        let mut redraw_reason = None;
         let mut action = TuiTickAction::None;
         while poll(Duration::ZERO)? {
             let event = read()?;
             if is_ctrl_c_event(&event) {
                 action = TuiTickAction::CancelCurrentTurn;
+                redraw_reason = Some(RedrawReason::CancelCurrentTurn);
                 continue;
             }
-            changed |= self.handle_navigation_event(&event)?;
+            if self.handle_navigation_event(&event)? {
+                redraw_reason = Some(if matches!(event, Event::Resize(_, _)) {
+                    RedrawReason::Resize
+                } else {
+                    RedrawReason::ScrollChanged
+                });
+            }
         }
-        if changed {
-            self.frame.force();
+        if let Some(reason) = redraw_reason {
+            self.frame.request(reason);
         }
         Ok(action)
     }
@@ -259,7 +270,7 @@ impl YunxiTui {
                 MouseEventKind::ScrollUp => {
                     if rect_contains(metrics.layout.transcript, mouse.column, mouse.row) {
                         self.app
-                            .scroll_up(3, metrics.content_height, metrics.visible_height);
+                            .scroll_up(3, &metrics.wrapped, metrics.visible_height);
                         Ok(true)
                     } else {
                         Ok(false)
@@ -267,7 +278,8 @@ impl YunxiTui {
                 }
                 MouseEventKind::ScrollDown => {
                     if rect_contains(metrics.layout.transcript, mouse.column, mouse.row) {
-                        self.app.scroll_down(3, metrics.visible_height);
+                        self.app
+                            .scroll_down(3, &metrics.wrapped, metrics.visible_height);
                         Ok(true)
                     } else {
                         Ok(false)
@@ -287,17 +299,15 @@ impl YunxiTui {
             },
             Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                 KeyCode::PageUp => {
-                    self.app
-                        .page_up(metrics.content_height, metrics.visible_height);
+                    self.app.page_up(&metrics.wrapped, metrics.visible_height);
                     Ok(true)
                 }
                 KeyCode::PageDown => {
-                    self.app.page_down(metrics.visible_height);
+                    self.app.page_down(&metrics.wrapped, metrics.visible_height);
                     Ok(true)
                 }
                 KeyCode::Home => {
-                    self.app
-                        .jump_top(metrics.content_height, metrics.visible_height);
+                    self.app.jump_top(&metrics.wrapped, metrics.visible_height);
                     Ok(true)
                 }
                 KeyCode::End => {
@@ -309,7 +319,7 @@ impl YunxiTui {
             Event::Resize(_, _) => {
                 self.scroll_drag = None;
                 self.app
-                    .clamp_viewport(metrics.content_height, metrics.visible_height);
+                    .reanchor_viewport(&metrics.wrapped, metrics.visible_height);
                 Ok(true)
             }
             _ => Ok(false),
@@ -331,12 +341,11 @@ impl YunxiTui {
                 Ok(true)
             }
             ScrollbarHit::PageUp => {
-                self.app
-                    .page_up(metrics.content_height, metrics.visible_height);
+                self.app.page_up(&metrics.wrapped, metrics.visible_height);
                 Ok(true)
             }
             ScrollbarHit::PageDown => {
-                self.app.page_down(metrics.visible_height);
+                self.app.page_down(&metrics.wrapped, metrics.visible_height);
                 Ok(true)
             }
             ScrollbarHit::Outside => Ok(false),
@@ -353,12 +362,8 @@ impl YunxiTui {
         };
         let start = scrollbar.start_for_drag_y(y, drag.grab_offset);
         let max_start = crate::viewport::max_start(metrics.content_height, metrics.visible_height);
-        self.app.set_scroll_fraction(
-            start,
-            max_start,
-            metrics.content_height,
-            metrics.visible_height,
-        );
+        self.app
+            .set_scroll_fraction(start, max_start, &metrics.wrapped, metrics.visible_height);
         Ok(true)
     }
 
@@ -377,13 +382,14 @@ struct TranscriptScrollDrag {
     grab_offset: u16,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct TranscriptMetrics {
     layout: crate::layout::TuiLayout,
     visible_height: usize,
     content_height: usize,
     start: usize,
     scrollbar: Option<TranscriptScrollbarGeometry>,
+    wrapped: WrappedTranscript,
 }
 
 fn transcript_metrics_for_size(
@@ -398,7 +404,7 @@ fn transcript_metrics_for_size(
         layout.transcript_inner.width as usize,
     );
     let content_height = wrapped.rows.len();
-    let start = app.viewport().view_start(content_height, visible_height);
+    let start = app.viewport().view_start(&wrapped, visible_height);
     let scrollbar = TranscriptScrollbarGeometry::new(
         layout.transcript_scrollbar,
         content_height,
@@ -412,6 +418,41 @@ fn transcript_metrics_for_size(
         content_height,
         start,
         scrollbar,
+        wrapped,
+    }
+}
+
+fn redraw_reason_for_agent_event(event: &AgentEvent) -> RedrawReason {
+    match event {
+        AgentEvent::Message {
+            stream: Some(stream),
+            ..
+        } => match stream.phase {
+            AgentMessageStreamPhase::Started | AgentMessageStreamPhase::Delta => {
+                RedrawReason::StreamDelta
+            }
+            AgentMessageStreamPhase::Final => RedrawReason::StreamFinalized,
+        },
+        AgentEvent::Completed { .. } | AgentEvent::Cancelled { .. } => {
+            RedrawReason::StreamFinalized
+        }
+        AgentEvent::ProviderError { .. } | AgentEvent::Error { .. } => RedrawReason::Error,
+        _ => RedrawReason::StatusChanged,
+    }
+}
+
+fn redraw_reason_for_tui_event(event: &TuiEvent) -> RedrawReason {
+    if event.kind == crate::presentation::TuiCellKind::ErrorSummary {
+        return RedrawReason::Error;
+    }
+    match event.stream.as_ref().map(|stream| stream.identity.phase) {
+        Some(crate::presentation::TuiStreamPhase::Started)
+        | Some(crate::presentation::TuiStreamPhase::Delta)
+        | Some(crate::presentation::TuiStreamPhase::Retry) => RedrawReason::StreamDelta,
+        Some(crate::presentation::TuiStreamPhase::Final)
+        | Some(crate::presentation::TuiStreamPhase::Finish)
+        | Some(crate::presentation::TuiStreamPhase::Cancel) => RedrawReason::StreamFinalized,
+        None => RedrawReason::StatusChanged,
     }
 }
 

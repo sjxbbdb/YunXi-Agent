@@ -1,4 +1,4 @@
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::layout::{Margin, Rect};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct TuiLayout {
@@ -10,16 +10,44 @@ pub(crate) struct TuiLayout {
 }
 
 pub(crate) fn compute_layout(area: Rect, bottom_pane_height: u16) -> TuiLayout {
-    let bottom_height = bottom_pane_height.min(area.height.saturating_sub(4)).max(3);
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(3),
-            Constraint::Length(bottom_height),
-        ])
-        .split(area);
-    let transcript = chunks[1];
+    let (header_height, transcript_height, bottom_height) = if area.height >= 7 {
+        let header_height = 3;
+        let bottom_height = bottom_pane_height
+            .max(3)
+            .min(area.height.saturating_sub(header_height + 1));
+        (
+            header_height,
+            area.height
+                .saturating_sub(header_height)
+                .saturating_sub(bottom_height),
+            bottom_height,
+        )
+    } else {
+        let bottom_height = area.height.min(3);
+        let header_height = area.height.saturating_sub(bottom_height).min(2);
+        (
+            header_height,
+            area.height
+                .saturating_sub(header_height)
+                .saturating_sub(bottom_height),
+            bottom_height,
+        )
+    };
+    let header = Rect::new(area.x, area.y, area.width, header_height);
+    let transcript = Rect::new(
+        area.x,
+        area.y.saturating_add(header_height),
+        area.width,
+        transcript_height,
+    );
+    let bottom_pane = Rect::new(
+        area.x,
+        area.y
+            .saturating_add(header_height)
+            .saturating_add(transcript_height),
+        area.width,
+        bottom_height,
+    );
     let transcript_inner = transcript.inner(Margin {
         vertical: 1,
         horizontal: 1,
@@ -34,11 +62,11 @@ pub(crate) fn compute_layout(area: Rect, bottom_pane_height: u16) -> TuiLayout {
     };
 
     TuiLayout {
-        header: chunks[0],
+        header,
         transcript,
         transcript_inner,
         transcript_scrollbar,
-        bottom_pane: chunks[2],
+        bottom_pane,
     }
 }
 
@@ -62,5 +90,34 @@ mod tests {
         assert_eq!(layout.transcript.height, 12);
         assert_eq!(layout.transcript_inner.height, 10);
         assert_eq!(layout.transcript_scrollbar.height, 10);
+    }
+
+    #[test]
+    fn tiny_heights_never_overlap_and_keep_bottom_pane_visible() {
+        for height in 0..=6 {
+            let area = Rect::new(0, 0, 20, height);
+            let layout = compute_layout(area, 8);
+            assert_eq!(
+                layout.header.height + layout.transcript.height + layout.bottom_pane.height,
+                height
+            );
+            assert!(layout.bottom_pane.y >= layout.transcript.y + layout.transcript.height);
+            assert!(layout.bottom_pane.y + layout.bottom_pane.height <= height);
+            if height > 0 {
+                assert!(layout.bottom_pane.height > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn normal_layout_preserves_at_least_one_transcript_row() {
+        for height in 7..=40 {
+            let layout = compute_layout(Rect::new(0, 0, 80, height), 20);
+            assert!(layout.transcript.height >= 1);
+            assert_eq!(
+                layout.header.height + layout.transcript.height + layout.bottom_pane.height,
+                height
+            );
+        }
     }
 }

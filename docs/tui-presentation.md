@@ -1,7 +1,8 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.2-hotfix.1 keeps the v2.0.1 presentation boundary and adds a structured
-streaming timeline between presentation and transcript storage.
+YunXi Agent v2.0.3 keeps the v2.0.1 presentation boundary and v2.0.2-hotfix.1
+streaming timeline, then adds reason-aware redraw scheduling and stable
+cell-anchored history navigation.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
 maps them into user-facing cells.
 
@@ -84,9 +85,25 @@ matching fence closes, and otherwise commits only through a safe grapheme
 boundary while retaining the last grapheme for possible cross-delta joining.
 Final drain preserves the exact source without inserting a newline.
 
-Viewport state remains independent of stream state. Updating or finalizing a
-cell calls `on_content_changed`, which marks new output below when the user is
-reviewing history but preserves the offset instead of forcing follow-tail.
+Viewport state remains independent of stream state. `WrappedTranscript` maps
+every screen row back to its stable `TuiCellId` and wrapped-line offset. The
+viewport stores `FollowTail`, `Pinned`, or `NewOutputBelow`; updating or
+finalizing a cell marks output below while history remains resolved to the same
+logical cell instead of preserving a fragile distance from the bottom.
+
+## Redraw And Resize
+
+`RedrawScheduler` classifies invalidations as immediate, next-frame, or
+coalesced. High-frequency stream deltas share one frame on the 33 ms host tick,
+while input, scroll, resize, errors, and active-turn cancellation bypass the
+throttle. Final stream state and control state are guaranteed on the next tick.
+
+Terminal resize rebuilds wrapped rows and resolves the existing cell/line
+anchor against the new width and visible height. Long-token splitting operates
+on Unicode grapheme clusters, so emoji ZWJ and combining sequences are never
+split into half characters. The layout uses saturating region allocation;
+extremely small terminals prioritize the bottom pane and skip zero-sized
+render/cursor operations rather than overlapping or panicking.
 
 ## Active-Turn Cancellation
 
@@ -103,6 +120,6 @@ the existing exit behavior.
 
 This boundary applies only to TUI presentation/storage. Core stream identity is
 serde-skipped and does not alter plain CLI, JSON, or JSONL AgentEvent output.
-Approval, user-input, resize, follow-tail, and bottom-pane owners remain intact.
+Approval, user-input, follow-tail, and bottom-pane owners remain intact.
 The CLI TUI renderer forwards events and cancellation actions; it does not
 deduplicate text.

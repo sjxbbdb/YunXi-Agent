@@ -1,43 +1,81 @@
+use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
-pub(crate) struct FrameScheduler {
+pub(crate) struct RedrawScheduler {
     last_draw: Option<Instant>,
     min_frame_interval: Duration,
-    dirty: bool,
-    force_draw: bool,
+    pending: BTreeSet<RedrawReason>,
+    immediate: bool,
 }
 
-impl Default for FrameScheduler {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum RedrawReason {
+    InputChanged,
+    StreamDelta,
+    StreamFinalized,
+    ScrollChanged,
+    Resize,
+    StatusChanged,
+    ControlChanged,
+    Error,
+    CancelCurrentTurn,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RedrawPriority {
+    Immediate,
+    NextFrame,
+    Coalesced,
+}
+
+impl RedrawReason {
+    pub(crate) fn priority(self) -> RedrawPriority {
+        match self {
+            Self::InputChanged
+            | Self::ScrollChanged
+            | Self::Resize
+            | Self::Error
+            | Self::CancelCurrentTurn => RedrawPriority::Immediate,
+            Self::StreamFinalized | Self::ControlChanged => RedrawPriority::NextFrame,
+            Self::StreamDelta | Self::StatusChanged => RedrawPriority::Coalesced,
+        }
+    }
+}
+
+impl Default for RedrawScheduler {
     fn default() -> Self {
         Self::new(Duration::from_millis(33))
     }
 }
 
-impl FrameScheduler {
+impl RedrawScheduler {
     pub(crate) fn new(min_frame_interval: Duration) -> Self {
         Self {
             last_draw: None,
             min_frame_interval,
-            dirty: false,
-            force_draw: false,
+            pending: BTreeSet::new(),
+            immediate: false,
         }
     }
 
-    pub(crate) fn mark_dirty(&mut self) {
-        self.dirty = true;
-    }
-
-    pub(crate) fn force(&mut self) {
-        self.dirty = true;
-        self.force_draw = true;
+    pub(crate) fn request(&mut self, reason: RedrawReason) -> RedrawPriority {
+        let priority = reason.priority();
+        self.pending.insert(reason);
+        self.immediate |= priority == RedrawPriority::Immediate;
+        priority
     }
 
     pub(crate) fn should_draw(&self, now: Instant) -> bool {
-        if !self.dirty {
+        if self.pending.is_empty() {
             return false;
         }
-        if self.force_draw {
+        if self.immediate
+            || self
+                .pending
+                .iter()
+                .any(|reason| reason.priority() == RedrawPriority::NextFrame)
+        {
             return true;
         }
         self.last_draw
@@ -47,8 +85,13 @@ impl FrameScheduler {
 
     pub(crate) fn record_draw(&mut self, now: Instant) {
         self.last_draw = Some(now);
-        self.dirty = false;
-        self.force_draw = false;
+        self.pending.clear();
+        self.immediate = false;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_count(&self) -> usize {
+        self.pending.len()
     }
 }
 
@@ -57,29 +100,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn throttles_dirty_frames_until_interval_elapses() {
-        let mut scheduler = FrameScheduler::new(Duration::from_millis(40));
+    fn coalesces_high_rate_stream_deltas_until_interval_elapses() {
+        let mut scheduler = RedrawScheduler::new(Duration::from_millis(40));
         let t0 = Instant::now();
 
-        scheduler.mark_dirty();
+        scheduler.request(RedrawReason::StreamDelta);
         assert!(scheduler.should_draw(t0));
         scheduler.record_draw(t0);
 
-        scheduler.mark_dirty();
+        for _ in 0..100 {
+            scheduler.request(RedrawReason::StreamDelta);
+        }
+        assert_eq!(scheduler.pending_count(), 1);
         assert!(!scheduler.should_draw(t0 + Duration::from_millis(20)));
         assert!(scheduler.should_draw(t0 + Duration::from_millis(40)));
     }
 
     #[test]
-    fn force_draw_bypasses_throttle() {
-        let mut scheduler = FrameScheduler::new(Duration::from_millis(40));
+    fn resize_and_cancel_bypass_stream_throttle() {
+        let mut scheduler = RedrawScheduler::new(Duration::from_millis(40));
         let t0 = Instant::now();
 
-        scheduler.mark_dirty();
+        scheduler.request(RedrawReason::StreamDelta);
         assert!(scheduler.should_draw(t0));
         scheduler.record_draw(t0);
 
-        scheduler.force();
+        scheduler.request(RedrawReason::Resize);
         assert!(scheduler.should_draw(t0 + Duration::from_millis(1)));
+        scheduler.record_draw(t0 + Duration::from_millis(1));
+
+        scheduler.request(RedrawReason::CancelCurrentTurn);
+        assert!(scheduler.should_draw(t0 + Duration::from_millis(2)));
+    }
+
+    #[test]
+    fn final_and_control_state_draw_on_next_tick_and_clear_pending_reasons() {
+        let mut scheduler = RedrawScheduler::new(Duration::from_millis(40));
+        let t0 = Instant::now();
+        scheduler.request(RedrawReason::StreamDelta);
+        scheduler.record_draw(t0);
+
+        assert_eq!(
+            scheduler.request(RedrawReason::StreamFinalized),
+            RedrawPriority::NextFrame
+        );
+        scheduler.request(RedrawReason::ControlChanged);
+        assert!(scheduler.should_draw(t0 + Duration::from_millis(1)));
+        scheduler.record_draw(t0 + Duration::from_millis(1));
+        assert_eq!(scheduler.pending_count(), 0);
     }
 }

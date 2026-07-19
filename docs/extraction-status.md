@@ -1,10 +1,27 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.2-hotfix.1
+## Current Workspace Version: v2.0.3
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## v2.0.3 Redraw, Scroll, And Resize Stability
+
+The TUI host now owns a reason-aware `RedrawScheduler`. High-rate provider
+deltas and ordinary status changes are coalesced on the existing 33 ms host
+tick; final/control state is rendered on the next frame; input, scroll, resize,
+cancellation, and errors remain immediate. The scheduler records the set of
+pending causes and clears it after a successful draw.
+
+`WrappedTranscript` maps each screen row to a stable `TuiCellId` and logical
+line offset. `TranscriptViewport` stores `FollowTail`, `Pinned`, or
+`NewOutputBelow` anchors and resolves them again after stream finalization,
+content append, and terminal width/height changes. Resize wrapping is
+grapheme-safe for CJK, emoji ZWJ, combining marks, and long tokens. Explicit
+saturating layout rules cover tiny terminal heights without overlapping panes
+or invalid cursor placement. Plain CLI, `--no-tui`, JSON, JSONL, runtime, and
+provider contracts remain unchanged.
 
 ## v2.0.2-hotfix.1 Streaming Audit Remediation Candidate
 

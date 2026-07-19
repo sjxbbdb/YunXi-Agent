@@ -34,7 +34,6 @@ pub(crate) enum HistoryCellKind {
 }
 
 impl HistoryCell {
-    #[cfg(test)]
     pub(crate) fn id(&self) -> &TuiCellId {
         &self.id
     }

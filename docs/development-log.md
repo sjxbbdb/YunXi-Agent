@@ -850,3 +850,77 @@ tag object、远程 refs 与 API key 推送结果记录在 Git 历史和桌面�
 旧 `v2.0.2` tag 全程保持不变。候选发布不等于正式审核通过。
 
 署名：开发者
+
+## 2026-07-19 13:12:10 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-19-122912-YunXi-Agent-v2.0.2-hotfix.1-源码与TUI视觉审核报告.md` 撰写 YunXi Agent v2.0.3 重绘调度、滚动与 Resize 稳定开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：1. 读取 v2.0.2-hotfix.1 源码与 TUI 视觉审核报告，确认审核通过，可以进入 v2.0.3 开发。2. 核对当前 Git 状态为 `master...origin/master`，存在审核运行生成的未跟踪目录 `crates\yunxi-agent-cli\.yunxi`。3. 使用 CodeGraph MCP 参考 TUI `host.rs`、`app.rs`、`render.rs`、`presentation.rs` 等接入点，确认 v2.0.3 应聚焦重绘调度、viewport anchor、滚动和 resize 稳定。4. 按固定流程在开发报告前部写入 14 条硬性约束。5. 围绕 v2.0.3 范围撰写开发目标、非目标、源码接入点、Codex TUI 参考建议、推荐技术设计、测试要求、真实 TUI 验收和统一验证要求。6. 在项目内新增开发报告。7. 追加项目内开发日志，将报告复制到桌面开发报告目录，并追加桌面开发日志。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-131210-yunxi-agent-v2-0-3-redraw-scroll-resize-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-131210-yunxi-agent-v2-0-3-redraw-scroll-resize-development-report.md`
+- 追加桌面日志目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成 v2.0.3 重绘调度、滚动与 Resize 稳定开发报告撰写，并同步到桌面开发报告目录。
+- 本次仅生成文档和追加日志，未修改 Rust 源码。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 当前未跟踪目录 `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 未被读取或清理；如需清理必须先取得用户确认。
+- 后续必须按报告完成 v2.0.3 开发、统一验证、真实 TUI 复核、清理和发布；验证通过前不得宣称完成。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag；旧 `v2.0.2` 与 `v2.0.2-hotfix.1` tag 均不得移动、删除或覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-19 14:07:47 +08:00
+
+工作目标：严格依据 v2.0.3 开发报告实施原因感知重绘调度、稳定 transcript
+cell/line viewport anchor、resize 安全布局与 Unicode grapheme-safe wrapping，完成
+统一验证、真实 offline/live TUI 验收、清理和新版本发布准备。
+
+执行流程：1. 完整读取开发报告和 v2.0.2-hotfix.1 审核报告，锁定 v2.0.3 范围和
+旧 tag 不可移动边界。2. 使用 CodeGraph 定位 host tick/draw、app viewport、wrapped
+transcript、layout/render 与 CLI TUI bridge。3. 实现 RedrawScheduler 三档优先级和
+九类 redraw reason。4. 建立 FollowTail/Pinned/NewOutputBelow cell-line anchor，并把
+Host、scrollbar、renderer 接到同一 WrappedTranscript。5. 加固 grapheme wrapping、
+极小 terminal layout、composer cursor 和真实 footer 状态。6. 升级 workspace、CLI、
+TUI、persona、runtime、evaluation 与文档版本到 2.0.3。7. 统一运行 fmt、check、
+workspace tests/build、release build、版本、Evaluation Harness、JSON/JSONL、offline
+及经用户授权的 DeepSeek live TUI 验收。8. 核验路径并经用户授权清理 target 与审计
+.yunxi 目录。
+
+修改文件：
+- 核心实现：`D:\YunXi Agent\crates\yunxi-agent-tui\src\frame.rs`、`viewport.rs`、
+  `transcript_layout.rs`、`host.rs`、`app.rs`、`layout.rs`、`render.rs`、`chat.rs`。
+- 版本与测试：`D:\YunXi Agent\Cargo.toml`、`Cargo.lock`、CLI/TUI/persona/runtime/
+  evaluation 对应源码和测试文件。
+- 文档：`D:\YunXi Agent\README.md`、`docs\extraction-status.md`、
+  `docs\tui-presentation.md`、`docs\persona-memory.md`、`docs\development-log.md`、
+  `docs\reports\2026-07-19-131210-yunxi-agent-v2-0-3-redraw-scroll-resize-development-report.md`。
+
+验证结果：报告规定的 fmt、fmt check、workspace check/test/build、release build 全部
+通过；TUI 82 项通过；release 为 `yunxi 2.0.3`；Evaluation Harness 31/31、golden
+通过、JSON 正常、JSONL 一行。offline PTY 验证滚动/状态/End；DeepSeek live 验证
+短流 canonical cell、长流 pinned history、100x30 到 58x18 动态 resize、active-turn
+Ctrl+C partial 保留及下一轮 `RESIZE_NEXT_OK`。`git diff --check` 通过。
+
+清理结果：经路径核验和用户授权，`cargo clean` 移除 17,490 个文件、约 4.9 GiB；
+`D:\YunXi Agent\target` 和审计生成的
+`D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 最终均不存在。
+
+提交和推送状态：本记录随唯一 v2.0.3 发布提交入库，随后立即创建 annotated
+`v2.0.3` tag 并使用指定 API key non-force 推送 master 与新 tag；最终 commit、tag
+object 和远程 refs 记录在 Git 历史及桌面最终开发日志中。旧 `v2.0.2` 与
+`v2.0.2-hotfix.1` tag 全程保持不变。
+
+署名：开发者

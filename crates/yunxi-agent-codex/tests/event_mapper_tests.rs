@@ -22,7 +22,8 @@ fn maps_thread_turn_message_and_completion_events() {
             },
             AgentEvent::TurnStarted,
             AgentEvent::Message {
-                content: "hello".to_string()
+                content: "hello".to_string(),
+                stream: None
             },
             AgentEvent::Completed {
                 status: AgentRunStatus::Completed,

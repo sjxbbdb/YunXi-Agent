@@ -7,9 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunApprovalDecision,
-    AgentRunControl, AgentRunStatus, AgentRunUserInputResponse, ApprovalMode, CommandStatus,
-    CompanionSettings, FileChangeKind, MemoryExtractionMode, PatchStatus, SandboxMode,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentMessageStreamPhase,
+    AgentRunApprovalDecision, AgentRunControl, AgentRunStatus, AgentRunUserInputResponse,
+    ApprovalMode, CommandStatus, CompanionSettings, FileChangeKind, MemoryExtractionMode,
+    PatchStatus, SandboxMode,
 };
 use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus};
 use yunxi_agent_protocol::{
@@ -42,7 +43,7 @@ async fn companion_is_disabled_by_default() {
         .expect("runtime should complete");
     assert!(!result.events.iter().any(|event| matches!(
         event,
-        AgentEvent::Message { content } if content.contains("[提醒]")
+        AgentEvent::Message { content, .. } if content.contains("[提醒]")
     )));
 }
 
@@ -70,7 +71,7 @@ async fn companion_check_emits_reasoned_plan_without_tool_execution() {
         .events
         .iter()
         .filter_map(|event| match event {
-            AgentEvent::Message { content } => Some(content.as_str()),
+            AgentEvent::Message { content, .. } => Some(content.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -1040,7 +1041,7 @@ async fn run_stream_emits_provider_delta_before_provider_completes() {
 
     let mut saw_first_delta = false;
     while let Some(event) = stream.events.recv().await {
-        if matches!(event, AgentEvent::Message { content } if content == "hel") {
+        if matches!(event, AgentEvent::Message { content, .. } if content == "hel") {
             saw_first_delta = true;
             break;
         }
@@ -1050,6 +1051,29 @@ async fn run_stream_emits_provider_delta_before_provider_completes() {
     assert!(!handle.is_finished());
     let result = handle.await.expect("join stream run").expect("stream run");
     assert_eq!(result.final_response.as_deref(), Some("hello"));
+    let assistant_stream = result
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Message { content, stream } => {
+                Some((content.as_str(), stream.as_ref().expect("message stream")))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        assistant_stream
+            .iter()
+            .map(|(content, _)| *content)
+            .collect::<Vec<_>>(),
+        vec!["hel", "lo", "hello"]
+    );
+    assert!(
+        assistant_stream
+            .windows(2)
+            .all(|pair| pair[0].1.stream_id == pair[1].1.stream_id)
+    );
+    assert_eq!(assistant_stream[2].1.phase, AgentMessageStreamPhase::Final);
 }
 
 #[tokio::test]
@@ -2115,6 +2139,25 @@ fn protocol_stream_events_map_to_agent_events() {
                 delta: "reason".to_string(),
             },
         },
+        yunxi_agent_protocol::StreamEvent::ItemDelta {
+            thread_id: yunxi_agent_protocol::ThreadId("thread-1".to_string()),
+            turn_id: yunxi_agent_protocol::TurnId("turn-1".to_string()),
+            delta: yunxi_agent_protocol::ResponseItemDelta::MessageContent {
+                item_id: Some("message-1".to_string()),
+                delta: "hel".to_string(),
+            },
+        },
+        yunxi_agent_protocol::StreamEvent::ItemCompleted {
+            thread_id: yunxi_agent_protocol::ThreadId("thread-1".to_string()),
+            turn_id: yunxi_agent_protocol::TurnId("turn-1".to_string()),
+            item: yunxi_agent_protocol::ResponseItem::AgentMessage {
+                id: "message-1".to_string(),
+                content: vec![yunxi_agent_protocol::ContentItem::OutputText {
+                    text: "hello".to_string(),
+                }],
+                phase: yunxi_agent_protocol::MessagePhase::Completed,
+            },
+        },
     ];
 
     let events = protocol_stream_events_to_agent_events(&stream);
@@ -2123,6 +2166,23 @@ fn protocol_stream_events_map_to_agent_events() {
         event,
         AgentEvent::Reasoning { content } if content == "reason"
     )));
+    let messages = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::Message { content, stream } => {
+                Some((content.as_str(), stream.as_ref().expect("stream identity")))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].0, "hel");
+    assert_eq!(messages[0].1.turn_id, "turn-1");
+    assert_eq!(messages[0].1.stream_id, "message-1");
+    assert_eq!(messages[0].1.phase, AgentMessageStreamPhase::Delta);
+    assert_eq!(messages[1].0, "hello");
+    assert_eq!(messages[1].1.phase, AgentMessageStreamPhase::Final);
+    assert!(messages[0].1.source_sequence < messages[1].1.source_sequence);
 }
 
 #[tokio::test(flavor = "current_thread")]

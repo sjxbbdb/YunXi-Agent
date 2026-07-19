@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.1
+# YunXi Agent v2.0.2
 
-YunXi Agent v2.0.1 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.2 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.1 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.2 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.1 TUI presentation and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.2 TUI presentation, streaming timeline, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -53,8 +53,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Keeps the default transcript quiet: raw reasoning, memory/context internals,
   hidden prompts, provider wire data, tool arguments, full stdout/stderr, and
   exception stacks remain in debug/details only
-- Preserves one stable assistant cell id across streamed deltas and keeps
-  committed Markdown source separate from the live tail
+- Maps provider thread, turn, message stream, and source sequence into one
+  canonical assistant cell; delta, retry, final, and cancel transitions are
+  structurally idempotent without deleting legitimate repeated text
+- Keeps committed Markdown source separate from the live tail and lets final
+  update the active cell in place without forcing a history view back to tail
 - Shows tool work as compact timeline cells with approval, running,
   completion, output-summary, and details references
 - Provides `/debug events on|off` and `/details [id]` for TUI diagnostics
@@ -135,22 +138,21 @@ with `[offline]` and `/cost` reports that no model call was made.
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
 
-## Quiet TUI Presentation v2.0.1
+## Streaming Timeline And Idempotency v2.0.2
 
-v2.0.1 introduces `yunxi-agent-tui::presentation` as the only semantic mapping
-from `AgentEvent` to transcript-facing `TuiEvent`. The transcript and renderer
-consume already-classified cells with stable cell and detail IDs; filtering is
-now a pure visibility decision. Tool lifecycle events expose only compact state
-and output-size summaries by default, while redacted arguments, complete output,
-provider errors, reasoning, and memory/context diagnostics remain available via
-`/debug events on` and `/details [id]`.
+v2.0.2 adds `timeline_store.rs` as the single owner of assistant stream
+lifecycle. Runtime provider messages carry non-serialized thread, turn, stream,
+sequence, and phase metadata into the TUI. The store maps that identity to a
+canonical cell and handles start/delta/retry/final/cancel transitions; final is
+an in-place write, duplicate final events are ignored by identity/state, and
+equal deltas with newer sequences remain valid output.
 
-The TUI assistant stream now passes through `MarkdownStreamController` inside
-the presentation layer. A contiguous message keeps one cell ID and separates
-committed source from its live tail; a non-message boundary starts a new cell.
-Plain CLI, JSON, JSONL, runtime event ordering, approvals, user input, and
-cancellation retain their existing contracts. See `docs/tui-presentation.md`
-for the boundary and visibility rules.
+`MarkdownStreamController` now lives inside each stream session. Presentation
+continues to classify events and quiet transcript visibility, while `chat.rs`
+only applies explicit timeline updates. Plain CLI, JSON, JSONL, approvals,
+user-input, and cancellation contracts remain unchanged. The viewport keeps its
+history offset when a final update arrives and reports new output below. See
+`docs/tui-presentation.md` for the complete boundary and state model.
 
 ## General Companion Agent v2.0.0
 
@@ -206,7 +208,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v2.0.1 CLI into a user-local bin directory:
+Build and install the v2.0.2 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

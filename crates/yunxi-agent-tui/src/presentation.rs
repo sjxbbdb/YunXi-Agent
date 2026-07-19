@@ -1,8 +1,9 @@
 use crate::output_summary::{OutputSummary, redact_secrets, truncate_chars};
-use crate::streaming::{MarkdownStreamController, MarkdownStreamFrame};
 use crate::timeline::{ToolPhase, ToolTimelineUpdate, phase_from_command_status, status_label};
 use std::fmt;
-use yunxi_agent_core::{AgentEvent, AgentRunStatus, McpToolStatus};
+use yunxi_agent_core::{
+    AgentEvent, AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus, McpToolStatus,
+};
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TuiCellId(String);
@@ -14,6 +15,10 @@ impl TuiCellId {
 
     pub(crate) fn with_suffix(&self, suffix: &str) -> Self {
         Self(format!("{}:{suffix}", self.0))
+    }
+
+    fn assistant_for_turn(turn_id: &str) -> Self {
+        Self(format!("assistant:{:016x}", stable_hash(turn_id)))
     }
 
     #[cfg(test)]
@@ -52,16 +57,27 @@ pub struct TuiStreamState {
     pub stable_source: String,
     pub live_tail: String,
     pub committed: bool,
+    pub identity: TuiStreamIdentity,
+    pub offline_label: bool,
 }
 
-impl From<MarkdownStreamFrame> for TuiStreamState {
-    fn from(frame: MarkdownStreamFrame) -> Self {
-        Self {
-            stable_source: frame.stable_source,
-            live_tail: frame.live_tail,
-            committed: frame.committed,
-        }
-    }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TuiStreamIdentity {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub stream_id: String,
+    pub source_sequence: u64,
+    pub phase: TuiStreamPhase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TuiStreamPhase {
+    Started,
+    Delta,
+    Retry,
+    Final,
+    Finish,
+    Cancel,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,8 +101,10 @@ pub struct TuiEvent {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct TuiPresentation {
     next_cell_sequence: u64,
-    assistant_cell_id: Option<TuiCellId>,
-    assistant_stream: MarkdownStreamController,
+    next_local_turn_sequence: u64,
+    next_local_source_sequence: u64,
+    current_local_turn_id: Option<String>,
+    active_stream: Option<TuiStreamIdentity>,
     offline_label: bool,
 }
 
@@ -96,12 +114,14 @@ impl TuiPresentation {
     }
 
     pub(crate) fn present_agent_event(&mut self, event: &AgentEvent) -> TuiEvent {
-        if !matches!(event, AgentEvent::Message { .. }) {
-            self.finish_assistant_stream();
+        if matches!(event, AgentEvent::TurnStarted) {
+            self.begin_local_turn();
         }
 
-        let presented = match event {
-            AgentEvent::Message { content } => return self.present_assistant_delta(content),
+        let mut presented = match event {
+            AgentEvent::Message { content, stream } => {
+                return self.present_assistant_message(content, stream.as_ref());
+            }
             AgentEvent::Reasoning { content } => {
                 self.debug_only("reasoning", content.clone(), "reasoning")
             }
@@ -389,7 +409,6 @@ impl TuiPresentation {
                     .unwrap_or_else(|| "current turn cancelled".to_string()),
             ),
             AgentEvent::Completed { status, usage } => {
-                self.finish_assistant_stream();
                 if *status != AgentRunStatus::Completed {
                     self.visible_with_detail(
                         TuiCellKind::Notice,
@@ -465,11 +484,22 @@ impl TuiPresentation {
             }
         };
 
+        let control_phase = match event {
+            AgentEvent::Cancelled { .. }
+            | AgentEvent::ProviderError { .. }
+            | AgentEvent::Error { .. } => Some(TuiStreamPhase::Cancel),
+            AgentEvent::Completed { .. } => Some(TuiStreamPhase::Finish),
+            _ => None,
+        };
+        if let Some(phase) = control_phase {
+            presented.stream = self.stream_control(phase);
+        }
+
         presented
     }
 
     pub(crate) fn present_user(&mut self, value: impl Into<String>) -> TuiEvent {
-        self.finish_assistant_stream();
+        self.begin_local_turn();
         self.simple_visible(TuiCellKind::UserMessage, "user", value.into())
     }
 
@@ -510,23 +540,38 @@ impl TuiPresentation {
         }
     }
 
-    fn present_assistant_delta(&mut self, content: &str) -> TuiEvent {
-        let id = self
-            .assistant_cell_id
-            .clone()
-            .unwrap_or_else(|| self.next_id("assistant"));
-        self.assistant_cell_id = Some(id.clone());
-        let frame = self.assistant_stream.push_delta(content);
-        let mut visible_text = format!("{}{}", frame.stable_source, frame.live_tail);
-        if self.offline_label && !visible_text.starts_with("[offline] ") {
-            visible_text = format!("[offline] {visible_text}");
+    fn present_assistant_message(
+        &mut self,
+        content: &str,
+        source: Option<&AgentMessageStream>,
+    ) -> TuiEvent {
+        let mut identity = source
+            .map(stream_identity_from_core)
+            .unwrap_or_else(|| self.next_legacy_stream_identity());
+        if identity.phase == TuiStreamPhase::Started
+            && self.active_stream.as_ref().is_some_and(|active| {
+                active.turn_id == identity.turn_id && active.stream_id != identity.stream_id
+            })
+        {
+            identity.phase = TuiStreamPhase::Retry;
         }
+        let id = TuiCellId::assistant_for_turn(&identity.turn_id);
+        self.next_local_source_sequence = self
+            .next_local_source_sequence
+            .max(identity.source_sequence);
+        self.active_stream = Some(identity.clone());
         TuiEvent {
             id,
             kind: TuiCellKind::AssistantMessage,
-            visible_text,
+            visible_text: content.to_string(),
             detail: None,
-            stream: Some(frame.into()),
+            stream: Some(TuiStreamState {
+                stable_source: String::new(),
+                live_tail: String::new(),
+                committed: false,
+                identity,
+                offline_label: self.offline_label,
+            }),
             visibility: if content.is_empty() {
                 PresentationVisibility::Hidden
             } else {
@@ -662,10 +707,68 @@ impl TuiPresentation {
         TuiCellId(format!("{prefix}:{:016x}", self.next_cell_sequence))
     }
 
-    fn finish_assistant_stream(&mut self) {
-        let _ = self.assistant_stream.finalize();
-        self.assistant_stream.clear();
-        self.assistant_cell_id = None;
+    fn begin_local_turn(&mut self) {
+        self.next_local_turn_sequence = self.next_local_turn_sequence.saturating_add(1);
+        self.current_local_turn_id =
+            Some(format!("local-turn-{:016x}", self.next_local_turn_sequence));
+        self.active_stream = None;
+    }
+
+    fn next_legacy_stream_identity(&mut self) -> TuiStreamIdentity {
+        let turn_id = self.current_local_turn_id.clone().unwrap_or_else(|| {
+            self.begin_local_turn();
+            self.current_local_turn_id
+                .clone()
+                .expect("local turn initialized")
+        });
+        self.next_local_source_sequence = self.next_local_source_sequence.saturating_add(1);
+        let stream_id = self
+            .active_stream
+            .as_ref()
+            .filter(|active| active.turn_id == turn_id)
+            .map(|active| active.stream_id.clone())
+            .unwrap_or_else(|| format!("{turn_id}:assistant"));
+        TuiStreamIdentity {
+            thread_id: "local".to_string(),
+            turn_id,
+            stream_id,
+            source_sequence: self.next_local_source_sequence,
+            phase: TuiStreamPhase::Delta,
+        }
+    }
+
+    fn stream_control(&mut self, phase: TuiStreamPhase) -> Option<TuiStreamState> {
+        let mut identity = self.active_stream.clone()?;
+        self.next_local_source_sequence = self
+            .next_local_source_sequence
+            .max(identity.source_sequence)
+            .saturating_add(1);
+        identity.source_sequence = self.next_local_source_sequence;
+        identity.phase = phase;
+        if matches!(phase, TuiStreamPhase::Cancel | TuiStreamPhase::Finish) {
+            self.active_stream = None;
+        }
+        Some(TuiStreamState {
+            stable_source: String::new(),
+            live_tail: String::new(),
+            committed: false,
+            identity,
+            offline_label: self.offline_label,
+        })
+    }
+}
+
+fn stream_identity_from_core(stream: &AgentMessageStream) -> TuiStreamIdentity {
+    TuiStreamIdentity {
+        thread_id: stream.thread_id.clone(),
+        turn_id: stream.turn_id.clone(),
+        stream_id: stream.stream_id.clone(),
+        source_sequence: stream.source_sequence,
+        phase: match stream.phase {
+            AgentMessageStreamPhase::Started => TuiStreamPhase::Started,
+            AgentMessageStreamPhase::Delta => TuiStreamPhase::Delta,
+            AgentMessageStreamPhase::Final => TuiStreamPhase::Final,
+        },
     }
 }
 
@@ -780,22 +883,27 @@ mod tests {
         let mut presentation = TuiPresentation::default();
         let first = presentation.present_agent_event(&AgentEvent::Message {
             content: "hello".to_string(),
+            stream: None,
         });
         let second = presentation.present_agent_event(&AgentEvent::Message {
             content: "\nworld".to_string(),
+            stream: None,
         });
 
         assert_eq!(first.id, second.id);
         assert_eq!(first.visible_text, "hello");
-        assert_eq!(second.visible_text, "hello\nworld");
+        assert_eq!(second.visible_text, "\nworld");
+        let first_stream = first.stream.expect("first stream");
+        let second_stream = second.stream.expect("second stream");
         assert_eq!(
-            second.stream,
-            Some(TuiStreamState {
-                stable_source: "hello\n".to_string(),
-                live_tail: "world".to_string(),
-                committed: true,
-            })
+            first_stream.identity.turn_id,
+            second_stream.identity.turn_id
         );
+        assert_eq!(
+            first_stream.identity.stream_id,
+            second_stream.identity.stream_id
+        );
+        assert!(first_stream.identity.source_sequence < second_stream.identity.source_sequence);
     }
 
     #[test]
@@ -893,10 +1001,11 @@ mod tests {
     }
 
     #[test]
-    fn non_message_boundary_starts_the_next_assistant_cell_with_a_new_id() {
+    fn non_message_boundary_does_not_split_the_active_assistant_stream() {
         let mut presentation = TuiPresentation::default();
         let before_tool = presentation.present_agent_event(&AgentEvent::Message {
             content: "before".to_string(),
+            stream: None,
         });
         presentation.present_agent_event(&AgentEvent::ToolCallStarted {
             id: Some("call-1".to_string()),
@@ -905,9 +1014,10 @@ mod tests {
         });
         let after_tool = presentation.present_agent_event(&AgentEvent::Message {
             content: "after".to_string(),
+            stream: None,
         });
 
-        assert_ne!(before_tool.id, after_tool.id);
+        assert_eq!(before_tool.id, after_tool.id);
         assert_eq!(after_tool.visible_text, "after");
     }
 }

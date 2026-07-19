@@ -79,6 +79,7 @@ fn map_item(item: Option<&Value>, phase: ItemPhase) -> AgentResult<Vec<AgentEven
     match item_type {
         "agent_message" => Ok(vec![AgentEvent::Message {
             content: required_string(item, "text")?,
+            stream: None,
         }]),
         "reasoning" => Ok(vec![AgentEvent::Reasoning {
             content: required_string(item, "text")?,

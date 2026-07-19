@@ -1,10 +1,33 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.1
+## Current Workspace Version: v2.0.2
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## YunXi Agent v2.0.2 Streaming Timeline And Message Idempotency
+
+Provider stream messages now carry TUI-only structured identity from
+`yunxi-agent-runtime`: thread ID, turn ID, stream/message ID, source sequence,
+and started/delta/final phase. The metadata is skipped by serde, so the existing
+plain, JSON, and JSONL event contracts remain unchanged.
+
+`crates/yunxi-agent-tui/src/timeline_store.rs` owns the stream lifecycle and the
+mapping from a stream session to its canonical `TuiCellId`. Its state machine
+handles delta, retry, final, finish, and cancel. Final replaces the active
+canonical cell, duplicate or late events are rejected by stream state and
+sequence, and equal payloads with newer sequences remain valid. The
+`MarkdownStreamController` is scoped to each stream session rather than the
+presentation layer.
+
+`presentation.rs` supplies identity and visibility, `chat.rs` applies explicit
+assistant timeline updates, and the host bridge still only forwards runtime
+events. Provider-shaped integration coverage proves that one user turn plus a
+delta/final response leaves exactly one assistant cell. Additional regressions
+cover retry, cancel, repeated final, legal repeated payloads, CJK, Japanese
+kana, Emoji ZWJ, Markdown fences, long tokens, and a final update while the
+viewport is in history mode.
 
 ## YunXi Agent v2.0.1 Quiet TUI Presentation
 

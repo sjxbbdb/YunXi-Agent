@@ -127,6 +127,14 @@ pub enum AgentEvent {
     },
     Message {
         content: String,
+        /// Structured provider-stream identity used by interactive renderers.
+        ///
+        /// This metadata is deliberately kept out of the serialized `AgentEvent`
+        /// contract so plain, JSON, and JSONL consumers retain their v2.0.1 wire
+        /// shape. Events deserialized from that contract behave as legacy message
+        /// deltas with no source identity.
+        #[serde(skip)]
+        stream: Option<AgentMessageStream>,
     },
     Reasoning {
         content: String,
@@ -273,6 +281,22 @@ pub enum AgentRunStatus {
     Completed,
     Failed,
     Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentMessageStreamPhase {
+    Started,
+    Delta,
+    Final,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentMessageStream {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub stream_id: String,
+    pub source_sequence: u64,
+    pub phase: AgentMessageStreamPhase,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

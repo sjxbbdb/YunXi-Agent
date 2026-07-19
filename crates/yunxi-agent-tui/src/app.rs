@@ -1,6 +1,7 @@
 use crate::bottom_pane::{ApprovalRequestView, BottomPane, UserInputRequestView};
 use crate::chat::Transcript;
 use crate::presentation::{TuiEvent, TuiPresentation};
+use crate::timeline_store::TimelineStore;
 use crate::viewport::TranscriptViewport;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use yunxi_agent_core::{AgentEvent, ControlSnapshot};
@@ -20,6 +21,7 @@ pub(crate) struct YunxiTuiApp {
     version: String,
     banner: Option<YunxiTuiBanner>,
     presentation: TuiPresentation,
+    timeline: TimelineStore,
     transcript: Transcript,
     viewport: TranscriptViewport,
     bottom_pane: BottomPane,
@@ -29,9 +31,10 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.1".to_string(),
+            version: "v2.0.2".to_string(),
             banner: None,
             presentation: TuiPresentation::default(),
+            timeline: TimelineStore::default(),
             transcript: Transcript::default(),
             viewport: TranscriptViewport::default(),
             bottom_pane: BottomPane::default(),
@@ -200,18 +203,52 @@ impl YunxiTuiApp {
 
     pub(crate) fn push_user(&mut self, value: impl Into<String>) {
         self.show_transcript();
+        let mut changed = false;
+        for update in self.timeline.finish_active() {
+            changed |= self.transcript.apply_assistant_update(update);
+        }
         let event = self.presentation.present_user(value);
         self.push_tui_event(event);
+        if changed {
+            self.on_transcript_changed();
+        }
     }
 
     pub(crate) fn push_agent_event(&mut self, event: &AgentEvent) {
+        let terminal = matches!(
+            event,
+            AgentEvent::Completed { .. }
+                | AgentEvent::Cancelled { .. }
+                | AgentEvent::ProviderError { .. }
+                | AgentEvent::Error { .. }
+        );
         let event = self.presentation.present_agent_event(event);
         self.push_tui_event(event);
+        if terminal {
+            let mut changed = false;
+            for update in self.timeline.finish_active() {
+                changed |= self.transcript.apply_assistant_update(update);
+            }
+            if changed {
+                self.on_transcript_changed();
+            }
+        }
     }
 
-    pub(crate) fn push_tui_event(&mut self, event: TuiEvent) {
-        self.transcript.push_tui_event(event);
-        self.on_transcript_changed();
+    pub(crate) fn push_tui_event(&mut self, mut event: TuiEvent) {
+        let has_stream = event.stream.is_some();
+        let mut changed = self
+            .timeline
+            .apply(&mut event)
+            .is_some_and(|update| self.transcript.apply_assistant_update(update));
+        if event.kind != crate::presentation::TuiCellKind::AssistantMessage || !has_stream {
+            let before = self.transcript.cells().len();
+            self.transcript.push_tui_event(event);
+            changed |= self.transcript.cells().len() != before;
+        }
+        if changed {
+            self.on_transcript_changed();
+        }
     }
 
     pub(crate) fn set_debug_events(&mut self, enabled: bool) {
@@ -249,6 +286,7 @@ impl YunxiTuiApp {
     }
 
     pub(crate) fn clear_transcript(&mut self) {
+        self.timeline.clear();
         self.transcript.clear();
         self.viewport.reset();
     }
@@ -397,6 +435,10 @@ fn display_width(value: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::HistoryCellKind;
+    use yunxi_agent_core::{
+        AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus, TokenUsage,
+    };
 
     fn banner() -> YunxiTuiBanner {
         YunxiTuiBanner {
@@ -406,6 +448,19 @@ mod tests {
             provider_source: "offline_static".to_string(),
             model: "deepseek-chat".to_string(),
             provider: "static".to_string(),
+        }
+    }
+
+    fn assistant_event(content: &str, sequence: u64, phase: AgentMessageStreamPhase) -> AgentEvent {
+        AgentEvent::Message {
+            content: content.to_string(),
+            stream: Some(AgentMessageStream {
+                thread_id: "thread-live".to_string(),
+                turn_id: "turn-live".to_string(),
+                stream_id: "message-live".to_string(),
+                source_sequence: sequence,
+                phase,
+            }),
         }
     }
 
@@ -421,7 +476,7 @@ mod tests {
         assert!(display_width(&header) <= 58);
         assert!(display_width(&subheader) <= 58);
         assert!(display_width(&footer) <= 58);
-        assert!(header.contains("YunXi v2.0.1"));
+        assert!(header.contains("YunXi v2.0.2"));
         assert!(header.contains("offline"));
         assert!(header.contains("static"));
         assert!(subheader.contains("provider=static"));
@@ -438,7 +493,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.1"));
+        assert!(header.contains("YunXi Agent v2.0.2"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));
@@ -459,5 +514,60 @@ mod tests {
         assert!(display_width(&header) <= 100);
         assert!(header.contains("deepseek live"));
         assert!(header.contains("model=deepseek-chat"));
+    }
+
+    #[test]
+    fn provider_shaped_delta_and_final_leave_one_canonical_assistant_cell() {
+        let mut app = YunxiTuiApp::default();
+        app.push_user("你好");
+        app.push_agent_event(&assistant_event("你", 1, AgentMessageStreamPhase::Delta));
+        app.push_agent_event(&assistant_event(
+            "你好，我在。",
+            2,
+            AgentMessageStreamPhase::Final,
+        ));
+        app.push_agent_event(&AgentEvent::Completed {
+            status: AgentRunStatus::Completed,
+            usage: Some(TokenUsage {
+                input_tokens: 1,
+                cached_input_tokens: 0,
+                output_tokens: 4,
+                reasoning_output_tokens: 0,
+            }),
+        });
+
+        let assistant_cells = app
+            .transcript()
+            .cells()
+            .iter()
+            .filter_map(|cell| match cell.kind() {
+                HistoryCellKind::Assistant { content, active } => Some((content, active)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(assistant_cells, vec![(&"你好，我在。".to_string(), &false)]);
+        assert_eq!(app.transcript().cells().len(), 2);
+    }
+
+    #[test]
+    fn final_update_preserves_history_scroll_position() {
+        let mut app = YunxiTuiApp::default();
+        app.push_user("history test");
+        app.push_agent_event(&assistant_event(
+            "partial",
+            1,
+            AgentMessageStreamPhase::Delta,
+        ));
+        app.scroll_up(4, 30, 10);
+        let before = app.viewport().view_start(30, 10);
+
+        app.push_agent_event(&assistant_event(
+            "final answer",
+            2,
+            AgentMessageStreamPhase::Final,
+        ));
+
+        assert_eq!(app.viewport().view_start(30, 10), before);
+        assert_eq!(app.viewport().scroll_status(), "new output below");
     }
 }

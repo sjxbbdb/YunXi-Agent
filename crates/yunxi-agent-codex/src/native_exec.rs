@@ -49,7 +49,7 @@ async fn run_native_codex(
     let events = map_exec_jsonl(&output.jsonl)?;
     let final_response = output.final_message.or_else(|| {
         events.iter().rev().find_map(|event| match event {
-            AgentEvent::Message { content } => Some(content.clone()),
+            AgentEvent::Message { content, .. } => Some(content.clone()),
             _ => None,
         })
     });

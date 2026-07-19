@@ -122,6 +122,7 @@ impl ChildAgentRuntime for FixtureChildAgentRuntime {
                 },
                 AgentEvent::Message {
                     content: final_response,
+                    stream: None,
                 },
                 AgentEvent::Completed {
                     status: AgentRunStatus::Completed,

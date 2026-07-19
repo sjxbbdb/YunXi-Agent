@@ -21,9 +21,9 @@ pub use control::{
 };
 pub use error::{AgentError, AgentResult};
 pub use event::{
-    AgentEvent, AgentRunResult, AgentRunStatus, CommandStatus, DeepParityData, FileChangeKind,
-    McpToolStatus, PatchStatus, ThreadRuntimeState, TodoStatus, TokenUsage, TurnRuntimeMetadata,
-    TurnRuntimeState,
+    AgentEvent, AgentMessageStream, AgentMessageStreamPhase, AgentRunResult, AgentRunStatus,
+    CommandStatus, DeepParityData, FileChangeKind, McpToolStatus, PatchStatus, ThreadRuntimeState,
+    TodoStatus, TokenUsage, TurnRuntimeMetadata, TurnRuntimeState,
 };
 pub use input::AgentInput;
 pub use runner::Agent;

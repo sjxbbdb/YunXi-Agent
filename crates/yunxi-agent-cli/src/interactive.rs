@@ -661,6 +661,7 @@ impl InteractiveSession {
                 renderer.event(
                     &AgentEvent::Message {
                         content: final_response.clone(),
+                        stream: None,
                     },
                     &mut render_state,
                 )?;

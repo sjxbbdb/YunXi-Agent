@@ -1,7 +1,28 @@
 use yunxi_agent_core::{
-    AgentEvent, AgentRunStatus, CommandStatus, FileChangeKind, McpToolStatus, PatchStatus,
-    TodoStatus, TokenUsage,
+    AgentEvent, AgentMessageStream, AgentMessageStreamPhase, AgentRunStatus, CommandStatus,
+    FileChangeKind, McpToolStatus, PatchStatus, TodoStatus, TokenUsage,
 };
+
+#[test]
+fn message_stream_identity_does_not_change_json_contract() {
+    let event = AgentEvent::Message {
+        content: "hello".to_string(),
+        stream: Some(AgentMessageStream {
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            stream_id: "message-1".to_string(),
+            source_sequence: 7,
+            phase: AgentMessageStreamPhase::Delta,
+        }),
+    };
+
+    let json = serde_json::to_value(event).expect("json");
+
+    assert_eq!(
+        json,
+        serde_json::json!({"type": "message", "content": "hello"})
+    );
+}
 
 #[test]
 fn command_event_serializes_with_stable_shape() {

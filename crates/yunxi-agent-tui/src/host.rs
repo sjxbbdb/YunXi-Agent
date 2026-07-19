@@ -478,6 +478,7 @@ mod tests {
         let mut app = YunxiTuiApp::default();
         app.push_agent_event(&yunxi_agent_core::AgentEvent::Message {
             content: "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz".to_string(),
+            stream: None,
         });
 
         let metrics = transcript_metrics_for_size(

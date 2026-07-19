@@ -513,7 +513,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.1"));
+        assert!(rendered.contains("YunXi v2.0.2"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }
@@ -599,6 +599,7 @@ mod tests {
             content:
                 "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
                     .to_string(),
+            stream: None,
         });
 
         let rendered = render_app(&app, 28, 12);

@@ -13,6 +13,7 @@ mod render;
 mod scrollbar;
 pub mod streaming;
 mod timeline;
+mod timeline_store;
 mod transcript_layout;
 mod viewport;
 
@@ -21,4 +22,7 @@ pub use bottom_pane::{
     ApprovalDecision, ApprovalRequestView, UserInputRequestView, UserInputResponse,
 };
 pub use host::YunxiTui;
-pub use presentation::{PresentationDetail, TuiCellId, TuiCellKind, TuiEvent, TuiStreamState};
+pub use presentation::{
+    PresentationDetail, TuiCellId, TuiCellKind, TuiEvent, TuiStreamIdentity, TuiStreamPhase,
+    TuiStreamState,
+};

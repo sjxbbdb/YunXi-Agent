@@ -23,10 +23,10 @@ use yunxi_agent_context::{
 };
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
-    AgentResult, AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus,
-    CommandStatus, CompanionHistoryRecord, ControlScope, ControlScopeSnapshot, ControlSnapshot,
-    ControlSource, FileChangeKind, MemoryExtractionMode, ThreadRuntimeState, TokenUsage,
-    TurnRuntimeMetadata, TurnRuntimeState,
+    AgentMessageStream, AgentMessageStreamPhase, AgentResult, AgentRunApprovalDecision,
+    AgentRunControl, AgentRunResult, AgentRunStatus, CommandStatus, CompanionHistoryRecord,
+    ControlScope, ControlScopeSnapshot, ControlSnapshot, ControlSource, FileChangeKind,
+    MemoryExtractionMode, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata, TurnRuntimeState,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_multi_agent::{
@@ -1016,7 +1016,10 @@ impl YunXiRuntimeBackend {
                 content: "Provider turn started".to_string(),
             })
             .await?;
-            let mut provider_event_sink = RuntimeProviderStreamSink { sink: &sink };
+            let mut provider_event_sink = RuntimeProviderStreamSink {
+                sink: &sink,
+                mapper: ProtocolStreamEventMapper::for_attempt(turn_index),
+            };
             let provider_stream = match self
                 .provider
                 .stream_with_sink(
@@ -1047,6 +1050,7 @@ impl YunXiRuntimeBackend {
                     return Err(error);
                 }
             };
+            let final_stream_identity = provider_event_sink.mapper.final_message_identity();
             if control.is_cancelled() {
                 return cancelled_turn_result(&sink, "current turn cancelled").await;
             }
@@ -1080,9 +1084,13 @@ impl YunXiRuntimeBackend {
             .await?;
 
             if provider_response.tool_calls.is_empty() {
-                final_response = provider_response
-                    .message
-                    .map(|message| (message.content, assistant_message_emitted));
+                final_response = provider_response.message.map(|message| {
+                    (
+                        message.content,
+                        assistant_message_emitted,
+                        final_stream_identity,
+                    )
+                });
                 break;
             }
 
@@ -1167,8 +1175,8 @@ impl YunXiRuntimeBackend {
                 .await?;
         }
 
-        let (final_response, final_response_emitted) =
-            final_response.ok_or_else(|| AgentError::Execution {
+        let (final_response, final_response_emitted, final_stream_identity) = final_response
+            .ok_or_else(|| AgentError::Execution {
                 message: format!(
                     "runtime did not produce a final response within {} turns",
                     self.max_turns
@@ -1182,6 +1190,7 @@ impl YunXiRuntimeBackend {
         if !final_response_emitted {
             sink.emit(AgentEvent::Message {
                 content: final_response.clone(),
+                stream: final_stream_identity,
             })
             .await?;
         }
@@ -1209,6 +1218,7 @@ impl YunXiRuntimeBackend {
             }
             sink.emit(AgentEvent::Message {
                 content: message.clone(),
+                stream: None,
             })
             .await?;
         }
@@ -1845,6 +1855,7 @@ impl YunXiRuntimeBackend {
                 .to_string();
         sink.emit(AgentEvent::Message {
             content: final_response.clone(),
+            stream: None,
         })
         .await?;
         sink.emit(AgentEvent::Completed {
@@ -2836,33 +2847,35 @@ where
     Ok(())
 }
 
-async fn emit_provider_stream_events<S>(sink: &S, events: &[StreamEvent]) -> AgentResult<()>
+async fn emit_provider_agent_event<S>(sink: &S, event: AgentEvent) -> AgentResult<()>
 where
     S: RuntimeEventSink,
 {
-    for event in protocol_stream_events_to_agent_events(events) {
-        match event {
-            AgentEvent::ThreadStarted { .. }
-            | AgentEvent::TurnStarted
-            | AgentEvent::CommandStarted { .. }
-            | AgentEvent::McpToolStarted { .. }
-            | AgentEvent::ToolCallStarted { .. }
-            | AgentEvent::Completed { .. } => {}
-            AgentEvent::Message { content } if content.is_empty() => {}
-            other => sink.emit(other).await?,
-        }
+    match event {
+        AgentEvent::ThreadStarted { .. }
+        | AgentEvent::TurnStarted
+        | AgentEvent::CommandStarted { .. }
+        | AgentEvent::McpToolStarted { .. }
+        | AgentEvent::ToolCallStarted { .. }
+        | AgentEvent::Completed { .. } => {}
+        AgentEvent::Message { content, .. } if content.is_empty() => {}
+        other => sink.emit(other).await?,
     }
     Ok(())
 }
 
 struct RuntimeProviderStreamSink<'a> {
     sink: &'a VecEventSink,
+    mapper: ProtocolStreamEventMapper,
 }
 
 #[async_trait]
 impl ProviderStreamEventSink for RuntimeProviderStreamSink<'_> {
     async fn emit(&mut self, event: StreamEvent) -> AgentResult<()> {
-        emit_provider_stream_events(self.sink, std::slice::from_ref(&event)).await
+        for event in self.mapper.map(&event) {
+            emit_provider_agent_event(self.sink, event).await?;
+        }
+        Ok(())
     }
 }
 
@@ -2887,6 +2900,8 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<CollectedPro
     }
 
     let mut message_content = String::new();
+    let mut started_message_content = None;
+    let mut completed_message_content = None;
     let mut tool_calls = Vec::new();
     let mut usage = None;
     let mut argument_deltas: BTreeMap<String, String> = BTreeMap::new();
@@ -2897,13 +2912,29 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<CollectedPro
     let stream_events = stream.events;
     for event in &stream_events {
         match event {
-            StreamEvent::ItemStarted { item, .. } | StreamEvent::ItemCompleted { item, .. } => {
-                collect_response_item(
-                    item.clone(),
-                    &mut message_content,
-                    &mut tool_calls,
-                    &mut usage,
-                )?;
+            StreamEvent::ItemStarted { item, .. } => {
+                if let Some(content) = response_item_message_content(item) {
+                    started_message_content = Some(content);
+                } else {
+                    collect_response_item(
+                        item.clone(),
+                        &mut message_content,
+                        &mut tool_calls,
+                        &mut usage,
+                    )?;
+                }
+            }
+            StreamEvent::ItemCompleted { item, .. } => {
+                if let Some(content) = response_item_message_content(item) {
+                    completed_message_content = Some(content);
+                } else {
+                    collect_response_item(
+                        item.clone(),
+                        &mut message_content,
+                        &mut tool_calls,
+                        &mut usage,
+                    )?;
+                }
             }
             StreamEvent::ItemDelta { delta, .. } => match delta {
                 ResponseItemDelta::MessageContent { delta, .. } => {
@@ -2976,6 +3007,13 @@ fn collect_provider_response(stream: ProviderStream) -> AgentResult<CollectedPro
         {
             tool_calls.push(tool_call);
         }
+    }
+
+    if let Some(canonical) = completed_message_content
+        .or_else(|| (!message_content.is_empty()).then(|| message_content.clone()))
+        .or(started_message_content)
+    {
+        message_content = canonical;
     }
 
     let message = if message_content.is_empty() {
@@ -3112,23 +3150,80 @@ fn collect_response_item(
 pub fn protocol_stream_events_to_agent_events(
     events: &[yunxi_agent_protocol::StreamEvent],
 ) -> Vec<AgentEvent> {
-    let mut output = Vec::new();
-    for event in events {
+    let mut mapper = ProtocolStreamEventMapper::default();
+    events.iter().flat_map(|event| mapper.map(event)).collect()
+}
+
+#[derive(Default)]
+struct ProtocolStreamEventMapper {
+    next_source_sequence: u64,
+    response_generation: u64,
+    last_message_stream: Option<AgentMessageStream>,
+}
+
+impl ProtocolStreamEventMapper {
+    fn for_attempt(attempt: usize) -> Self {
+        Self {
+            next_source_sequence: 0,
+            response_generation: u64::try_from(attempt).unwrap_or(u64::MAX),
+            last_message_stream: None,
+        }
+    }
+
+    fn map(&mut self, event: &yunxi_agent_protocol::StreamEvent) -> Vec<AgentEvent> {
+        let mut output = Vec::new();
         match event {
             yunxi_agent_protocol::StreamEvent::ResponseStarted { thread_id, .. } => {
+                self.response_generation = self.response_generation.saturating_add(1);
                 output.push(AgentEvent::ThreadStarted {
                     thread_id: thread_id.0.clone(),
                 });
                 output.push(AgentEvent::TurnStarted);
             }
-            yunxi_agent_protocol::StreamEvent::ItemStarted { item, .. }
-            | yunxi_agent_protocol::StreamEvent::ItemCompleted { item, .. } => {
-                push_response_item_agent_event(item, &mut output);
+            yunxi_agent_protocol::StreamEvent::ItemStarted {
+                thread_id,
+                turn_id,
+                item,
+            } => {
+                let stream = self.message_stream_for_item(
+                    thread_id,
+                    turn_id,
+                    item,
+                    AgentMessageStreamPhase::Started,
+                );
+                push_response_item_agent_event(item, stream, &mut output);
             }
-            yunxi_agent_protocol::StreamEvent::ItemDelta { delta, .. } => match delta {
-                yunxi_agent_protocol::ResponseItemDelta::MessageContent { delta, .. } => {
+            yunxi_agent_protocol::StreamEvent::ItemCompleted {
+                thread_id,
+                turn_id,
+                item,
+            } => {
+                let stream = self.message_stream_for_item(
+                    thread_id,
+                    turn_id,
+                    item,
+                    AgentMessageStreamPhase::Final,
+                );
+                push_response_item_agent_event(item, stream, &mut output);
+            }
+            yunxi_agent_protocol::StreamEvent::ItemDelta {
+                thread_id,
+                turn_id,
+                delta,
+            } => match delta {
+                yunxi_agent_protocol::ResponseItemDelta::MessageContent { item_id, delta } => {
                     output.push(AgentEvent::Message {
                         content: delta.clone(),
+                        stream: Some(
+                            self.message_stream(
+                                thread_id,
+                                turn_id,
+                                item_id
+                                    .clone()
+                                    .unwrap_or_else(|| self.fallback_assistant_stream_id(turn_id)),
+                                AgentMessageStreamPhase::Delta,
+                            ),
+                        ),
                     });
                 }
                 yunxi_agent_protocol::ResponseItemDelta::ReasoningContent { delta, .. } => {
@@ -3211,23 +3306,86 @@ pub fn protocol_stream_events_to_agent_events(
                 });
             }
         }
+        output
     }
-    output
+
+    fn message_stream_for_item(
+        &mut self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        item: &ResponseItem,
+        phase: AgentMessageStreamPhase,
+    ) -> Option<AgentMessageStream> {
+        self.response_item_stream_id(item, turn_id)
+            .map(|stream_id| self.message_stream(thread_id, turn_id, stream_id, phase))
+    }
+
+    fn message_stream(
+        &mut self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        stream_id: String,
+        phase: AgentMessageStreamPhase,
+    ) -> AgentMessageStream {
+        self.next_source_sequence = self.next_source_sequence.saturating_add(1);
+        let stream = AgentMessageStream {
+            thread_id: thread_id.0.clone(),
+            turn_id: turn_id.0.clone(),
+            stream_id,
+            source_sequence: self.next_source_sequence,
+            phase,
+        };
+        self.last_message_stream = Some(stream.clone());
+        stream
+    }
+
+    fn response_item_stream_id(&self, item: &ResponseItem, turn_id: &TurnId) -> Option<String> {
+        match item {
+            ResponseItem::Message { .. } => Some(self.fallback_assistant_stream_id(turn_id)),
+            ResponseItem::AgentMessage { id, .. } => Some(id.clone()),
+            ResponseItem::Reasoning { .. }
+            | ResponseItem::ReasoningItem { .. }
+            | ResponseItem::Usage { .. }
+            | ResponseItem::LocalShellCall { .. }
+            | ResponseItem::FunctionCallOutput { .. }
+            | ResponseItem::WebSearchCall { .. }
+            | ResponseItem::Compaction { .. }
+            | ResponseItem::CompactionTrigger { .. }
+            | ResponseItem::ToolCall { .. }
+            | ResponseItem::FunctionCall { .. }
+            | ResponseItem::McpToolCall { .. }
+            | ResponseItem::ToolSearchCall { .. } => None,
+        }
+    }
+
+    fn fallback_assistant_stream_id(&self, turn_id: &TurnId) -> String {
+        format!("{}:assistant:{}", turn_id.0, self.response_generation)
+    }
+
+    fn final_message_identity(&self) -> Option<AgentMessageStream> {
+        self.last_message_stream.clone().map(|mut stream| {
+            stream.source_sequence = stream.source_sequence.saturating_add(1);
+            stream.phase = AgentMessageStreamPhase::Final;
+            stream
+        })
+    }
 }
 
 fn push_response_item_agent_event(
     item: &yunxi_agent_protocol::ResponseItem,
+    stream: Option<AgentMessageStream>,
     output: &mut Vec<AgentEvent>,
 ) {
     match item {
         yunxi_agent_protocol::ResponseItem::Message { content, .. } => {
             output.push(AgentEvent::Message {
                 content: content.clone(),
+                stream,
             })
         }
         yunxi_agent_protocol::ResponseItem::AgentMessage { content, .. } => {
             if let Some(content) = first_content_text(content) {
-                output.push(AgentEvent::Message { content });
+                output.push(AgentEvent::Message { content, stream });
             }
         }
         yunxi_agent_protocol::ResponseItem::Reasoning { content } => {
@@ -3629,7 +3787,7 @@ fn child_scoped_stream_event(event: &AgentEvent) -> Option<(&'static str, Option
             "child_session_started",
             Some(format!("child started: {prompt}")),
         )),
-        AgentEvent::Message { content } | AgentEvent::Reasoning { content } => {
+        AgentEvent::Message { content, .. } | AgentEvent::Reasoning { content } => {
             Some(("child_provider_delta", Some(content.clone())))
         }
         AgentEvent::CommandStarted { command, .. } => {
@@ -3669,7 +3827,7 @@ fn child_scoped_stream_event(event: &AgentEvent) -> Option<(&'static str, Option
 fn summarize_child_event(event: &AgentEvent) -> Option<String> {
     match event {
         AgentEvent::Started { prompt } => Some(format!("child started: {prompt}")),
-        AgentEvent::Message { content } => Some(content.clone()),
+        AgentEvent::Message { content, .. } => Some(content.clone()),
         AgentEvent::Reasoning { content } => Some(format!("child reasoning: {content}")),
         AgentEvent::ToolCallStarted { name, .. } => Some(format!("child tool started: {name}")),
         AgentEvent::ToolCallCompleted { name, output, .. } => {

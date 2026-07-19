@@ -130,7 +130,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v2.0.1 interactive CLI");
+    println!("YunXi Agent v2.0.2 interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(
@@ -197,7 +197,7 @@ impl RenderState {
 
 pub(crate) fn render_agent_event(event: &AgentEvent, state: &mut RenderState) -> Result<()> {
     match event {
-        AgentEvent::Message { content } => {
+        AgentEvent::Message { content, .. } => {
             if let Some(rendered) = state.observe_assistant_content(content) {
                 println!("{rendered}");
             }

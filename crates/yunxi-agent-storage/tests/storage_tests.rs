@@ -83,6 +83,7 @@ fn rollout_record_can_be_reconstructed_from_session_record() {
         Some("done".to_string()),
         vec![AgentEvent::Message {
             content: "done".to_string(),
+            stream: None,
         }],
     )
     .with_parent_id(parent_id.clone())

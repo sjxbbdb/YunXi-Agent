@@ -62,6 +62,7 @@ impl AgentBackend for DryRunBackend {
             },
             AgentEvent::Message {
                 content: response.clone(),
+                stream: None,
             },
             AgentEvent::Completed {
                 status: AgentRunStatus::Completed,

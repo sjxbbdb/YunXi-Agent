@@ -593,3 +593,78 @@ non-force 推送 master 与 tag；旧 tag 保持不变，不追加同版本 docs
 hotfix 提交，最终远程状态以 Git refs 为准。
 
 署名：开发者
+
+## 2026-07-19 07:18:26 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-18-213015-YunXi-Agent-v2.0.1-源码与TUI视觉审核报告.md` 撰写 YunXi Agent v2.0.2 流式状态机与消息幂等化开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：
+1. 读取 v2.0.1 源码与 TUI 视觉审核报告，确认 v2.0.1 审核通过，可以进入 v2.0.2 开发报告撰写。
+2. 核对当前项目 Git 状态：`master...origin/master`，工作树在报告撰写前干净。
+3. 使用 CodeGraph 参考 TUI `streaming.rs`、`chat.rs`、`presentation.rs`、core `stream.rs` 等当前源码结构，确认 v2.0.2 应以 TurnId/StreamSession/timeline store 和 canonical assistant cell 为核心。
+4. 按固定流程在开发报告前部写入 14 条硬性约束。
+5. 围绕 v2.0.2 流式状态机与消息幂等化撰写开发目标、live provider 重复回复问题、源码接入点、必须覆盖场景、参考源码抽取建议、实现顺序、验收标准、统一验证要求和文档同步要求。
+6. 将开发报告保存到项目内报告目录，并复制到桌面开发报告目录。
+7. 追加项目内开发日志和桌面开发日志，记录本次报告撰写与文件同步状态。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-071826-yunxi-agent-v2-0-2-streaming-state-machine-idempotency-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-071826-yunxi-agent-v2-0-2-streaming-state-machine-idempotency-development-report.md`
+- 追加桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成开发报告撰写，并已同步到桌面开发报告目录。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 后续仍需按固定流程完成实际开发、统一验证、清理和发布闭环后，才能宣称完成。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag。
+
+署名：开发报告撰写者
+
+## 2026-07-19 09:18:11 +08:00
+
+工作目标：严格依据 v2.0.2 开发报告完成流式状态机、消息幂等化、canonical assistant cell、版本升级、自动化与 live provider 验证，并按单一发布提交和不可移动 annotated tag 的约束准备发布。
+
+执行流程：
+1. 核对 `master`/`origin/master` 基线 `2b07a13ae49380b63aa966801e9a52c628107708`、开发前工作树、`v2.0.1` annotated tag 与旧 tag 保护状态。
+2. 使用 `.codegraph` 定位 core、runtime、TUI、CLI 与测试边界；只读参考本机 Codex TUI rendering/wrapping/width 等实现思路。
+3. 在 core 增加不改变 JSON 形状的流式身份元数据，在 runtime 将 provider thread/turn/item/source sequence/phase 映射为稳定 stream identity，并避免 delta 与 completed snapshot 重复累加。
+4. 新增 `crates/yunxi-agent-tui/src/timeline_store.rs`，以 TurnId、StreamSessionId、SourceSequence、canonical cell 和显式状态机处理 started/delta/retry/final/finish/cancel。
+5. 调整 TUI presentation、chat、app、host 与 render，使 final 原位更新、重复 final 幂等、cancel 后迟到事件失效、合法重复 delta 保留、工具边界不拆流，历史回看不被 final 抢回尾部。
+6. 增加 core JSON 契约、runtime 协议映射、TUI 状态机、provider-shaped 单 canonical cell、历史回看，以及 CJK/假名/Emoji ZWJ/Markdown fence/长 token 等回归测试。
+7. 将 workspace、CLI/TUI/persona/evaluation harness 与 README/docs 版本和说明同步为 `2.0.2`。
+8. 统一执行 fmt、check、workspace tests、workspace build、release build、版本冒烟、Evaluation Harness、JSON/JSONL 与 diff 检查；修正首次测试暴露的两个 fixture 字段后完整重跑并通过。
+9. 经用户授权，在独立临时 `YUNXI_HOME` 与空工作目录执行真实 DeepSeek 流式单轮复核，确认 transcript 只有一个 canonical assistant cell且无重复回答。
+10. 经用户授权核验绝对路径后执行 `cargo clean`，清理测试状态和 live 临时目录；准备创建唯一 v2.0.2 发布提交并立即创建 annotated tag，再以 API key 临时认证 non-force 推送。
+
+主要修改文件与路径：
+- workspace 与锁文件：`D:\YunXi Agent\Cargo.toml`、`D:\YunXi Agent\Cargo.lock`
+- 流式事件契约：`D:\YunXi Agent\crates\yunxi-agent-core\src\event.rs`
+- provider/runtime 映射：`D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`
+- TUI 状态机：`D:\YunXi Agent\crates\yunxi-agent-tui\src\timeline_store.rs`
+- TUI 接入：`D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`、`chat.rs`、`host.rs`、`presentation.rs`、`render.rs`
+- 兼容性与回归测试：core、runtime、TUI、CLI、storage、persona、Codex adapter 对应测试文件
+- 文档：`D:\YunXi Agent\README.md`、`docs/extraction-status.md`、`docs/persona-memory.md`、`docs/tui-presentation.md`
+- 开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-071826-yunxi-agent-v2-0-2-streaming-state-machine-idempotency-development-report.md`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面同步目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-071826-yunxi-agent-v2-0-2-streaming-state-machine-idempotency-development-report.md`、`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- `cargo fmt --all`、`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace`、`cargo build --workspace`、release build 全部通过。
+- release 输出 `yunxi 2.0.2`；Evaluation Harness 31/31 通过、golden 通过，JSON 正常，JSONL 恰好一行。
+- 自动化覆盖 delta/final/retry/cancel、重复 final、合法重复文本、CJK/假名/Emoji ZWJ/Markdown fence/4096 字符长 token、单 canonical cell 与历史回看不抢尾部。
+- 隔离 live provider 使用 `deepseek-v4-flash` 回答固定提示，等待 15 秒后仍为 1 个 user cell + 1 个 canonical assistant cell，无重复回答。
+- `git diff --check` 通过；`cargo clean` 移除 15,211 个文件、4.2 GiB，最终 `target`、CLI 测试状态目录与 live 临时目录均不存在。
+
+提交和推送状态：所有 v2.0.2 实现与文档已准备纳入唯一发布提交；该提交后立即创建 annotated `v2.0.2` tag，并以 non-force 方式推送 `master` 和 tag。发布后不追加同版本 docs-only/hotfix 提交，最终远程状态以 Git refs 为准。
+
+署名：开发者

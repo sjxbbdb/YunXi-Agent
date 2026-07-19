@@ -482,8 +482,9 @@ fn redact_agent_event_for_json(event: AgentEvent) -> AgentEvent {
             schema_version,
             warning: redact_text(warning),
         },
-        AgentEvent::Message { content } => AgentEvent::Message {
+        AgentEvent::Message { content, stream } => AgentEvent::Message {
             content: redact_text(content),
+            stream,
         },
         AgentEvent::Reasoning { content } => AgentEvent::Reasoning {
             content: redact_text(content),
@@ -1139,6 +1140,7 @@ mod tests {
                 },
                 AgentEvent::Message {
                     content: format!("assistant echo {secret}"),
+                    stream: None,
                 },
                 AgentEvent::MemoryRecall {
                     schema_version: 1,

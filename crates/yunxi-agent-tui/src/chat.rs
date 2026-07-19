@@ -2,6 +2,7 @@ use crate::debug::DebugBuffer;
 use crate::event_filter::should_show;
 use crate::presentation::{TuiCellId, TuiCellKind, TuiEvent};
 use crate::timeline::{ToolTimelineEntry, ToolTimelineUpdate};
+use crate::timeline_store::AssistantTimelineUpdate;
 
 const MAX_HISTORY_CELLS: usize = 800;
 
@@ -94,10 +95,6 @@ impl Transcript {
     }
 
     pub(crate) fn push_tui_event(&mut self, mut event: TuiEvent) {
-        if event.kind != TuiCellKind::AssistantMessage {
-            self.finalize_assistant();
-        }
-
         let source_id = event.id.clone();
         let detail_id = event.detail.take().map(|detail| self.debug.add(detail));
         if !should_show(&event, self.debug.enabled()) {
@@ -161,6 +158,29 @@ impl Transcript {
         }
     }
 
+    pub(crate) fn apply_assistant_update(&mut self, update: AssistantTimelineUpdate) -> bool {
+        if let Some(cell) = self.cells.iter_mut().find(|cell| cell.id == update.cell_id)
+            && let HistoryCellKind::Assistant { content, active } = &mut cell.kind
+        {
+            let changed = *content != update.content || *active != update.active;
+            *content = update.content;
+            *active = update.active;
+            return changed;
+        }
+        if update.content.is_empty() {
+            return false;
+        }
+        self.push_cell(HistoryCell {
+            id: update.cell_id,
+            kind: HistoryCellKind::Assistant {
+                content: update.content,
+                active: update.active,
+            },
+            detail_id: None,
+        });
+        true
+    }
+
     fn push_assistant(&mut self, id: TuiCellId, content: String, detail_id: Option<usize>) {
         if content.trim().is_empty() {
             return;
@@ -211,7 +231,6 @@ impl Transcript {
         mut update: ToolTimelineUpdate,
         detail_id: Option<usize>,
     ) {
-        self.finalize_assistant();
         if let Some(detail_id) = detail_id {
             update = update.detail_id(detail_id);
         }
@@ -239,7 +258,6 @@ impl Transcript {
                 .get(id)
                 .map(|entry| entry.label.clone())
                 .unwrap_or_else(|| "debug".to_string());
-            self.finalize_assistant();
             self.push_cell(HistoryCell {
                 id: source_id.with_suffix(&format!("debug-{id}")),
                 kind: HistoryCellKind::Debug { id, label, message },
@@ -278,23 +296,17 @@ mod tests {
 
     #[test]
     fn assistant_stream_rewrites_one_stable_history_cell() {
-        let mut presentation = TuiPresentation::default();
-        let mut transcript = Transcript::default();
-        push_event(
-            &mut presentation,
-            &mut transcript,
-            AgentEvent::Message {
-                content: "用户".to_string(),
-            },
-        );
-        let stable_id = transcript.cells()[0].id().clone();
-        push_event(
-            &mut presentation,
-            &mut transcript,
-            AgentEvent::Message {
-                content: "输入".to_string(),
-            },
-        );
+        let mut app = crate::app::YunxiTuiApp::default();
+        app.push_agent_event(&AgentEvent::Message {
+            content: "用户".to_string(),
+            stream: None,
+        });
+        let stable_id = app.transcript().cells()[0].id().clone();
+        app.push_agent_event(&AgentEvent::Message {
+            content: "输入".to_string(),
+            stream: None,
+        });
+        let transcript = app.transcript();
 
         assert_eq!(transcript.cells().len(), 1);
         assert_eq!(transcript.cells()[0].id(), &stable_id);

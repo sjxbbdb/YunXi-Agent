@@ -1,15 +1,34 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.3
+## Current Workspace Version: v2.0.3-hotfix.1
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
 
-## v2.0.3 Redraw, Scroll, And Resize Stability
+## v2.0.3-hotfix.1 Redraw Audit Remediation Candidate
+
+The project owner explicitly selected `2.0.3-hotfix.1` and the new annotated
+`v2.0.3-hotfix.1` tag for the failed v2.0.3 audit remediation. The published
+`v2.0.3`, `v2.0.2-hotfix.1`, and `v2.0.2` tags remain immutable.
+
+The default coalesced redraw interval is now 33,334 microseconds, strictly below
+the 30 FPS hard ceiling. `RedrawScheduler::record_draw` counts only successful
+production-path draw records. A deterministic test manually advances `Instant`
+while injecting 1,000 deltas over one second and asserts no more than 30 draws
+and far fewer draws than deltas. Immediate and next-frame invalidations retain
+their existing semantics.
+
+Full normalized frame snapshots at 80x24 and 120x40 are checked into
+`crates/yunxi-agent-tui/src/snapshots`. Both traverse the real layout and wrap
+path with active streaming, pinned history, new output below, scrollbar,
+footer, and composer. Tests also assert stable region coordinates, no overlap,
+scrollbar containment, row width bounds, and required frame content.
+
+## v2.0.3 Redraw, Scroll, And Resize Stability (Superseded Audit Candidate)
 
 The TUI host now owns a reason-aware `RedrawScheduler`. High-rate provider
-deltas and ordinary status changes are coalesced on the existing 33 ms host
+deltas and ordinary status changes were coalesced on the original 33 ms host
 tick; final/control state is rendered on the next frame; input, scroll, resize,
 cancellation, and errors remain immediate. The scheduler records the set of
 pending causes and clears it after a successful draw.
@@ -22,6 +41,11 @@ grapheme-safe for CJK, emoji ZWJ, combining marks, and long tokens. Explicit
 saturating layout rules cover tiny terminal heights without overlapping panes
 or invalid cursor placement. Plain CLI, `--no-tui`, JSON, JSONL, runtime, and
 provider contracts remain unchanged.
+
+This published candidate failed independent audit because 33 ms is not a strict
+30 FPS ceiling and it lacked the required 1,000-delta draw count plus 80x24 and
+120x40 full-frame snapshots. The immutable release is superseded only by the
+explicitly approved hotfix remediation above.
 
 ## v2.0.2-hotfix.1 Streaming Audit Remediation Candidate
 

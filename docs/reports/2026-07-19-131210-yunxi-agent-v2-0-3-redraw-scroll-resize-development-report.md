@@ -302,3 +302,15 @@ refs 以 Git 历史和桌面最终开发日志为准。旧 `v2.0.2`、`v2.0.2-ho
 全程不移动、不删除、不覆盖。
 
 署名：开发者
+
+## 2026-07-19 v2.0.3 审计后状态
+
+独立源码与 TUI 视觉审核判定已发布 `v2.0.3` 未通过，缺口为严格 30 FPS 的
+1,000-delta draw 计数证明，以及 80x24、120x40 完整 TUI frame snapshot。上文是
+不可改写的原发布记录，不代表重新审核通过。
+
+项目负责人已明确选择 `2.0.3-hotfix.1` / annotated `v2.0.3-hotfix.1` 作为整改
+发布策略，原 `v2.0.3` tag 保持不变。实际整改、验证与发布证据记录在
+`docs/reports/2026-07-19-151023-yunxi-agent-v2-0-3-redraw-scroll-resize-remediation-development-report.md`。
+
+署名：开发者

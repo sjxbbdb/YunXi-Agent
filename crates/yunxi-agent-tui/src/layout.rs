@@ -120,4 +120,33 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn snapshot_dimensions_have_stable_non_overlapping_regions() {
+        for (width, height, transcript_height, inner_height) in
+            [(80, 24, 17, 15), (120, 40, 33, 31)]
+        {
+            let layout = compute_layout(Rect::new(0, 0, width, height), 4);
+
+            assert_eq!(layout.header, Rect::new(0, 0, width, 3));
+            assert_eq!(layout.transcript, Rect::new(0, 3, width, transcript_height));
+            assert_eq!(
+                layout.transcript_inner,
+                Rect::new(1, 4, width - 2, inner_height)
+            );
+            assert_eq!(
+                layout.transcript_scrollbar,
+                Rect::new(width - 1, 4, 1, inner_height)
+            );
+            assert_eq!(layout.bottom_pane, Rect::new(0, height - 4, width, 4));
+            assert_eq!(
+                layout.transcript.y + layout.transcript.height,
+                layout.bottom_pane.y
+            );
+            assert_eq!(
+                layout.transcript_scrollbar.y + layout.transcript_scrollbar.height,
+                layout.transcript.y + layout.transcript.height - 1
+            );
+        }
+    }
 }

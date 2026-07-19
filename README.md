@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.3
+# YunXi Agent v2.0.3-hotfix.1
 
-YunXi Agent v2.0.3 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.3-hotfix.1 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.3 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.3-hotfix.1 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.3 TUI presentation, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.3-hotfix.1 TUI presentation, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -161,6 +161,22 @@ resize to resolve the same logical history content. Unicode long-token wrapping
 uses grapheme clusters, and saturating small-terminal layout keeps the composer
 visible without overlapping regions or panicking.
 
+## Redraw Audit Remediation v2.0.3-hotfix.1
+
+The published annotated `v2.0.3` tag remains immutable. The explicitly approved
+`v2.0.3-hotfix.1` re-audit candidate tightens the coalesced-frame interval to
+33,334 microseconds, whose theoretical rate is strictly below 30 FPS. The
+production `record_draw` path now retains a draw counter used by a deterministic
+one-second test that injects 1,000 stream deltas with manually advanced
+`Instant` values and proves no more than 30 draws.
+
+Repository-owned full-frame snapshots at 80x24 and 120x40 exercise the real
+layout, wrapped transcript, active canonical assistant cell, pinned history,
+`new output below`, scrollbar, footer, and composer paths. The snapshots and
+their boundary assertions live under
+`crates/yunxi-agent-tui/src/snapshots` and `render.rs`; no live provider or
+wall-clock sleep is needed for these automated gates.
+
 ## Streaming Audit Remediation Hotfix Candidate
 
 The `2.0.2-hotfix.1` audit remediation keeps the published `v2.0.2` tag immutable
@@ -236,7 +252,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v2.0.3 CLI into a user-local bin directory:
+Build and install the v2.0.3-hotfix.1 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

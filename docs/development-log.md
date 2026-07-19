@@ -924,3 +924,92 @@ object 和远程 refs 记录在 Git 历史及桌面最终开发日志中。旧 `
 `v2.0.2-hotfix.1` tag 全程保持不变。
 
 署名：开发者
+
+## 2026-07-19 15:10:23 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-19-150645-YunXi-Agent-v2.0.3-源码与TUI视觉审核报告.md` 撰写 YunXi Agent v2.0.3 重绘调度与 TUI Snapshot 整改开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：1. 读取 v2.0.3 源码与 TUI 视觉审核报告，确认审核不通过，不可进入 v2.0.4 的既定功能开发。2. 核对当前 Git 状态为 `master...origin/master`，存在在线审核运行生成的未跟踪目录 `crates\yunxi-agent-cli\.yunxi`。3. 使用 CodeGraph MCP 参考 `frame.rs`、`host.rs`、`render.rs` 等接入点，确认缺口集中在 1,000 高频 delta draw/FPS 硬证明、30 FPS 严格边界、80x24 与 120x40 完整 TUI snapshot、真实 online TUI 复测证据。4. 按固定流程在开发报告前部写入 14 条硬性约束。5. 围绕 v2.0.3 整改范围撰写开发目标、版本边界、源码接入点、Codex TUI 参考建议、推荐执行顺序、测试要求、真实 TUI 复核要求和统一验证要求。6. 在项目内新增整改开发报告。7. 追加项目内开发日志，将报告复制到桌面开发报告目录，并追加桌面开发日志。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-151023-yunxi-agent-v2-0-3-redraw-scroll-resize-remediation-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-151023-yunxi-agent-v2-0-3-redraw-scroll-resize-remediation-development-report.md`
+- 追加桌面日志目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成 v2.0.3 重绘调度与 TUI Snapshot 整改开发报告撰写，并同步到桌面开发报告目录。
+- 本次仅生成文档和追加日志，未修改 Rust 源码。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 当前未跟踪目录 `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 未被读取或清理；如需清理必须先取得用户确认。
+- 后续必须按报告先完成 v2.0.3 验收整改和重新审核；审核通过前不得宣称完成，也不得进入 v2.0.4。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag；已发布 `v2.0.3` tag 不得移动、删除或覆盖，整改发布编号与 tag 策略需用户确认。
+
+署名：开发报告撰写者
+
+## 2026-07-19 16:30:48 +08:00
+
+工作目标：严格依据
+`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-151023-yunxi-agent-v2-0-3-redraw-scroll-resize-remediation-development-report.md`
+完成 `2.0.3-hotfix.1` 重绘审计整改，补齐严格 30 FPS 的 1,000-delta draw 证明、
+80x24 与 120x40 完整 frame snapshot、真实 offline/live TUI 复核，并在不移动任何旧
+tag 的前提下准备 annotated `v2.0.3-hotfix.1` 发布。
+
+执行流程：1. 完整读取整改报告并锁定 14 条硬性约束、通用陪伴 Agent 目标和
+`v2.0.4` 禁入边界。2. 使用 CodeGraph 复核 `RedrawScheduler`、生产 draw 记录路径、
+layout 与 full-frame snapshot 接入点。3. 将最小帧间隔改为 33,334 微秒，增加生产
+draw count 和手动推进 `Instant` 的 1,000-delta 确定性测试。4. 扩展 immediate 与
+next-frame 回归。5. 新增 80x24、120x40 完整 snapshot 与固定区域、宽度、scrollbar
+边界断言。6. 同步 workspace、CLI、TUI、persona、runtime、evaluation、README 和
+状态文档到 `2.0.3-hotfix.1`。7. 集中运行 fmt、check、workspace tests/build、
+release build、版本、Evaluation Harness、golden、JSON/JSONL、offline one-shot 与
+offline PTY。8. 使用 DeepSeek `deepseek-v4-flash` 在真实 ConPTY 中复核短流 canonical
+cell、滚轮、PgUp/PgDown、动态 resize、Home/End、active-turn Ctrl+C、partial 保留、
+下一轮与退出。9. 将不含凭据的 TUI 证据固化到项目报告目录。10. 执行 diff/status
+检查并准备精确清理清单。
+
+主要修改文件与路径：
+
+- 调度与测试：`D:\YunXi Agent\crates\yunxi-agent-tui\src\frame.rs`。
+- 布局与渲染：`D:\YunXi Agent\crates\yunxi-agent-tui\src\layout.rs`、
+  `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`、
+  `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`。
+- 完整快照：`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`、
+  `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt`。
+- 版本与测试：`D:\YunXi Agent\Cargo.toml`、`D:\YunXi Agent\Cargo.lock`、CLI、
+  persona、runtime、evaluation 对应源码和测试文件。
+- 文档：`D:\YunXi Agent\README.md`、`D:\YunXi Agent\docs\extraction-status.md`、
+  `D:\YunXi Agent\docs\tui-presentation.md`、`D:\YunXi Agent\docs\persona-memory.md`、
+  `D:\YunXi Agent\docs\development-log.md`、原 v2.0.3 开发报告、本整改报告和
+  `D:\YunXi Agent\docs\reports\evidence\2026-07-19-v2-0-3-hotfix-1-tui-evidence.md`。
+
+验证结果：`cargo fmt --all`、fmt check、workspace check/test/build、release build
+全部通过；TUI 87/87，CLI integration 44、provider 44、runtime 45；release 输出
+`yunxi 2.0.3-hotfix.1`。Evaluation Harness 31/31、golden true，JSON 可解析、JSONL
+恰好一行，各质量率 1.0，违规和审批绕过为 0。offline one-shot、offline PTY 80x24
+和 DeepSeek live TUI 均通过，live 会话 10 个检查点、39,896 bytes、退出码 0；普通
+屏幕未发现凭据、协议、thinking、工具参数、memory/context 或内部错误栈泄漏。
+`git diff --check` 通过，仅有 Windows 行尾提示。
+
+清理状态：2026-07-19 16:50:18 +08:00 经用户明确授权完成。清理前 `target` 有
+16,570 个文件、5,043,980,114 字节，`cargo clean` 报告移除 16,570 个文件、
+4.7 GiB；CLI `.yunxi` 有 1 个文件、832 字节；9 个实际存在的精确 `.tmp` 目标
+共 59 个文件、9,147,991 字节。一个 `conpty.node` 被本轮证据 Node PID 26592 占用，
+经模块路径和启动时间核验后只终止该 PID，再删除残留目录。最终全部清理目标均不
+存在，没有删除整个 `.tmp`，没有终止其他 Node/CodeGraph 进程。
+
+提交和推送状态：尚未提交、尚未创建 `v2.0.3-hotfix.1` tag、尚未推送。原
+`v2.0.3`、`v2.0.2-hotfix.1`、`v2.0.2` tag 保持不变；本记录将在单一 hotfix 发布
+提交中入库，再创建新 annotated tag 并使用指定 GitHub API
+key non-force 推送和核验远程 refs。候选发布不等于独立重新审核通过。
+
+署名：开发者

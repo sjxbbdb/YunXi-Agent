@@ -403,6 +403,154 @@ mod tests {
         format!("{:?}", terminal.backend().buffer())
     }
 
+    fn render_full_frame_snapshot(app: &YunxiTuiApp, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| render_tui_frame(frame, app))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                let mut row = String::new();
+                let mut x = 0;
+                while x < width {
+                    let symbol = buffer[(x, y)].symbol();
+                    row.push_str(symbol);
+                    x = x.saturating_add(UnicodeWidthStr::width(symbol).max(1) as u16);
+                }
+                format!("{y:02}|{}", row.trim_end())
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn full_frame_snapshot_app(width: u16, height: u16) -> YunxiTuiApp {
+        use yunxi_agent_core::{
+            AgentEvent, AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase,
+        };
+
+        fn stream_event(content: &str, sequence: u64) -> AgentEvent {
+            AgentEvent::Message {
+                content: content.to_string(),
+                stream: Some(AgentMessageStream {
+                    thread_id: "snapshot-thread".to_string(),
+                    turn_id: "snapshot-turn".to_string(),
+                    stream_id: "snapshot-message".to_string(),
+                    event_id: format!("snapshot-event-{sequence}"),
+                    source_sequence: AgentMessageSequence::LocalFallback(sequence),
+                    phase: AgentMessageStreamPhase::Delta,
+                }),
+            }
+        }
+
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        app.start_prompt("yunxi> ");
+        app.bottom_pane_mut().paste("snapshot ready");
+        for index in 0..36 {
+            app.push_notice(
+                "history",
+                &format!("history {index:02}: stable transcript row for viewport evidence"),
+            );
+        }
+        app.push_user("Keep the current history position while the answer streams.");
+        app.push_agent_event(&stream_event(
+            "Streaming snapshot line 1.\nLine 2 keeps the canonical assistant cell active.\nLine 3 includes CJK 中文 and emoji 👩‍💻.\nLine 4 remains visible near the pinned history anchor.",
+            1,
+        ));
+
+        let layout = compute_layout(
+            Rect::new(0, 0, width, height),
+            app.bottom_pane().desired_height_for_width(width as usize),
+        );
+        let wrapped = build_wrapped_transcript(
+            app.transcript().cells(),
+            layout.transcript_inner.width as usize,
+        );
+        app.scroll_up(1, &wrapped, layout.transcript_inner.height as usize);
+        app.push_agent_event(&stream_event(
+            "Streaming snapshot line 1.\nLine 2 keeps the canonical assistant cell active.\nLine 3 includes CJK 中文 and emoji 👩‍💻.\nLine 4 remains visible near the pinned history anchor.\nLine 5 arrived below the pinned viewport.\nLine 6 is still streaming without stealing follow-tail.",
+            2,
+        ));
+        assert_eq!(app.viewport().scroll_status(), "new output below");
+        app
+    }
+
+    fn assert_full_frame_snapshot(width: u16, height: u16, expected: &str) -> String {
+        let app = full_frame_snapshot_app(width, height);
+        let snapshot = render_full_frame_snapshot(&app, width, height);
+        let layout = compute_layout(
+            Rect::new(0, 0, width, height),
+            app.bottom_pane().desired_height_for_width(width as usize),
+        );
+
+        assert_eq!(snapshot.lines().count(), height as usize);
+        for row in snapshot.lines() {
+            let content = row.split_once('|').expect("snapshot row prefix").1;
+            assert!(
+                UnicodeWidthStr::width(content) <= width as usize,
+                "row overflow at {width}x{height}: {row}"
+            );
+        }
+        assert_eq!(
+            layout.header.y.saturating_add(layout.header.height),
+            layout.transcript.y
+        );
+        assert_eq!(
+            layout.transcript.y.saturating_add(layout.transcript.height),
+            layout.bottom_pane.y
+        );
+        assert_eq!(
+            layout
+                .bottom_pane
+                .y
+                .saturating_add(layout.bottom_pane.height),
+            height
+        );
+        assert!(layout.transcript_scrollbar.x >= layout.transcript.x);
+        assert!(
+            layout
+                .transcript_scrollbar
+                .x
+                .saturating_add(layout.transcript_scrollbar.width)
+                <= layout.transcript.x.saturating_add(layout.transcript.width)
+        );
+        assert!(
+            layout
+                .transcript_scrollbar
+                .y
+                .saturating_add(layout.transcript_scrollbar.height)
+                <= layout.transcript.y.saturating_add(layout.transcript.height)
+        );
+        for required in [
+            "[assistant*]",
+            "new output below",
+            "^",
+            "v",
+            "Composer",
+            "yunxi> snapshot ready",
+            "End follow tail",
+        ] {
+            assert!(
+                snapshot.contains(required),
+                "missing {required} at {width}x{height}"
+            );
+        }
+        assert_eq!(snapshot, expected.trim_end_matches(['\r', '\n']));
+        snapshot
+    }
+
+    #[test]
+    fn full_frame_snapshot_80x24_covers_stream_history_and_composer() {
+        assert_full_frame_snapshot(80, 24, include_str!("snapshots/full_frame_80x24.txt"));
+    }
+
+    #[test]
+    fn full_frame_snapshot_120x40_covers_stream_history_and_composer() {
+        assert_full_frame_snapshot(120, 40, include_str!("snapshots/full_frame_120x40.txt"));
+    }
+
     #[test]
     fn renders_shared_control_snapshot_with_scope_and_clear_effects() {
         use yunxi_agent_core::{
@@ -533,7 +681,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.3"));
+        assert!(rendered.contains("YunXi v2.0.3-hotfix.1"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }

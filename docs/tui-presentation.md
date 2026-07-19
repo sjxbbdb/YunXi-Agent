@@ -1,6 +1,6 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.3 keeps the v2.0.1 presentation boundary and v2.0.2-hotfix.1
+YunXi Agent v2.0.3-hotfix.1 keeps the v2.0.1 presentation boundary and v2.0.2-hotfix.1
 streaming timeline, then adds reason-aware redraw scheduling and stable
 cell-anchored history navigation.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
@@ -94,9 +94,15 @@ logical cell instead of preserving a fragile distance from the bottom.
 ## Redraw And Resize
 
 `RedrawScheduler` classifies invalidations as immediate, next-frame, or
-coalesced. High-frequency stream deltas share one frame on the 33 ms host tick,
+coalesced. High-frequency stream deltas share one frame on a 33,334 microsecond
+minimum interval, which is strictly slower than the 30 FPS hard ceiling,
 while input, scroll, resize, errors, and active-turn cancellation bypass the
 throttle. Final stream state and control state are guaranteed on the next tick.
+
+`record_draw` is called only after a successful terminal draw and retains a
+test-visible count. The scheduler test injects 1,000 stream deltas over a fixed
+one-second window using manually advanced `Instant` values, without sleeping,
+then asserts at most 30 draws and a draw count far below the delta count.
 
 Terminal resize rebuilds wrapped rows and resolves the existing cell/line
 anchor against the new width and visible height. Long-token splitting operates
@@ -104,6 +110,14 @@ on Unicode grapheme clusters, so emoji ZWJ and combining sequences are never
 split into half characters. The layout uses saturating region allocation;
 extremely small terminals prioritize the bottom pane and skip zero-sized
 render/cursor operations rather than overlapping or panicking.
+
+The complete normalized `TestBackend` frames for 80x24 and 120x40 are stored in
+`crates/yunxi-agent-tui/src/snapshots/full_frame_80x24.txt` and
+`full_frame_120x40.txt`. Each frame contains active streaming, a stable pinned
+history anchor represented by `new output below`, a bounded scrollbar, footer,
+and composer. Snapshot tests assert full-frame equality, exact row count,
+display-width bounds, contiguous regions, scrollbar containment, and required
+content.
 
 ## Active-Turn Cancellation
 

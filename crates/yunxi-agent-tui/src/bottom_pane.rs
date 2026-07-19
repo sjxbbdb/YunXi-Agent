@@ -1,6 +1,7 @@
 use crate::approval_layout::approval_desired_height;
+use crate::text_layout::{TextLayout, WrapPolicy};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use unicode_width::UnicodeWidthStr;
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApprovalRequestView {
@@ -297,20 +298,12 @@ impl BottomPane {
 
 pub(crate) fn composer_desired_height(prompt: &str, buffer: &str, width: usize) -> u16 {
     let inner_width = width.saturating_sub(2).max(1);
-    let prompt_width = UnicodeWidthStr::width(prompt);
+    let prompt_width = TextLayout::measure(prompt);
     let body_width = inner_width.saturating_sub(prompt_width).max(1);
-    let display_rows = buffer
-        .split('\n')
-        .map(|line| wrapped_display_rows(line, body_width))
-        .sum::<usize>()
+    let display_rows = TextLayout::wrap(buffer, body_width, WrapPolicy::CodeBlock)
+        .len()
         .max(1);
     3u16.saturating_add(display_rows.min(6) as u16)
-}
-
-fn wrapped_display_rows(value: &str, width: usize) -> usize {
-    let width = width.max(1);
-    let display_width = UnicodeWidthStr::width(value);
-    display_width.checked_sub(1).unwrap_or_default() / width + 1
 }
 
 impl ApprovalRequestView {
@@ -406,7 +399,7 @@ fn remove_at_cursor(buffer: &mut String, cursor: usize) {
 fn previous_boundary(value: &str, cursor: usize) -> usize {
     let cursor = clamp_to_boundary(value, cursor);
     value[..cursor]
-        .char_indices()
+        .grapheme_indices(true)
         .next_back()
         .map(|(idx, _)| idx)
         .unwrap_or(0)
@@ -415,7 +408,7 @@ fn previous_boundary(value: &str, cursor: usize) -> usize {
 fn next_boundary(value: &str, cursor: usize) -> usize {
     let cursor = clamp_to_boundary(value, cursor);
     value[cursor..]
-        .char_indices()
+        .grapheme_indices(true)
         .nth(1)
         .map(|(idx, _)| cursor + idx)
         .unwrap_or(value.len())
@@ -480,6 +473,21 @@ mod tests {
         );
 
         assert!(pane.desired_height_for_width(32) > 4);
+    }
+
+    #[test]
+    fn composer_backspace_removes_complete_emoji_and_combining_graphemes() {
+        let mut pane = BottomPane::default();
+        pane.paste("中文👩‍💻e\u{301}");
+
+        pane.handle_composer_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        pane.handle_composer_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+
+        let BottomPaneMode::Composer { buffer, cursor, .. } = pane.mode() else {
+            panic!("composer mode");
+        };
+        assert_eq!(buffer, "中文");
+        assert_eq!(*cursor, "中文".len());
     }
 
     #[test]

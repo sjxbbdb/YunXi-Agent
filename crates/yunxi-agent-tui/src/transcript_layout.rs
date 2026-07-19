@@ -1,9 +1,8 @@
 use crate::chat::{HistoryCell, HistoryCellKind};
 use crate::presentation::TuiCellId;
+use crate::text_layout::{TextLayout, WrapPolicy};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
 
 const CONTINUATION_GUTTER: &str = "    ";
 
@@ -160,106 +159,48 @@ fn push_wrapped_text(
 }
 
 fn content_capacity(width: usize, prefix: &str) -> usize {
-    width.saturating_sub(UnicodeWidthStr::width(prefix)).max(1)
+    width.saturating_sub(TextLayout::measure(prefix)).max(1)
 }
 
 fn split_display_width(text: &str, first_width: usize, rest_width: usize) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    let mut capacity = first_width.max(1);
-    let mut pending_space = false;
-
-    for token in word_tokens(text) {
-        if token.chars().all(char::is_whitespace) {
-            pending_space |= !current.is_empty();
-            continue;
-        }
-
-        let separator_width = usize::from(pending_space && !current.is_empty());
-        let token_width = UnicodeWidthStr::width(token);
-        let current_width = UnicodeWidthStr::width(current.as_str());
-        if !current.is_empty()
-            && current_width
-                .saturating_add(separator_width)
-                .saturating_add(token_width)
-                <= capacity
-        {
-            if pending_space {
-                current.push(' ');
-            }
-            current.push_str(token);
-            pending_space = false;
-            continue;
-        }
-
-        if !current.is_empty() {
-            chunks.push(std::mem::take(&mut current));
-            capacity = rest_width.max(1);
-        }
-        pending_space = false;
-
-        if token_width <= capacity {
-            current.push_str(token);
-            continue;
-        }
-
-        let mut pieces = split_long_token(token, capacity, rest_width.max(1));
-        if pieces.len() > 1 {
-            chunks.extend(pieces.drain(..pieces.len() - 1));
-            capacity = rest_width.max(1);
-        }
-        if let Some(last) = pieces.pop() {
-            current = last;
-        }
+    if text.is_empty() {
+        return vec![String::new()];
     }
-
-    if current.is_empty() && chunks.is_empty() {
-        chunks.push(String::new());
-    } else if !current.is_empty() {
-        chunks.push(current);
+    let policy = wrap_policy_for(text);
+    let first = TextLayout::wrap(text, first_width, policy);
+    let Some(first_line) = first.first() else {
+        return vec![String::new()];
+    };
+    let mut chunks = vec![first_line.text.clone()];
+    let mut rest_start = first_line.source_range.end;
+    while rest_start < text.len()
+        && text[rest_start..]
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+    {
+        rest_start += text[rest_start..].chars().next().unwrap().len_utf8();
+    }
+    if rest_start < text.len() {
+        chunks.extend(
+            TextLayout::wrap(&text[rest_start..], rest_width, policy)
+                .into_iter()
+                .map(|line| line.text),
+        );
     }
     chunks
 }
 
-fn word_tokens(text: &str) -> Vec<&str> {
-    let mut tokens = Vec::new();
-    let mut start = 0usize;
-    let mut last_whitespace: Option<bool> = None;
-    for (idx, ch) in text.char_indices() {
-        let whitespace = ch.is_whitespace();
-        if last_whitespace.is_some_and(|last| last != whitespace) {
-            tokens.push(&text[start..idx]);
-            start = idx;
-        }
-        last_whitespace = Some(whitespace);
+fn wrap_policy_for(text: &str) -> WrapPolicy {
+    if text.trim_start().starts_with("```") || text.starts_with("    ") {
+        WrapPolicy::CodeBlock
+    } else if text.contains("://") {
+        WrapPolicy::UrlAware
+    } else if text.len() >= 3 && text.as_bytes()[1] == b':' && text.contains('\\') {
+        WrapPolicy::WindowsPathAware
+    } else {
+        WrapPolicy::NaturalText
     }
-    if start < text.len() {
-        tokens.push(&text[start..]);
-    }
-    tokens
-}
-
-fn split_long_token(token: &str, first_width: usize, rest_width: usize) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    let mut current_width = 0usize;
-    let mut capacity = first_width.max(1);
-
-    for grapheme in token.graphemes(true) {
-        let grapheme_width = UnicodeWidthStr::width(grapheme);
-        if !current.is_empty() && current_width.saturating_add(grapheme_width) > capacity {
-            chunks.push(std::mem::take(&mut current));
-            current = String::new();
-            current_width = 0;
-            capacity = rest_width.max(1);
-        }
-        current.push_str(grapheme);
-        current_width = current_width.saturating_add(grapheme_width);
-    }
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-    chunks
 }
 
 fn label_color(label: &str) -> Color {

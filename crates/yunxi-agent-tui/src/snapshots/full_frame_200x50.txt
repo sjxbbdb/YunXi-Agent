@@ -1,0 +1,50 @@
+00|YunXi Agent v2.0.4 | deepseek live | model=deepseek-chat-ultra-long-model-name | C:\Users\24763\YunXi Agent\国际化工作区\crates\yunxi-agent-cli
+01|new output below | cells=38 | backend=yunxi | source=auto_live | debug off
+02|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌Transcript 2-42 / 49 | new output below───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+04|│[notice] history 01: stable transcript row for viewport evidence                                                                                                                                      ^
+05|│[notice] history 02: stable transcript row for viewport evidence                                                                                                                                      █
+06|│[notice] history 03: stable transcript row for viewport evidence                                                                                                                                      █
+07|│[notice] history 04: stable transcript row for viewport evidence                                                                                                                                      █
+08|│[notice] history 05: stable transcript row for viewport evidence                                                                                                                                      █
+09|│[notice] history 06: stable transcript row for viewport evidence                                                                                                                                      █
+10|│[notice] history 07: stable transcript row for viewport evidence                                                                                                                                      █
+11|│[notice] history 08: stable transcript row for viewport evidence                                                                                                                                      █
+12|│[notice] history 09: stable transcript row for viewport evidence                                                                                                                                      █
+13|│[notice] history 10: stable transcript row for viewport evidence                                                                                                                                      █
+14|│[notice] history 11: stable transcript row for viewport evidence                                                                                                                                      █
+15|│[notice] history 12: stable transcript row for viewport evidence                                                                                                                                      █
+16|│[notice] history 13: stable transcript row for viewport evidence                                                                                                                                      █
+17|│[notice] history 14: stable transcript row for viewport evidence                                                                                                                                      █
+18|│[notice] history 15: stable transcript row for viewport evidence                                                                                                                                      █
+19|│[notice] history 16: stable transcript row for viewport evidence                                                                                                                                      █
+20|│[notice] history 17: stable transcript row for viewport evidence                                                                                                                                      █
+21|│[notice] history 18: stable transcript row for viewport evidence                                                                                                                                      █
+22|│[notice] history 19: stable transcript row for viewport evidence                                                                                                                                      █
+23|│[notice] history 20: stable transcript row for viewport evidence                                                                                                                                      ║
+24|│[notice] history 21: stable transcript row for viewport evidence                                                                                                                                      ║
+25|│[notice] history 22: stable transcript row for viewport evidence                                                                                                                                      ║
+26|│[notice] history 23: stable transcript row for viewport evidence                                                                                                                                      ║
+27|│[notice] history 24: stable transcript row for viewport evidence                                                                                                                                      ║
+28|│[notice] history 25: stable transcript row for viewport evidence                                                                                                                                      ║
+29|│[notice] history 26: stable transcript row for viewport evidence                                                                                                                                      ║
+30|│[notice] history 27: stable transcript row for viewport evidence                                                                                                                                      ║
+31|│[notice] history 28: stable transcript row for viewport evidence                                                                                                                                      ║
+32|│[notice] history 29: stable transcript row for viewport evidence                                                                                                                                      ║
+33|│[notice] history 30: stable transcript row for viewport evidence                                                                                                                                      ║
+34|│[notice] history 31: stable transcript row for viewport evidence                                                                                                                                      ║
+35|│[notice] history 32: stable transcript row for viewport evidence                                                                                                                                      ║
+36|│[notice] history 33: stable transcript row for viewport evidence                                                                                                                                      ║
+37|│[notice] history 34: stable transcript row for viewport evidence                                                                                                                                      ║
+38|│[notice] history 35: stable transcript row for viewport evidence                                                                                                                                      ║
+39|│[user] Keep the current history position while the answer streams.                                                                                                                                    ║
+40|│[assistant*] 国際化 layout 中文かな keeps one active cell with emoji 👩‍💻 and é.                                                                                                                        ║
+41|│    URL https://very-long.example.test/api/v1/items?search=中文&sort=desc#results                                                                                                                     ║
+42|│    Windows C:\Users\24763\YunXi Agent\输出目录\very-long-file-name.txt                                                                                                                               ║
+43|│    ```rust                                                                                                                                                                                           ║
+44|│        let greeting = "你好、世界"; // 日本語と中文                                                                                                                                                  v
+45|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+46|┌Composer──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+47|│yunxi> 入力 中文かな 👩‍💻 é                                                                                                                                                                             │
+48|│End follow tail | new output below | wheel/drag history                                                                                                                                               │
+49|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

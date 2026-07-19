@@ -1,10 +1,10 @@
 use crate::bottom_pane::{ApprovalRequestView, BottomPane, UserInputRequestView};
 use crate::chat::Transcript;
 use crate::presentation::{TuiEvent, TuiPresentation};
+use crate::text_layout::{ClipPriority, PrioritySegment, TextLayout};
 use crate::timeline_store::TimelineStore;
 use crate::transcript_layout::WrappedTranscript;
 use crate::viewport::TranscriptViewport;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use yunxi_agent_core::{AgentEvent, ControlSnapshot};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,7 +32,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.3-hotfix.1".to_string(),
+            version: "v2.0.4".to_string(),
             banner: None,
             presentation: TuiPresentation::default(),
             timeline: TimelineStore::default(),
@@ -80,40 +80,40 @@ impl YunxiTuiApp {
 
     pub(crate) fn footer_for_width(&self, width: usize) -> String {
         match self.viewport.scroll_status() {
-            "new output below" => fit_line(
+            "new output below" => TextLayout::priority_line(
                 &[
-                    "new output below",
-                    "End follow tail",
-                    if width < 72 {
-                        "wheel history"
-                    } else {
-                        "wheel/drag history"
-                    },
+                    PrioritySegment::new("End follow tail", ClipPriority::MustKeep),
+                    PrioritySegment::new("new output below", ClipPriority::Important),
+                    PrioritySegment::new("wheel/drag history", ClipPriority::Optional),
                 ],
                 width,
             ),
-            "history" => fit_line(
+            "history" => TextLayout::priority_line(
                 &[
-                    "history view",
-                    "End follow tail",
-                    if width < 72 {
-                        "PgUp/PgDown"
-                    } else {
-                        "wheel/drag PgUp/PgDown"
-                    },
+                    PrioritySegment::new("End follow tail", ClipPriority::MustKeep),
+                    PrioritySegment::new("history view", ClipPriority::Important),
+                    PrioritySegment::new("wheel/drag PgUp/PgDown", ClipPriority::Optional),
                 ],
                 width,
             ),
-            _ if self.timeline.has_active_sessions() && width < 56 => {
-                "streaming | Ctrl+C cancel".to_string()
-            }
-            _ if self.timeline.has_active_sessions() => {
-                "streaming current turn | Ctrl+C cancel | history scroll available".to_string()
-            }
-            _ if width < 56 => "Enter | /help | Ctrl+C".to_string(),
-            _ if width < 86 => "Enter submit | /help | wheel scroll | Ctrl+C exit".to_string(),
-            _ => "Enter submit | Alt+Enter newline | /help commands | wheel/drag scroll | Ctrl+C exit"
-                .to_string(),
+            _ if self.timeline.has_active_sessions() => TextLayout::priority_line(
+                &[
+                    PrioritySegment::new("Ctrl+C cancel", ClipPriority::MustKeep),
+                    PrioritySegment::new("streaming current turn", ClipPriority::Important),
+                    PrioritySegment::new("history scroll available", ClipPriority::Optional),
+                ],
+                width,
+            ),
+            _ => TextLayout::priority_line(
+                &[
+                    PrioritySegment::new("Enter submit", ClipPriority::MustKeep),
+                    PrioritySegment::new("Ctrl+C exit", ClipPriority::Important),
+                    PrioritySegment::new("/help commands", ClipPriority::Optional),
+                    PrioritySegment::new("Alt+Enter newline", ClipPriority::Optional),
+                    PrioritySegment::new("wheel/drag scroll", ClipPriority::DebugOnly),
+                ],
+                width,
+            ),
         }
     }
 
@@ -126,30 +126,25 @@ impl YunxiTuiApp {
         match &self.banner {
             Some(banner) => {
                 let mode = mode_label(banner.provider_live);
-                if width < 64 {
-                    let model = short_model(&banner.model, banner.provider_live, width / 2);
-                    return fit_line(&[&format!("YunXi {}", self.version), mode, &model], width);
-                }
+                let product = if width < 90 {
+                    format!("YunXi {}", self.version)
+                } else {
+                    format!("YunXi Agent {}", self.version)
+                };
                 let provider = format!("{} {}", banner.provider, mode);
-                let model = model_label(&banner.model, if width < 90 { 28 } else { 36 });
-                if width < 90 {
-                    return fit_line(
-                        &[&format!("YunXi Agent {}", self.version), &provider, &model],
-                        width,
-                    );
-                }
-                let cwd = compact_path(&banner.cwd, if width < 110 { 28 } else { 44 });
-                fit_line(
+                let model = model_label(&banner.model, if width < 100 { 24 } else { 44 });
+                let cwd = compact_path(&banner.cwd, if width < 120 { 28 } else { 72 });
+                TextLayout::priority_line(
                     &[
-                        &format!("YunXi Agent {}", self.version),
-                        &provider,
-                        &model,
-                        &cwd,
+                        PrioritySegment::new(&product, ClipPriority::MustKeep),
+                        PrioritySegment::new(&provider, ClipPriority::Important),
+                        PrioritySegment::new(&model, ClipPriority::Optional),
+                        PrioritySegment::new(&cwd, ClipPriority::DebugOnly),
                     ],
                     width,
                 )
             }
-            None => truncate_end(
+            None => TextLayout::truncate(
                 &format!("YunXi Agent {} interactive CLI", self.version),
                 width,
             ),
@@ -172,21 +167,31 @@ impl YunxiTuiApp {
                     debug.push_str(&format!("/stream-dupes={duplicate_events}"));
                 }
                 if width < 64 {
-                    let provider = format!("provider={}", truncate_end(&banner.provider, 18));
-                    return fit_line(&[&provider, view, &cells, &debug], width);
+                    let provider =
+                        format!("provider={}", TextLayout::truncate(&banner.provider, 18));
+                    return TextLayout::priority_line(
+                        &[
+                            PrioritySegment::new(view, ClipPriority::MustKeep),
+                            PrioritySegment::new(&cells, ClipPriority::Important),
+                            PrioritySegment::new(&provider, ClipPriority::Optional),
+                            PrioritySegment::new(&debug, ClipPriority::DebugOnly),
+                        ],
+                        width,
+                    );
                 }
                 let source = if width < 90 {
                     banner.provider_source.clone()
                 } else {
                     format!("source={}", banner.provider_source)
                 };
-                fit_line(
+                let backend = format!("backend={}", banner.backend);
+                TextLayout::priority_line(
                     &[
-                        &format!("backend={}", banner.backend),
-                        &source,
-                        &cells,
-                        view,
-                        &debug,
+                        PrioritySegment::new(view, ClipPriority::MustKeep),
+                        PrioritySegment::new(&cells, ClipPriority::Important),
+                        PrioritySegment::new(&backend, ClipPriority::Optional),
+                        PrioritySegment::new(&source, ClipPriority::Optional),
+                        PrioritySegment::new(&debug, ClipPriority::DebugOnly),
                     ],
                     width,
                 )
@@ -370,18 +375,10 @@ fn mode_label(provider_live: bool) -> &'static str {
     if provider_live { "live" } else { "offline" }
 }
 
-fn short_model(model: &str, provider_live: bool, width: usize) -> String {
-    if provider_live {
-        model_label(model, width)
-    } else {
-        "model=static".to_string()
-    }
-}
-
 fn model_label(model: &str, width: usize) -> String {
     let prefix = "model=";
-    let value_width = width.saturating_sub(display_width(prefix)).max(8);
-    format!("{prefix}{}", truncate_end(model, value_width))
+    let value_width = width.saturating_sub(TextLayout::measure(prefix)).max(8);
+    format!("{prefix}{}", TextLayout::truncate(model, value_width))
 }
 
 fn compact_debug_status(status: &str) -> String {
@@ -392,33 +389,8 @@ fn compact_debug_status(status: &str) -> String {
     }
 }
 
-fn fit_line(parts: &[&str], width: usize) -> String {
-    let mut included = Vec::new();
-    for part in parts.iter().filter(|part| !part.trim().is_empty()) {
-        let candidate = if included.is_empty() {
-            (*part).to_string()
-        } else {
-            format!("{} | {}", included.join(" | "), part)
-        };
-        if display_width(&candidate) <= width {
-            included.push((*part).to_string());
-        } else {
-            break;
-        }
-    }
-
-    if included.is_empty() {
-        parts
-            .first()
-            .map(|part| truncate_end(part, width))
-            .unwrap_or_default()
-    } else {
-        truncate_end(&included.join(" | "), width)
-    }
-}
-
 fn compact_path(path: &str, width: usize) -> String {
-    if display_width(path) <= width {
+    if TextLayout::measure(path) <= width {
         return path.to_string();
     }
     let normalized = path.replace('\\', "/");
@@ -432,33 +404,7 @@ fn compact_path(path: &str, width: usize) -> String {
         "..."
     };
     let compact = format!("{prefix}/.../{tail}");
-    truncate_end(&compact, width)
-}
-
-fn truncate_end(value: &str, width: usize) -> String {
-    if width == usize::MAX || display_width(value) <= width {
-        return value.to_string();
-    }
-    if width <= 3 {
-        return String::new();
-    }
-    let mut output = String::new();
-    let limit = width.saturating_sub(3);
-    let mut used = 0usize;
-    for ch in value.chars() {
-        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used.saturating_add(ch_width) > limit {
-            break;
-        }
-        output.push(ch);
-        used = used.saturating_add(ch_width);
-    }
-    output.push_str("...");
-    output
-}
-
-fn display_width(value: &str) -> usize {
-    UnicodeWidthStr::width(value)
+    TextLayout::truncate(&compact, width)
 }
 
 #[cfg(test)]
@@ -504,16 +450,16 @@ mod tests {
         let subheader = app.subheader_for_width(58);
         let footer = app.footer_for_width(58);
 
-        assert!(display_width(&header) <= 58);
-        assert!(display_width(&subheader) <= 58);
-        assert!(display_width(&footer) <= 58);
-        assert!(header.contains("YunXi v2.0.3-hotfix.1"));
+        assert!(TextLayout::measure(&header) <= 58);
+        assert!(TextLayout::measure(&subheader) <= 58);
+        assert!(TextLayout::measure(&footer) <= 58);
+        assert!(header.contains("YunXi v2.0.4"));
         assert!(header.contains("offline"));
-        assert!(header.contains("static"));
-        assert!(subheader.contains("provider=static"));
+        assert!(subheader.contains("tail"));
         assert!(!subheader.ends_with('|'));
         assert!(!subheader.ends_with("| d"));
-        assert_eq!(footer, "Enter submit | /help | wheel scroll | Ctrl+C exit");
+        assert!(footer.contains("Enter submit"));
+        assert!(footer.contains("Ctrl+C exit"));
     }
 
     #[test]
@@ -524,7 +470,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.3-hotfix.1"));
+        assert!(header.contains("YunXi Agent v2.0.4"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));
@@ -542,9 +488,36 @@ mod tests {
 
         let header = app.header_for_width(100);
 
-        assert!(display_width(&header) <= 100);
+        assert!(TextLayout::measure(&header) <= 100);
         assert!(header.contains("deepseek live"));
         assert!(header.contains("model=deepseek-chat"));
+    }
+
+    #[test]
+    fn responsive_status_priority_is_stable_across_width_matrix() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(YunxiTuiBanner {
+            cwd: "C:\\Users\\24763\\YunXi Agent\\包含空格\\very-long-workspace".to_string(),
+            model: "deepseek-chat-ultra-long-model-name".to_string(),
+            provider_live: true,
+            provider: "deepseek".to_string(),
+            ..banner()
+        });
+
+        for width in [80, 100, 120, 200] {
+            let header = app.header_for_width(width);
+            let subheader = app.subheader_for_width(width);
+            let footer = app.footer_for_width(width);
+            assert!(TextLayout::measure(&header) <= width, "width={width}");
+            assert!(TextLayout::measure(&subheader) <= width, "width={width}");
+            assert!(TextLayout::measure(&footer) <= width, "width={width}");
+            assert!(header.contains("v2.0.4"), "width={width}");
+            assert!(header.contains("deepseek live"), "width={width}");
+            assert!(subheader.contains("tail"), "width={width}");
+            assert!(footer.contains("Enter submit"), "width={width}");
+        }
+        assert!(!app.header_for_width(80).contains("very-long-workspace"));
+        assert!(app.header_for_width(200).contains("very-long-workspace"));
     }
 
     #[test]

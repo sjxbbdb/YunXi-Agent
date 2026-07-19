@@ -1,8 +1,8 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.3-hotfix.1 keeps the v2.0.1 presentation boundary and v2.0.2-hotfix.1
-streaming timeline, then adds reason-aware redraw scheduling and stable
-cell-anchored history navigation.
+YunXi Agent v2.0.4 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
+streaming timeline, and v2.0.3-hotfix.1 redraw/viewport guarantees, then adds
+one international text layout model and explicit responsive clipping priorities.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
 maps them into user-facing cells.
 
@@ -30,6 +30,29 @@ applies explicit timeline insert/update/finalize/cancel results by canonical ID.
 The host also exposes `push_tui_event` for callers that already hold a
 presentation event. Its compatibility `push_agent_event` entry immediately
 delegates to the same presentation object.
+
+## Unified Text Layout
+
+`text_layout.rs` is the shared internal display model for transcript, composer,
+approval, header, subheader, and footer rendering. It provides grapheme-safe
+display measurement, wrapping, truncation, source ranges for visual lines, and
+byte-index-to-visual-row/column mapping. The composer renderer and cursor use
+the same wrapped result, so display and input navigation cannot disagree about
+line boundaries.
+
+The available policies are `NaturalText`, `BreakLongToken`, `UrlAware`,
+`WindowsPathAware`, and `CodeBlock`. Natural text preserves ordinary word
+boundaries while allowing CJK and kana breaks. URL and path policies prefer
+semantic separators. Code preserves indentation/fence structure as far as the
+available width permits. Every policy treats emoji ZWJ and combining sequences
+as indivisible graphemes.
+
+Responsive single-line regions use `MustKeep`, `Important`, `Optional`, and
+`DebugOnly` priorities. The header retains product/version and provider/live
+state before model and cwd; the subheader retains view/cell state before source
+and debug data; the footer retains the currently executable action. Approval
+layout keeps risk, command/path identity, Approve/Decline, and shortcut rows on
+narrow screens.
 
 ## Default Visibility
 
@@ -111,13 +134,15 @@ split into half characters. The layout uses saturating region allocation;
 extremely small terminals prioritize the bottom pane and skip zero-sized
 render/cursor operations rather than overlapping or panicking.
 
-The complete normalized `TestBackend` frames for 80x24 and 120x40 are stored in
-`crates/yunxi-agent-tui/src/snapshots/full_frame_80x24.txt` and
-`full_frame_120x40.txt`. Each frame contains active streaming, a stable pinned
-history anchor represented by `new output below`, a bounded scrollbar, footer,
-and composer. Snapshot tests assert full-frame equality, exact row count,
-display-width bounds, contiguous regions, scrollbar containment, and required
-content.
+The complete normalized `TestBackend` frames for 80x24, 100x30, 120x40, and
+200x50 are stored in `crates/yunxi-agent-tui/src/snapshots`. Each frame contains
+mixed CJK/kana/emoji/combining text, a long URL, a Windows path, a fenced code
+block, active streaming, a stable pinned history anchor represented by
+`new output below`, a bounded scrollbar, footer, and composer. Snapshot tests
+assert full-frame equality, exact row count, display-width bounds, contiguous
+regions, scrollbar containment, and required content. The explicit
+`YUNXI_UPDATE_SNAPSHOTS=1` test-only update path regenerates these baselines;
+normal tests only compare them.
 
 ## Active-Turn Cancellation
 

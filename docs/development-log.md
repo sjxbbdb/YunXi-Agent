@@ -1013,3 +1013,94 @@ cell、滚轮、PgUp/PgDown、动态 resize、Home/End、active-turn Ctrl+C、pa
 key non-force 推送和核验远程 refs。候选发布不等于独立重新审核通过。
 
 署名：开发者
+
+## 2026-07-19 17:34:13 +08:00
+
+工作目标：根据 `C:\Users\24763\Documents\Codex\2026-07-16\b\audit-v2.0.3-hotfix.1-report-pending-desktop.md` 撰写 YunXi Agent v2.0.4 国际化排版、响应式布局与视觉层级开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：1. 读取位于 C 盘 Documents 目录的 v2.0.3-hotfix.1 源码与 TUI 视觉审核报告，确认审核通过，可以进入 v2.0.4 开发。2. 核对当前 Git 状态为 `master...origin/master`，存在真实 Provider 尝试生成的未跟踪目录 `crates\yunxi-agent-cli\.yunxi`。3. 使用 CodeGraph MCP 参考 `transcript_layout.rs`、`layout.rs`、`render.rs`、`bottom_pane.rs`、`approval_layout.rs` 和 `app.rs` 等接入点，确认 v2.0.4 应聚焦统一 `TextLayout`、显示宽度、折行、cursor 映射、响应式优先级裁剪与 80/100/120/200 宽度矩阵。4. 按固定流程在开发报告前部写入 14 条硬性约束。5. 围绕 v2.0.4 范围撰写开发目标、非目标、源码接入点、Codex TUI 参考建议、推荐技术设计、测试要求、真实 TUI 验收和统一验证要求。6. 在项目内新增开发报告。7. 追加项目内开发日志，将报告复制到桌面开发报告目录，并追加桌面开发日志。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-173413-yunxi-agent-v2-0-4-i18n-responsive-layout-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-173413-yunxi-agent-v2-0-4-i18n-responsive-layout-development-report.md`
+- 追加桌面日志目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 审核报告来源：`C:\Users\24763\Documents\Codex\2026-07-16\b\audit-v2.0.3-hotfix.1-report-pending-desktop.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成 v2.0.4 国际化排版、响应式布局与视觉层级开发报告撰写，并同步到桌面开发报告目录。
+- 本次仅生成文档和追加日志，未修改 Rust 源码。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 当前未跟踪目录 `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 未被读取或清理；如需清理必须先取得用户确认。
+- 后续必须按报告完成 v2.0.4 开发、统一验证、真实 TUI 复核、清理和发布；验证通过前不得宣称完成。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag；旧 `v2.0.2`、`v2.0.2-hotfix.1`、`v2.0.3` 与 `v2.0.3-hotfix.1` tag 均不得移动、删除或覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-19 19:09:14 +08:00
+
+工作目标：严格依据
+`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-173413-yunxi-agent-v2-0-4-i18n-responsive-layout-development-report.md`
+完成 YunXi Agent `v2.0.4` 国际化排版、响应式布局与视觉层级开发，在不进入主题、
+插件、工具任务化或 `v2.0.5` 范围的前提下，保持通用陪伴 Agent 的完整运行链，并
+准备新的 annotated `v2.0.4` 发布。
+
+执行流程：1. 完整读取开发报告并锁定 14 条硬性约束、Rust 2024、统一验证、清理
+授权、不可移动旧 tag 和桌面同步要求。2. 使用 CodeGraph 核对 TUI 调用路径与影响面。
+3. 新增统一 `TextLayout`，迁移 transcript、composer、approval 和 responsive status。
+4. 补齐 CJK、日文、Emoji ZWJ、组合字符、URL、Windows 路径、代码块、cursor、
+source range 与优先级裁剪回归。5. 用真实 `ratatui::TestBackend` 机械生成并固定
+80x24、100x30、120x40、200x50 完整 frame。6. 同步 workspace、CLI、persona、runtime、
+Evaluation Harness、README 和状态文档到 `2.0.4`。7. 集中执行 fmt、check、workspace
+test/build、release build、版本、Evaluation、golden、JSON/JSONL 和 offline one-shot。
+8. 在 Windows ConPTY 中实际复核 offline 与 DeepSeek live 的四宽度 resize、国际化
+粘贴/退格/提交、滚动、End、active-turn Ctrl+C、partial 保留与下一轮。9. 固化不含
+凭据的 evidence 摘要。10. 经用户确认后执行精确构建/状态/临时证据清理。11. 核验
+diff/status、活动版本残留和旧 tag object，准备单一发布提交、新 annotated tag 与
+API key non-force 推送。
+
+修改文件与路径：
+
+- 统一布局：`D:\YunXi Agent\crates\yunxi-agent-tui\src\text_layout.rs`、
+  `transcript_layout.rs`、`bottom_pane.rs`、`approval_layout.rs`、`app.rs`、`render.rs`、
+  `layout.rs`、`lib.rs`。
+- 完整快照：`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`、
+  `full_frame_100x30.txt`、`full_frame_120x40.txt`、`full_frame_200x50.txt`。
+- 版本与回归：`D:\YunXi Agent\Cargo.toml`、`Cargo.lock`、CLI main/render/tests、
+  evaluation、persona compiler/profile/tests、runtime general companion tests。
+- 文档：`D:\YunXi Agent\README.md`、`docs\extraction-status.md`、
+  `docs\tui-presentation.md`、`docs\persona-memory.md`、`docs\development-log.md`、本开发
+  报告及 `docs\reports\evidence\2026-07-19-v2-0-4-i18n-responsive-tui-evidence.md`。
+
+验证结果：`cargo fmt --all`、fmt check、workspace check/test/build、release 双 binary
+构建全部通过且无编译警告；TUI 101/101，CLI integration 44/44，provider 44/44，
+其余 workspace 单元、集成和 doc tests 全部通过。两个 release binary 均返回
+`yunxi 2.0.4`。Evaluation Harness `harness_version=2.0.4`、31/31、失败 0、golden true，
+JSON 可解析、JSONL 恰好一行，各质量率 1.0，主动边界违规与 tool approval bypass 为 0。
+offline one-shot 通过。真实 offline ConPTY 50,633 bytes、6 个检查点、退出码 0；真实
+DeepSeek live / `deepseek-v4-flash` ConPTY 192,867 bytes、8 个检查点、退出码 0。普通
+终端流未发现 API key、Authorization/Bearer、arguments_json、thinking、memory/context、
+provider wire 或内部错误栈。`git diff --check` 通过，仅有 Windows 行尾提示；活动 Rust
+旧版本残留为 0。
+
+清理结果：经用户明确授权，清理前 `D:\YunXi Agent\target` 有 16,447 个文件、
+5,069,034,507 字节，其中本轮 node-pty/原始证据 319 个文件、66,466,457 字节，手写
+ConPTY 诊断 4 个文件、20,345 字节；CLI `.yunxi` 有 1 个文件、832 字节且内容未读取。
+`cargo clean` 报告移除 16,447 个文件、4.7 GiB，随后删除精确 CLI `.yunxi` 路径。
+最终两个目标均不存在；没有删除仓库 `.tmp`、没有触碰其他目录、没有遗留本轮进程。
+
+提交和推送状态：本记录随唯一 `v2.0.4` 发布提交入库；随后创建新的 annotated
+`v2.0.4` tag，并使用用户指定 GitHub API key 对 `master` 和新 tag 执行 non-force
+推送。最终 commit、tag object 和远程 refs 记录在 Git 历史及桌面最终开发日志中。
+旧 `v2.0.2`、`v2.0.2-hotfix.1`、`v2.0.3`、`v2.0.3-hotfix.1` tag 全程保持不变。
+
+署名：开发者

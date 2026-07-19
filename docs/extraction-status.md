@@ -1,10 +1,35 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.3-hotfix.1
+## Current Workspace Version: v2.0.4
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## v2.0.4 International Text And Responsive Layout
+
+The TUI now uses one internal `TextLayout` module for Unicode display-width
+measurement, grapheme-safe wrapping and truncation, visual-line source ranges,
+and byte-index-to-visual-cursor mapping. Transcript, composer, approval, and
+responsive status rendering share this path instead of maintaining independent
+character and token splitting implementations.
+
+Wrapping has explicit natural-text, long-token, URL, Windows-path, and code
+policies. CJK, Japanese kana, emoji ZWJ sequences, and combining characters are
+kept atomic. Composer movement, deletion, backspace, height calculation, and
+cursor rendering use the same grapheme and visual-row model.
+
+Header, subheader, footer, and approval rendering now select content with
+explicit must-keep, important, optional, and debug-only priorities. Narrow
+screens retain current actions, provider/view state, approval risk, dangerous
+command identity, paths, and decision controls before lower-priority details.
+
+Full normalized `ratatui::TestBackend` frames at 80x24, 100x30, 120x40, and
+200x50 are checked into `crates/yunxi-agent-tui/src/snapshots`. The matrix covers
+international text, URL/path/code wrapping, active assistant output, pinned
+history, `new output below`, scrollbar, footer, and composer. Approval rendering
+has a separate four-width matrix. The v2.0.3-hotfix.1 redraw, viewport, resize,
+and cancellation model remains unchanged.
 
 ## v2.0.3-hotfix.1 Redraw Audit Remediation Candidate
 

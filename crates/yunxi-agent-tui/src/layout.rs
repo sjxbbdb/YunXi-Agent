@@ -123,9 +123,12 @@ mod tests {
 
     #[test]
     fn snapshot_dimensions_have_stable_non_overlapping_regions() {
-        for (width, height, transcript_height, inner_height) in
-            [(80, 24, 17, 15), (120, 40, 33, 31)]
-        {
+        for (width, height, transcript_height, inner_height) in [
+            (80, 24, 17, 15),
+            (100, 30, 23, 21),
+            (120, 40, 33, 31),
+            (200, 50, 43, 41),
+        ] {
             let layout = compute_layout(Rect::new(0, 0, width, height), 4);
 
             assert_eq!(layout.header, Rect::new(0, 0, width, 3));

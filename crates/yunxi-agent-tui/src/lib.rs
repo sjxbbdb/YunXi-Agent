@@ -12,6 +12,7 @@ mod presentation;
 mod render;
 mod scrollbar;
 pub mod streaming;
+mod text_layout;
 mod timeline;
 mod timeline_store;
 mod transcript_layout;

@@ -2,6 +2,7 @@ use crate::app::YunxiTuiApp;
 use crate::approval_layout::{ApprovalLayoutLine, ApprovalLineKind, approval_layout_for_width};
 use crate::bottom_pane::BottomPaneMode;
 use crate::layout::compute_layout;
+use crate::text_layout::{TextLayout, WrapPolicy};
 use crate::transcript_layout::build_wrapped_transcript;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
@@ -10,7 +11,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
 };
-use unicode_width::UnicodeWidthStr;
 
 pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     let area = frame.area();
@@ -254,27 +254,32 @@ fn render_composer(
     buffer: &str,
     cursor: usize,
 ) {
-    let mut lines = Vec::new();
-    let mut first = true;
-    for line in buffer.split('\n') {
-        if first {
-            lines.push(Line::from(vec![
-                Span::styled(prompt.to_string(), Style::default().fg(Color::Green)),
-                Span::raw(line.to_string()),
-            ]));
-            first = false;
-        } else {
-            lines.push(Line::from(vec![
-                Span::styled(" ".repeat(UnicodeWidthStr::width(prompt)), Style::default()),
-                Span::raw(line.to_string()),
-            ]));
-        }
-    }
+    let prompt_width = TextLayout::measure(prompt);
+    let inner_width = area.width.saturating_sub(2).max(1) as usize;
+    let body_width = inner_width.saturating_sub(prompt_width).max(1);
+    let visual_lines = TextLayout::wrap(buffer, body_width, WrapPolicy::CodeBlock);
+    let mut lines = visual_lines
+        .into_iter()
+        .enumerate()
+        .map(|(index, line)| {
+            if index == 0 {
+                Line::from(vec![
+                    Span::styled(prompt.to_string(), Style::default().fg(Color::Green)),
+                    Span::raw(line.text),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(" ".repeat(prompt_width), Style::default()),
+                    Span::raw(line.text),
+                ])
+            }
+        })
+        .collect::<Vec<_>>();
     if lines.is_empty() {
-        lines.push(Line::from(Span::styled(
-            prompt.to_string(),
-            Style::default().fg(Color::Green),
-        )));
+        lines.push(Line::from(vec![
+            Span::styled(prompt.to_string(), Style::default().fg(Color::Green)),
+            Span::raw(String::new()),
+        ]));
     }
     lines.push(Line::from(Span::styled(
         footer,
@@ -292,44 +297,23 @@ fn render_composer(
 }
 
 fn composer_cursor_position(area: Rect, prompt: &str, buffer: &str, cursor: usize) -> Position {
-    let cursor = clamp_to_boundary(buffer, cursor);
-    let before = &buffer[..cursor];
     let inner_width = area.width.saturating_sub(2).max(1) as usize;
-    let prompt_width = UnicodeWidthStr::width(prompt);
+    let prompt_width = TextLayout::measure(prompt);
     let body_width = inner_width.saturating_sub(prompt_width).max(1);
-    let mut row = 0usize;
-    for line in before
-        .split('\n')
-        .take(before.split('\n').count().saturating_sub(1))
-    {
-        row += wrapped_rows(line, body_width);
-    }
-    let current_line = before.rsplit('\n').next().unwrap_or("");
-    let display_col = UnicodeWidthStr::width(current_line);
-    row += display_col / body_width;
-    let col = display_col % body_width;
+    let visual = TextLayout::cursor_position(buffer, cursor, body_width, WrapPolicy::CodeBlock);
     Position {
         x: area
             .x
             .saturating_add(1)
             .saturating_add(prompt_width as u16)
-            .saturating_add(col as u16)
+            .saturating_add(visual.column as u16)
             .min(area.x.saturating_add(area.width.saturating_sub(2))),
         y: area
             .y
             .saturating_add(1)
-            .saturating_add(row as u16)
+            .saturating_add(visual.row as u16)
             .min(area.y.saturating_add(area.height.saturating_sub(2))),
     }
-}
-
-fn wrapped_rows(value: &str, width: usize) -> usize {
-    let width = width.max(1);
-    UnicodeWidthStr::width(value)
-        .checked_sub(1)
-        .unwrap_or_default()
-        / width
-        + 1
 }
 
 fn option_line(label: &str, selected: bool, shortcut: &str) -> Line<'static> {
@@ -368,24 +352,17 @@ fn transcript_title(
     )
 }
 
-fn clamp_to_boundary(value: &str, cursor: usize) -> usize {
-    let mut cursor = cursor.min(value.len());
-    while cursor > 0 && !value.is_char_boundary(cursor) {
-        cursor -= 1;
-    }
-    cursor
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::YunxiTuiBanner;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use unicode_width::UnicodeWidthStr;
 
     fn banner() -> YunxiTuiBanner {
         YunxiTuiBanner {
-            cwd: "D:/YunXi Agent/crates/yunxi-agent-cli".to_string(),
+            cwd: "C:\\Users\\24763\\YunXi Agent\\国际化工作区\\crates\\yunxi-agent-cli".to_string(),
             backend: "yunxi".to_string(),
             provider_live: true,
             provider_source: "auto_live".to_string(),
@@ -447,7 +424,7 @@ mod tests {
         let mut app = YunxiTuiApp::default();
         app.set_banner(banner());
         app.start_prompt("yunxi> ");
-        app.bottom_pane_mut().paste("snapshot ready");
+        app.bottom_pane_mut().paste("入力 中文かな 👩‍💻 e\u{301}");
         for index in 0..36 {
             app.push_notice(
                 "history",
@@ -456,7 +433,7 @@ mod tests {
         }
         app.push_user("Keep the current history position while the answer streams.");
         app.push_agent_event(&stream_event(
-            "Streaming snapshot line 1.\nLine 2 keeps the canonical assistant cell active.\nLine 3 includes CJK 中文 and emoji 👩‍💻.\nLine 4 remains visible near the pinned history anchor.",
+            "国際化 layout 中文かな keeps one active cell with emoji 👩‍💻 and e\u{301}.\nURL https://very-long.example.test/api/v1/items?search=中文&sort=desc#results\nWindows C:\\Users\\24763\\YunXi Agent\\输出目录\\very-long-file-name.txt\n```rust\n    let greeting = \"你好、世界\"; // 日本語と中文\n```",
             1,
         ));
 
@@ -470,7 +447,7 @@ mod tests {
         );
         app.scroll_up(1, &wrapped, layout.transcript_inner.height as usize);
         app.push_agent_event(&stream_event(
-            "Streaming snapshot line 1.\nLine 2 keeps the canonical assistant cell active.\nLine 3 includes CJK 中文 and emoji 👩‍💻.\nLine 4 remains visible near the pinned history anchor.\nLine 5 arrived below the pinned viewport.\nLine 6 is still streaming without stealing follow-tail.",
+            "国際化 layout 中文かな keeps one active cell with emoji 👩‍💻 and e\u{301}.\nURL https://very-long.example.test/api/v1/items?search=中文&sort=desc#results\nWindows C:\\Users\\24763\\YunXi Agent\\输出目录\\very-long-file-name.txt\n```rust\n    let greeting = \"你好、世界\"; // 日本語と中文\n```\nNew output remains below the pinned viewport without stealing follow-tail.",
             2,
         ));
         assert_eq!(app.viewport().scroll_status(), "new output below");
@@ -529,13 +506,22 @@ mod tests {
             "^",
             "v",
             "Composer",
-            "yunxi> snapshot ready",
+            "yunxi> 入力 中文かな 👩‍💻 e\u{301}",
             "End follow tail",
+            "国際化",
         ] {
             assert!(
                 snapshot.contains(required),
                 "missing {required} at {width}x{height}"
             );
+        }
+        if std::env::var_os("YUNXI_UPDATE_SNAPSHOTS").is_some() {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("snapshots")
+                .join(format!("full_frame_{width}x{height}.txt"));
+            std::fs::write(path, format!("{snapshot}\n")).expect("write full-frame snapshot");
+            return snapshot;
         }
         assert_eq!(snapshot, expected.trim_end_matches(['\r', '\n']));
         snapshot
@@ -549,6 +535,16 @@ mod tests {
     #[test]
     fn full_frame_snapshot_120x40_covers_stream_history_and_composer() {
         assert_full_frame_snapshot(120, 40, include_str!("snapshots/full_frame_120x40.txt"));
+    }
+
+    #[test]
+    fn full_frame_snapshot_100x30_covers_international_responsive_layout() {
+        assert_full_frame_snapshot(100, 30, include_str!("snapshots/full_frame_100x30.txt"));
+    }
+
+    #[test]
+    fn full_frame_snapshot_200x50_covers_international_responsive_layout() {
+        assert_full_frame_snapshot(200, 50, include_str!("snapshots/full_frame_200x50.txt"));
     }
 
     #[test]
@@ -612,6 +608,21 @@ mod tests {
         assert!(position.x < area.width - 1);
         assert!(position.y < area.height - 1);
         assert!(position.y > 1);
+    }
+
+    #[test]
+    fn composer_cursor_maps_multiline_i18n_url_and_path_input() {
+        let area = Rect::new(0, 0, 32, 10);
+        let input =
+            "中文かな👩‍💻e\u{301}\nhttps://example.test/very/long?query=中文\nC:\\YunXi Agent\\输出";
+
+        for cursor in ["中文".len(), "中文かな👩‍💻e\u{301}".len(), input.len()] {
+            let position = composer_cursor_position(area, "yunxi> ", input, cursor);
+            assert!(position.x > area.x && position.x < area.x + area.width - 1);
+            assert!(position.y > area.y && position.y < area.y + area.height - 1);
+        }
+        let end = composer_cursor_position(area, "yunxi> ", input, input.len());
+        assert!(end.y >= 4);
     }
 
     #[test]
@@ -681,7 +692,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.3-hotfix.1"));
+        assert!(rendered.contains("YunXi v2.0.4"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }
@@ -715,6 +726,22 @@ mod tests {
             assert!(rendered.contains("Decline"));
             assert!(rendered.contains("Tab changes selection"));
             assert!(rendered.contains("risk: destructive"));
+        }
+    }
+
+    #[test]
+    fn approval_risk_and_actions_survive_responsive_width_matrix() {
+        let app = approval_app();
+        for (width, height) in [(80, 24), (100, 30), (120, 40), (200, 50)] {
+            let snapshot = render_full_frame_snapshot(&app, width, height);
+            assert!(snapshot.contains("risk: destructive"), "width={width}");
+            assert!(snapshot.contains("Remove-Item"), "width={width}");
+            assert!(snapshot.contains("Approve"), "width={width}");
+            assert!(snapshot.contains("Decline"), "width={width}");
+            assert!(snapshot.contains("Tab changes selection"), "width={width}");
+            assert!(snapshot.lines().all(|row| {
+                UnicodeWidthStr::width(row.split_once('|').unwrap().1) <= width as usize
+            }));
         }
     }
 

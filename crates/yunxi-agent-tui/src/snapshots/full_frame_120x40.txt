@@ -1,40 +1,40 @@
-00|YunXi Agent v2.0.3-hotfix.1 | deepseek live | model=deepseek-chat-ultra-long-mo...
-01|backend=yunxi | source=auto_live | cells=38 | new output below | debug off
+00|YunXi Agent v2.0.4 | deepseek live | model=deepseek-chat-ultra-long-model-name
+01|new output below | cells=38 | backend=yunxi | source=auto_live | debug off
 02|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-03|┌Transcript 10-40 / 46 | new output below──────────────────────────────────────────────────────────────────────────────┐
-04|│[notice] history 09: stable transcript row for viewport evidence                                                      ^
-05|│[notice] history 10: stable transcript row for viewport evidence                                                      ║
-06|│[notice] history 11: stable transcript row for viewport evidence                                                      ║
-07|│[notice] history 12: stable transcript row for viewport evidence                                                      ║
-08|│[notice] history 13: stable transcript row for viewport evidence                                                      █
-09|│[notice] history 14: stable transcript row for viewport evidence                                                      █
-10|│[notice] history 15: stable transcript row for viewport evidence                                                      █
-11|│[notice] history 16: stable transcript row for viewport evidence                                                      █
-12|│[notice] history 17: stable transcript row for viewport evidence                                                      █
-13|│[notice] history 18: stable transcript row for viewport evidence                                                      █
-14|│[notice] history 19: stable transcript row for viewport evidence                                                      █
-15|│[notice] history 20: stable transcript row for viewport evidence                                                      █
-16|│[notice] history 21: stable transcript row for viewport evidence                                                      █
-17|│[notice] history 22: stable transcript row for viewport evidence                                                      █
-18|│[notice] history 23: stable transcript row for viewport evidence                                                      █
-19|│[notice] history 24: stable transcript row for viewport evidence                                                      █
-20|│[notice] history 25: stable transcript row for viewport evidence                                                      ║
-21|│[notice] history 26: stable transcript row for viewport evidence                                                      ║
-22|│[notice] history 27: stable transcript row for viewport evidence                                                      ║
-23|│[notice] history 28: stable transcript row for viewport evidence                                                      ║
-24|│[notice] history 29: stable transcript row for viewport evidence                                                      ║
-25|│[notice] history 30: stable transcript row for viewport evidence                                                      ║
-26|│[notice] history 31: stable transcript row for viewport evidence                                                      ║
-27|│[notice] history 32: stable transcript row for viewport evidence                                                      ║
-28|│[notice] history 33: stable transcript row for viewport evidence                                                      ║
-29|│[notice] history 34: stable transcript row for viewport evidence                                                      ║
-30|│[notice] history 35: stable transcript row for viewport evidence                                                      ║
-31|│[user] Keep the current history position while the answer streams.                                                    ║
-32|│[assistant*] Streaming snapshot line 1.                                                                               ║
-33|│    Line 2 keeps the canonical assistant cell active.                                                                 ║
-34|│    Line 3 includes CJK 中文 and emoji 👩‍💻.                                                                            v
+03|┌Transcript 12-42 / 49 | new output below──────────────────────────────────────────────────────────────────────────────┐
+04|│[notice] history 11: stable transcript row for viewport evidence                                                      ^
+05|│[notice] history 12: stable transcript row for viewport evidence                                                      ║
+06|│[notice] history 13: stable transcript row for viewport evidence                                                      ║
+07|│[notice] history 14: stable transcript row for viewport evidence                                                      ║
+08|│[notice] history 15: stable transcript row for viewport evidence                                                      ║
+09|│[notice] history 16: stable transcript row for viewport evidence                                                      █
+10|│[notice] history 17: stable transcript row for viewport evidence                                                      █
+11|│[notice] history 18: stable transcript row for viewport evidence                                                      █
+12|│[notice] history 19: stable transcript row for viewport evidence                                                      █
+13|│[notice] history 20: stable transcript row for viewport evidence                                                      █
+14|│[notice] history 21: stable transcript row for viewport evidence                                                      █
+15|│[notice] history 22: stable transcript row for viewport evidence                                                      █
+16|│[notice] history 23: stable transcript row for viewport evidence                                                      █
+17|│[notice] history 24: stable transcript row for viewport evidence                                                      █
+18|│[notice] history 25: stable transcript row for viewport evidence                                                      █
+19|│[notice] history 26: stable transcript row for viewport evidence                                                      █
+20|│[notice] history 27: stable transcript row for viewport evidence                                                      ║
+21|│[notice] history 28: stable transcript row for viewport evidence                                                      ║
+22|│[notice] history 29: stable transcript row for viewport evidence                                                      ║
+23|│[notice] history 30: stable transcript row for viewport evidence                                                      ║
+24|│[notice] history 31: stable transcript row for viewport evidence                                                      ║
+25|│[notice] history 32: stable transcript row for viewport evidence                                                      ║
+26|│[notice] history 33: stable transcript row for viewport evidence                                                      ║
+27|│[notice] history 34: stable transcript row for viewport evidence                                                      ║
+28|│[notice] history 35: stable transcript row for viewport evidence                                                      ║
+29|│[user] Keep the current history position while the answer streams.                                                    ║
+30|│[assistant*] 国際化 layout 中文かな keeps one active cell with emoji 👩‍💻 and é.                                        ║
+31|│    URL https://very-long.example.test/api/v1/items?search=中文&sort=desc#results                                     ║
+32|│    Windows C:\Users\24763\YunXi Agent\输出目录\very-long-file-name.txt                                               ║
+33|│    ```rust                                                                                                           ║
+34|│        let greeting = "你好、世界"; // 日本語と中文                                                                  v
 35|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 36|┌Composer──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-37|│yunxi> snapshot ready                                                                                                 │
-38|│new output below | End follow tail | wheel/drag history                                                               │
+37|│yunxi> 入力 中文かな 👩‍💻 é                                                                                             │
+38|│End follow tail | new output below | wheel/drag history                                                               │
 39|└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

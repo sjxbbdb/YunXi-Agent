@@ -1,5 +1,5 @@
 use crate::bottom_pane::ApprovalRequestView;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use crate::text_layout::{TextLayout, WrapPolicy};
 
 const HEADER_LINES: usize = 1;
 const REASON_LINES: usize = 1;
@@ -60,6 +60,7 @@ pub(crate) fn approval_layout_for_width(
         &format!("{} in {}", request.tool_name, request.cwd),
         inner_width,
         HEADER_LINES,
+        WrapPolicy::WindowsPathAware,
     );
     push_labeled(
         &mut lines,
@@ -68,6 +69,7 @@ pub(crate) fn approval_layout_for_width(
         &request.reason,
         inner_width,
         REASON_LINES,
+        WrapPolicy::NaturalText,
     );
     push_labeled(
         &mut lines,
@@ -76,6 +78,7 @@ pub(crate) fn approval_layout_for_width(
         &request.risk_label(),
         inner_width,
         RISK_LINES,
+        WrapPolicy::NaturalText,
     );
     if let Some(command) = &request.command {
         push_labeled(
@@ -85,6 +88,7 @@ pub(crate) fn approval_layout_for_width(
             command,
             inner_width,
             COMMAND_LINES,
+            command_policy(command),
         );
     }
 
@@ -111,11 +115,12 @@ fn push_labeled(
     text: &str,
     width: usize,
     max_lines: usize,
+    policy: WrapPolicy,
 ) {
-    let label_width = display_width(label);
+    let label_width = TextLayout::measure(label);
     let text_width = width.saturating_sub(label_width).max(8);
-    let wrapped = wrap_text(text, text_width, max_lines.max(1));
-    let continuation = " ".repeat(label.chars().count());
+    let wrapped = wrap_text(text, text_width, max_lines.max(1), policy);
+    let continuation = " ".repeat(label_width);
     for (index, text) in wrapped.into_iter().enumerate() {
         lines.push(ApprovalLayoutLine::Label {
             kind,
@@ -129,35 +134,11 @@ fn push_labeled(
     }
 }
 
-fn wrap_text(value: &str, width: usize, max_lines: usize) -> Vec<String> {
-    let width = width.max(1);
-    let mut rows = Vec::new();
-    let mut current = String::new();
-    let mut used = 0usize;
-
-    for ch in value.trim().chars() {
-        if ch == '\r' {
-            continue;
-        }
-        if ch == '\n' {
-            rows.push(std::mem::take(&mut current));
-            used = 0;
-            continue;
-        }
-
-        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used.saturating_add(char_width) > width && !current.is_empty() {
-            rows.push(std::mem::take(&mut current));
-            used = 0;
-        }
-        current.push(ch);
-        used = used.saturating_add(char_width);
-    }
-
-    if !current.is_empty() || rows.is_empty() {
-        rows.push(current);
-    }
-
+fn wrap_text(value: &str, width: usize, max_lines: usize, policy: WrapPolicy) -> Vec<String> {
+    let mut rows = TextLayout::wrap(value.trim(), width, policy)
+        .into_iter()
+        .map(|line| line.text)
+        .collect::<Vec<_>>();
     if rows.len() <= max_lines {
         return rows;
     }
@@ -174,7 +155,7 @@ fn append_ellipsis(value: &str, width: usize) -> String {
         return String::new();
     }
     let candidate = format!("{value}...");
-    if display_width(&candidate) <= width {
+    if TextLayout::measure(&candidate) <= width {
         candidate
     } else {
         truncate_end(&candidate, width)
@@ -182,30 +163,17 @@ fn append_ellipsis(value: &str, width: usize) -> String {
 }
 
 fn truncate_end(value: &str, width: usize) -> String {
-    if display_width(value) <= width {
-        return value.to_string();
-    }
-    if width <= 3 {
-        return String::new();
-    }
-
-    let mut output = String::new();
-    let limit = width.saturating_sub(3);
-    let mut used = 0usize;
-    for ch in value.chars() {
-        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used.saturating_add(char_width) > limit {
-            break;
-        }
-        output.push(ch);
-        used = used.saturating_add(char_width);
-    }
-    output.push_str("...");
-    output
+    TextLayout::truncate(value, width)
 }
 
-fn display_width(value: &str) -> usize {
-    UnicodeWidthStr::width(value)
+fn command_policy(command: &str) -> WrapPolicy {
+    if command.contains("://") {
+        WrapPolicy::UrlAware
+    } else if command.contains('\\') || command.contains(":\\") {
+        WrapPolicy::WindowsPathAware
+    } else {
+        WrapPolicy::NaturalText
+    }
 }
 
 #[cfg(test)]
@@ -247,5 +215,37 @@ mod tests {
                 .contains(&ApprovalLayoutLine::Hint("Tab changes selection"))
         );
         assert!(layout.desired_height() <= 12);
+    }
+
+    #[test]
+    fn narrow_approval_preserves_risk_path_and_destructive_command_identity() {
+        let request = ApprovalRequestView {
+            cwd: "C:\\Users\\24763\\YunXi Agent\\包含空格\\危险输出目录".to_string(),
+            command: Some(
+                "Remove-Item -Recurse -Force C:\\Users\\24763\\YunXi Agent\\包含空格\\危险输出目录"
+                    .to_string(),
+            ),
+            reason: "削除前に利用者の明示的な承認が必要です".to_string(),
+            ..request()
+        };
+        let layout = approval_layout_for_width(&request, 1, 58);
+        let rendered = layout
+            .lines
+            .iter()
+            .filter_map(|line| match line {
+                ApprovalLayoutLine::Label { label, text, .. } => Some(format!("{label}{text}")),
+                ApprovalLayoutLine::Action { label, .. } => Some((*label).to_string()),
+                ApprovalLayoutLine::Hint(value) => Some((*value).to_string()),
+                ApprovalLayoutLine::Blank => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("risk: destructive"));
+        assert!(rendered.contains("Remove-Item"));
+        assert!(rendered.contains("C:\\"));
+        assert!(rendered.contains("Approve"));
+        assert!(rendered.contains("Decline"));
+        assert!(rendered.contains("Tab changes selection"));
     }
 }

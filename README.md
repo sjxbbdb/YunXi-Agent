@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.3-hotfix.1
+# YunXi Agent v2.0.4
 
-YunXi Agent v2.0.3-hotfix.1 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.4 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.3-hotfix.1 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.4 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.3-hotfix.1 TUI presentation, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.4 TUI text layout, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -48,7 +48,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Scrolls the TUI transcript by pre-wrapped screen rows, so long Chinese,
   English, assistant, tool-summary, and detail output keeps the title,
   viewport, and scrollbar in sync
-- Coalesces high-rate stream deltas on a 33 ms frame cadence while input,
+- Coalesces high-rate stream deltas on a 33,334 microsecond minimum frame interval while input,
   history navigation, resize, cancellation, and errors remain immediately visible
 - Anchors history review to a stable transcript cell and wrapped-line offset, so
   stream finalization and terminal width/height changes do not force the view
@@ -145,6 +145,26 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Runs 31 deterministic companion evaluation scenarios without a live provider
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
+
+## International Text And Responsive Layout v2.0.4
+
+v2.0.4 routes transcript, composer, approval, and responsive status text through
+one Rust-native `TextLayout` model. Display measurement, wrapping, truncation,
+source ranges, and cursor positions operate on Unicode grapheme clusters, so
+CJK, Japanese kana, emoji ZWJ sequences, and combining characters remain atomic.
+URL-, Windows-path-, long-token-, and code-aware policies provide stable break
+points without introducing an upstream TUI or non-Rust runtime dependency.
+
+Header, subheader, footer, and approval rows use explicit must-keep, important,
+optional, and debug-only priorities. Narrow terminals retain the product and
+provider state, current view/action, approval risk, dangerous command identity,
+and Approve/Decline controls before model, path, help, or debug details.
+
+Repository-owned full-frame snapshots cover 80x24, 100x30, 120x40, and 200x50.
+They exercise the real `ratatui::TestBackend` layout with mixed international
+text, a long URL, a Windows path, a fenced code block, active streaming, pinned
+history, `new output below`, footer, and composer. Approval has a separate
+four-width matrix over the same layout rules.
 
 ## Redraw, Scroll, And Resize Stability v2.0.3
 
@@ -252,7 +272,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v2.0.3-hotfix.1 CLI into a user-local bin directory:
+Build and install the v2.0.4 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -293,7 +313,7 @@ Run `yunxi` without a prompt to enter interactive mode:
 yunxi
 ```
 
-When stdin and stdout are both attached to a terminal, YunXi uses the v1.9.0
+When stdin and stdout are both attached to a terminal, YunXi uses the current
 TUI host, wrapped-row transcript viewport, draggable scrollbar, composer, and
 approval overlay. Use `--no-tui` to force the stable plain REPL:
 

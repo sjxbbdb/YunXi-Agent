@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v2.0.3-hotfix.1 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v2.0.4 keeps persona and long-term memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -22,11 +22,11 @@ request.
 
 ## Persona Context Blocks
 
-v2.0.3-hotfix.1 compiles the built-in persona into one bounded, XML-like context string
+v2.0.4 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="2.0.3-hotfix.1" profile_id="yunxi_companion_strong" mode="routed_memory">
+<yunxi_persona_context version="2.0.4" profile_id="yunxi_companion_strong" mode="routed_memory">
 <persona>...</persona>
 <boundaries>...</boundaries>
 <human>...</human>

@@ -1,6 +1,6 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.4 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
+YunXi Agent v2.0.4-hotfix.1 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
 streaming timeline, and v2.0.3-hotfix.1 redraw/viewport guarantees, then adds
 one international text layout model and explicit responsive clipping priorities.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
@@ -48,11 +48,14 @@ available width permits. Every policy treats emoji ZWJ and combining sequences
 as indivisible graphemes.
 
 Responsive single-line regions use `MustKeep`, `Important`, `Optional`, and
-`DebugOnly` priorities. The header retains product/version and provider/live
-state before model and cwd; the subheader retains view/cell state before source
-and debug data; the footer retains the currently executable action. Approval
-layout keeps risk, command/path identity, Approve/Decline, and shortcut rows on
-narrow screens.
+`DebugOnly` priorities. Before priority clipping, the header selects an explicit
+semantic tier: widths below 90 construct only product/version and provider/live
+state; widths from 90 through 119 add model but do not construct cwd; widths of
+120 or more add a path-boundary-compacted cwd. This prevents spare narrow-screen
+cells from reintroducing low-priority context. The subheader retains view/cell
+state before source and debug data; the footer retains the currently executable
+action. Approval layout keeps risk, command/path identity, Approve/Decline, and
+shortcut rows on narrow screens.
 
 ## Default Visibility
 

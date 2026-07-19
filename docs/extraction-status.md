@@ -1,12 +1,27 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.4
+## Current Workspace Version: v2.0.4-hotfix.1
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
 
-## v2.0.4 International Text And Responsive Layout
+## v2.0.4-hotfix.1 Responsive Header Audit Remediation Candidate
+
+The project owner explicitly selected `2.0.4-hotfix.1` and the new annotated
+`v2.0.4-hotfix.1` tag for the failed v2.0.4 visual audit. The published
+`v2.0.4`, `v2.0.3-hotfix.1`, `v2.0.3`, `v2.0.2-hotfix.1`, and `v2.0.2` tags
+remain immutable.
+
+`YunxiTuiApp::header_for_width` now chooses its information set before invoking
+shared priority clipping. Widths below 90 contain only product/version and
+provider connection state; widths from 90 through 119 add model data without
+constructing cwd; widths of 120 or more add a path-boundary-compacted cwd.
+The 80/100/120/200 matrix has explicit positive and negative assertions, and
+repository-owned full-frame snapshots confirm the same behavior through the
+real render path.
+
+## v2.0.4 International Text And Responsive Layout (Superseded Audit Candidate)
 
 The TUI now uses one internal `TextLayout` module for Unicode display-width
 measurement, grapheme-safe wrapping and truncation, visual-line source ranges,
@@ -19,10 +34,10 @@ policies. CJK, Japanese kana, emoji ZWJ sequences, and combining characters are
 kept atomic. Composer movement, deletion, backspace, height calculation, and
 cursor rendering use the same grapheme and visual-row model.
 
-Header, subheader, footer, and approval rendering now select content with
-explicit must-keep, important, optional, and debug-only priorities. Narrow
-screens retain current actions, provider/view state, approval risk, dangerous
-command identity, paths, and decision controls before lower-priority details.
+Header, subheader, footer, and approval rendering introduced explicit
+must-keep, important, optional, and debug-only priorities. This candidate was
+superseded because its narrow header still admitted model and cwd segments when
+they happened to fit, despite remaining within the terminal width.
 
 Full normalized `ratatui::TestBackend` frames at 80x24, 100x30, 120x40, and
 200x50 are checked into `crates/yunxi-agent-tui/src/snapshots`. The matrix covers

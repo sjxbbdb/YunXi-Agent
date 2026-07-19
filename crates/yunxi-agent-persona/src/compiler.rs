@@ -1,7 +1,7 @@
 use crate::memory::{MemoryKind, MemoryRecord, now_millis};
 use crate::profile::{HumanProfile, PersonaProfile, RelationshipFamiliarity, RelationshipState};
 
-const CONTEXT_BLOCK_VERSION: &str = "2.0.4";
+const CONTEXT_BLOCK_VERSION: &str = "2.0.4-hotfix.1";
 const MIN_SAFE_CONTEXT_BUDGET_CHARS: usize = 1000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -32,7 +32,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.4".to_string(),
+            version: "v2.0.4-hotfix.1".to_string(),
             banner: None,
             presentation: TuiPresentation::default(),
             timeline: TimelineStore::default(),
@@ -132,8 +132,41 @@ impl YunxiTuiApp {
                     format!("YunXi Agent {}", self.version)
                 };
                 let provider = format!("{} {}", banner.provider, mode);
+
+                // Header tiers are semantic: lower tiers never receive hidden context.
+                if width < 90 {
+                    return TextLayout::priority_line(
+                        &[
+                            PrioritySegment::new(&product, ClipPriority::MustKeep),
+                            PrioritySegment::new(&provider, ClipPriority::Important),
+                        ],
+                        width,
+                    );
+                }
+
                 let model = model_label(&banner.model, if width < 100 { 24 } else { 44 });
-                let cwd = compact_path(&banner.cwd, if width < 120 { 28 } else { 72 });
+                if width < 120 {
+                    return TextLayout::priority_line(
+                        &[
+                            PrioritySegment::new(&product, ClipPriority::MustKeep),
+                            PrioritySegment::new(&provider, ClipPriority::Important),
+                            PrioritySegment::new(&model, ClipPriority::Optional),
+                        ],
+                        width,
+                    );
+                }
+
+                let separator_width = TextLayout::measure(" | ");
+                let fixed_width = TextLayout::measure(&product)
+                    .saturating_add(TextLayout::measure(&provider))
+                    .saturating_add(separator_width.saturating_mul(3));
+                let detail_width = width.saturating_sub(fixed_width);
+                let model_width = detail_width.saturating_sub(28).clamp(14, 44);
+                let model = model_label(&banner.model, model_width);
+                let cwd_width = detail_width
+                    .saturating_sub(TextLayout::measure(&model))
+                    .clamp(14, 72);
+                let cwd = compact_path(&banner.cwd, cwd_width);
                 TextLayout::priority_line(
                     &[
                         PrioritySegment::new(&product, ClipPriority::MustKeep),
@@ -446,15 +479,19 @@ mod tests {
         let mut app = YunxiTuiApp::default();
         app.set_banner(banner());
 
-        let header = app.header_for_width(58);
-        let subheader = app.subheader_for_width(58);
-        let footer = app.footer_for_width(58);
+        let header = app.header_for_width(80);
+        let subheader = app.subheader_for_width(80);
+        let footer = app.footer_for_width(80);
 
-        assert!(TextLayout::measure(&header) <= 58);
-        assert!(TextLayout::measure(&subheader) <= 58);
-        assert!(TextLayout::measure(&footer) <= 58);
-        assert!(header.contains("YunXi v2.0.4"));
+        assert!(TextLayout::measure(&header) <= 80);
+        assert!(TextLayout::measure(&subheader) <= 80);
+        assert!(TextLayout::measure(&footer) <= 80);
+        assert!(header.contains("YunXi v2.0.4-hotfix.1"));
         assert!(header.contains("offline"));
+        assert!(!header.contains("model="));
+        assert!(!header.contains("D:/"));
+        assert!(!header.contains("yunxi-agent-cli"));
+        assert!(!header.contains(".../"));
         assert!(subheader.contains("tail"));
         assert!(!subheader.ends_with('|'));
         assert!(!subheader.ends_with("| d"));
@@ -470,8 +507,10 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.4"));
+        assert!(header.contains("YunXi Agent v2.0.4-hotfix.1"));
         assert!(header.contains("model=deepseek-chat"));
+        assert!(header.contains("D:/"));
+        assert!(header.contains("yunxi-agent-cli"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));
     }
@@ -491,6 +530,9 @@ mod tests {
         assert!(TextLayout::measure(&header) <= 100);
         assert!(header.contains("deepseek live"));
         assert!(header.contains("model=deepseek-chat"));
+        assert!(!header.contains("D:/"));
+        assert!(!header.contains("yunxi-agent-cli"));
+        assert!(!header.contains(".../"));
     }
 
     #[test]
@@ -511,13 +553,28 @@ mod tests {
             assert!(TextLayout::measure(&header) <= width, "width={width}");
             assert!(TextLayout::measure(&subheader) <= width, "width={width}");
             assert!(TextLayout::measure(&footer) <= width, "width={width}");
-            assert!(header.contains("v2.0.4"), "width={width}");
+            assert!(header.contains("v2.0.4-hotfix.1"), "width={width}");
             assert!(header.contains("deepseek live"), "width={width}");
             assert!(subheader.contains("tail"), "width={width}");
             assert!(footer.contains("Enter submit"), "width={width}");
         }
-        assert!(!app.header_for_width(80).contains("very-long-workspace"));
-        assert!(app.header_for_width(200).contains("very-long-workspace"));
+        let narrow = app.header_for_width(80);
+        assert!(!narrow.contains("model="));
+        assert!(!narrow.contains("C:"));
+        assert!(!narrow.contains("very-long-workspace"));
+        assert!(!narrow.contains(".../"));
+
+        let medium = app.header_for_width(100);
+        assert!(medium.contains("model=deepseek-chat"));
+        assert!(!medium.contains("C:"));
+        assert!(!medium.contains("very-long-workspace"));
+        assert!(!medium.contains(".../"));
+
+        for width in [120, 200] {
+            let wide = app.header_for_width(width);
+            assert!(wide.contains("model=deepseek-chat"), "width={width}");
+            assert!(wide.contains("very-long-workspace"), "width={width}");
+        }
     }
 
     #[test]

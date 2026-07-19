@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.0.4"));
+        .stdout(predicate::str::contains("yunxi 2.0.4-hotfix.1"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.0.4"));
+        .stdout(predicate::str::contains("yunxi 2.0.4-hotfix.1"));
 }
 
 #[test]
@@ -172,7 +172,10 @@ fn cli_v2_general_companion_release_gate_is_local_safe_and_auditable() {
         .stdout(predicate::str::contains("general companion release smoke"));
 
     let evaluation = run_json_command_with_env(&home, &["--json", "eval", "companion"]);
-    assert_eq!(evaluation["harness_version"].as_str(), Some("2.0.4"));
+    assert_eq!(
+        evaluation["harness_version"].as_str(),
+        Some("2.0.4-hotfix.1")
+    );
     assert_eq!(evaluation["golden_passed"].as_bool(), Some(true));
     assert_eq!(evaluation["metrics"]["scenario_count"].as_u64(), Some(31));
     assert_eq!(
@@ -336,7 +339,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.4 interactive CLI",
+            "YunXi Agent v2.0.4-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -495,7 +498,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.4 interactive CLI",
+            "YunXi Agent v2.0.4-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -515,7 +518,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.4 interactive CLI",
+            "YunXi Agent v2.0.4-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

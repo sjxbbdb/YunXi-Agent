@@ -1104,3 +1104,86 @@ ConPTY 诊断 4 个文件、20,345 字节；CLI `.yunxi` 有 1 个文件、832 �
 旧 `v2.0.2`、`v2.0.2-hotfix.1`、`v2.0.3`、`v2.0.3-hotfix.1` tag 全程保持不变。
 
 署名：开发者
+
+## 2026-07-19 20:51:31 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-19-204523-YunXi-Agent-v2.0.4-源码与TUI视觉审核报告.md` 撰写 YunXi Agent v2.0.4 窄屏 Header 信息层级整改开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：1. 读取 v2.0.4 源码与 TUI 视觉审核报告，确认审核不通过，不可进入下一版本开发。2. 核对当前 Git 状态为 `master...origin/master`，存在真实 Provider 短请求生成的未跟踪目录 `crates\yunxi-agent-cli\.yunxi`。3. 使用 CodeGraph MCP 参考 `app.rs` 中 `YunxiTuiApp::header_for_width`、`TextLayout::priority_line`、`compact_path`、header 回归测试和 80x24 snapshot 相关接入点，确认缺口集中在窄屏 header 没有显式信息档位，导致 80 列仍显示 model 与 cwd。4. 按固定流程在开发报告前部写入 14 条硬性约束。5. 围绕 v2.0.4 当前版本整改撰写开发目标、版本边界、已通过能力保持要求、源码接入点、参考源码建议、推荐执行顺序、测试要求、真实 TUI 复核要求和统一验证要求。6. 在项目内新增整改开发报告。7. 追加项目内开发日志，将报告复制到桌面开发报告目录，并追加桌面开发日志。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-205131-yunxi-agent-v2-0-4-responsive-header-remediation-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-205131-yunxi-agent-v2-0-4-responsive-header-remediation-development-report.md`
+- 追加桌面日志目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成 v2.0.4 窄屏 Header 信息层级整改开发报告撰写，并同步到桌面开发报告目录。
+- 本次仅生成文档和追加日志，未修改 Rust 源码。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 当前未跟踪目录 `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 未被读取或清理；如需清理必须先取得用户确认。
+- 后续必须按报告先完成 v2.0.4 验收整改和重新审核；审核通过前不得宣称完成，也不得进入下一版本开发。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag；已发布 `v2.0.4` tag 不得移动、删除或覆盖，整改发布编号与 tag 策略需用户确认。
+
+署名：开发报告撰写者
+
+## 2026-07-19 21:36:58 +08:00
+
+工作目标：严格依据
+`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-205131-yunxi-agent-v2-0-4-responsive-header-remediation-development-report.md`
+完成 v2.0.4 窄屏 Header 信息层级整改，并按项目负责人确认的
+`v2.0.4-hotfix.1` 发布编号完成验证、清理和发布准备，不进入下一版本功能开发。
+
+执行流程：1. 完整读取整改报告与独立审核报告并锁定 14 条硬性约束。2. 等待并取得
+`v2.0.4-hotfix.1` tag 策略确认。3. 使用 CodeGraph 核对 `header_for_width`、
+`priority_line`、render 与 snapshot 调用链。4. 在 header 构造层实现小于 90、90 至
+119、120 及以上三档语义。5. 补齐 80/100/120/200 正向与负向断言并通过真实 renderer
+更新四份 snapshot。6. 同步 workspace、CLI、persona、runtime、Evaluation Harness、
+README 和状态文档版本。7. 集中执行 fmt、workspace/TUI 测试、debug/release 构建、
+版本、SHA-256、Evaluation、golden、JSON/JSONL 与 offline one-shot。8. 使用用户提供的
+DeepSeek API key 仅在进程内完成 live one-shot 和真实 Windows ConPTY 复核。9. 在内存
+terminal buffer 中验证四宽度、双向 resize、国际化粘贴/退格、滚动、End、active
+`Ctrl+C`、partial 保留和下一轮恢复，并执行泄漏扫描。10. 固化无凭据证据。11. 经用户
+明确授权后精确清理 `target` 与 CLI `.yunxi`。12. 复核 diff/status 与旧 tag，准备唯一
+发布提交、新 annotated tag 和 non-force 推送。
+
+修改文件与路径：
+- Header 与测试：`D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`、`render.rs`。
+- 完整快照：`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`、
+  `full_frame_100x30.txt`、`full_frame_120x40.txt`、`full_frame_200x50.txt`。
+- 版本契约：`D:\YunXi Agent\Cargo.toml`、`Cargo.lock`，CLI、evaluation、persona 与
+  runtime 的版本实现和回归测试。
+- 文档：`D:\YunXi Agent\README.md`、`docs\extraction-status.md`、
+  `docs\tui-presentation.md`、`docs\persona-memory.md`、`docs\development-log.md`、原开发
+  报告、本整改报告及
+  `docs\reports\evidence\2026-07-19-v2-0-4-hotfix-1-responsive-header-evidence.md`。
+
+验证结果：fmt、workspace check/test/build、release 双 binary 与 TUI 101/101 全部通过；
+CLI integration 44/44、provider 44/44。两个 binary 均返回
+`yunxi 2.0.4-hotfix.1`；SHA-256 分别为
+`27C7332C5D46188EB00F96694575B8E5CBA51ED9168B976ACEA1C709E2436B29` 与
+`9354BBDABBEB568521CDABBFAEDF59B1CAAABFF57E71F2C35CC8B90EC1DC62B6`。
+Evaluation Harness 31/31、失败 0、golden true、JSON/单行 JSONL 通过、质量率 1.0、
+主动边界违规与 approval bypass 为 0。offline ConPTY 为 66,212 bytes、7 个检查点、
+退出码 0；DeepSeek live ConPTY 为 112,368 bytes、11 个检查点、退出码 0，active cancel
+和下一轮 `V204H1_NEXT_OK` 通过，未发现凭据或内部协议字段泄漏。
+
+清理结果：经用户明确授权，`cargo clean` 移除 17,265 个文件、4.8 GiB；随后在不读取
+内容的前提下删除精确 CLI `.yunxi`。最终 `D:\YunXi Agent\target` 与
+`D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 均不存在，仓库 `.tmp` 保留。
+
+提交和推送状态：本记录将随唯一 `v2.0.4-hotfix.1` 发布提交入库；随后只新增 annotated
+`v2.0.4-hotfix.1` tag，并使用用户指定 GitHub API key 对 `master` 和新 tag 执行
+non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不变核验将追加到桌面
+开发日志。整改候选仍需独立重新审核，不能提前宣称审核通过或进入下一版本。
+
+署名：开发者

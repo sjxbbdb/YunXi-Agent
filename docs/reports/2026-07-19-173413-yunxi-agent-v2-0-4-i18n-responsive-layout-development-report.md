@@ -326,3 +326,21 @@ memory/context 或 provider wire 标记。凭据只从进程环境读取，没�
 只能新增 annotated `v2.0.4` tag 并 non-force 推送。
 
 署名：开发者
+
+## 十七、独立审核与 Header 整改状态
+
+2026-07-19 20:45:23 +08:00 的独立源码与 TUI 视觉审核判定已发布 `v2.0.4` 不通过：
+80 列 header 虽未溢出，但仍显示 model 与 cwd，违反窄屏只保留产品/版本和连接状态的
+硬要求。因此本报告的原发布记录保留为历史事实，不能再作为重新审核通过的结论。
+
+项目负责人随后明确选择 `v2.0.4-hotfix.1` 作为当前版本整改发布。整改在
+`D:\YunXi Agent\docs\reports\2026-07-19-205131-yunxi-agent-v2-0-4-responsive-header-remediation-development-report.md`
+中执行，复核证据位于
+`D:\YunXi Agent\docs\reports\evidence\2026-07-19-v2-0-4-hotfix-1-responsive-header-evidence.md`。
+新实现用小于 90、90 至 119、120 及以上三档显式构造 header 信息集合，已完成自动化、
+真实 Provider、真实 Windows ConPTY、双向 resize、取消和下一轮恢复复核。
+
+已发布 annotated `v2.0.4` tag 保持不变；整改只允许新增 annotated
+`v2.0.4-hotfix.1` tag，且仍需独立重新审核后才能宣称审核通过或进入下一版本开发。
+
+署名：开发者

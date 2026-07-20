@@ -1670,3 +1670,35 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 提交、推送与 tag 状态：v2.0.6 发布提交、annotated tag 和远程推送均完成并核验一致。本条报告/日志状态将作为 tag 后 docs-only 收尾提交 non-force 推送到 `master`；该收尾不移动 `v2.0.6`，不包含功能或测试变更。
 
 署名：开发报告撰写者
+
+## 2026-07-20 20:06:05 +08:00
+
+工作目标：按用户明确授权，将 PATH 中现有的 YunXi 2.0.2 安装升级到已发布的 v2.0.6，并消除 C、D 两处现有安装目录的版本差异。
+
+执行流程：
+1. 使用 CodeGraph 和项目安装脚本核对 Windows 安装方式、release 双 binary 名称与版本来源。
+2. 检查当前 Machine/User/进程 PATH 和两处现有安装，确认 C、D 两处 `yunxi.exe` 与 `yunxi-agent-cli.exe` 均为 `yunxi 2.0.2`。
+3. 从已发布且工作树干净的 v2.0.6 源码执行 `cargo build -p yunxi-agent-cli --release --bins`，两个 release binary 均输出 `yunxi 2.0.6`。
+4. 用户明确回复“允许”后，使用 `scripts\install\install-yunxi.ps1 -Configuration release -SkipBuild` 依次覆盖 C、D 两处安装；不修改 PATH、注册表或其他系统配置。
+5. 刷新 Machine/User PATH，从 `C:\Windows\System32` 执行 `yunxi --version`，并逐个核验四个已安装 binary 的版本和 SHA-256。
+6. 按用户同一授权，将本次构建生成的 `D:\YunXi Agent\target` 解析为绝对路径并确认位于仓库内后精确递归清理，清理后再次核验路径不存在。
+
+修改文件与路径：
+- `C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi.exe`
+- `C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi-agent-cli.exe`
+- `D:\Apps\YunXi Agent\bin\yunxi.exe`
+- `D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面同步目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 四个已安装 binary 均输出 `yunxi 2.0.6`。
+- 两处 `yunxi.exe` SHA-256 均为 `069343743025D1CA1B54492E23F0C5F1BB3927696E7CF33160CD39A6C75B7B00`。
+- 两处 `yunxi-agent-cli.exe` SHA-256 均为 `C5BE86A59C75BBD5847B251EDA3C25148F47DFD1304268D1E898FE27329EAAB2`。
+- 刷新持久 PATH 后，`yunxi` 解析到 `C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi.exe`；从 `C:\Windows\System32` 执行返回 `yunxi 2.0.6`。
+- User PATH 中 `C:\Users\24763\AppData\Local\YunXi Agent\bin` 仅存在一项；安装脚本两次均报告 `path_updated=False`。
+- `D:\YunXi Agent\target` 已清理并确认不存在。
+
+提交、推送与 tag 状态：本次只更新系统安装 binary 与开发日志，不修改源码，不移动、删除或覆盖 `v2.0.6` 及任何历史 tag；本条日志将作为 docs-only 收尾提交 non-force 推送到 `master`。
+
+署名：开发报告撰写者

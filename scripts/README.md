@@ -10,11 +10,15 @@ provider, and writes sanitized raw frames plus a SHA-256 manifest under
 
 ```powershell
 npm ci --prefix scripts\conpty\v205
+node -e "require('./scripts/conpty/v205/node_modules/node-pty'); console.log('node-pty binding ready')"
 npm run capture --prefix scripts\conpty\v205
 npm run verify --prefix scripts\conpty\v205
 ```
 
-See `scripts/conpty/v205/README.md` for prerequisites and scenario details.
+The collector manifest grants project-local install-script permission only to
+the locked `node-pty@1.1.0` native dependency. See
+`scripts/conpty/v205/README.md` for the permission boundary, prerequisites,
+and scenario details.
 
 ## `install\install-yunxi.ps1`
 

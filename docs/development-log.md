@@ -1467,3 +1467,64 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 提交和推送状态：发布提交 `7d6c18b73a1f4a0d4ec9b7cc64ed501e76f72bf4` 与 `v2.0.5-hotfix.1` 已推送；本条报告与日志将作为 docs-only 收尾提交继续 non-force 推送到 `master`。
 
 署名：开发者
+
+## 2026-07-20 13:17:09 +08:00
+
+工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-20-124813-YunXi-Agent-v2.0.5-hotfix.1-ConPTY独立复审报告.md` 整改当前 v2.0.5 发布的 ConPTY 原生依赖可复现性 P1；不修改已经通过审核的 TUI、ToolActivity、审批或 ExecOutputDecoder 功能，不进入下一版本开发。
+
+硬性要求：
+1. 将 `allowScripts.node-pty@1.1.0=true` 纳入项目提交。
+2. 在 collector README 中明确项目级原生依赖许可步骤和安全边界，不描述为系统级安装。
+3. 在干净的项目级 Node 安装环境完整执行 README 重现步骤。
+4. 后续必须创建新的当前版本 hotfix 提交和 annotated tag；`v2.0.5-hotfix.1` 及全部历史 tag 不得移动、删除或覆盖，新 tag 名称必须先由用户确认。
+
+执行流程：
+1. 保留审核者生成的 `scripts\conpty\v205\package.json`、八份脱敏帧、manifest 和项目内审核报告副本，不回退或覆盖审核现场。
+2. 确认 `package.json` 已包含精确的 `"allowScripts": {"node-pty@1.1.0": true}`；`package-lock.json` 继续锁定 `node-pty 1.1.0`、`@xterm/headless 5.5.0` 及完整性哈希。
+3. 更新 `scripts\conpty\v205\README.md` 和 `scripts\README.md`，说明 `npm ci` 直接消费已提交许可，并增加 native binding 加载检查。
+4. 明确许可只覆盖项目目录内锁定版本的 npm install script，不安装全局包或服务，不修改 PATH、Windows 注册表或系统配置；若没有可用预构建，npm 仅可在项目目录调用本地编译工具链。
+5. 重新执行 `npm.cmd ci --prefix scripts\conpty\v205`，干净安装三个锁定依赖；未执行额外 `npm approve-scripts`。
+6. 执行 `node -e "require('./scripts/conpty/v205/node_modules/node-pty')"`，真实 native binding 加载成功并输出 `node-pty binding ready`。
+7. 第一次完整 capture 和随后单独 responsive 重跑均在受限命令沙箱显示 `YX-PROVIDER-001`；no-TUI 诊断在沙箱内返回 network failure，在获准真实网络环境立即返回 `YUNXI_PROVIDER_DIAGNOSTIC_OK`，确认失败来自网络沙箱而非安装或采集器。
+8. 在获准真实网络环境从头运行八个 DeepSeek live / Windows ConPTY 场景，responsive、decline、approve、cancel、nonzero、invalid、binary、long 全部通过并重新生成脱敏帧与 manifest。
+9. 运行离线 verifier、脚本语法检查、Rust 格式/check/test、workspace/release build、版本和 Evaluation Harness 门禁。
+
+主要修改或保留文件：
+- `D:\YunXi Agent\scripts\conpty\v205\package.json`
+- `D:\YunXi Agent\scripts\conpty\v205\package-lock.json`
+- `D:\YunXi Agent\scripts\conpty\v205\README.md`
+- `D:\YunXi Agent\scripts\README.md`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v205-conpty\*.json`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v205-conpty\manifest.json`
+- `D:\YunXi Agent\docs\reports\evidence\2026-07-20-v2-0-5-error-presentation-conpty-evidence.md`
+- `D:\YunXi Agent\docs\reports\2026-07-20-124813-yunxi-agent-v2-0-5-hotfix-1-conpty-independent-reaudit-report.md`
+- `D:\YunXi Agent\docs\reports\2026-07-20-131709-yunxi-agent-v2-0-5-conpty-native-install-reproducibility-remediation-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：干净 `npm ci` 与 native binding 加载通过；八场景在线采集从 `2026-07-20 13:13:48 +08:00` 至 `13:14:37 +08:00` 全部通过，checkpoint 数为 7/6/6/6/6/8/8/9；离线 verifier 返回 `ok=true, scenarios=8`。`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace`、workspace build 和 release build 全部通过；TUI 111/111、执行器 13/13、沙箱 8/8。双 binary 均为 `yunxi 2.0.5`；Evaluation Harness 为 31/31、`golden_passed=true`、memory precision 1.0、tool approval bypass 0。
+
+清理、提交与推送状态：本次验证生成的 `target`、`scripts\conpty\v205\node_modules`、`.work`、根目录 `.yunxi` 和 CLI `.yunxi` 尚未清理；递归清理前仍需用户明确确认。当前 `master` 包含上一轮尚未推送的 docs-only 提交 `16024ce`，本轮整改尚未提交、尚未创建新 tag、尚未推送。新 tag 名称必须由用户确认，建议使用 `v2.0.5-hotfix.2`；不得移动或覆盖 `v2.0.5-hotfix.1`。
+
+署名：开发者
+
+## 2026-07-20 13:29:45 +08:00
+
+工作目标：根据用户明确确认，为 v2.0.5 ConPTY 原生安装可复现性整改使用新 annotated tag `v2.0.5-hotfix.2`，并执行发布前精确临时目录清理；`v2.0.5-hotfix.1` 与全部历史 tag 保持不变。
+
+执行流程：
+1. 将五个清理目标解析为绝对路径，逐项确认全部存在且全部位于 `D:\YunXi Agent` 工作区内。
+2. 使用 PowerShell `Remove-Item -LiteralPath -Recurse -Force` 删除每个精确目标，不使用通配符，不触碰 collector、锁定文件、审核报告或正式证据。
+3. 使用 `Test-Path -LiteralPath` 逐项核验清理结果。
+
+清理路径与结果：
+- `D:\YunXi Agent\target`：已删除，不存在。
+- `D:\YunXi Agent\scripts\conpty\v205\node_modules`：已删除，不存在。
+- `D:\YunXi Agent\scripts\conpty\v205\.work`：已删除，不存在。
+- `D:\YunXi Agent\.yunxi`：已删除，不存在。
+- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`：已删除，不存在。
+
+保留内容：`scripts\conpty\v205` collector 源码、`package.json`、`package-lock.json`、项目内审核报告、整改开发报告、正式 evidence、八份 `13:13:48–13:14:37 +08:00` 脱敏帧与 manifest 全部保留。
+
+提交和推送状态：用户已确认新 tag 名称为 `v2.0.5-hotfix.2`。下一步创建整改提交和新的 annotated tag，使用 API key 显式 non-force 推送 `master` 与该新 tag，并通过远程 refs 前后快照确认 `v2.0.5-hotfix.1` 和全部历史 tag 未移动、未删除、未覆盖。
+
+署名：开发者

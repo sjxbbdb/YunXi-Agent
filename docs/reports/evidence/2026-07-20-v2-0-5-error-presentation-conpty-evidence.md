@@ -215,6 +215,46 @@ After returning to the tail, the next Provider round trip succeeded:
 
 The ConPTY evidence directly covers approval, cancel, tool failure, decoder loss, binary fallback, and long-output truncation. Rust integration tests additionally cover provider, tool, approval, cancel, terminal, and unknown categories through the same `ErrorPresentation` boundary. Each normal error summary contains a stable `YX-*-001` code, `retryable=yes|no`, and an actionable `next:` field. Provider wire bodies, internal stacks, commands, raw decoder data, and full output remain in details/debug.
 
+## Clean Native Dependency Replay
+
+The `2026-07-20 12:48:13 +08:00` independent review found that the released
+`v2.0.5-hotfix.1` tag required an uncommitted `npm approve-scripts` action
+before `node-pty` could load. The project-level manifest now commits the exact
+permission required by the native ConPTY dependency:
+
+```json
+"allowScripts": {
+  "node-pty@1.1.0": true
+}
+```
+
+From a freshly rebuilt `scripts/conpty/v205/node_modules`, the documented
+sequence was executed without a separate approval command:
+
+```powershell
+npm ci --prefix scripts\conpty\v205
+node -e "require('./scripts/conpty/v205/node_modules/node-pty'); console.log('node-pty binding ready')"
+npm run capture --prefix scripts\conpty\v205
+npm run verify --prefix scripts\conpty\v205
+```
+
+`npm ci` installed the three locked project dependencies and the following
+binding check printed `node-pty binding ready`. The permission is limited to
+`node-pty@1.1.0` below this project; it does not install a global package or
+service and does not modify `PATH`, the registry, or system configuration.
+
+The first capture attempt inside the restricted command sandbox produced a
+safe `YX-PROVIDER-001` network failure. A one-shot no-TUI diagnostic confirmed
+that the same DeepSeek request succeeded in the authorized network context.
+The complete eight-scenario capture was therefore rerun in that real network
+context and passed from `2026-07-20 13:13:48 +08:00` through
+`13:14:37 +08:00`. The new manifest was generated at
+`2026-07-20T05:14:37.825Z`; checkpoint counts are `7/6/6/6/6/8/8/9` for
+responsive, decline, approve, cancel, nonzero, invalid, binary, and long.
+Offline verification returned `ok=true, scenarios=8` after recomputing every
+frame hash and checking all interaction, decoder, continuation, and secret
+constraints.
+
 ## Result
 
 The Windows ConPTY remediation gate passed for the selected successful checkpoints:
@@ -227,6 +267,9 @@ The Windows ConPTY remediation gate passed for the selected successful checkpoin
 - Non-zero exit produced `YX-TOOL-001` and the session accepted another turn.
 - Invalid UTF-8 and binary output used loss-aware details without raw-byte leakage in the tool summary.
 - Long output remained compact, recorded `truncated=true / integrity=Partial`, and accepted another turn.
-- The committed collector can replay all eight sessions, and the committed raw frames pass offline SHA-256/checkpoint/secret verification.
+- The project-local native permission allows a clean `npm ci` to load the real
+  ConPTY binding without an extra uncommitted approval.
+- The collector replayed all eight sessions after that clean install, and the
+  new raw frames pass offline SHA-256/checkpoint/secret verification.
 
 署名：开发者

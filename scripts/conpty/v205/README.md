@@ -16,6 +16,31 @@ Credential values are inherited by the child process. The collector never
 prints or persists them. Saved frames are scanned and redacted for GitHub,
 bearer, API-key, and `sk-` token shapes.
 
+## Native dependency permission
+
+`node-pty@1.1.0` contains the Windows native ConPTY binding and therefore has
+an npm install script. This project explicitly grants that one version local
+install-script permission in `package.json`:
+
+```json
+"allowScripts": {
+  "node-pty@1.1.0": true
+}
+```
+
+`npm ci` consumes this committed permission while installing the locked
+dependencies below `scripts/conpty/v205/node_modules`. No separate
+`npm approve-scripts` command should be required. Treat a pending or blocked
+`node-pty` build as an installation failure instead of bypassing it with an
+uncommitted local approval.
+
+This permission is project-local and version-specific. It does not install a
+global package or service, and it does not change `PATH`, the Windows registry,
+or system configuration. On a machine without a usable prebuilt binding, npm
+may invoke the local compiler toolchain to build the binding inside this
+project directory. The exact package archive and transitive dependency hashes
+remain pinned by `package-lock.json`.
+
 ## Reproduce
 
 From `D:\YunXi Agent`:
@@ -23,6 +48,7 @@ From `D:\YunXi Agent`:
 ```powershell
 cargo build -p yunxi-agent-cli --release --bins
 npm ci --prefix scripts\conpty\v205
+node -e "require('./scripts/conpty/v205/node_modules/node-pty'); console.log('node-pty binding ready')"
 npm run capture --prefix scripts\conpty\v205
 npm run verify --prefix scripts\conpty\v205
 ```

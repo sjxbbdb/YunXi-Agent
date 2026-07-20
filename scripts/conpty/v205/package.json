@@ -11,5 +11,8 @@
   "dependencies": {
     "@xterm/headless": "5.5.0",
     "node-pty": "1.1.0"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
   }
 }

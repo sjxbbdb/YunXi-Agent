@@ -295,6 +295,6 @@ CLI 交互路径应继续保留 `no-TUI`、JSON、JSONL 兼容，不因错误呈
 
 `2026-07-20 12:19:19 +08:00` 发布前门禁再次确认：`cargo test -p yunxi-agent-exec` 为 13/13 与 sandbox 8/8，workspace/debug/release build 通过，两个 release binary 均为 `yunxi 2.0.5`，Evaluation Harness 为 31 通过、0 失败、`golden_passed=true`、`tool_approval_bypass_count=0`，offline JSON/JSONL/no-TUI 与八场景离线 ConPTY verifier 全部通过，`git diff --check` 无空白错误。用户确认后删除 `D:\YunXi Agent\target`、`D:\YunXi Agent\scripts\conpty\v205\node_modules`、`D:\YunXi Agent\scripts\conpty\v205\.work`、`D:\YunXi Agent\.yunxi` 和 `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`，五项目标均核验为不存在；collector、`package-lock.json`、脱敏帧和 manifest 保留。
 
-尚未提交、尚未创建整改 tag、尚未推送。用户已确认 `v2.0.5-hotfix.1`；下一步创建整改发布提交和新的 annotated tag，使用 non-force 方式推送并核验远程 master、整改 tag 和历史 refs。所有旧 tag 保持不变，API key 不打印、不写入仓库、Git 配置或 remote URL。
+整改发布已于 `2026-07-20 12:27:34 +08:00` 完成。发布提交为 `7d6c18b73a1f4a0d4ec9b7cc64ed501e76f72bf4`；新 annotated `v2.0.5-hotfix.1` tag object 为 `74053c8ad44bcea463a3fd08422510abbff20768`，解析到该发布提交。首次 non-force 推送后，远程 `master` 指向发布提交，新 tag 指向上述 tag object，原远程 `v2.0.5` tag object 保持 `caad35a0ecc8eeb066721ab6f9d4e35cd2592602`，42 个历史远程 tag 的对象哈希在推送前后逐一不变。发布状态通过后续 docs-only 收尾提交写入 `master`，`v2.0.5-hotfix.1` 不移动。API key 未打印、未写入仓库、Git 配置、remote URL 或日志。
 
 署名：开发者

@@ -1441,3 +1441,29 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 提交和推送状态：当前准备创建整改发布提交和 annotated `v2.0.5-hotfix.1`；尚未提交、尚未创建 tag、尚未推送。推送必须 non-force，且完成后核验远程 `master`、新 tag 和全部历史 tag refs。GitHub API key 不打印、不写入仓库、Git 配置、remote URL 或日志。
 
 署名：开发者
+
+## 2026-07-20 12:27:34 +08:00
+
+工作目标：完成 YunXi Agent v2.0.5 整改发布提交、annotated hotfix tag、GitHub non-force 推送与远程历史 tag 保护核验，并将实际发布状态写回整改报告和开发日志。
+
+执行流程：
+1. 将 31 个已验证文件提交为 `7d6c18b73a1f4a0d4ec9b7cc64ed501e76f72bf4`，提交说明为 `fix(tui): complete v2.0.5 error presentation remediation`。
+2. 创建新的 annotated `v2.0.5-hotfix.1`，tag object 为 `74053c8ad44bcea463a3fd08422510abbff20768`，解析到发布提交 `7d6c18b73a1f4a0d4ec9b7cc64ed501e76f72bf4`。
+3. 核验原 `v2.0.5` tag object 仍为 `caad35a0ecc8eeb066721ab6f9d4e35cd2592602`，解析提交仍为 `fe15693a039d025a2cdb21b6d7c192207161682b`。
+4. 第一次发布前保护检查发现本地和远程既有 `v1.3.0` tag object 在本次操作前已不一致，因此在推送前主动停止；远程 `master`、`v2.0.5` 和新 tag 均未发生变化，也没有尝试修正或覆盖该历史差异。
+5. 第二次发布采用远程 refs 前后快照：只显式推送 `refs/heads/master` 与 `refs/tags/v2.0.5-hotfix.1`，不使用 `--tags`、`--force` 或 force-with-lease。
+6. 推送后重新读取远程 refs，确认首次发布远程 `master` 为 `7d6c18b73a1f4a0d4ec9b7cc64ed501e76f72bf4`，远程新 tag object 为 `74053c8ad44bcea463a3fd08422510abbff20768`，原远程 `v2.0.5` 保持不变。
+7. 对推送前已有的 42 个远程历史 tag 逐一比较对象哈希，全部未移动、未删除、未覆盖；推送后远程 tag 总数为 43，仅增加 `v2.0.5-hotfix.1`。
+8. GitHub API key 仅从 `C:\Users\24763\Desktop\GitHub apikey.txt` 在单次 PowerShell 进程内读取并转换为临时 Git HTTP 认证头；未打印 token，未写入仓库、Git 配置、remote URL 或日志。
+
+修改文件：
+- `D:\YunXi Agent\docs\reports\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面同步目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`
+- 桌面同步目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：整改发布提交、annotated tag、GitHub non-force 推送和远程 refs 核验全部完成；42 个历史远程 tag 未变，原 `v2.0.5` 未变，新 tag 唯一新增。后续仅创建并推送本条发布状态的 docs-only 收尾提交，不移动 `v2.0.5-hotfix.1`。
+
+提交和推送状态：发布提交 `7d6c18b73a1f4a0d4ec9b7cc64ed501e76f72bf4` 与 `v2.0.5-hotfix.1` 已推送；本条报告与日志将作为 docs-only 收尾提交继续 non-force 推送到 `master`。
+
+署名：开发者

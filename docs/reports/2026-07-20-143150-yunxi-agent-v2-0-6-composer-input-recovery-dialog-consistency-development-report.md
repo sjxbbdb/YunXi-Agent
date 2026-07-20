@@ -242,6 +242,15 @@ git status --short
 - Companion Evaluation Harness 的 text、JSON、JSONL 均为 31/31 且 `golden_passed=true`；离线 one-shot JSON、22 行 JSONL 和 no-TUI REPL 均通过。
 - v206/v205 两个 ConPTY verifier 均返回 `ok=true, scenarios=8`；`git diff --check` 无空白错误。
 - 用户于本轮明确确认清理后，精确删除并核验以下路径均不存在：`D:\YunXi Agent\target`、`D:\YunXi Agent\scripts\conpty\v206\node_modules`、`D:\YunXi Agent\scripts\conpty\v206\.work`、`D:\YunXi Agent\.yunxi`、`D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`。正式 collector、lockfile、证据和 manifest 全部保留。
-- 尚未创建发布提交、annotated `v2.0.6` tag 或 GitHub 推送；所有历史 tag 保持不移动、不删除、不覆盖。
+- 在发布前检查点时尚未创建发布提交、annotated `v2.0.6` tag 或执行 GitHub 推送；该状态随后已由“十一、发布结果”更新，所有历史 tag 始终保持不移动、不删除、不覆盖。
+
+## 十一、发布结果
+
+- 发布时间：2026-07-20 17:58:30 +08:00
+- 发布提交：`30842cf3bae3053d36a3f9229c90eb75597d8eac`，提交说明为 `feat(tui): complete v2.0.6 composer recovery`。
+- annotated tag：`v2.0.6`，tag object 为 `12e64e0cd31e612046c24f4a073b95c6bc887dff`，peeled commit 为 `30842cf3bae3053d36a3f9229c90eb75597d8eac`。
+- 推送方式：使用 GitHub API key 转换出的单进程临时 HTTP header，显式 non-force 推送 `refs/heads/master` 与 `refs/tags/v2.0.6`；API key 未打印、未持久化到仓库、Git 配置、remote URL、报告或日志。
+- 远程核验：远程 `master`、新 tag object 和 peeled commit 与本地完全一致；推送前存在的 88 条历史 tag ref 行逐一保持不变，未移动、删除或覆盖任何旧 tag；远程版本 tag 共 45 个。
+- 本节与开发日志将作为 tag 后的 docs-only 收尾提交继续 non-force 推送到 `master`，不移动 `v2.0.6`，也不追加功能代码或测试代码。
 
 署名：开发报告撰写者

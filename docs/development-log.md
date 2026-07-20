@@ -64,30 +64,6 @@
 
 署名：开发报告撰写者
 
-## 2026-07-20 17:43:39 +08:00
-
-工作目标：完成 v2.0.6 发布前统一验证、用户确认后的精确中间产物清理，以及提交/tag/推送前状态收敛。
-
-执行流程与验证结果：
-1. `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过。
-2. `cargo build -p yunxi-agent-cli --release --bins` 通过；`target\release\yunxi.exe --version` 与兼容 binary 均为 `yunxi 2.0.6`。
-3. Companion Evaluation Harness 的 text、JSON、JSONL 均通过 31/31，JSON 与 JSONL 均为 `golden_passed=true`。
-4. 离线 one-shot JSON 可解析，JSONL 共 22 行且逐行可解析，no-TUI REPL 完成 turn 后由 `/exit` 正常退出。
-5. `npm.cmd run verify --prefix scripts\conpty\v206` 与历史 `v205` verifier 均返回 `ok=true, scenarios=8`；`git diff --check` 通过。
-6. 用户明确回复“确认”后，在命令内再次校验所有绝对目标均位于 `D:\YunXi Agent`，再使用 PowerShell `Remove-Item -LiteralPath -Recurse -Force` 精确清理并逐项 `Test-Path` 核验。
-
-清理路径与结果：
-- `D:\YunXi Agent\target`：已删除，不存在；清理前约 5,231,550,916 bytes。
-- `D:\YunXi Agent\scripts\conpty\v206\node_modules`：已删除，不存在；清理前约 66,816,800 bytes。
-- `D:\YunXi Agent\scripts\conpty\v206\.work`：已删除，不存在。
-- `D:\YunXi Agent\.yunxi`：已删除，不存在。
-- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`：已删除，不存在。
-- 保留 `scripts\conpty\v206` collector、`package-lock.json`、八份正式脱敏证据、manifest、报告和全部历史 tag。
-
-提交、推送与 tag 状态：发布提交、annotated `v2.0.6` 和 GitHub non-force 推送尚待执行；本地 `v2.0.6` 当前不存在，基线 HEAD 为 `a2e7fc2688d6da17ea13813694cd78f08232a933`。GitHub API key 仍未打印或持久化。
-
-署名：开发报告撰写者
-
 ## 2026-07-18 10:00:25 +08:00
 
 工作目标：依据 v1.9.3 Companion UX & Controls 开发报告，在 `D:\YunXi Agent`
@@ -1319,42 +1295,6 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 
 开发报告撰写者
 
-## 2026-07-20 17:35:20 +08:00
-
-工作目标：依据 `D:\YunXi Agent\docs\reports\2026-07-20-143150-yunxi-agent-v2-0-6-composer-input-recovery-dialog-consistency-development-report.md` 实施 v2.0.6 Composer、输入恢复与对话一致性候选，并建立真实 DeepSeek/Windows ConPTY 证据链。
-
-执行流程：
-1. 重新核对开发报告 14 条硬性约束和 v2.0.6 源码接入点；使用 CodeGraph 复核 BottomPane、host、render、timeline 和 CLI interactive 链路。
-2. 新增 grapheme-indexed `EditBuffer`，统一 Composer/UserInput 编辑行为、CRLF 归一化、Unicode 删除移动、提交与 snapshot/restore。
-3. 重构 bottom pane active view、流式草稿、渲染窗口、footer 状态和 assistant 单 cell 回归。
-4. 真实 ConPTY 调试发现 Windows crossterm 将粘贴 LF 交付为 Ctrl+Enter，并发现 approval channel 可能早于 UI tick 消费排队草稿；分别增加输入突发分类、5ms 静默 drain 和覆盖层前强制 tick。
-5. 新建 `scripts\conpty\v206`，固定 Node 原生依赖并覆盖 ordinary、multiline、crlf、long、ime、stream-cancel、approval-restore、final-single 八场。
-6. 在获准真实网络环境中用最终 release 完整运行 8 个 DeepSeek 会话，生成脱敏 JSON 帧与 SHA-256 manifest，并执行 v206/v205 离线 verifier。
-7. 更新 README、提取状态、TUI 设计、脚本索引、证据说明和本开发报告；当前尚未执行最终 workspace 门禁、递归清理、提交、tag 或推送。
-
-主要修改文件与路径：
-- `D:\YunXi Agent\crates\yunxi-agent-tui\src\edit_buffer.rs`
-- `D:\YunXi Agent\crates\yunxi-agent-tui\src\bottom_pane.rs`
-- `D:\YunXi Agent\crates\yunxi-agent-tui\src\host.rs`
-- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
-- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
-- `D:\YunXi Agent\crates\yunxi-agent-cli\src\interactive.rs`
-- `D:\YunXi Agent\scripts\conpty\v206\*`
-- `D:\YunXi Agent\docs\reports\evidence\frames\v206-conpty\*`
-- `D:\YunXi Agent\docs\reports\evidence\2026-07-20-v2-0-6-composer-input-conpty-evidence.md`
-- `D:\YunXi Agent\README.md`
-- `D:\YunXi Agent\docs\extraction-status.md`
-- `D:\YunXi Agent\docs\tui-presentation.md`
-- `D:\YunXi Agent\scripts\README.md`
-
-验证结果：TUI 126/126 通过；CLI crate/集成/JSONL 测试通过；release 双 binary 构建通过；最终 DeepSeek/Windows ConPTY 8/8 场通过；v206 verifier 返回 `ok=true, scenarios=8`；历史 v205 verifier 同样返回 `ok=true, scenarios=8`。完整 workspace 门禁仍待执行，未提前声明 v2.0.6 发布完成。
-
-清理结果：本轮尚未递归清理。`target`、`scripts\conpty\v206\node_modules`、`scripts\conpty\v206\.work` 以及可能生成的 `.yunxi` 状态必须在最终验证后、重新取得用户明确确认后按绝对路径精确清理。
-
-提交、推送与 tag 状态：尚未提交、尚未推送、尚未创建 annotated `v2.0.6`；全部历史 tag 保持不移动、不删除、不覆盖。GitHub API key 未打印、未写入仓库、Git 配置、remote URL、报告或日志。
-
-署名：开发报告撰写者
-
 ## 2026-07-20 10:54:13 +08:00
 
 工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md` 完成 v2.0.5 当前版本错误呈现与真实 Windows ConPTY 在线证据整改；保持原 `v2.0.5` 和全部历史 tag 不变，不进入下一版本开发。
@@ -1650,4 +1590,83 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 
 提交和推送状态：未提交、未推送、未创建新的 Git tag；既有历史 tag 不移动、不删除、不覆盖。`v2.0.6` 后续实现、验证和发布完成后必须创建新的 annotated Git tag。
 
-开发报告撰写者
+署名：开发报告撰写者
+
+## 2026-07-20 17:35:20 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\reports\2026-07-20-143150-yunxi-agent-v2-0-6-composer-input-recovery-dialog-consistency-development-report.md` 实施 v2.0.6 Composer、输入恢复与对话一致性候选，并建立真实 DeepSeek/Windows ConPTY 证据链。
+
+执行流程：
+1. 重新核对开发报告 14 条硬性约束和 v2.0.6 源码接入点；使用 CodeGraph 复核 BottomPane、host、render、timeline 和 CLI interactive 链路。
+2. 新增 grapheme-indexed `EditBuffer`，统一 Composer/UserInput 编辑行为、CRLF 归一化、Unicode 删除移动、提交与 snapshot/restore。
+3. 重构 bottom pane active view、流式草稿、渲染窗口、footer 状态和 assistant 单 cell 回归。
+4. 真实 ConPTY 调试发现 Windows crossterm 将粘贴 LF 交付为 Ctrl+Enter，并发现 approval channel 可能早于 UI tick 消费排队草稿；分别增加输入突发分类、5ms 静默 drain 和覆盖层前强制 tick。
+5. 新建 `scripts\conpty\v206`，固定 Node 原生依赖并覆盖 ordinary、multiline、crlf、long、ime、stream-cancel、approval-restore、final-single 八场。
+6. 在获准真实网络环境中用最终 release 完整运行 8 个 DeepSeek 会话，生成脱敏 JSON 帧与 SHA-256 manifest，并执行 v206/v205 离线 verifier。
+7. 更新 README、提取状态、TUI 设计、脚本索引、证据说明和本开发报告；当前尚未执行最终 workspace 门禁、递归清理、提交、tag 或推送。
+
+主要修改文件与路径：
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\edit_buffer.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\bottom_pane.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\host.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\interactive.rs`
+- `D:\YunXi Agent\scripts\conpty\v206\*`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v206-conpty\*`
+- `D:\YunXi Agent\docs\reports\evidence\2026-07-20-v2-0-6-composer-input-conpty-evidence.md`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\docs\extraction-status.md`
+- `D:\YunXi Agent\docs\tui-presentation.md`
+- `D:\YunXi Agent\scripts\README.md`
+
+验证结果：TUI 126/126 通过；CLI crate/集成/JSONL 测试通过；release 双 binary 构建通过；最终 DeepSeek/Windows ConPTY 8/8 场通过；v206 verifier 返回 `ok=true, scenarios=8`；历史 v205 verifier 同样返回 `ok=true, scenarios=8`。完整 workspace 门禁仍待执行，未提前声明 v2.0.6 发布完成。
+
+清理结果：本轮尚未递归清理。`target`、`scripts\conpty\v206\node_modules`、`scripts\conpty\v206\.work` 以及可能生成的 `.yunxi` 状态必须在最终验证后、重新取得用户明确确认后按绝对路径精确清理。
+
+提交、推送与 tag 状态：尚未提交、尚未推送、尚未创建 annotated `v2.0.6`；全部历史 tag 保持不移动、不删除、不覆盖。GitHub API key 未打印、未写入仓库、Git 配置、remote URL、报告或日志。
+
+署名：开发报告撰写者
+
+## 2026-07-20 17:43:39 +08:00
+
+工作目标：完成 v2.0.6 发布前统一验证、用户确认后的精确中间产物清理，以及提交/tag/推送前状态收敛。
+
+执行流程与验证结果：
+1. `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过。
+2. `cargo build -p yunxi-agent-cli --release --bins` 通过；`target\release\yunxi.exe --version` 与兼容 binary 均为 `yunxi 2.0.6`。
+3. Companion Evaluation Harness 的 text、JSON、JSONL 均通过 31/31，JSON 与 JSONL 均为 `golden_passed=true`。
+4. 离线 one-shot JSON 可解析，JSONL 共 22 行且逐行可解析，no-TUI REPL 完成 turn 后由 `/exit` 正常退出。
+5. `npm.cmd run verify --prefix scripts\conpty\v206` 与历史 `v205` verifier 均返回 `ok=true, scenarios=8`；`git diff --check` 通过。
+6. 用户明确回复“确认”后，在命令内再次校验所有绝对目标均位于 `D:\YunXi Agent`，再使用 PowerShell `Remove-Item -LiteralPath -Recurse -Force` 精确清理并逐项 `Test-Path` 核验。
+
+清理路径与结果：
+- `D:\YunXi Agent\target`：已删除，不存在；清理前约 5,231,550,916 bytes。
+- `D:\YunXi Agent\scripts\conpty\v206\node_modules`：已删除，不存在；清理前约 66,816,800 bytes。
+- `D:\YunXi Agent\scripts\conpty\v206\.work`：已删除，不存在。
+- `D:\YunXi Agent\.yunxi`：已删除，不存在。
+- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`：已删除，不存在。
+- 保留 `scripts\conpty\v206` collector、`package-lock.json`、八份正式脱敏证据、manifest、报告和全部历史 tag。
+
+提交、推送与 tag 状态：发布提交、annotated `v2.0.6` 和 GitHub non-force 推送尚待执行；本地 `v2.0.6` 当前不存在，基线 HEAD 为 `a2e7fc2688d6da17ea13813694cd78f08232a933`。GitHub API key 仍未打印或持久化。
+
+署名：开发报告撰写者
+
+## 2026-07-20 17:58:30 +08:00
+
+工作目标：完成 YunXi Agent v2.0.6 发布提交、annotated tag、GitHub API-key non-force 推送、远程 refs 核验与 docs-only 状态收尾。
+
+执行流程：
+1. 将 47 个已验证文件提交为 `30842cf3bae3053d36a3f9229c90eb75597d8eac`，提交说明为 `feat(tui): complete v2.0.6 composer recovery`。
+2. 推送前使用 GitHub API key 的临时 HTTP header 读取远程 `master` 与全部 tag refs；远程 `master` 为基线 `a2e7fc2688d6da17ea13813694cd78f08232a933`，远程不存在 `v2.0.6`，保存 88 条历史 tag ref 行用于前后比较。
+3. 创建新的 annotated `v2.0.6`；tag object 为 `12e64e0cd31e612046c24f4a073b95c6bc887dff`，peeled commit 为发布提交 `30842cf3bae3053d36a3f9229c90eb75597d8eac`。
+4. 只显式 non-force 推送 `refs/heads/master` 和 `refs/tags/v2.0.6`，未使用 `--tags`、`--force` 或 force-with-lease。
+5. 首次推送后校验脚本错误地把预期变化的 `master` 当作历史 ref 比较；推送本身已成功。随后一次只读请求遇到连接重置，最终使用相同临时 API header 成功重读 refs 并完成核验。
+6. 远程 `master`、新 tag object、peeled commit 与本地完全一致；推送前的 88 条历史 tag ref 行逐一未变化，远程版本 tag 总数为 45，仅新增 `v2.0.6`。
+7. GitHub API key 只存在于单次 PowerShell 进程环境和 Git HTTP header 中，未打印、未写入仓库、Git 配置、remote URL、开发报告或开发日志。
+
+清理状态：发布前已按用户确认删除并核验 `target`、v206 `node_modules`、v206 `.work`、根目录 `.yunxi` 与 CLI `.yunxi` 均不存在；正式 collector、依赖锁、八场证据、manifest 和历史 tag 全部保留。
+
+提交、推送与 tag 状态：v2.0.6 发布提交、annotated tag 和远程推送均完成并核验一致。本条报告/日志状态将作为 tag 后 docs-only 收尾提交 non-force 推送到 `master`；该收尾不移动 `v2.0.6`，不包含功能或测试变更。
+
+署名：开发报告撰写者

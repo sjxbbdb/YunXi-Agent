@@ -1528,3 +1528,26 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 提交和推送状态：用户已确认新 tag 名称为 `v2.0.5-hotfix.2`。下一步创建整改提交和新的 annotated tag，使用 API key 显式 non-force 推送 `master` 与该新 tag，并通过远程 refs 前后快照确认 `v2.0.5-hotfix.1` 和全部历史 tag 未移动、未删除、未覆盖。
 
 署名：开发者
+
+## 2026-07-20 13:36:32 +08:00
+
+工作目标：完成 YunXi Agent v2.0.5 ConPTY 原生依赖可复现性整改提交、annotated `v2.0.5-hotfix.2`、GitHub non-force 推送和全部历史远程 tag 保护核验，并将真实发布状态写回整改报告和开发日志。
+
+执行流程：
+1. 将 16 个整改文件提交为 `63155ce1fc8785f17dabd3f11babd159222445d5`，提交说明为 `fix(conpty): make v2.0.5 evidence install reproducible`。
+2. 创建新的 annotated `v2.0.5-hotfix.2`，tag object 为 `578e0db14fb232c004b89d8eb4ac244a53518c32`，解析到发布提交 `63155ce1fc8785f17dabd3f11babd159222445d5`。
+3. 推送前读取远程 `master` 与全部 tag refs，确认远程尚无 `v2.0.5-hotfix.2`，远程 `v2.0.5-hotfix.1` tag object 仍为 `74053c8ad44bcea463a3fd08422510abbff20768`。
+4. 只显式推送 `refs/heads/master` 和 `refs/tags/v2.0.5-hotfix.2`，未使用 `--tags`、`--force` 或 force-with-lease。
+5. 推送后重新读取远程 refs，确认远程 `master` 为 `63155ce1fc8785f17dabd3f11babd159222445d5`，远程新 tag object 为 `578e0db14fb232c004b89d8eb4ac244a53518c32`。
+6. 对推送前已有的 43 个远程历史 tag 逐一比较对象哈希，全部未移动、未删除、未覆盖；远程 tag 总数变为 44，仅新增 `v2.0.5-hotfix.2`。
+7. GitHub API key 仅从 `C:\Users\24763\Desktop\GitHub apikey.txt` 在单次 PowerShell 进程内读取并转换为临时 Git HTTP 认证头；未打印 token，未写入仓库、Git 配置、remote URL、报告或日志。
+
+发布结果：ConPTY 原生安装可复现性整改提交与 `v2.0.5-hotfix.2` 均已推送。`v2.0.5-hotfix.1` 和全部历史 tag 保持不变；清理的五个运行目录仍不存在。后续仅创建并推送本条发布状态的 docs-only 收尾提交，不移动任何 tag。
+
+修改与同步路径：
+- `D:\YunXi Agent\docs\reports\2026-07-20-131709-yunxi-agent-v2-0-5-conpty-native-install-reproducibility-remediation-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-131709-yunxi-agent-v2-0-5-conpty-native-install-reproducibility-remediation-development-report.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+署名：开发者

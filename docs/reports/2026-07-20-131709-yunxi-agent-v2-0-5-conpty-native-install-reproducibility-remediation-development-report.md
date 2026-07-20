@@ -72,6 +72,6 @@ npm run verify --prefix scripts\conpty\v205
 
 清理前将每个目标解析为绝对路径并确认位于 `D:\YunXi Agent` 内；随后删除 `target`、`scripts\conpty\v205\node_modules`、`scripts\conpty\v205\.work`、根目录 `.yunxi` 与 `crates\yunxi-agent-cli\.yunxi`，五项目标均经 `Test-Path` 核验为不存在。collector 源码、`package-lock.json`、审核报告、正式 evidence、八份新脱敏帧和 manifest 均保留。
 
-当前本地 `master` 还包含上一轮未推送的 docs-only `16024ce`，本轮整改文件待创建唯一整改提交和 `v2.0.5-hotfix.2`。发布必须采用 non-force 推送，核验远程 `master`、新 tag、`v2.0.5-hotfix.1` 及全部历史 refs。GitHub API key 不得打印或写入仓库、Git 配置、remote URL、报告或日志。
+整改已于 `2026-07-20 13:36:32 +08:00` 发布。发布提交为 `63155ce1fc8785f17dabd3f11babd159222445d5`；新 annotated `v2.0.5-hotfix.2` tag object 为 `578e0db14fb232c004b89d8eb4ac244a53518c32`，解析到该发布提交。显式 non-force 推送后，远程 `master` 指向发布提交，新 tag 指向上述 tag object，原 `v2.0.5-hotfix.1` tag object 保持 `74053c8ad44bcea463a3fd08422510abbff20768`；推送前已有的 43 个远程 tag 对象哈希全部未变，远程 tag 总数仅增加为 44。发布状态通过后续 docs-only 收尾提交写入 `master`，新旧 tag 均不移动。GitHub API key 未打印、未写入仓库、Git 配置、remote URL、报告或日志。
 
 署名：开发者

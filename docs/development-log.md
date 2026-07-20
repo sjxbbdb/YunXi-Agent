@@ -64,6 +64,30 @@
 
 署名：开发报告撰写者
 
+## 2026-07-20 17:43:39 +08:00
+
+工作目标：完成 v2.0.6 发布前统一验证、用户确认后的精确中间产物清理，以及提交/tag/推送前状态收敛。
+
+执行流程与验证结果：
+1. `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过。
+2. `cargo build -p yunxi-agent-cli --release --bins` 通过；`target\release\yunxi.exe --version` 与兼容 binary 均为 `yunxi 2.0.6`。
+3. Companion Evaluation Harness 的 text、JSON、JSONL 均通过 31/31，JSON 与 JSONL 均为 `golden_passed=true`。
+4. 离线 one-shot JSON 可解析，JSONL 共 22 行且逐行可解析，no-TUI REPL 完成 turn 后由 `/exit` 正常退出。
+5. `npm.cmd run verify --prefix scripts\conpty\v206` 与历史 `v205` verifier 均返回 `ok=true, scenarios=8`；`git diff --check` 通过。
+6. 用户明确回复“确认”后，在命令内再次校验所有绝对目标均位于 `D:\YunXi Agent`，再使用 PowerShell `Remove-Item -LiteralPath -Recurse -Force` 精确清理并逐项 `Test-Path` 核验。
+
+清理路径与结果：
+- `D:\YunXi Agent\target`：已删除，不存在；清理前约 5,231,550,916 bytes。
+- `D:\YunXi Agent\scripts\conpty\v206\node_modules`：已删除，不存在；清理前约 66,816,800 bytes。
+- `D:\YunXi Agent\scripts\conpty\v206\.work`：已删除，不存在。
+- `D:\YunXi Agent\.yunxi`：已删除，不存在。
+- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`：已删除，不存在。
+- 保留 `scripts\conpty\v206` collector、`package-lock.json`、八份正式脱敏证据、manifest、报告和全部历史 tag。
+
+提交、推送与 tag 状态：发布提交、annotated `v2.0.6` 和 GitHub non-force 推送尚待执行；本地 `v2.0.6` 当前不存在，基线 HEAD 为 `a2e7fc2688d6da17ea13813694cd78f08232a933`。GitHub API key 仍未打印或持久化。
+
+署名：开发报告撰写者
+
 ## 2026-07-18 10:00:25 +08:00
 
 工作目标：依据 v1.9.3 Companion UX & Controls 开发报告，在 `D:\YunXi Agent`
@@ -1295,6 +1319,42 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 
 开发报告撰写者
 
+## 2026-07-20 17:35:20 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\reports\2026-07-20-143150-yunxi-agent-v2-0-6-composer-input-recovery-dialog-consistency-development-report.md` 实施 v2.0.6 Composer、输入恢复与对话一致性候选，并建立真实 DeepSeek/Windows ConPTY 证据链。
+
+执行流程：
+1. 重新核对开发报告 14 条硬性约束和 v2.0.6 源码接入点；使用 CodeGraph 复核 BottomPane、host、render、timeline 和 CLI interactive 链路。
+2. 新增 grapheme-indexed `EditBuffer`，统一 Composer/UserInput 编辑行为、CRLF 归一化、Unicode 删除移动、提交与 snapshot/restore。
+3. 重构 bottom pane active view、流式草稿、渲染窗口、footer 状态和 assistant 单 cell 回归。
+4. 真实 ConPTY 调试发现 Windows crossterm 将粘贴 LF 交付为 Ctrl+Enter，并发现 approval channel 可能早于 UI tick 消费排队草稿；分别增加输入突发分类、5ms 静默 drain 和覆盖层前强制 tick。
+5. 新建 `scripts\conpty\v206`，固定 Node 原生依赖并覆盖 ordinary、multiline、crlf、long、ime、stream-cancel、approval-restore、final-single 八场。
+6. 在获准真实网络环境中用最终 release 完整运行 8 个 DeepSeek 会话，生成脱敏 JSON 帧与 SHA-256 manifest，并执行 v206/v205 离线 verifier。
+7. 更新 README、提取状态、TUI 设计、脚本索引、证据说明和本开发报告；当前尚未执行最终 workspace 门禁、递归清理、提交、tag 或推送。
+
+主要修改文件与路径：
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\edit_buffer.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\bottom_pane.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\host.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\interactive.rs`
+- `D:\YunXi Agent\scripts\conpty\v206\*`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v206-conpty\*`
+- `D:\YunXi Agent\docs\reports\evidence\2026-07-20-v2-0-6-composer-input-conpty-evidence.md`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\docs\extraction-status.md`
+- `D:\YunXi Agent\docs\tui-presentation.md`
+- `D:\YunXi Agent\scripts\README.md`
+
+验证结果：TUI 126/126 通过；CLI crate/集成/JSONL 测试通过；release 双 binary 构建通过；最终 DeepSeek/Windows ConPTY 8/8 场通过；v206 verifier 返回 `ok=true, scenarios=8`；历史 v205 verifier 同样返回 `ok=true, scenarios=8`。完整 workspace 门禁仍待执行，未提前声明 v2.0.6 发布完成。
+
+清理结果：本轮尚未递归清理。`target`、`scripts\conpty\v206\node_modules`、`scripts\conpty\v206\.work` 以及可能生成的 `.yunxi` 状态必须在最终验证后、重新取得用户明确确认后按绝对路径精确清理。
+
+提交、推送与 tag 状态：尚未提交、尚未推送、尚未创建 annotated `v2.0.6`；全部历史 tag 保持不移动、不删除、不覆盖。GitHub API key 未打印、未写入仓库、Git 配置、remote URL、报告或日志。
+
+署名：开发报告撰写者
+
 ## 2026-07-20 10:54:13 +08:00
 
 工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md` 完成 v2.0.5 当前版本错误呈现与真实 Windows ConPTY 在线证据整改；保持原 `v2.0.5` 和全部历史 tag 不变，不进入下一版本开发。
@@ -1551,3 +1611,43 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 - `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
 
 署名：开发者
+
+## 2026-07-20 14:36:46 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-20-142235-YunXi-Agent-v2.0.5-hotfix.2-复核审核通过报告.md` 撰写面向开发者的 YunXi Agent v2.0.6 Composer、输入恢复与对话一致性开发报告，并同步到项目内开发报告目录与桌面开发报告目录。
+
+执行流程：
+1. 读取 `v2.0.5-hotfix.2` 复核审核通过报告，确认该报告取代此前发布原子性不通过结论，当前版本审核通过，可进入 `v2.0.6` 开发。
+2. 核对项目内 `docs/reports` 目录，确认复核审核报告已归档为 `D:\YunXi Agent\docs\reports\2026-07-20-142235-yunxi-agent-v2-0-5-hotfix-2-reaudit-report.md`。
+3. 使用 CodeGraph 复核 `bottom_pane.rs`、`app.rs`、`host.rs`、`render.rs`、`streaming.rs`、`chat.rs`、`timeline.rs` 和 `interactive.rs` 相关输入、渲染、流式输出与 assistant cell 更新链路。
+4. 按固定流程在开发报告前部写入 14 条硬性约束。
+5. 围绕 `v2.0.6` Composer、输入恢复与对话一致性撰写开发目标、版本边界、既有能力保持要求、源码接入点、源码参考建议、推荐执行顺序、测试验收要求和文档发布要求。
+6. 在项目内新增开发报告，并复制到桌面开发报告目录。
+7. 对项目内开发报告和桌面开发报告执行 SHA256 校验，确认内容一致。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-20-143150-yunxi-agent-v2-0-6-composer-input-recovery-dialog-consistency-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-143150-yunxi-agent-v2-0-6-composer-input-recovery-dialog-consistency-development-report.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 审核报告来源：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-20-142235-YunXi-Agent-v2.0.5-hotfix.2-复核审核通过报告.md`
+- 项目内审核报告归档：`D:\YunXi Agent\docs\reports\2026-07-20-142235-yunxi-agent-v2-0-5-hotfix-2-reaudit-report.md`
+
+验证结果：
+- 项目开发报告与桌面开发报告 SHA256 一致：`E3CF80095FA713BF8DCED35B7FE6D97D75B0D8AA3820B97995BCF127DA094E70`。
+- 项目开发日志已同步到桌面开发日志；最终一致性以收尾校验结果为准。
+- 本次仅撰写开发报告并追加日志，未修改 Rust 源码。
+- 未运行 `cargo fmt`、`cargo check`、`cargo test`、`cargo build` 或 ConPTY capture/verify。
+- 未执行编译产物清理；本次没有新增编译产物。
+- 未执行递归删除、强制移动、清空目录、系统级安装/卸载、PATH/注册表/系统配置修改。
+
+提交和推送状态：未提交、未推送、未创建新的 Git tag；既有历史 tag 不移动、不删除、不覆盖。`v2.0.6` 后续实现、验证和发布完成后必须创建新的 annotated Git tag。
+
+开发报告撰写者

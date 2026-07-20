@@ -1,5 +1,23 @@
 # Scripts
 
+## `conpty\v206`
+
+Contains the reproducible Windows ConPTY gate for the v2.0.6 Composer, input
+recovery, and dialog-consistency release. Eight real DeepSeek sessions cover
+ordinary, multi-line, CRLF, long, IME-style, stream-cancel,
+approval-restore, and final-single behavior.
+
+```powershell
+npm ci --prefix scripts\conpty\v206
+npm run capture --prefix scripts\conpty\v206
+npm run verify --prefix scripts\conpty\v206
+```
+
+The collector writes sanitized frames and a SHA-256 manifest to
+`docs/reports/evidence/frames/v206-conpty`. See
+`scripts/conpty/v206/README.md` for locked dependency, credential, individual
+scenario, and offline verification details.
+
 ## `conpty\v205`
 
 Contains the reproducible Windows ConPTY evidence collector for the v2.0.5
@@ -22,7 +40,7 @@ and scenario details.
 
 ## `install\install-yunxi.ps1`
 
-Builds and installs the current YunXi Agent v1.8.9 terminal binaries:
+Builds and installs the current YunXi Agent v2.0.6 terminal binaries:
 
 ```powershell
 .\scripts\install\install-yunxi.ps1 -AddToPath

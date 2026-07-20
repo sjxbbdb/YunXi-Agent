@@ -113,7 +113,7 @@ async fn run_general_companion_scenario(workspace: &Path) -> AgentResult<()> {
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(system_context.contains("yunxi_persona_context version=\"2.0.5\""));
+    assert!(system_context.contains("yunxi_persona_context version=\"2.0.6\""));
     assert!(system_context.contains("Alex relationship is trusting"));
     assert!(!system_context.contains("Alex relationship is strained"));
 
@@ -131,7 +131,7 @@ async fn run_general_companion_scenario(workspace: &Path) -> AgentResult<()> {
     );
 
     let snapshot = general_companion_snapshot(&config)?;
-    assert_eq!(snapshot.version, "2.0.5");
+    assert_eq!(snapshot.version, "2.0.6");
     assert_eq!(snapshot.runtime_owner, "yunxi");
     assert!(!snapshot.upstream_codex_required);
     assert_eq!(snapshot.persona_profile_id, "yunxi_companion_strong");

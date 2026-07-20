@@ -1,7 +1,7 @@
 use crate::approval_layout::approval_desired_height;
+use crate::edit_buffer::{EditBuffer, EditBufferSnapshot};
 use crate::text_layout::{TextLayout, WrapPolicy};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApprovalRequestView {
@@ -32,19 +32,14 @@ pub struct UserInputResponse {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum BottomPaneMode {
-    Composer {
-        prompt: String,
-        buffer: String,
-        cursor: usize,
-    },
+    Composer,
     Approval {
         request: ApprovalRequestView,
         selected: usize,
     },
     UserInput {
         request: UserInputRequestView,
-        buffer: String,
-        cursor: usize,
+        buffer: EditBuffer,
     },
 }
 
@@ -71,16 +66,18 @@ pub(crate) enum UserInputAction {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BottomPane {
     mode: BottomPaneMode,
+    composer_prompt: String,
+    composer: EditBuffer,
+    suspended_composer: Option<EditBufferSnapshot>,
 }
 
 impl Default for BottomPane {
     fn default() -> Self {
         Self {
-            mode: BottomPaneMode::Composer {
-                prompt: "yunxi> ".to_string(),
-                buffer: String::new(),
-                cursor: 0,
-            },
+            mode: BottomPaneMode::Composer,
+            composer_prompt: "yunxi> ".to_string(),
+            composer: EditBuffer::default(),
+            suspended_composer: None,
         }
     }
 }
@@ -90,15 +87,43 @@ impl BottomPane {
         &self.mode
     }
 
+    pub(crate) fn text_input_active(&self) -> bool {
+        matches!(
+            self.mode,
+            BottomPaneMode::Composer | BottomPaneMode::UserInput { .. }
+        )
+    }
+
+    pub(crate) fn composer_prompt(&self) -> &str {
+        &self.composer_prompt
+    }
+
+    pub(crate) fn composer_buffer(&self) -> &EditBuffer {
+        &self.composer
+    }
+
+    #[cfg(test)]
+    pub(crate) fn composer_snapshot(&self) -> EditBufferSnapshot {
+        self.composer.snapshot()
+    }
+
     pub(crate) fn start_composer(&mut self, prompt: impl Into<String>) {
-        self.mode = BottomPaneMode::Composer {
-            prompt: prompt.into(),
-            buffer: String::new(),
-            cursor: 0,
-        };
+        self.composer_prompt = prompt.into();
+        if let Some(snapshot) = self.suspended_composer.take() {
+            self.composer.restore(snapshot);
+        }
+        self.mode = BottomPaneMode::Composer;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_composer(&mut self, prompt: impl Into<String>) {
+        self.suspended_composer = None;
+        self.composer.clear();
+        self.start_composer(prompt);
     }
 
     pub(crate) fn start_approval(&mut self, request: ApprovalRequestView) {
+        self.suspend_composer();
         self.mode = BottomPaneMode::Approval {
             request,
             // Safe default: Enter confirms the explicitly selected decline.
@@ -107,27 +132,31 @@ impl BottomPane {
     }
 
     pub(crate) fn start_user_input(&mut self, request: UserInputRequestView) {
+        self.suspend_composer();
         self.mode = BottomPaneMode::UserInput {
             request,
-            buffer: String::new(),
-            cursor: 0,
+            buffer: EditBuffer::default(),
         };
     }
 
-    pub(crate) fn paste(&mut self, value: &str) {
+    pub(crate) fn paste(&mut self, value: &str) -> bool {
         match &mut self.mode {
-            BottomPaneMode::Composer { buffer, cursor, .. }
-            | BottomPaneMode::UserInput { buffer, cursor, .. } => {
-                insert_at_cursor(buffer, cursor, value);
+            BottomPaneMode::Composer => {
+                self.composer.insert_text(value);
+                true
             }
-            BottomPaneMode::Approval { .. } => {}
+            BottomPaneMode::UserInput { buffer, .. } => {
+                buffer.insert_text(value);
+                true
+            }
+            BottomPaneMode::Approval { .. } => false,
         }
     }
 
     pub(crate) fn handle_composer_key(&mut self, key: KeyEvent) -> ComposerAction {
-        let BottomPaneMode::Composer { buffer, cursor, .. } = &mut self.mode else {
+        if !matches!(self.mode, BottomPaneMode::Composer) {
             return ComposerAction::None;
-        };
+        }
         if key.kind != KeyEventKind::Press {
             return ComposerAction::None;
         }
@@ -137,57 +166,86 @@ impl BottomPane {
                     .modifiers
                     .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
             {
-                insert_at_cursor(buffer, cursor, "\n");
+                self.composer.insert_newline();
                 ComposerAction::None
             }
-            KeyCode::Enter => {
-                let submitted = buffer.trim_end_matches('\n').to_string();
-                buffer.clear();
-                *cursor = 0;
-                ComposerAction::Submit(submitted)
-            }
+            KeyCode::Enter => ComposerAction::Submit(self.composer.submit_text()),
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 ComposerAction::Cancel
             }
             KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                insert_at_cursor(buffer, cursor, "\n");
+                self.composer.insert_newline();
                 ComposerAction::None
             }
             KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                insert_at_cursor(buffer, cursor, &ch.to_string());
+                self.composer.insert_text(&ch.to_string());
                 ComposerAction::None
             }
             KeyCode::Backspace => {
-                remove_before_cursor(buffer, cursor);
+                self.composer.delete_previous_grapheme();
                 ComposerAction::None
             }
             KeyCode::Delete => {
-                remove_at_cursor(buffer, *cursor);
+                self.composer.delete_next_grapheme();
                 ComposerAction::None
             }
             KeyCode::Left => {
-                *cursor = previous_boundary(buffer, *cursor);
+                self.composer.move_left();
                 ComposerAction::None
             }
             KeyCode::Right => {
-                *cursor = next_boundary(buffer, *cursor);
+                self.composer.move_right();
                 ComposerAction::None
             }
             KeyCode::Home => {
-                *cursor = 0;
+                self.composer.move_home();
                 ComposerAction::None
             }
             KeyCode::End => {
-                *cursor = buffer.len();
+                self.composer.move_end();
                 ComposerAction::None
             }
             KeyCode::Esc => {
-                buffer.clear();
-                *cursor = 0;
+                self.composer.clear();
                 ComposerAction::None
             }
             _ => ComposerAction::None,
         }
+    }
+
+    pub(crate) fn handle_composer_draft_key(&mut self, key: KeyEvent) -> bool {
+        if !matches!(self.mode, BottomPaneMode::Composer)
+            || key.kind != KeyEventKind::Press
+            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+        {
+            return false;
+        }
+        let before = self.composer.snapshot();
+        match key.code {
+            KeyCode::Enter
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
+                self.composer.insert_newline();
+            }
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.composer.insert_newline();
+            }
+            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.composer.insert_text(&ch.to_string());
+            }
+            KeyCode::Backspace => self.composer.delete_previous_grapheme(),
+            KeyCode::Delete => self.composer.delete_next_grapheme(),
+            KeyCode::Left => self.composer.move_left(),
+            KeyCode::Right => self.composer.move_right(),
+            KeyCode::Home => self.composer.move_home(),
+            KeyCode::End => self.composer.move_end(),
+            // Submit and destructive clear are disabled while a turn is active.
+            KeyCode::Enter | KeyCode::Esc => {}
+            _ => {}
+        }
+        before != self.composer.snapshot()
     }
 
     pub(crate) fn handle_approval_key(&mut self, key: KeyEvent) -> ApprovalAction {
@@ -239,47 +297,58 @@ impl BottomPane {
     }
 
     pub(crate) fn handle_user_input_key(&mut self, key: KeyEvent) -> UserInputAction {
-        let BottomPaneMode::UserInput { buffer, cursor, .. } = &mut self.mode else {
+        let BottomPaneMode::UserInput { buffer, .. } = &mut self.mode else {
             return UserInputAction::None;
         };
         if key.kind != KeyEventKind::Press {
             return UserInputAction::None;
         }
         match key.code {
-            KeyCode::Enter => {
-                let value = buffer.trim_end_matches('\n').to_string();
-                UserInputAction::Submit(UserInputResponse { value: Some(value) })
+            KeyCode::Enter
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
+                buffer.insert_newline();
+                UserInputAction::None
             }
+            KeyCode::Enter => UserInputAction::Submit(UserInputResponse {
+                value: Some(buffer.submit_text()),
+            }),
             KeyCode::Esc => UserInputAction::Cancel,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 UserInputAction::Cancel
             }
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                buffer.insert_newline();
+                UserInputAction::None
+            }
             KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                insert_at_cursor(buffer, cursor, &ch.to_string());
+                buffer.insert_text(&ch.to_string());
                 UserInputAction::None
             }
             KeyCode::Backspace => {
-                remove_before_cursor(buffer, cursor);
+                buffer.delete_previous_grapheme();
                 UserInputAction::None
             }
             KeyCode::Delete => {
-                remove_at_cursor(buffer, *cursor);
+                buffer.delete_next_grapheme();
                 UserInputAction::None
             }
             KeyCode::Left => {
-                *cursor = previous_boundary(buffer, *cursor);
+                buffer.move_left();
                 UserInputAction::None
             }
             KeyCode::Right => {
-                *cursor = next_boundary(buffer, *cursor);
+                buffer.move_right();
                 UserInputAction::None
             }
             KeyCode::Home => {
-                *cursor = 0;
+                buffer.move_home();
                 UserInputAction::None
             }
             KeyCode::End => {
-                *cursor = buffer.len();
+                buffer.move_end();
                 UserInputAction::None
             }
             _ => UserInputAction::None,
@@ -292,13 +361,19 @@ impl BottomPane {
 
     pub(crate) fn desired_height_for_width(&self, width: usize) -> u16 {
         match &self.mode {
-            BottomPaneMode::Composer { prompt, buffer, .. } => {
-                composer_desired_height(prompt, buffer, width)
+            BottomPaneMode::Composer => {
+                composer_desired_height(&self.composer_prompt, self.composer.text(), width)
             }
             BottomPaneMode::Approval { request, .. } => approval_desired_height(request, width),
-            BottomPaneMode::UserInput {
-                request, buffer, ..
-            } => composer_desired_height(&format!("{} ", request.prompt), buffer, width),
+            BottomPaneMode::UserInput { request, buffer } => {
+                composer_desired_height(&format!("{} ", request.prompt), buffer.text(), width)
+            }
+        }
+    }
+
+    fn suspend_composer(&mut self) {
+        if matches!(self.mode, BottomPaneMode::Composer) {
+            self.suspended_composer = Some(self.composer.snapshot());
         }
     }
 }
@@ -378,55 +453,6 @@ impl ApprovalRequestView {
 
 fn contains_any(value: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| value.contains(needle))
-}
-
-fn insert_at_cursor(buffer: &mut String, cursor: &mut usize, value: &str) {
-    let cursor_at = clamp_to_boundary(buffer, *cursor);
-    buffer.insert_str(cursor_at, value);
-    *cursor = cursor_at + value.len();
-}
-
-fn remove_before_cursor(buffer: &mut String, cursor: &mut usize) {
-    if *cursor == 0 || buffer.is_empty() {
-        return;
-    }
-    let start = previous_boundary(buffer, *cursor);
-    buffer.drain(start..*cursor);
-    *cursor = start;
-}
-
-fn remove_at_cursor(buffer: &mut String, cursor: usize) {
-    if cursor >= buffer.len() {
-        return;
-    }
-    let end = next_boundary(buffer, cursor);
-    buffer.drain(cursor..end);
-}
-
-fn previous_boundary(value: &str, cursor: usize) -> usize {
-    let cursor = clamp_to_boundary(value, cursor);
-    value[..cursor]
-        .grapheme_indices(true)
-        .next_back()
-        .map(|(idx, _)| idx)
-        .unwrap_or(0)
-}
-
-fn next_boundary(value: &str, cursor: usize) -> usize {
-    let cursor = clamp_to_boundary(value, cursor);
-    value[cursor..]
-        .grapheme_indices(true)
-        .nth(1)
-        .map(|(idx, _)| cursor + idx)
-        .unwrap_or(value.len())
-}
-
-fn clamp_to_boundary(value: &str, cursor: usize) -> usize {
-    let mut cursor = cursor.min(value.len());
-    while cursor > 0 && !value.is_char_boundary(cursor) {
-        cursor -= 1;
-    }
-    cursor
 }
 
 #[cfg(test)]
@@ -515,11 +541,67 @@ mod tests {
         pane.handle_composer_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         pane.handle_composer_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
 
-        let BottomPaneMode::Composer { buffer, cursor, .. } = pane.mode() else {
-            panic!("composer mode");
-        };
-        assert_eq!(buffer, "中文");
-        assert_eq!(*cursor, "中文".len());
+        assert!(matches!(pane.mode(), BottomPaneMode::Composer));
+        assert_eq!(pane.composer_buffer().text(), "中文");
+        assert_eq!(pane.composer_buffer().cursor_grapheme(), 2);
+    }
+
+    #[test]
+    fn composer_draft_survives_approval_and_user_input_views() {
+        let mut pane = BottomPane::default();
+        pane.paste("草稿👩‍💻");
+        let snapshot = pane.composer_snapshot();
+        pane.start_approval(ApprovalRequestView {
+            id: None,
+            tool_name: "shell".to_string(),
+            cwd: ".".to_string(),
+            command: None,
+            reason: "needs approval".to_string(),
+            risk_label: None,
+        });
+        pane.start_composer("yunxi> ");
+        assert_eq!(pane.composer_snapshot(), snapshot);
+
+        pane.start_user_input(UserInputRequestView {
+            id: None,
+            prompt: "details".to_string(),
+        });
+        pane.paste("answer\r\n第二行");
+        let response =
+            pane.handle_user_input_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            response,
+            UserInputAction::Submit(UserInputResponse {
+                value: Some("answer\n第二行".to_string()),
+            })
+        );
+        pane.start_composer("yunxi> ");
+        assert_eq!(pane.composer_snapshot(), snapshot);
+    }
+
+    #[test]
+    fn active_turn_draft_accepts_edits_but_not_submit_or_escape() {
+        let mut pane = BottomPane::default();
+        assert!(
+            pane.handle_composer_draft_key(KeyEvent::new(KeyCode::Char('中'), KeyModifiers::NONE,))
+        );
+        assert!(
+            !pane.handle_composer_draft_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE,))
+        );
+        assert!(!pane.handle_composer_draft_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE,)));
+        assert_eq!(pane.composer_buffer().text(), "中");
+    }
+
+    #[test]
+    fn reset_composer_is_the_only_explicit_draft_reset_path() {
+        let mut pane = BottomPane::default();
+        pane.paste("keep me");
+        pane.start_composer("next> ");
+        assert_eq!(pane.composer_buffer().text(), "keep me");
+
+        pane.reset_composer("fresh> ");
+        assert!(pane.composer_buffer().is_empty());
+        assert_eq!(pane.composer_prompt(), "fresh> ");
     }
 
     #[test]

@@ -32,6 +32,7 @@ pub struct YunxiTui {
     app: YunxiTuiApp,
     frame: RedrawScheduler,
     scroll_drag: Option<TranscriptScrollDrag>,
+    windows_input_burst: WindowsInputBurst,
     _guard: TerminalGuard,
 }
 
@@ -52,6 +53,7 @@ impl YunxiTui {
             app: YunxiTuiApp::default(),
             frame: RedrawScheduler::default(),
             scroll_drag: None,
+            windows_input_burst: WindowsInputBurst::default(),
             _guard: guard,
         })
     }
@@ -120,10 +122,19 @@ impl YunxiTui {
 
     pub fn read_prompt(&mut self, prompt: &str) -> Result<Option<String>> {
         self.app.start_prompt(prompt);
+        self.windows_input_burst.reset();
         self.request_draw_now()?;
         loop {
             let event = read()?;
+            let paste_newline = self.windows_input_burst.observe(&event, Instant::now());
             if self.handle_navigation_event(&event)? {
+                self.request_draw_now()?;
+                continue;
+            }
+            if paste_newline {
+                self.app
+                    .bottom_pane_mut()
+                    .handle_composer_key(paste_newline_key());
                 self.request_draw_now()?;
                 continue;
             }
@@ -140,7 +151,9 @@ impl YunxiTui {
                         return Ok(Some(value));
                     }
                 },
-                Event::Paste(value) => self.app.bottom_pane_mut().paste(&value),
+                Event::Paste(value) => {
+                    self.app.bottom_pane_mut().paste(&value);
+                }
                 _ => {}
             }
             self.request_draw_now()?;
@@ -149,6 +162,7 @@ impl YunxiTui {
 
     pub fn request_approval(&mut self, request: ApprovalRequestView) -> Result<ApprovalDecision> {
         self.app.start_approval(request);
+        self.windows_input_burst.reset();
         self.request_draw_now()?;
         loop {
             let event = read()?;
@@ -176,10 +190,19 @@ impl YunxiTui {
         request: UserInputRequestView,
     ) -> Result<UserInputResponse> {
         self.app.start_user_input(request);
+        self.windows_input_burst.reset();
         self.request_draw_now()?;
         loop {
             let event = read()?;
+            let paste_newline = self.windows_input_burst.observe(&event, Instant::now());
             if self.handle_navigation_event(&event)? {
+                self.request_draw_now()?;
+                continue;
+            }
+            if paste_newline {
+                self.app
+                    .bottom_pane_mut()
+                    .handle_user_input_key(paste_newline_key());
                 self.request_draw_now()?;
                 continue;
             }
@@ -197,7 +220,9 @@ impl YunxiTui {
                         return Ok(response);
                     }
                 },
-                Event::Paste(value) => self.app.bottom_pane_mut().paste(&value),
+                Event::Paste(value) => {
+                    self.app.bottom_pane_mut().paste(&value);
+                }
                 _ => {}
             }
             self.request_draw_now()?;
@@ -234,8 +259,15 @@ impl YunxiTui {
     fn drain_turn_events(&mut self) -> Result<TuiTickAction> {
         let mut redraw_reason = None;
         let mut action = TuiTickAction::None;
-        while poll(Duration::ZERO)? {
+        let mut poll_timeout = Duration::ZERO;
+        while poll(poll_timeout)? {
+            poll_timeout = if cfg!(windows) {
+                Duration::from_millis(5)
+            } else {
+                Duration::ZERO
+            };
             let event = read()?;
+            let paste_newline = self.windows_input_burst.observe(&event, Instant::now());
             if is_ctrl_c_event(&event) {
                 action = TuiTickAction::CancelCurrentTurn;
                 redraw_reason = Some(RedrawReason::CancelCurrentTurn);
@@ -247,6 +279,20 @@ impl YunxiTui {
                 } else {
                     RedrawReason::ScrollChanged
                 });
+                continue;
+            }
+            if paste_newline {
+                if self
+                    .app
+                    .bottom_pane_mut()
+                    .handle_composer_draft_key(paste_newline_key())
+                {
+                    redraw_reason = Some(RedrawReason::InputChanged);
+                }
+                continue;
+            }
+            if apply_turn_draft_event(&mut self.app, &event) {
+                redraw_reason = Some(RedrawReason::InputChanged);
             }
         }
         if let Some(reason) = redraw_reason {
@@ -298,11 +344,11 @@ impl YunxiTui {
                     self.app.page_down(&metrics.wrapped, metrics.visible_height);
                     Ok(true)
                 }
-                KeyCode::Home => {
+                KeyCode::Home if !self.app.bottom_pane().text_input_active() => {
                     self.app.jump_top(&metrics.wrapped, metrics.visible_height);
                     Ok(true)
                 }
-                KeyCode::End => {
+                KeyCode::End if !self.app.bottom_pane().text_input_active() => {
                     self.app.follow_tail();
                     Ok(true)
                 }
@@ -366,6 +412,14 @@ impl YunxiTui {
             self.app.bottom_pane().desired_height(),
             &self.app,
         ))
+    }
+}
+
+fn apply_turn_draft_event(app: &mut YunxiTuiApp, event: &Event) -> bool {
+    match event {
+        Event::Paste(value) => app.bottom_pane_mut().paste(value),
+        Event::Key(key) => app.bottom_pane_mut().handle_composer_draft_key(*key),
+        _ => false,
     }
 }
 
@@ -464,6 +518,74 @@ fn is_ctrl_c_event(event: &Event) -> bool {
     )
 }
 
+fn paste_newline_key() -> KeyEvent {
+    KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)
+}
+
+const WINDOWS_PASTE_MAX_EVENT_GAP: Duration = Duration::from_millis(25);
+const WINDOWS_PASTE_MIN_TEXT_EVENTS: usize = 4;
+
+#[derive(Default)]
+struct WindowsInputBurst {
+    recent_text_events: usize,
+    last_text_at: Option<Instant>,
+}
+
+impl WindowsInputBurst {
+    fn observe(&mut self, event: &Event, now: Instant) -> bool {
+        if !cfg!(windows) {
+            return false;
+        }
+        match event {
+            Event::Key(key)
+                if key.kind == KeyEventKind::Press
+                    && matches!(key.code, KeyCode::Char(_))
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                let continues_burst = self.last_text_at.is_some_and(|last| {
+                    now.saturating_duration_since(last) <= WINDOWS_PASTE_MAX_EVENT_GAP
+                });
+                self.recent_text_events = if continues_burst {
+                    self.recent_text_events.saturating_add(1)
+                } else {
+                    1
+                };
+                self.last_text_at = Some(now);
+                false
+            }
+            Event::Key(key)
+                if key.kind == KeyEventKind::Press
+                    && key.code == KeyCode::Enter
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
+                let is_paste_newline = self.recent_text_events >= WINDOWS_PASTE_MIN_TEXT_EVENTS
+                    && self.last_text_at.is_some_and(|last| {
+                        now.saturating_duration_since(last) <= WINDOWS_PASTE_MAX_EVENT_GAP
+                    });
+                if is_paste_newline {
+                    self.last_text_at = Some(now);
+                } else {
+                    self.reset();
+                }
+                is_paste_newline
+            }
+            Event::Key(key) if key.kind != KeyEventKind::Press => false,
+            Event::Paste(_) | Event::Key(_) => {
+                self.reset();
+                false
+            }
+            _ => false,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.recent_text_events = 0;
+        self.last_text_at = None;
+    }
+}
+
 struct TerminalGuard;
 
 impl TerminalGuard {
@@ -498,6 +620,7 @@ impl Drop for TerminalGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bottom_pane::BottomPaneMode;
 
     #[test]
     fn transcript_visible_height_matches_tui_layout() {
@@ -537,6 +660,97 @@ mod tests {
             KeyCode::Char('c'),
             KeyModifiers::NONE,
         ))));
+    }
+
+    #[test]
+    fn windows_conpty_text_burst_reclassifies_only_rapid_embedded_enter() {
+        let mut burst = WindowsInputBurst::default();
+        let started = Instant::now();
+        for (index, ch) in ['p', 'a', 's', 't', 'e'].into_iter().enumerate() {
+            assert!(!burst.observe(
+                &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+                started + Duration::from_millis(index as u64),
+            ));
+            assert!(!burst.observe(
+                &Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Char(ch),
+                    KeyModifiers::NONE,
+                    KeyEventKind::Release,
+                )),
+                started + Duration::from_millis(index as u64),
+            ));
+        }
+        let enter = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        assert_eq!(
+            burst.observe(&enter, started + Duration::from_millis(6)),
+            cfg!(windows)
+        );
+
+        burst.reset();
+        for (index, ch) in ['t', 'y', 'p', 'e'].into_iter().enumerate() {
+            burst.observe(
+                &Event::Key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)),
+                started + Duration::from_millis(index as u64 * 40),
+            );
+        }
+        assert!(!burst.observe(&enter, started + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn active_turn_routes_committed_text_and_paste_to_the_composer_draft() {
+        let mut app = YunxiTuiApp::default();
+        assert!(apply_turn_draft_event(
+            &mut app,
+            &Event::Key(KeyEvent::new(KeyCode::Char('输'), KeyModifiers::NONE,)),
+        ));
+        assert!(apply_turn_draft_event(
+            &mut app,
+            &Event::Paste("入法\r\n第二行👩‍💻".to_string()),
+        ));
+        assert!(!apply_turn_draft_event(
+            &mut app,
+            &Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        ));
+
+        assert_eq!(
+            app.bottom_pane().composer_buffer().text(),
+            "输入法\n第二行👩‍💻"
+        );
+    }
+
+    #[test]
+    fn active_views_take_input_without_overwriting_the_composer_draft() {
+        let mut app = YunxiTuiApp::default();
+        app.bottom_pane_mut().paste("composer draft");
+        app.start_approval(ApprovalRequestView {
+            id: None,
+            tool_name: "shell".to_string(),
+            cwd: ".".to_string(),
+            command: None,
+            reason: "test".to_string(),
+            risk_label: None,
+        });
+        assert!(!apply_turn_draft_event(
+            &mut app,
+            &Event::Paste("ignored".to_string()),
+        ));
+        app.start_prompt("yunxi> ");
+        assert_eq!(app.bottom_pane().composer_buffer().text(), "composer draft");
+
+        app.start_user_input(UserInputRequestView {
+            id: None,
+            prompt: "answer".to_string(),
+        });
+        assert!(apply_turn_draft_event(
+            &mut app,
+            &Event::Paste("overlay answer".to_string()),
+        ));
+        let BottomPaneMode::UserInput { buffer, .. } = app.bottom_pane().mode() else {
+            panic!("user input mode");
+        };
+        assert_eq!(buffer.text(), "overlay answer");
+        app.start_prompt("yunxi> ");
+        assert_eq!(app.bottom_pane().composer_buffer().text(), "composer draft");
     }
 
     #[test]

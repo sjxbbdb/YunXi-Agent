@@ -32,7 +32,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.5".to_string(),
+            version: "v2.0.6".to_string(),
             banner: None,
             presentation: TuiPresentation::default(),
             timeline: TimelineStore::default(),
@@ -99,8 +99,9 @@ impl YunxiTuiApp {
             _ if self.timeline.has_active_sessions() => TextLayout::priority_line(
                 &[
                     PrioritySegment::new("Ctrl+C cancel", ClipPriority::MustKeep),
-                    PrioritySegment::new("streaming current turn", ClipPriority::Important),
-                    PrioritySegment::new("history scroll available", ClipPriority::Optional),
+                    PrioritySegment::new("typing saves draft", ClipPriority::Important),
+                    PrioritySegment::new("Enter waits for turn", ClipPriority::Optional),
+                    PrioritySegment::new("history scroll available", ClipPriority::DebugOnly),
                 ],
                 width,
             ),
@@ -486,7 +487,7 @@ mod tests {
         assert!(TextLayout::measure(&header) <= 80);
         assert!(TextLayout::measure(&subheader) <= 80);
         assert!(TextLayout::measure(&footer) <= 80);
-        assert!(header.contains("YunXi v2.0.5"));
+        assert!(header.contains("YunXi v2.0.6"));
         assert!(header.contains("offline"));
         assert!(!header.contains("model="));
         assert!(!header.contains("D:/"));
@@ -507,7 +508,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.5"));
+        assert!(header.contains("YunXi Agent v2.0.6"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(header.contains("D:/"));
         assert!(header.contains("yunxi-agent-cli"));
@@ -553,7 +554,7 @@ mod tests {
             assert!(TextLayout::measure(&header) <= width, "width={width}");
             assert!(TextLayout::measure(&subheader) <= width, "width={width}");
             assert!(TextLayout::measure(&footer) <= width, "width={width}");
-            assert!(header.contains("v2.0.5"), "width={width}");
+            assert!(header.contains("v2.0.6"), "width={width}");
             assert!(header.contains("deepseek live"), "width={width}");
             assert!(subheader.contains("tail"), "width={width}");
             assert!(footer.contains("Enter submit"), "width={width}");
@@ -731,5 +732,78 @@ mod tests {
             HistoryCellKind::User(content) if content == "next prompt"
         )));
         assert!(!app.timeline.has_active_sessions());
+    }
+
+    #[test]
+    fn overlays_and_control_snapshots_preserve_composer_text_and_cursor() {
+        let mut app = YunxiTuiApp::default();
+        app.bottom_pane_mut().paste("draft 中文👩‍💻");
+        app.bottom_pane_mut()
+            .handle_composer_key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Left,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        let expected = app.bottom_pane().composer_snapshot();
+
+        app.start_approval(ApprovalRequestView {
+            id: Some("approval-1".to_string()),
+            tool_name: "shell".to_string(),
+            cwd: ".".to_string(),
+            command: Some("echo ok".to_string()),
+            reason: "test".to_string(),
+            risk_label: None,
+        });
+        app.start_prompt("yunxi> ");
+        assert_eq!(app.bottom_pane().composer_snapshot(), expected);
+
+        app.start_user_input(UserInputRequestView {
+            id: Some("input-1".to_string()),
+            prompt: "details".to_string(),
+        });
+        app.start_prompt("yunxi> ");
+        app.show_control_snapshot(ControlSnapshot {
+            companion_enabled: false,
+            cloud_control_enabled: false,
+            quiet_hours: None,
+            persona_summary: String::new(),
+            memory_summary: String::new(),
+            relationship_summary: String::new(),
+            scopes: Vec::new(),
+            recent_change: None,
+        });
+        app.show_transcript();
+        assert_eq!(app.bottom_pane().composer_snapshot(), expected);
+    }
+
+    #[test]
+    fn streaming_final_and_completion_do_not_touch_pretyped_draft_or_duplicate_answer() {
+        let mut app = YunxiTuiApp::default();
+        app.push_user("first prompt");
+        app.push_agent_event(&assistant_event(
+            "partial",
+            1,
+            AgentMessageStreamPhase::Delta,
+        ));
+        app.bottom_pane_mut().paste("next 草稿👩‍💻");
+        let expected = app.bottom_pane().composer_snapshot();
+
+        app.push_agent_event(&assistant_event(
+            "final answer",
+            2,
+            AgentMessageStreamPhase::Final,
+        ));
+        app.push_agent_event(&AgentEvent::Completed {
+            status: AgentRunStatus::Completed,
+            usage: None,
+        });
+
+        let assistant_cells = app
+            .transcript()
+            .cells()
+            .iter()
+            .filter(|cell| matches!(cell.kind(), HistoryCellKind::Assistant { .. }))
+            .count();
+        assert_eq!(assistant_cells, 1);
+        assert_eq!(app.bottom_pane().composer_snapshot(), expected);
     }
 }

@@ -3,6 +3,8 @@
 /crates/yunxi-agent-cli/.yunxi/
 /scripts/conpty/v205/node_modules/
 /scripts/conpty/v205/.work/
+/scripts/conpty/v206/node_modules/
+/scripts/conpty/v206/.work/
 /external/
 /.worktrees/
 /.codegraph/

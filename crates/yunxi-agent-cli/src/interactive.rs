@@ -624,13 +624,29 @@ impl InteractiveSession {
                 }
                 request = stream.approvals.recv(), if approvals_open => {
                     match request {
-                        Some(request) => renderer.approval_request(request, input)?,
+                        Some(request) => {
+                            if renderer.tick()? == InteractiveRenderAction::CancelCurrentTurn
+                                && let Some(control) = &control_slot
+                            {
+                                control.cancel();
+                                renderer.warning("[cancelled] cancellation requested")?;
+                            }
+                            renderer.approval_request(request, input)?;
+                        }
                         None => approvals_open = false,
                     }
                 }
                 request = stream.user_inputs.recv(), if user_inputs_open => {
                     match request {
-                        Some(request) => renderer.user_input_request(request, input)?,
+                        Some(request) => {
+                            if renderer.tick()? == InteractiveRenderAction::CancelCurrentTurn
+                                && let Some(control) = &control_slot
+                            {
+                                control.cancel();
+                                renderer.warning("[cancelled] cancellation requested")?;
+                            }
+                            renderer.user_input_request(request, input)?;
+                        }
                         None => user_inputs_open = false,
                     }
                 }

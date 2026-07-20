@@ -1,10 +1,37 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.5
+## Current Workspace Version: v2.0.6
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## v2.0.6 Composer, Input Recovery, And Dialog Consistency
+
+The TUI now owns one grapheme-indexed `EditBuffer` instead of exposing byte
+cursor semantics through Composer state. Composer and `request_user_input`
+share insertion, CRLF normalization, newline, movement, Home/End, deletion,
+submit, snapshot, and restore behavior. Rendering consumes the buffer's safe
+cursor mapping and caps the Composer body at six rows around the cursor.
+
+Approval and user-input views suspend rather than replace the Composer.
+Streaming accepts a next-turn draft but disables Enter submission and Esc
+clearing until the active turn ends. The CLI drains already queued terminal
+input before entering a blocking overlay, and Windows input draining continues
+to a 5ms quiet period once a burst begins. A Windows-only burst classifier
+handles ConPTY/crossterm LF as an embedded Ctrl+Enter without changing isolated
+Enter behavior.
+
+Provider delta, final, and completed events continue to update one canonical
+assistant cell. Added regression tests prove that final/completed events do not
+duplicate the answer or modify the pretyped draft. The TUI suite contains 126
+tests, including 80/100/120/200-column long-input and Unicode frames.
+
+The reproducible real-provider gate is stored in `scripts/conpty/v206` with
+locked `node-pty@1.1.0` and `@xterm/headless@5.5.0` dependencies. Eight
+sanitized DeepSeek/Windows ConPTY scenarios and a SHA-256 manifest live in
+`docs/reports/evidence/frames/v206-conpty`; the offline verifier passes while
+the existing `v205` verifier remains unchanged and passing.
 
 ## v2.0.5 Tool Activity, Approval, And Decoder
 
@@ -29,9 +56,9 @@ The real Windows ConPTY gate is now recorded in
 DeepSeek live sessions cover the 80/100/120/200 width matrix, approval,
 rejection, cancellation, non-zero exit, invalid UTF-8, binary fallback, long
 output truncation/details, and subsequent input. The original `v2.0.5` tag is
-unchanged. The owner confirmed the new annotated remediation tag name
-`v2.0.5-hotfix.1`; it must point to the new remediation release commit and must
-not move any historical ref.
+unchanged. Error presentation shipped as `v2.0.5-hotfix.1`; the native ConPTY
+dependency reproducibility remediation shipped and passed re-audit as
+`v2.0.5-hotfix.2`. Neither hotfix moved an earlier tag.
 
 The 11:34 re-audit required independent ConPTY replay rather than Markdown-only
 evidence. `scripts/conpty/v205` now contains the collector, exact npm dependency

@@ -28,7 +28,7 @@ fn default_yunxi_persona_compiles_stable_context_blocks() {
 
     assert_eq!(compiled.profile_id, "yunxi_companion_strong");
     assert!(compiled.content.starts_with(
-        "<yunxi_persona_context version=\"2.0.5\" profile_id=\"yunxi_companion_strong\">"
+        "<yunxi_persona_context version=\"2.0.6\" profile_id=\"yunxi_companion_strong\">"
     ));
     assert!(compiled.content.ends_with("</yunxi_persona_context>"));
 

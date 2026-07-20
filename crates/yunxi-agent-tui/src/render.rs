@@ -1,6 +1,7 @@
 use crate::app::YunxiTuiApp;
 use crate::approval_layout::{ApprovalLayoutLine, ApprovalLineKind, approval_layout_for_width};
 use crate::bottom_pane::BottomPaneMode;
+use crate::edit_buffer::EditBuffer;
 use crate::layout::compute_layout;
 use crate::text_layout::{TextLayout, WrapPolicy};
 use crate::transcript_layout::build_wrapped_transcript;
@@ -172,17 +173,13 @@ fn render_transcript(
 
 fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
     match app.bottom_pane().mode() {
-        BottomPaneMode::Composer {
-            prompt,
-            buffer,
-            cursor,
-        } => render_composer(
+        BottomPaneMode::Composer => render_composer(
             frame,
             area,
             app.footer_for_width(area.width as usize),
-            prompt,
-            buffer,
-            *cursor,
+            "Composer",
+            app.bottom_pane().composer_prompt(),
+            app.bottom_pane().composer_buffer(),
         ),
         BottomPaneMode::Approval { request, selected } => {
             let layout = approval_layout_for_width(request, *selected, area.width as usize);
@@ -195,19 +192,15 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
                 .block(Block::default().title("Approval").borders(Borders::ALL));
             frame.render_widget(pane, area);
         }
-        BottomPaneMode::UserInput {
-            request,
-            buffer,
-            cursor,
-        } => {
+        BottomPaneMode::UserInput { request, buffer } => {
             let prompt = format!("{} ", request.prompt);
             render_composer(
                 frame,
                 area,
                 "Enter submit | Esc cancel".to_string(),
+                "Input",
                 &prompt,
                 buffer,
-                *cursor,
             );
         }
     }
@@ -250,17 +243,30 @@ fn render_composer(
     frame: &mut Frame<'_>,
     area: Rect,
     footer: String,
+    title: &str,
     prompt: &str,
-    buffer: &str,
-    cursor: usize,
+    buffer: &EditBuffer,
 ) {
     let prompt_width = TextLayout::measure(prompt);
     let inner_width = area.width.saturating_sub(2).max(1) as usize;
     let body_width = inner_width.saturating_sub(prompt_width).max(1);
-    let visual_lines = TextLayout::wrap(buffer, body_width, WrapPolicy::CodeBlock);
+    let visual_lines = TextLayout::wrap(buffer.text(), body_width, WrapPolicy::CodeBlock);
+    let visual_cursor = TextLayout::cursor_position(
+        buffer.text(),
+        buffer.cursor_byte_offset(),
+        body_width,
+        WrapPolicy::CodeBlock,
+    );
+    let visible_content_rows = area.height.saturating_sub(3).max(1) as usize;
+    let first_visible_row = visual_cursor
+        .row
+        .saturating_add(1)
+        .saturating_sub(visible_content_rows);
     let mut lines = visual_lines
         .into_iter()
         .enumerate()
+        .skip(first_visible_row)
+        .take(visible_content_rows)
         .map(|(index, line)| {
             if index == 0 {
                 Line::from(vec![
@@ -286,21 +292,31 @@ fn render_composer(
         Style::default().fg(Color::DarkGray),
     )));
     let pane = Paragraph::new(lines)
-        .block(Block::default().title("Composer").borders(Borders::ALL))
+        .block(Block::default().title(title).borders(Borders::ALL))
         .wrap(Wrap { trim: false });
     frame.render_widget(pane, area);
 
     if area.width > 2 && area.height > 2 {
-        let cursor_position = composer_cursor_position(area, prompt, buffer, cursor);
+        let cursor_position = composer_cursor_position(area, prompt, buffer, first_visible_row);
         frame.set_cursor_position(cursor_position);
     }
 }
 
-fn composer_cursor_position(area: Rect, prompt: &str, buffer: &str, cursor: usize) -> Position {
+fn composer_cursor_position(
+    area: Rect,
+    prompt: &str,
+    buffer: &EditBuffer,
+    first_visible_row: usize,
+) -> Position {
     let inner_width = area.width.saturating_sub(2).max(1) as usize;
     let prompt_width = TextLayout::measure(prompt);
     let body_width = inner_width.saturating_sub(prompt_width).max(1);
-    let visual = TextLayout::cursor_position(buffer, cursor, body_width, WrapPolicy::CodeBlock);
+    let visual = TextLayout::cursor_position(
+        buffer.text(),
+        buffer.cursor_byte_offset(),
+        body_width,
+        WrapPolicy::CodeBlock,
+    );
     Position {
         x: area
             .x
@@ -311,7 +327,7 @@ fn composer_cursor_position(area: Rect, prompt: &str, buffer: &str, cursor: usiz
         y: area
             .y
             .saturating_add(1)
-            .saturating_add(visual.row as u16)
+            .saturating_add(visual.row.saturating_sub(first_visible_row) as u16)
             .min(area.y.saturating_add(area.height.saturating_sub(2))),
     }
 }
@@ -358,6 +374,7 @@ mod tests {
     use crate::app::YunxiTuiBanner;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use unicode_segmentation::UnicodeSegmentation;
     use unicode_width::UnicodeWidthStr;
 
     fn banner() -> YunxiTuiBanner {
@@ -593,7 +610,8 @@ mod tests {
     #[test]
     fn composer_cursor_uses_display_width_for_cjk_text() {
         let area = Rect::new(0, 0, 58, 6);
-        let position = composer_cursor_position(area, "yunxi> ", "你好abc", "你好abc".len());
+        let buffer = edit_buffer_at("你好abc", "你好abc");
+        let position = composer_cursor_position(area, "yunxi> ", &buffer, 0);
 
         assert_eq!(position.x, 1 + "yunxi> ".len() as u16 + 7);
         assert_eq!(position.y, 1);
@@ -603,7 +621,8 @@ mod tests {
     fn composer_cursor_wraps_inside_composer_bounds() {
         let area = Rect::new(0, 0, 24, 6);
         let input = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz";
-        let position = composer_cursor_position(area, "yunxi> ", input, input.len());
+        let buffer = edit_buffer_at(input, input);
+        let position = composer_cursor_position(area, "yunxi> ", &buffer, 0);
 
         assert!(position.x < area.width - 1);
         assert!(position.y < area.height - 1);
@@ -616,13 +635,67 @@ mod tests {
         let input =
             "中文かな👩‍💻e\u{301}\nhttps://example.test/very/long?query=中文\nC:\\YunXi Agent\\输出";
 
-        for cursor in ["中文".len(), "中文かな👩‍💻e\u{301}".len(), input.len()] {
-            let position = composer_cursor_position(area, "yunxi> ", input, cursor);
+        for prefix in ["中文", "中文かな👩‍💻e\u{301}", input] {
+            let buffer = edit_buffer_at(input, prefix);
+            let position = composer_cursor_position(area, "yunxi> ", &buffer, 0);
             assert!(position.x > area.x && position.x < area.x + area.width - 1);
             assert!(position.y > area.y && position.y < area.y + area.height - 1);
         }
-        let end = composer_cursor_position(area, "yunxi> ", input, input.len());
+        let end_buffer = edit_buffer_at(input, input);
+        let end = composer_cursor_position(area, "yunxi> ", &end_buffer, 0);
         assert!(end.y >= 4);
+    }
+
+    fn edit_buffer_at(text: &str, prefix: &str) -> EditBuffer {
+        let mut buffer = EditBuffer::default();
+        buffer.insert_text(text);
+        buffer.move_home();
+        for _ in prefix.graphemes(true) {
+            buffer.move_right();
+        }
+        buffer
+    }
+
+    #[test]
+    fn long_multiline_composer_keeps_footer_visible_at_responsive_widths() {
+        for (width, height) in [(80, 24), (100, 30), (120, 40), (200, 50)] {
+            let mut app = YunxiTuiApp::default();
+            app.set_banner(banner());
+            app.bottom_pane_mut().paste(
+                &(0..40)
+                    .map(|index| {
+                        format!("第{index:02}行 👩‍💻 e\u{301} long-token-without-breaks-{index}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\r\n"),
+            );
+            let pane_height = app.bottom_pane().desired_height_for_width(width as usize);
+            let snapshot = render_full_frame_snapshot(&app, width, height);
+
+            assert_eq!(pane_height, 9, "width={width}");
+            assert!(snapshot.contains("Composer"), "width={width}");
+            assert!(snapshot.contains("Enter submit"), "width={width}");
+            assert!(snapshot.lines().all(|row| {
+                UnicodeWidthStr::width(row.split_once('|').unwrap().1) <= width as usize
+            }));
+        }
+    }
+
+    #[test]
+    fn user_input_overlay_uses_its_own_title_and_preserves_crlf_lines() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        app.start_user_input(crate::bottom_pane::UserInputRequestView {
+            id: None,
+            prompt: "Required input".to_string(),
+        });
+        app.bottom_pane_mut().paste("第一行\r\nsecond");
+
+        let snapshot = render_full_frame_snapshot(&app, 80, 24);
+        assert!(snapshot.contains("Input"));
+        assert!(snapshot.contains("Required input 第一行"));
+        assert!(snapshot.contains("second"));
+        assert!(!snapshot.contains("┌Composer"));
     }
 
     #[test]
@@ -692,7 +765,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.5"));
+        assert!(rendered.contains("YunXi v2.0.6"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }

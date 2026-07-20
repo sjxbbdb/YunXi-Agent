@@ -1,10 +1,52 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.5 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
+YunXi Agent v2.0.6 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
 streaming timeline, and v2.0.3-hotfix.1 redraw/viewport guarantees, then adds
-one international text layout model and explicit responsive clipping priorities.
+one international text layout model, explicit responsive clipping priorities,
+and a recoverable grapheme-indexed input model.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
 maps them into user-facing cells.
+
+## v2.0.6 Composer And Active Views
+
+`EditBuffer` is the sole user-visible cursor owner. Its cursor is a grapheme
+index; byte offsets are derived only when mapping text into visual rows and
+columns. Insertion normalizes CRLF and lone CR to LF. Backspace, Delete,
+Left/Right, Home/End, newline, submit, snapshot, and restore never split CJK,
+emoji ZWJ, or combining graphemes.
+
+`BottomPane` permanently owns the Composer buffer. Approval and user-input
+requests are active views over that buffer: entry stores a snapshot and return
+restores text and cursor. User input has its own `Input` title and its own
+`EditBuffer`; it does not borrow or clear Composer state. Composer rendering
+shows at most six body rows and chooses a cursor-centered window, preserving
+the footer and transcript at 80, 100, 120, and 200 columns.
+
+While a turn is active, ordinary characters, committed IME text, paste,
+Backspace/Delete, arrows, and Home/End edit a next-turn draft. Enter and Esc do
+not submit or clear it; Ctrl+C cancels the current turn. Before a blocking
+approval or user-input view starts, the CLI performs a host tick so queued
+characters reach Composer first. Once Windows draining observes input, it
+continues until a 5ms quiet period to prevent one ConPTY paste from crossing an
+overlay boundary.
+
+On Windows, crossterm 0.28 reports LF from a ConPTY paste as Ctrl+Enter key
+records instead of `Event::Paste`. `WindowsInputBurst` recognizes only a rapid
+sequence of at least four text presses followed within 25ms by an unshifted,
+unmodified-or-Control Enter; that Enter is routed through the normal newline
+operation. Slow or isolated Enter keeps submit semantics. Native `Event::Paste`
+continues to use the same buffer API on platforms that provide it.
+
+The final response, completion boundary, cancellation, and provider error all
+reuse the existing stable turn-cell lifecycle. A final update freezes the same
+assistant cell used by deltas and cannot insert a duplicate answer or touch the
+Composer draft.
+
+The real Windows gate is `scripts/conpty/v206`. Its eight independent DeepSeek
+sessions cover ordinary, multi-line, CRLF, long, IME-style, stream-cancel,
+approval-restore, and final-single behavior. Sanitized checkpoints and their
+SHA-256 manifest are committed under
+`docs/reports/evidence/frames/v206-conpty`; `npm run verify` is offline.
 
 ## v2.0.5 Tool Activity And Error Presentation
 

@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.5
+# YunXi Agent v2.0.6
 
-YunXi Agent v2.0.5 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.6 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.5 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.6 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.5 TUI text layout, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.6 TUI input, text layout, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -41,6 +41,12 @@ with `[offline]` and `/cost` reports that no model call was made.
   stable plain REPL
 - Uses a TUI composer for terminal input while keeping piped stdin and scripted
   sessions on the plain line reader
+- Uses one grapheme-indexed `EditBuffer` for Composer and `request_user_input`,
+  including CRLF normalization, multi-line/long paste, CJK, combining text,
+  emoji ZWJ, Home/End, deletion, snapshot, and restore semantics
+- Preserves an editable next-turn draft during streaming and across approval or
+  user-input overlays; final/completed updates cannot create a second assistant
+  cell or overwrite the draft
 - Renders approval and `request_user_input` inside the TUI bottom pane instead
   of leaking line prompts into the alternate screen
 - Collapses each tool call into one stable activity cell, keeps approval in a
@@ -151,11 +157,38 @@ with `[offline]` and `/cost` reports that no model call was made.
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
 
-## v2.0.5 Audit Remediation Candidate
+## Composer And Dialog Consistency v2.0.6
+
+v2.0.6 replaces the TUI's scattered `String + byte cursor` state with a
+grapheme-indexed `EditBuffer`. Composer and `request_user_input` share the same
+editing operations while retaining separate submit/cancel semantics. Overlay
+entry snapshots the Composer and restoration returns the exact text, grapheme
+cursor, and multi-line layout. During an active turn, typing and paste update a
+next-turn draft; Enter waits for completion and Ctrl+C cancels only that turn.
+
+The Windows host accounts for crossterm's console-event behavior: LF inside a
+rapid ConPTY paste arrives as Ctrl+Enter rather than `Event::Paste`. A bounded
+input-burst classifier maps only rapid embedded Enter records to newlines, and
+the active-turn drain waits for a 5ms quiet period once a Windows input burst
+has started. The CLI drains pending terminal input immediately before entering
+approval or user-input views, preventing queued draft characters from becoming
+overlay shortcuts.
+
+Real DeepSeek `deepseek-chat` sessions were captured through Windows ConPTY for
+ordinary input, multi-line paste, CRLF/lone-CR normalization, a paste longer
+than 1,800 characters at 80x24, committed Chinese/emoji/combining input,
+stream cancellation and draft recovery, approval-overlay recovery, and a
+single final assistant cell. The locked collector is in `scripts/conpty/v206`;
+sanitized frames and their SHA-256 manifest are under
+`docs/reports/evidence/frames/v206-conpty`.
+
+## v2.0.5 Audit Remediation
 
 The published annotated `v2.0.5` tag remains immutable at its original release
-commit. This workspace contains the current-version audit remediation candidate;
-the owner-selected remediation tag has not yet been created.
+commit. Error-presentation remediation was released as `v2.0.5-hotfix.1`, and
+the independently required native ConPTY installation reproducibility fix was
+released and re-audited as `v2.0.5-hotfix.2`. All three tags remain immutable
+rollback points.
 
 Provider, tool, approval, cancel, terminal, and unknown failures now enter one
 `ErrorPresentation` boundary. Normal transcript summaries contain a stable
@@ -315,7 +348,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v2.0.5 CLI into a user-local bin directory:
+Build and install the v2.0.6 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -670,6 +703,11 @@ expiry, invalidation, supersession, and conflict metadata. Clear active
 preference/correction changes append a bidirectional supersession chain while
 retaining old facts for history; Boot Context excludes old facts, and dynamic
 relationship-history queries return safe, time-ordered explanations.
+
+v2.0.6 adds the grapheme-indexed Composer/input core, recoverable next-turn
+drafts, explicit overlay routing, Windows ConPTY paste reconstruction, and
+single-cell delta/final consistency. It adds a new immutable `v2.0.6` release
+tag without moving or deleting any earlier release or hotfix tag.
 
 ## Backend Capability Matrix
 

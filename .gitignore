@@ -1,5 +1,8 @@
 /target/
 /.yunxi/
+/crates/yunxi-agent-cli/.yunxi/
+/scripts/conpty/v205/node_modules/
+/scripts/conpty/v205/.work/
 /external/
 /.worktrees/
 /.codegraph/

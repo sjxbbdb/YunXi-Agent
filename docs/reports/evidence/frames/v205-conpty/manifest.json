@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-20T04:02:15.693Z",
+  "version": "2.0.5",
+  "provider": "DeepSeek",
+  "model": "deepseek-chat",
+  "terminal": "Windows ConPTY",
+  "collector": "scripts/conpty/v205/capture.js",
+  "scenarios": [
+    {
+      "mode": "responsive",
+      "file": "responsive.json",
+      "sha256": "b41c6e0d121d307b2768b57c4b1e43bb6df8bfb8f2379f69a4bdfefb723d30c4",
+      "output_bytes": 47947,
+      "checkpoint_count": 7,
+      "started_at": "2026-07-20T04:01:29.252Z",
+      "finished_at": "2026-07-20T04:01:34.816Z"
+    },
+    {
+      "mode": "decline",
+      "file": "decline.json",
+      "sha256": "87327b29e98b3586573bd39ca0b5955d32dfdd53a8195c18f3b5fd8a5d485704",
+      "output_bytes": 7831,
+      "checkpoint_count": 6,
+      "started_at": "2026-07-20T04:01:35.172Z",
+      "finished_at": "2026-07-20T04:01:39.852Z"
+    },
+    {
+      "mode": "approve",
+      "file": "approve.json",
+      "sha256": "ad6f9ab87b44ca93c977cc7f930d4fac97ddd43a8f4885fca8d22c2c038d1326",
+      "output_bytes": 12002,
+      "checkpoint_count": 6,
+      "started_at": "2026-07-20T04:01:40.193Z",
+      "finished_at": "2026-07-20T04:01:45.359Z"
+    },
+    {
+      "mode": "cancel",
+      "file": "cancel.json",
+      "sha256": "a4fe92af7c2451641f1cef9820866928ee89ddc5c959e98d5c551111d46d6cee",
+      "output_bytes": 7679,
+      "checkpoint_count": 6,
+      "started_at": "2026-07-20T04:01:45.702Z",
+      "finished_at": "2026-07-20T04:01:49.897Z"
+    },
+    {
+      "mode": "nonzero",
+      "file": "nonzero.json",
+      "sha256": "f97c6b4f655fb9d5341ff38597b56bed33450fe70156195730497a49ab82751d",
+      "output_bytes": 11417,
+      "checkpoint_count": 6,
+      "started_at": "2026-07-20T04:01:50.255Z",
+      "finished_at": "2026-07-20T04:01:54.177Z"
+    },
+    {
+      "mode": "invalid",
+      "file": "invalid.json",
+      "sha256": "a4eb70a315c7c06ce9d7ae573067fe5afe9db05dafb5bc3f4f6fcfef7fe7a42e",
+      "output_bytes": 59931,
+      "checkpoint_count": 8,
+      "started_at": "2026-07-20T04:01:54.537Z",
+      "finished_at": "2026-07-20T04:02:00.492Z"
+    },
+    {
+      "mode": "binary",
+      "file": "binary.json",
+      "sha256": "dfe631259be063d9ac5488b076bc11850bba1e940046cafe74562742d4514537",
+      "output_bytes": 55395,
+      "checkpoint_count": 8,
+      "started_at": "2026-07-20T04:02:00.851Z",
+      "finished_at": "2026-07-20T04:02:08.331Z"
+    },
+    {
+      "mode": "long",
+      "file": "long.json",
+      "sha256": "9215b739d2d66d7e2cef07317e438917888bc09c564d0019aa49606d4f607c40",
+      "output_bytes": 56795,
+      "checkpoint_count": 9,
+      "started_at": "2026-07-20T04:02:08.675Z",
+      "finished_at": "2026-07-20T04:02:15.680Z"
+    }
+  ]
+}

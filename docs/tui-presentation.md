@@ -10,7 +10,10 @@ maps them into user-facing cells.
 
 Tool calls are represented by one stable activity cell keyed by the external
 tool id. Requested, approval required, running, and terminal phases update that
-cell in place; late events cannot reopen a terminal activity. The normal
+cell in place; late events cannot reopen a terminal activity. The sole narrow
+exception is a structured approval cancellation arriving after the runtime's
+generic declined completion: it refines that same cell from Declined to
+Cancelled without reopening or duplicating it. The normal
 transcript renders one safe summary line. Commands, working directories,
 exit codes, complete output, decoder metadata, and provider diagnostics remain
 available through details/debug.
@@ -26,6 +29,25 @@ binary output is reduced to a safe summary, and long output records original
 bytes, displayed bytes, truncation, and `Clean`/`Lossy`/`Partial` integrity in
 details. Error summaries use stable provider/tool/approval/cancel/terminal/
 unknown codes with a user-actionable next step.
+
+All user-visible error producers now converge on `ErrorPresentation`. The
+normal contract is `code + summary + retryable + next`; `detail_ref` points to
+the redacted diagnostic record. Command completion details put byte-integrity
+metadata before output so long output cannot hide `original_bytes`,
+`replacement_count`, `truncated`, or `integrity` behind the details line cap.
+
+The real DeepSeek/Windows ConPTY gate and selected sanitized frames are stored
+in `docs/reports/evidence/2026-07-20-v2-0-5-error-presentation-conpty-evidence.md`.
+It covers 80x24, 100x30, 120x40, 200x50, approval/decline/Ctrl+C, non-zero exit,
+invalid UTF-8, binary fallback, long-output details, PageUp/End navigation, and
+successful input after terminal failures.
+
+The gate is independently reproducible through `scripts/conpty/v205`. Its
+locked Node dependencies only provide the Windows PTY host and terminal parser;
+all product events and frames come from the release `yunxi.exe`. The committed
+raw frames live in `docs/reports/evidence/frames/v205-conpty`, and the offline
+verifier checks SHA-256, required checkpoints, decision keys, error codes,
+decoder integrity fields, and secret-like token shapes.
 
 ## Boundary
 

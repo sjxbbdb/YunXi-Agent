@@ -20,6 +20,19 @@ request.
   into prompts.
 - `YUNXI_HOME` overrides the default `%USERPROFILE%\.yunxi` root.
 
+## v2.0.5 Remediation Verification
+
+The error-presentation remediation does not change persona, memory schema,
+recall, write policy, or proactive defaults. Workspace tests and the 31-scenario
+Evaluation Harness remain green with persona consistency `1.0`, memory
+precision `1.0`, memory false-positive rate `0.0`, relationship continuity
+`1.0`, proactive boundary violations `0`, and tool approval bypasses `0`.
+
+The real Windows ConPTY evidence keeps persona, memory, context, reasoning, and
+Provider internals out of the normal transcript. They appear only after the
+operator explicitly enables `/debug events on`; approval and decoder summaries
+remain bounded and do not turn memory/context into instructions or authority.
+
 ## Persona Context Blocks
 
 v2.0.5 compiles the built-in persona into one bounded, XML-like context string

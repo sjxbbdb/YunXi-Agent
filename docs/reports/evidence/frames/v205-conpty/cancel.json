@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "version": "2.0.5",
+  "provider": "DeepSeek",
+  "model": "deepseek-chat",
+  "terminal": "Windows ConPTY",
+  "mode": "cancel",
+  "command": "xterm-256color",
+  "output_bytes": 7679,
+  "actions": [
+    {
+      "action": "prompt",
+      "value": "Call the shell tool now and run exactly powershell -NoProfile -File .\\probe-cancel.ps1. Return the actual result; do not answer without calling the tool.",
+      "timestamp": "2026-07-20T04:01:45.703Z"
+    },
+    {
+      "action": "key",
+      "value": "Ctrl+C",
+      "timestamp": "2026-07-20T04:01:47.016Z"
+    },
+    {
+      "action": "wait_for_assistant_after",
+      "value": "CANCEL-001",
+      "timestamp": "2026-07-20T04:01:47.280Z"
+    },
+    {
+      "action": "prompt",
+      "value": "Reply exactly: YUNXI_CANCEL_NEXT_OK",
+      "timestamp": "2026-07-20T04:01:47.807Z"
+    },
+    {
+      "action": "command",
+      "value": "/exit",
+      "timestamp": "2026-07-20T04:01:48.866Z"
+    }
+  ],
+  "checkpoints": [
+    {
+      "label": "startup",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:45.702Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=0 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│Ready.                                                                        │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "cancel-approval-pane",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:47.016Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=1 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -File .\\ │\n│    probe-cancel.ps1. Return the actual result; do not answer without calling │\n│    the tool.                                                                 │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Approval──────────────────────────────────────────────────────────────────────┐\n│approval shell in D:\\YunXi Agent\\scripts\\conpty\\v205\\.work\\cancel             │\n│reason   tool execution requires approval                                     │\n│risk     risk: low                                                            │\n│command  powershell -NoProfile -File .\\probe-cancel.ps1                       │\n│                                                                              │\n│  Approve  Enter/Y                                                            │\n│> Decline  N/Esc                                                              │\n│Tab changes selection                                                         │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "cancelled",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:47.280Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=2 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -File .\\ │\n│    probe-cancel.ps1. Return the actual result; do not answer without calling │\n│    the tool.                                                                 │\n│[tool] shell: cancelled; path=approval required -> running -> declined ->     │\n│    cancelled; YX-CANCEL-001 operation cancelled: approval was cancelled;     │\n│    retryable=yes; next: Enter a new request when ready.                      │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "cancel-turn-done",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:47.807Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=3 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -File .\\ │\n│    probe-cancel.ps1. Return the actual result; do not answer without calling │\n│    the tool.                                                                 │\n│[tool] shell: cancelled; path=approval required -> running -> declined ->     │\n│    cancelled; YX-CANCEL-001 operation cancelled: approval was cancelled;     │\n│    retryable=yes; next: Enter a new request when ready.                      │\n│[assistant] 执行被用户中断（Ctrl+C），未产生输出结果。                        │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "cancel-next-turn",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:48.866Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=5 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -File .\\ │\n│    probe-cancel.ps1. Return the actual result; do not answer without calling │\n│    the tool.                                                                 │\n│[tool] shell: cancelled; path=approval required -> running -> declined ->     │\n│    cancelled; YX-CANCEL-001 operation cancelled: approval was cancelled;     │\n│    retryable=yes; next: Enter a new request when ready.                      │\n│[assistant] 执行被用户中断（Ctrl+C），未产生输出结果。                        │\n│[user] Reply exactly: YUNXI_CANCEL_NEXT_OK                                    │\n│[assistant] YUNXI_CANCEL_NEXT_OK                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "exit",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:49.897Z",
+      "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "matched": true,
+      "exited": true
+    }
+  ]
+}

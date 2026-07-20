@@ -424,6 +424,180 @@ mod tests {
         assert!(!detail.contains("secret-value"));
     }
 
+    #[test]
+    fn error_events_render_codes_in_the_normal_transcript_without_raw_diagnostics() {
+        let mut presentation = TuiPresentation::default();
+        let mut transcript = Transcript::default();
+        for event in [
+            AgentEvent::ProviderError {
+                provider: "deepseek".to_string(),
+                status: Some(500),
+                classification: "server_error".to_string(),
+                message: "provider wire body\nprivate stack".to_string(),
+            },
+            AgentEvent::CommandCompleted {
+                id: Some("tool-error".to_string()),
+                command: "echo private-command".to_string(),
+                aggregated_output: "private output".to_string(),
+                exit_code: Some(2),
+                status: CommandStatus::Failed,
+                execution_details: None,
+            },
+            AgentEvent::ApprovalCompleted {
+                id: Some("approval-error".to_string()),
+                approved: false,
+                reason: Some("declined by policy".to_string()),
+            },
+            AgentEvent::Cancelled {
+                reason: Some("cancelled by user".to_string()),
+            },
+            AgentEvent::Error {
+                message: "terminal resize failed\ninternal stack".to_string(),
+            },
+        ] {
+            push_event(&mut presentation, &mut transcript, event);
+        }
+
+        let visible = transcript
+            .cells()
+            .iter()
+            .map(cell_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for code in [
+            "YX-PROVIDER-001",
+            "YX-TOOL-001",
+            "YX-APPROVAL-001",
+            "YX-CANCEL-001",
+            "YX-TERMINAL-001",
+        ] {
+            assert!(visible.contains(code), "missing {code} in transcript");
+        }
+        for forbidden in [
+            "provider wire body",
+            "private stack",
+            "private-command",
+            "internal stack",
+        ] {
+            assert!(!visible.contains(forbidden), "leaked {forbidden}");
+        }
+        let details = transcript
+            .cells()
+            .iter()
+            .filter_map(HistoryCell::detail_id)
+            .map(|id| transcript.detail_text(Some(id)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(details.contains("provider wire body"));
+        assert!(details.contains("internal stack"));
+    }
+
+    #[test]
+    fn declined_command_keeps_one_activity_with_approval_code_and_hides_duplicate_warning() {
+        let mut presentation = TuiPresentation::default();
+        let mut transcript = Transcript::default();
+        for event in [
+            AgentEvent::ApprovalRequested {
+                id: Some("declined-command".to_string()),
+                tool_name: "shell".to_string(),
+                reason: "tool execution requires approval".to_string(),
+            },
+            AgentEvent::CommandStarted {
+                id: Some("declined-command".to_string()),
+                command: "echo private-command".to_string(),
+            },
+            AgentEvent::CommandCompleted {
+                id: Some("declined-command".to_string()),
+                command: "echo private-command".to_string(),
+                aggregated_output: "declined by YunXi TUI".to_string(),
+                exit_code: None,
+                status: CommandStatus::Declined,
+                execution_details: None,
+            },
+            AgentEvent::Warning {
+                message: "declined by YunXi TUI".to_string(),
+            },
+            AgentEvent::ApprovalCompleted {
+                id: Some("declined-command".to_string()),
+                approved: false,
+                reason: Some("declined by YunXi TUI".to_string()),
+            },
+        ] {
+            push_event(&mut presentation, &mut transcript, event);
+        }
+
+        let tool_cells = transcript
+            .cells()
+            .iter()
+            .filter(|cell| matches!(cell.kind(), HistoryCellKind::Tool(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(tool_cells.len(), 1);
+        let visible = cell_text(tool_cells[0]);
+        assert!(visible.contains("YX-APPROVAL-001"));
+        assert!(visible.contains("retryable=no"));
+        assert!(!visible.contains("private-command"));
+        assert!(!transcript.cells().iter().any(|cell| {
+            matches!(
+                cell.kind(),
+                HistoryCellKind::Event { message, .. } if message.contains("declined by YunXi TUI")
+            )
+        }));
+    }
+
+    #[test]
+    fn ctrl_c_after_declined_completion_refines_the_same_activity_to_cancelled() {
+        let mut presentation = TuiPresentation::default();
+        let mut transcript = Transcript::default();
+        for event in [
+            AgentEvent::ApprovalRequested {
+                id: Some("cancelled-command".to_string()),
+                tool_name: "shell".to_string(),
+                reason: "tool execution requires approval".to_string(),
+            },
+            AgentEvent::CommandStarted {
+                id: Some("cancelled-command".to_string()),
+                command: "echo private-command".to_string(),
+            },
+            AgentEvent::CommandCompleted {
+                id: Some("cancelled-command".to_string()),
+                command: "echo private-command".to_string(),
+                aggregated_output: String::new(),
+                exit_code: None,
+                status: CommandStatus::Declined,
+                execution_details: None,
+            },
+            AgentEvent::ApprovalCompleted {
+                id: Some("cancelled-command".to_string()),
+                approved: false,
+                reason: Some("cancelled by user (Ctrl+C)".to_string()),
+            },
+            AgentEvent::Warning {
+                message: "cancelled by user (Ctrl+C)".to_string(),
+            },
+        ] {
+            push_event(&mut presentation, &mut transcript, event);
+        }
+
+        let tool_cells = transcript
+            .cells()
+            .iter()
+            .filter(|cell| matches!(cell.kind(), HistoryCellKind::Tool(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(tool_cells.len(), 1);
+        let visible = cell_text(tool_cells[0]);
+        assert!(visible.contains("shell: cancelled"));
+        assert!(visible.contains("YX-CANCEL-001"));
+        assert!(visible.contains("retryable=yes"));
+        assert!(!visible.contains("YX-APPROVAL-001"));
+        assert!(!visible.contains("private-command"));
+        assert!(!transcript.cells().iter().any(|cell| {
+            matches!(
+                cell.kind(),
+                HistoryCellKind::Event { message, .. } if message.contains("cancelled by user")
+            )
+        }));
+    }
+
     fn cell_text(cell: &HistoryCell) -> String {
         match cell.kind() {
             HistoryCellKind::User(value) | HistoryCellKind::Error(value) => value.clone(),

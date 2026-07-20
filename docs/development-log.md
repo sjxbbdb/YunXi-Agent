@@ -1219,6 +1219,37 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 
 署名：开发报告撰写者
 
+## 2026-07-20 08:59:31 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-20-084839-YunXi-Agent-v2.0.5-工具审批错误任务化呈现审核报告.md` 撰写 YunXi Agent v2.0.5 错误呈现与真实在线 TUI 证据整改开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：1. 读取 v2.0.5 工具、审批与错误任务化呈现审核报告，确认审核不通过，不得进入下一版本开发。2. 核对当前 Git 状态为 `master...origin/master`，存在发布后真实 Provider 请求生成的未跟踪目录 `crates\\yunxi-agent-cli\\.yunxi`。3. 使用 CodeGraph MCP 参考 `presentation.rs` 中 `present_error`、`ApprovalCompleted`、`Cancelled`、`ProviderError` 路径，以及 `error_presentation.rs`、`app.rs`、`timeline.rs`、`bottom_pane.rs`、`exec/src/lib.rs` 和 `interactive.rs`，确认缺口集中在错误分类没有统一接入和真实 ConPTY 在线 TUI 证据不足。4. 按固定流程在开发报告前部写入 14 条硬性约束。5. 围绕 v2.0.5 当前版本整改撰写开发目标、版本边界、已通过能力保持要求、必须整改的问题、源码接入点、参考源码建议、推荐执行顺序、测试要求、真实 TUI 复核要求和统一验证要求。6. 在项目内新增整改开发报告。7. 追加项目内开发日志，将报告复制到桌面开发报告目录，并追加桌面开发日志。
+
+修改文件：
+- 新增开发报告：`D:\\YunXi Agent\\docs\\reports\\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`
+- 追加项目日志：`D:\\YunXi Agent\\docs\\development-log.md`
+- 新增/覆盖复制目标：`C:\\Users\\24763\\Desktop\\YunXi Agent开发报告\\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`
+- 追加桌面日志目标：`C:\\Users\\24763\\Desktop\\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\\YunXi Agent`
+- 项目报告目录：`D:\\YunXi Agent\\docs\\reports`
+- 项目日志：`D:\\YunXi Agent\\docs\\development-log.md`
+- 桌面报告目录：`C:\\Users\\24763\\Desktop\\YunXi Agent开发报告`
+- 桌面开发日志：`C:\\Users\\24763\\Desktop\\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成 v2.0.5 错误呈现与真实在线 TUI 证据整改开发报告撰写，并同步到桌面开发报告目录。
+- 本次仅生成文档和追加日志，未修改 Rust 源码。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 当前未跟踪目录 `D:\\YunXi Agent\\crates\\yunxi-agent-cli\\.yunxi` 未被读取或清理；如需清理必须先取得用户确认。
+- 后续必须按报告完成 v2.0.5 当前版本整改、统一验证、真实 ConPTY 复核、清理和发布；验证通过前不得宣称完成。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag；旧 `v2.0.2`、`v2.0.2-hotfix.1`、`v2.0.3`、`v2.0.3-hotfix.1`、`v2.0.4` 与 `v2.0.4-hotfix.1` tag 均不得移动、删除或覆盖。
+
+署名：开发报告撰写者
+
 ## 2026-07-20 07:50:02 +08:00
 
 工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-220953-yunxi-agent-v2-0-5-tool-approval-error-activity-development-report.md` 完成 YunXi Agent v2.0.5 工具活动、审批、执行输出解码和错误任务化呈现开发，并同步版本文档、验证日志和发布准备状态。
@@ -1230,5 +1261,183 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 验证结果：`cargo fmt --all`、fmt check、`cargo check --workspace`、`cargo test --workspace`、`cargo test -p yunxi-agent-tui`、`cargo test -p yunxi-agent-exec`、workspace/debug/release build 全部通过；TUI 105 项、exec 13 项。两个 release binary 均返回 `yunxi 2.0.5`。Evaluation Harness 为 31/31、golden true、approval bypass 0；offline JSON/JSONL 与 no-TUI smoke 通过。DeepSeek online no-TUI JSON 返回 `YUNXI_V205_LIVE_OK`；在线 TUI 需在真实 ConPTY 环境复核，本次未伪造 TTY。
 
 清理与发布状态：用户已明确授权，已删除精确路径 `D:\YunXi Agent\target` 与 `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`，未触碰 `.tmp` 或其他目录；两个目标均已核验不存在。尚未提交、创建 `v2.0.5` tag 或推送；最终发布前将执行 `git diff --check`、status、唯一提交、annotated tag 和远程 refs 核验。API key 未打印、未写入仓库、未写入 Git 配置或 remote URL。旧 tag 不移动、不删除、不覆盖。
+
+署名：开发者
+## 2026-07-20 09:07:48 +08:00
+
+工作目标：完成 v2.0.5 开发报告的桌面同步与归档核对，确认项目内开发报告、桌面开发报告、项目日志和桌面日志保持一致，同时核对项目内审核报告副本的哈希一致性。
+执行流程：
+1. 复核项目内开发报告与项目日志的现状，确认 v2.0.5 仍处于整改阶段，未进入下一版本开发。
+2. 将 `D:\YunXi Agent\docs\reports\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md` 同步复制到 `C:\Users\24763\Desktop\YunXi Agent开发报告\`。
+3. 将 `D:\YunXi Agent\docs\development-log.md` 同步复制到 `C:\Users\24763\Desktop\YunXi Agent开发日志.md`。
+4. 对项目内开发报告与桌面开发报告执行 SHA256 哈希比对，确认两份文件一致。
+5. 对桌面原始审核报告与项目内归档审核报告副本执行 SHA256 哈希比对，确认内容一致。
+6. 检查 Git 状态，确认当前仅保留本次文档与日志相关变更，以及既有未跟踪工作目录。
+修改文件：
+- `D:\YunXi Agent\docs\development-log.md`
+- `D:\YunXi Agent\docs\reports\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- `D:\YunXi Agent\docs\reports\2026-07-20-084839-yunxi-agent-v2-0-5-tool-approval-error-activity-audit-report.md`
+- `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-20-084839-YunXi-Agent-v2.0.5-工具审批错误任务化呈现审核报告.md`
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目开发报告目录：`D:\YunXi Agent\docs\reports`
+- 项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 项目内审核报告归档副本：`D:\YunXi Agent\docs\reports\2026-07-20-084839-yunxi-agent-v2-0-5-tool-approval-error-activity-audit-report.md`
+验证结果：
+- 项目开发报告与桌面开发报告 SHA256 一致，内容完全同步。
+- 项目内审核报告归档副本与桌面原始审核报告 SHA256 一致，内容完全同步。
+- Git 状态仍显示 `docs/development-log.md`、`docs/reports/2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`、`docs/reports/2026-07-20-084839-yunxi-agent-v2-0-5-tool-approval-error-activity-audit-report.md` 以及 `crates/yunxi-agent-cli/.yunxi/`，未执行构建、测试、提交、推送或 Git tag。
+提交和推送状态：未执行提交、未执行推送、未创建新的 Git tag。
+
+开发报告撰写者
+
+## 2026-07-20 10:54:13 +08:00
+
+工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md` 完成 v2.0.5 当前版本错误呈现与真实 Windows ConPTY 在线证据整改；保持原 `v2.0.5` 和全部历史 tag 不变，不进入下一版本开发。
+
+执行流程：
+1. 按仓库 `AGENTS.md` 先使用 CodeGraph 梳理 `ErrorPresentation`、`present_agent_event`、`ToolActivity`、审批 host、runtime `CommandCompleted` 和 `ApprovalCompleted` 的真实调用与事件顺序。
+2. 将 provider/tool/approval/cancel/terminal/unknown 六类用户可见错误收敛到 `ErrorPresentation`，统一普通视图的稳定 code、摘要、retryable 和下一步，保留 redacted details 引用。
+3. 将 tool/command/MCP failure、拒绝、policy decline、cancel、非成功 turn 和通用 `present_error` 接入统一呈现；删除 host 额外 approved/declined notice。
+4. 复现真实 Ctrl+C 顺序，确认 runtime 先发 `CommandCompleted(Declined)`、后发结构化 `ApprovalCompleted(cancelled)`；仅允许同一 activity 精确执行 `Declined -> Cancelled` 终态纠正，其余终态继续冻结。
+5. 将命令执行完整性元数据放到长输出正文之前，使 `/details` 顶部可见字节数、replacement、truncated 和 integrity。
+6. 增加六类错误、敏感诊断隔离、拒绝单 activity、Ctrl+C 真实顺序、终态纠正和重复 warning 隐藏测试。
+7. 构建 release binary，在真实 Windows ConPTY 中使用 DeepSeek live / `deepseek-chat` 完成 80x24、100x30、120x40、200x50 resize、在线短响应、默认拒绝焦点、批准、拒绝、Ctrl+C、非零退出、无效 UTF-8、二进制、2000 行输出、PageUp details 和错误后继续输入。
+8. 将脱敏证据写入项目报告目录，并同步 README、提取状态、TUI 呈现、persona/memory 和整改报告。
+9. 统一执行格式、workspace check/test、TUI/exec 定向测试、debug/release build、版本、Evaluation Harness、offline JSON/JSONL/no-TUI 和 DeepSeek online no-TUI 门禁。
+
+修改文件：
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\error_presentation.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\presentation.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\timeline.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\chat.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\host.rs`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\docs\extraction-status.md`
+- `D:\YunXi Agent\docs\tui-presentation.md`
+- `D:\YunXi Agent\docs\persona-memory.md`
+- `D:\YunXi Agent\docs\reports\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`
+- `D:\YunXi Agent\docs\reports\evidence\2026-07-20-v2-0-5-error-presentation-conpty-evidence.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+临时验证路径：
+- `D:\YunXi Agent\target\v205-conpty`：临时 `node-pty`、`@xterm/headless`、驱动和脱敏 JSON checkpoint。
+- `D:\YunXi Agent\.tmp\v205-conpty-workspace`：无害审批与 decoder fixture 脚本。
+- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`：既有真实 Provider 状态目录，本次未读取或清理。
+
+验证结果：
+- `cargo fmt --all` 与 `cargo fmt --all -- --check`：通过。
+- `cargo check --workspace`：通过。
+- `cargo test --workspace`：通过，全部 crate、集成测试和 doc tests 无失败。
+- `cargo test -p yunxi-agent-tui`：111/111 通过。
+- `cargo test -p yunxi-agent-exec`：13/13 单元测试和 8/8 sandbox acceptance 通过。
+- `cargo build --workspace` 与 `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- 两个 release binary 的 `--version`：均为 `yunxi 2.0.5`。
+- Evaluation Harness：31/31，golden true，persona consistency 1.0，memory precision 1.0，tool approval bypass 0。
+- offline JSON、22 行 JSONL、offline no-TUI：全部通过。
+- DeepSeek online no-TUI JSON：返回 `YUNXI_V205_REMEDIATION_LIVE_OK`。
+- 真实 DeepSeek Windows ConPTY：四宽度、审批三路径、`YX-APPROVAL-001`、`YX-CANCEL-001`、`YX-TOOL-001`、invalid UTF-8 Lossy、binary Lossy、long output Partial/truncated 和后续输入全部通过；正式证据见项目 evidence 文档。
+
+清理状态：尚未执行。`target`、ConPTY 临时目录、`.tmp\v205-conpty-workspace` 和 `.yunxi` 的递归删除必须先取得用户再次明确授权。
+
+提交和推送状态：尚未提交、尚未创建整改 tag、尚未推送。原 annotated `v2.0.5` tag 和全部旧 tag 均未移动、删除或覆盖；整改 tag 名称须由用户确认，之后使用 non-force 推送并核验远程 refs。API key 未打印、未写入仓库、未写入 Git 配置或 remote URL。
+
+署名：开发者
+
+## 2026-07-20 11:19:59 +08:00
+
+工作目标：根据用户明确授权执行 v2.0.5 整改阶段收尾清理，删除编译产物、ConPTY 临时工作区和 CLI 真实 Provider 状态目录，同时保留源码、正式 Markdown 证据和其他项目内容。
+
+执行流程：
+1. 清理前解析并核对精确目标：`D:\YunXi Agent\target` 约 3658.83 MiB、`D:\YunXi Agent\.tmp\v205-conpty-workspace` 约 0.57 MiB、`D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 约 0 MiB，三者均位于项目工作树内。
+2. 首次执行 `cargo clean`，大部分产物已删除，但 `target\v205-conpty\node_modules\node-pty\prebuilds\win32-x64\conpty.node` 因拒绝访问未删除。
+3. 读取 Node 进程命令行，精确确认 PID 12932 为遗留 `target\v205-conpty\capture-scenario.js cancel` 采集进程；只终止 PID 12932，未终止 CodeGraph、Codex 或其他 Node 服务。
+4. 再次执行 `cargo clean` 成功，随后使用 PowerShell `Remove-Item -LiteralPath` 分别递归删除精确 ConPTY workspace 和 CLI `.yunxi` 路径。
+5. 使用 `Test-Path -LiteralPath` 核验三个目标均不存在。
+
+清理结果：
+- `D:\YunXi Agent\target`：不存在。
+- `D:\YunXi Agent\.tmp\v205-conpty-workspace`：不存在。
+- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`：不存在。
+- `D:\YunXi Agent\docs\reports\evidence\2026-07-20-v2-0-5-error-presentation-conpty-evidence.md`：正式证据保留。
+
+提交和推送状态：尚未提交、尚未创建整改 tag、尚未推送。原 `v2.0.5` 和全部旧 tag 未移动、未删除、未覆盖；用户随后确认整改 tag 使用 `v2.0.5-hotfix.1`。
+
+署名：开发者
+
+## 2026-07-20 12:07:40 +08:00
+
+工作目标：整改 `2026-07-20 11:34:10 +08:00` 复审报告提出的 ConPTY 证据不可独立重演 P1，并为用户已确认的 annotated tag `v2.0.5-hotfix.1` 完成发布前证据闭环；不移动、删除或覆盖原 `v2.0.5` 与任何历史 tag。
+
+执行流程：
+1. 读取并保留 `D:\YunXi Agent\docs\reports\2026-07-20-113410-yunxi-agent-v2-0-5-error-presentation-conpty-reaudit-report.md`，确认源码、workspace tests、Evaluation Harness 和 DeepSeek no-TUI 已通过，剩余 P1 为未发布和 Markdown-only ConPTY 证据。
+2. 在 `.gitignore` 中排除 collector 的 `node_modules`、临时 `.work` 与 CLI `.yunxi`，避免安装产物和运行状态进入提交。
+3. 新增 `scripts\conpty\v205`，保存 collector、八场景 runner、离线 verifier、精确 `package.json`、`package-lock.json` 和复跑说明；锁定 `node-pty 1.1.0`、`@xterm/headless 5.5.0` 与传递依赖 integrity。
+4. 八个场景使用独立 DeepSeek live / `deepseek-chat` 会话，避免审批缓存或上轮拒绝影响后续模型工具选择；真实 ConPTY 记录 80/100/120/200 resize、N、Y、Ctrl+C、非零退出、invalid UTF-8、binary、2000 行输出、PageUp/End、details 和后续输入。
+5. 首轮完整采集前五场景通过，invalid 场景因 tool marker 滚出可视 viewport 导致同步断言超时；检查最终帧确认产品已完成，随后将独立会话的收尾条件改为首次 assistant cell，同时保留独立工具终态 checkpoint。
+6. 单独重跑 invalid 通过，再从头执行八场景完整采集；生成八个原始脱敏 JSON 与 SHA-256 manifest。
+7. 新增并运行离线 verifier，重算每个原始帧哈希，核验必需 checkpoint、按键、稳定错误码、decoder metadata、next-turn 和 secret-like token；处理 80 列跨行 marker 后 verifier 通过。
+8. 更新 README、scripts 索引、extraction status、TUI 文档、正式 evidence 与整改开发报告，写明独立复跑命令和原始帧来源。
+
+主要新增或修改文件：
+- `D:\YunXi Agent\.gitignore`
+- `D:\YunXi Agent\scripts\README.md`
+- `D:\YunXi Agent\scripts\conpty\v205\README.md`
+- `D:\YunXi Agent\scripts\conpty\v205\package.json`
+- `D:\YunXi Agent\scripts\conpty\v205\package-lock.json`
+- `D:\YunXi Agent\scripts\conpty\v205\capture.js`
+- `D:\YunXi Agent\scripts\conpty\v205\capture-scenario.js`
+- `D:\YunXi Agent\scripts\conpty\v205\verify.js`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v205-conpty\manifest.json`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v205-conpty\{responsive,decline,approve,cancel,nonzero,invalid,binary,long}.json`
+- `D:\YunXi Agent\docs\reports\evidence\2026-07-20-v2-0-5-error-presentation-conpty-evidence.md`
+- `D:\YunXi Agent\docs\reports\2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\docs\extraction-status.md`
+- `D:\YunXi Agent\docs\tui-presentation.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：
+- `node --check capture.js` 与 `capture-scenario.js`：通过。
+- collector 依赖可从项目内 `node_modules` 解析；lockfile version 3，依赖版本和 integrity 固定。
+- `npm run capture --prefix scripts\conpty\v205`：八个场景从头通过；checkpoint 数分别为 7、6、6、6、6、8、8、9。
+- 原始帧 SHA-256：记录于 `docs\reports\evidence\frames\v205-conpty\manifest.json`。
+- `npm run verify --prefix scripts\conpty\v205`：返回 `ok=true, scenarios=8`；哈希、checkpoint、错误码、按键、decoder metadata、后续输入和 secret 扫描全部通过。
+- 凭据没有打印、没有写入原始帧、manifest、仓库、Git 配置或 remote URL。
+
+提交和推送状态：用户已确认新 annotated tag 为 `v2.0.5-hotfix.1`；当前仍未提交、未创建 tag、未推送。发布前将保留 collector、lock 和脱敏帧，只清理被忽略的 target/node_modules/.work/.yunxi，再创建整改发布提交与 tag，non-force 推送并核验远程全部 refs。
+
+署名：开发者
+
+## 2026-07-20 12:19:19 +08:00
+
+工作目标：完成 YunXi Agent v2.0.5 错误呈现与 ConPTY 整改的最终发布门禁和精确临时目录清理，为用户已确认的 annotated tag `v2.0.5-hotfix.1` 准备可提交工作树；原 `v2.0.5` 与全部历史 tag 不移动、不删除、不覆盖。
+
+执行流程：
+1. 核对 Git 状态、当前提交和全部本地 tag，确认分支为 `master`、基线为 `fe15693a039d025a2cdb21b6d7c192207161682b`，尚未创建 `v2.0.5-hotfix.1`。
+2. 补跑 `cargo test -p yunxi-agent-exec`、`cargo build --workspace` 与 `cargo build -p yunxi-agent-cli --release --bins`。
+3. 核验 `target\release\yunxi.exe` 与 `yunxi-agent-cli.exe` 的版本均为 `yunxi 2.0.5`。
+4. 运行 Evaluation Harness，核验 31 个场景通过、0 失败、`golden_passed=true`、memory precision 1.0、`tool_approval_bypass_count=0`。
+5. 运行 offline JSON、22 行 JSONL 和 no-TUI 冒烟；JSON/JSONL 全部可解析，no-TUI 完成一次 turn 后通过 `/exit` 正常退出。
+6. 运行 `npm.cmd run verify --prefix scripts\conpty\v205`，离线重算并核验八份脱敏帧，返回 `ok=true, scenarios=8`。
+7. 运行 `git diff --check`，无空白错误；LF/CRLF 信息为 Git 工作区换行提示，不是 diff 错误。
+8. 根据用户确认，先将五个目标解析为绝对路径并确认全部位于 `D:\YunXi Agent` 内，再使用 PowerShell `Remove-Item -LiteralPath -Recurse -Force` 删除精确目标，最后逐项使用 `Test-Path -LiteralPath` 核验。
+
+清理路径与结果：
+- `D:\YunXi Agent\target`：已删除，不存在。
+- `D:\YunXi Agent\scripts\conpty\v205\node_modules`：已删除，不存在。
+- `D:\YunXi Agent\scripts\conpty\v205\.work`：已删除，不存在。
+- `D:\YunXi Agent\.yunxi`：已删除，不存在。
+- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`：已删除，不存在。
+- `D:\YunXi Agent\scripts\conpty\v205\package-lock.json`：保留，用于独立重建锁定依赖。
+- `D:\YunXi Agent\docs\reports\evidence\frames\v205-conpty`：八份脱敏帧和 manifest 保留。
+
+验证结果：Rust 定向测试、workspace build、release 双 binary、版本、Evaluation Harness、offline JSON/JSONL/no-TUI、ConPTY 离线 verifier 与 `git diff --check` 全部通过。清理后没有保留构建产物、依赖安装目录、collector 临时工作区或 `.yunxi` 运行状态。
+
+提交和推送状态：当前准备创建整改发布提交和 annotated `v2.0.5-hotfix.1`；尚未提交、尚未创建 tag、尚未推送。推送必须 non-force，且完成后核验远程 `master`、新 tag 和全部历史 tag refs。GitHub API key 不打印、不写入仓库、Git 配置、remote URL 或日志。
 
 署名：开发者

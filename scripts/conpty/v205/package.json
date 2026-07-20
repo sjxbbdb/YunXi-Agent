@@ -1,0 +1,15 @@
+{
+  "name": "yunxi-v205-conpty-evidence",
+  "version": "2.0.5",
+  "private": true,
+  "description": "Reproducible Windows ConPTY evidence collector for YunXi Agent v2.0.5 remediation",
+  "scripts": {
+    "capture": "node capture.js",
+    "capture:scenario": "node capture-scenario.js",
+    "verify": "node verify.js"
+  },
+  "dependencies": {
+    "@xterm/headless": "5.5.0",
+    "node-pty": "1.1.0"
+  }
+}

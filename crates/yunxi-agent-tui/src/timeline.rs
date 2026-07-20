@@ -41,12 +41,15 @@ impl ToolTimelineEntry {
     }
 
     pub(crate) fn apply(&mut self, update: ToolTimelineUpdate) {
-        // A terminal activity is immutable from the user's point of view.
-        // Provider retries and late duplicate events must not reopen it.
-        if self.phase.is_terminal() {
+        // A late structured approval event may refine an initial generic
+        // decline into an explicit user cancellation. Other terminal states
+        // remain immutable so retries and duplicate events cannot reopen them.
+        let corrects_decline_to_cancel =
+            self.phase == ToolPhase::Declined && update.phase == ToolPhase::Cancelled;
+        if self.phase.is_terminal() && !corrects_decline_to_cancel {
             return;
         }
-        if self.name != update.name && !update.name.is_empty() {
+        if !corrects_decline_to_cancel && self.name != update.name && !update.name.is_empty() {
             self.name = update.name;
         }
         self.phase = update.phase;
@@ -230,5 +233,31 @@ mod tests {
 
         assert_eq!(activity.phase, ToolPhase::Completed);
         assert_eq!(activity.display_text().lines().count(), 1);
+    }
+
+    #[test]
+    fn late_structured_cancellation_refines_an_initial_decline() {
+        let mut activity = ToolActivity::new(ToolTimelineUpdate::new(
+            Some("tool-1".to_string()),
+            "shell",
+            ToolPhase::ApprovalRequired,
+        ));
+        activity.apply(
+            ToolTimelineUpdate::new(Some("tool-1".to_string()), "shell", ToolPhase::Declined)
+                .output_summary("YX-APPROVAL-001 approval was not granted"),
+        );
+        activity.apply(
+            ToolTimelineUpdate::new(Some("tool-1".to_string()), "approval", ToolPhase::Cancelled)
+                .output_summary("YX-CANCEL-001 operation cancelled"),
+        );
+
+        assert_eq!(activity.name, "shell");
+        assert_eq!(activity.phase, ToolPhase::Cancelled);
+        assert_eq!(
+            activity.steps,
+            vec!["approval required", "declined", "cancelled"]
+        );
+        assert!(activity.display_text().contains("YX-CANCEL-001"));
+        assert!(!activity.display_text().contains("YX-APPROVAL-001"));
     }
 }

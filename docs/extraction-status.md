@@ -17,6 +17,29 @@ use stable category codes and actionable next steps. JSON and JSONL event
 shapes remain compatible because execution details are internal presentation
 metadata.
 
+The current audit remediation routes every user-visible provider/tool/approval/
+cancel/terminal/unknown failure through `ErrorPresentation`. Stable summaries
+carry code, retryability, next action, and a details reference without exposing
+raw diagnostics. Approval decline and Ctrl+C remain one activity cell; the only
+permitted terminal refinement is a later structured `Declined -> Cancelled`
+decision for the same tool id.
+
+The real Windows ConPTY gate is now recorded in
+`docs/reports/evidence/2026-07-20-v2-0-5-error-presentation-conpty-evidence.md`.
+DeepSeek live sessions cover the 80/100/120/200 width matrix, approval,
+rejection, cancellation, non-zero exit, invalid UTF-8, binary fallback, long
+output truncation/details, and subsequent input. The original `v2.0.5` tag is
+unchanged. The owner confirmed the new annotated remediation tag name
+`v2.0.5-hotfix.1`; it must point to the new remediation release commit and must
+not move any historical ref.
+
+The 11:34 re-audit required independent ConPTY replay rather than Markdown-only
+evidence. `scripts/conpty/v205` now contains the collector, exact npm dependency
+lock, scenario runner, offline verifier, and reproduction instructions. Eight
+sanitized raw-frame JSON files and a SHA-256 manifest are retained in
+`docs/reports/evidence/frames/v205-conpty`. A full collector run and offline
+manifest verification both pass.
+
 ## v2.0.4-hotfix.1 Responsive Header Audit Remediation Candidate
 
 The project owner explicitly selected `2.0.4-hotfix.1` and the new annotated

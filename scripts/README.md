@@ -1,5 +1,21 @@
 # Scripts
 
+## `conpty\v205`
+
+Contains the reproducible Windows ConPTY evidence collector for the v2.0.5
+error-presentation remediation. The collector uses locked `node-pty` and
+`@xterm/headless` dependencies, launches the real release binary and DeepSeek
+provider, and writes sanitized raw frames plus a SHA-256 manifest under
+`docs/reports/evidence/frames/v205-conpty`.
+
+```powershell
+npm ci --prefix scripts\conpty\v205
+npm run capture --prefix scripts\conpty\v205
+npm run verify --prefix scripts\conpty\v205
+```
+
+See `scripts/conpty/v205/README.md` for prerequisites and scenario details.
+
 ## `install\install-yunxi.ps1`
 
 Builds and installs the current YunXi Agent v1.8.9 terminal binaries:

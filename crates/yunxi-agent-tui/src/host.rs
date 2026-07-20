@@ -160,14 +160,6 @@ impl YunxiTui {
                 Event::Key(key) => match self.app.bottom_pane_mut().handle_approval_key(key) {
                     ApprovalAction::None => {}
                     ApprovalAction::Decide(decision) => {
-                        self.app.push_notice(
-                            "approval",
-                            if decision.approved {
-                                "approved"
-                            } else {
-                                "declined"
-                            },
-                        );
                         self.app.start_prompt("yunxi> ");
                         self.request_draw_now()?;
                         return Ok(decision);

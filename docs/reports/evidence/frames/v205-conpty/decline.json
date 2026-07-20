@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "version": "2.0.5",
+  "provider": "DeepSeek",
+  "model": "deepseek-chat",
+  "terminal": "Windows ConPTY",
+  "mode": "decline",
+  "command": "xterm-256color",
+  "output_bytes": 7831,
+  "actions": [
+    {
+      "action": "prompt",
+      "value": "Call the shell tool now and run exactly powershell -NoProfile -File .\\probe-decline.ps1. Return the actual result; do not answer without calling the tool.",
+      "timestamp": "2026-07-20T04:01:35.174Z"
+    },
+    {
+      "action": "key",
+      "value": "N",
+      "timestamp": "2026-07-20T04:01:36.492Z"
+    },
+    {
+      "action": "wait_for_assistant_after",
+      "value": "APPROVAL-001",
+      "timestamp": "2026-07-20T04:01:36.744Z"
+    },
+    {
+      "action": "prompt",
+      "value": "Reply exactly: YUNXI_DECLINE_NEXT_OK",
+      "timestamp": "2026-07-20T04:01:37.777Z"
+    },
+    {
+      "action": "command",
+      "value": "/exit",
+      "timestamp": "2026-07-20T04:01:38.571Z"
+    }
+  ],
+  "checkpoints": [
+    {
+      "label": "startup",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:35.172Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=0 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│Ready.                                                                        │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "decline-approval-pane",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:36.492Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=1 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -File .\\ │\n│    probe-decline.ps1. Return the actual result; do not answer without        │\n│    calling the tool.                                                         │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Approval──────────────────────────────────────────────────────────────────────┐\n│approval shell in D:\\YunXi Agent\\scripts\\conpty\\v205\\.work\\decline            │\n│reason   tool execution requires approval                                     │\n│risk     risk: low                                                            │\n│command  powershell -NoProfile -File .\\probe-decline.ps1                      │\n│                                                                              │\n│  Approve  Enter/Y                                                            │\n│> Decline  N/Esc                                                              │\n│Tab changes selection                                                         │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "declined",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:36.744Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=2 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -File .\\ │\n│    probe-decline.ps1. Return the actual result; do not answer without        │\n│    calling the tool.                                                         │\n│[tool] shell: declined; path=approval required -> running -> declined; YX-    │\n│    APPROVAL-001 approval was not granted: command request was declined;      │\n│    retryable=no; next: Review the request and choose an explicit safe action.│\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "decline-turn-done",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:37.776Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=3 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -File .\\ │\n│    probe-decline.ps1. Return the actual result; do not answer without        │\n│    calling the tool.                                                         │\n│[tool] shell: declined; path=approval required -> running -> declined; YX-    │\n│    APPROVAL-001 approval was not granted: command request was declined;      │\n│    retryable=no; next: Review the request and choose an explicit safe action.│\n│[assistant] 命令返回的结果是：`declined by YunXi TUI`                         │\n│                                                                              │\n│    这表明该 PowerShell 脚本执行时被 YunXi TUI 拒绝了，没有输出实际的 GUID。  │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "decline-next-turn",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:38.570Z",
+      "screen": "YunXi v2.0.5 | deepseek live\ntail | cells=5 | backend=yunxi | forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -File .\\ │\n│    probe-decline.ps1. Return the actual result; do not answer without        │\n│    calling the tool.                                                         │\n│[tool] shell: declined; path=approval required -> running -> declined; YX-    │\n│    APPROVAL-001 approval was not granted: command request was declined;      │\n│    retryable=no; next: Review the request and choose an explicit safe action.│\n│[assistant] 命令返回的结果是：`declined by YunXi TUI`                         │\n│                                                                              │\n│    这表明该 PowerShell 脚本执行时被 YunXi TUI 拒绝了，没有输出实际的 GUID。  │\n│[user] Reply exactly: YUNXI_DECLINE_NEXT_OK                                   │\n│[assistant] YUNXI_DECLINE_NEXT_OK                                             │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "matched": true
+    },
+    {
+      "label": "exit",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-20T04:01:39.852Z",
+      "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "matched": true,
+      "exited": true
+    }
+  ]
+}

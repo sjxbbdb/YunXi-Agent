@@ -1,4 +1,4 @@
-use crate::error_presentation::{ErrorPresentation, classify_error};
+use crate::error_presentation::{ErrorCategory, ErrorPresentation, classify_error};
 use crate::output_summary::{OutputSummary, redact_secrets, truncate_chars};
 use crate::timeline::{ToolPhase, ToolTimelineUpdate, phase_from_command_status, status_label};
 use std::fmt;
@@ -189,7 +189,7 @@ impl TuiPresentation {
                 execution_details,
             } => {
                 let mut detail = format!(
-                    "command={command}\nstatus={} exit_code={}\n{aggregated_output}",
+                    "command={command}\nstatus={} exit_code={}",
                     status_label(*status),
                     exit_code
                         .map(|value| value.to_string())
@@ -198,6 +198,10 @@ impl TuiPresentation {
                 if let Some(execution_details) = execution_details {
                     detail.push_str("\nexecution_details=");
                     detail.push_str(&format_execution_details(execution_details));
+                }
+                if !aggregated_output.is_empty() {
+                    detail.push_str("\noutput=\n");
+                    detail.push_str(aggregated_output);
                 }
                 let mut event = self.tool_event(
                     id.as_deref(),
@@ -211,30 +215,47 @@ impl TuiPresentation {
                 {
                     event.tool_update = Some(update.output_summary(summary.visible));
                 }
-                if matches!(status, yunxi_agent_core::CommandStatus::Failed) {
-                    let error = ErrorPresentation::for_category(
-                        classify_error("tool execution failed"),
+                match status {
+                    yunxi_agent_core::CommandStatus::Failed => apply_tool_error(
+                        &mut event,
+                        ErrorCategory::Tool,
                         "command returned a non-zero status",
-                    );
-                    if let Some(update) = event.tool_update.take() {
-                        event.tool_update = Some(update.output_summary(format!(
-                            "{}; details available",
-                            error.display_summary()
-                        )));
-                    }
+                    ),
+                    yunxi_agent_core::CommandStatus::Declined => apply_tool_error(
+                        &mut event,
+                        ErrorCategory::Approval,
+                        "command request was declined",
+                    ),
+                    yunxi_agent_core::CommandStatus::Cancelled => apply_tool_error(
+                        &mut event,
+                        ErrorCategory::Cancel,
+                        "command request was cancelled",
+                    ),
+                    yunxi_agent_core::CommandStatus::InProgress
+                    | yunxi_agent_core::CommandStatus::Completed => {}
                 }
                 event
             }
-            AgentEvent::CommandFinished { command, exit_code } => self.tool_event(
-                None,
-                "shell",
-                command_exit_phase(*exit_code),
-                TuiCellKind::ToolStatusSummary,
-                Some((
-                    "shell result",
-                    format!("command={command}\nexit_code={exit_code}"),
-                )),
-            ),
+            AgentEvent::CommandFinished { command, exit_code } => {
+                let mut event = self.tool_event(
+                    None,
+                    "shell",
+                    command_exit_phase(*exit_code),
+                    TuiCellKind::ToolStatusSummary,
+                    Some((
+                        "shell result",
+                        format!("command={command}\nexit_code={exit_code}"),
+                    )),
+                );
+                if *exit_code != 0 {
+                    apply_tool_error(
+                        &mut event,
+                        ErrorCategory::Tool,
+                        "command returned a non-zero status",
+                    );
+                }
+                event
+            }
             AgentEvent::ToolCallStarted {
                 id,
                 name,
@@ -267,6 +288,23 @@ impl TuiPresentation {
                 {
                     event.tool_update = Some(update.output_summary(summary.visible));
                 }
+                match status {
+                    yunxi_agent_core::CommandStatus::Failed => {
+                        apply_tool_error(&mut event, ErrorCategory::Tool, "tool returned a failure")
+                    }
+                    yunxi_agent_core::CommandStatus::Declined => apply_tool_error(
+                        &mut event,
+                        ErrorCategory::Approval,
+                        "tool request was declined",
+                    ),
+                    yunxi_agent_core::CommandStatus::Cancelled => apply_tool_error(
+                        &mut event,
+                        ErrorCategory::Cancel,
+                        "tool request was cancelled",
+                    ),
+                    yunxi_agent_core::CommandStatus::InProgress
+                    | yunxi_agent_core::CommandStatus::Completed => {}
+                }
                 event
             }
             AgentEvent::McpToolStarted { id, server, tool } => self.tool_event(
@@ -285,17 +323,27 @@ impl TuiPresentation {
                 server,
                 tool,
                 status,
-            } => self.tool_event(
-                id.as_deref(),
-                &format!(
-                    "mcp {}/{}",
-                    safe_identifier(server),
-                    safe_identifier(tool)
-                ),
-                mcp_status_phase(*status),
-                TuiCellKind::ToolStatusSummary,
-                None,
-            ),
+            } => {
+                let mut event = self.tool_event(
+                    id.as_deref(),
+                    &format!(
+                        "mcp {}/{}",
+                        safe_identifier(server),
+                        safe_identifier(tool)
+                    ),
+                    mcp_status_phase(*status),
+                    TuiCellKind::ToolStatusSummary,
+                    None,
+                );
+                if matches!(status, McpToolStatus::Failed) {
+                    apply_tool_error(
+                        &mut event,
+                        ErrorCategory::Tool,
+                        "MCP tool execution failed",
+                    );
+                }
+                event
+            }
             AgentEvent::ApprovalRequested {
                 id,
                 tool_name,
@@ -318,19 +366,11 @@ impl TuiPresentation {
                 approved,
                 reason,
             } => {
+                let phase = approval_phase(*approved, reason.as_deref());
                 let mut event = self.tool_event(
                     id.as_deref(),
                     "approval",
-                    if *approved {
-                        ToolPhase::Approved
-                    } else if reason
-                        .as_deref()
-                        .is_some_and(|value| value.to_ascii_lowercase().contains("policy"))
-                    {
-                        ToolPhase::PolicyDeclined
-                    } else {
-                        ToolPhase::Declined
-                    },
+                    phase,
                     TuiCellKind::ToolStatusSummary,
                     reason
                         .as_ref()
@@ -338,6 +378,24 @@ impl TuiPresentation {
                 );
                 if let Some(update) = event.tool_update.take() {
                     event.tool_update = Some(update.approval(approval_label(*approved)));
+                }
+                if !approved {
+                    let category = if phase == ToolPhase::Cancelled {
+                        ErrorCategory::Cancel
+                    } else {
+                        ErrorCategory::Approval
+                    };
+                    apply_tool_error(
+                        &mut event,
+                        category,
+                        if phase == ToolPhase::PolicyDeclined {
+                            "request was declined by policy"
+                        } else if phase == ToolPhase::Cancelled {
+                            "approval was cancelled"
+                        } else {
+                            "request was declined by the user"
+                        },
+                    );
                 }
                 event
             }
@@ -370,19 +428,11 @@ impl TuiPresentation {
                 approved,
                 reason,
             } => {
+                let phase = approval_phase(*approved, reason.as_deref());
                 let mut event = self.tool_event(
                     id.as_deref(),
                     "escalation",
-                    if *approved {
-                        ToolPhase::Approved
-                    } else if reason
-                        .as_deref()
-                        .is_some_and(|value| value.to_ascii_lowercase().contains("policy"))
-                    {
-                        ToolPhase::PolicyDeclined
-                    } else {
-                        ToolPhase::Declined
-                    },
+                    phase,
                     TuiCellKind::ToolStatusSummary,
                     reason
                         .as_ref()
@@ -391,16 +441,28 @@ impl TuiPresentation {
                 if let Some(update) = event.tool_update.take() {
                     event.tool_update = Some(update.approval(approval_label(*approved)));
                 }
+                if !approved {
+                    let category = if phase == ToolPhase::Cancelled {
+                        ErrorCategory::Cancel
+                    } else {
+                        ErrorCategory::Approval
+                    };
+                    apply_tool_error(
+                        &mut event,
+                        category,
+                        "escalation request was not approved",
+                    );
+                }
                 event
             }
             AgentEvent::SandboxAttempt { status, .. } => {
                 if is_visible_sandbox_status(status) {
-                    self.visible_with_detail(
-                        TuiCellKind::ErrorSummary,
-                        "policy",
-                        format!("policy action requires attention: {}", safe_identifier(status)),
+                    self.present_error_event(
+                        ErrorCategory::Approval,
+                        "policy action requires attention",
                         "sandbox attempt",
                         format!("{event:?}"),
+                        "policy",
                     )
                 } else {
                     self.debug_only("sandbox attempt", format!("{event:?}"), "sandbox")
@@ -418,12 +480,12 @@ impl TuiPresentation {
                 if status.eq_ignore_ascii_case("failed")
                     || status.eq_ignore_ascii_case("error")
                 {
-                    self.visible_with_detail(
-                        TuiCellKind::ErrorSummary,
-                        "mcp-session",
+                    self.present_error_event(
+                        ErrorCategory::Tool,
                         format!("MCP session {} failed", safe_identifier(server)),
                         "mcp session",
                         detail,
+                        "mcp-session",
                     )
                 } else {
                     self.debug_only("mcp session", detail, "mcp-session")
@@ -442,59 +504,50 @@ impl TuiPresentation {
             AgentEvent::MemoryWarning { warning, .. } => {
                 self.debug_only("memory warning", warning.clone(), "memory-warning")
             }
-            AgentEvent::Error { message } => self.visible_with_detail(
-                TuiCellKind::ErrorSummary,
-                "error",
-                format!(
-                    "agent operation failed [{}]; next: {}",
-                    ErrorPresentation::for_category(classify_error(message), "agent operation failed").code,
-                    ErrorPresentation::for_category(classify_error(message), "agent operation failed").next_step,
-                ),
+            AgentEvent::Error { message } => self.present_error_event(
+                classify_error(message),
+                "agent operation failed",
                 "agent error",
                 message.clone(),
+                "error",
             ),
             AgentEvent::ProviderError {
                 provider,
                 classification,
                 status,
                 message,
-            } => self.visible_with_detail(
-                TuiCellKind::ErrorSummary,
-                "provider",
-                {
-                    let error = ErrorPresentation::for_category(
-                    crate::error_presentation::ErrorCategory::Provider,
-                    format!(
-                        "{} ({classification}{})",
-                        safe_identifier(provider),
-                        status.map(|value| format!("/{value}")).unwrap_or_default()
-                    ),
-                    );
-                    format!(
-                        "provider {} failed [{}]; next: {}",
-                        safe_identifier(provider), error.code, error.next_step
-                    )
-                },
+            } => self.present_error_event(
+                ErrorCategory::Provider,
+                format!(
+                    "provider {} failed ({classification}{})",
+                    safe_identifier(provider),
+                    status.map(|value| format!("/{value}")).unwrap_or_default()
+                ),
                 "provider error",
                 message.clone(),
+                "provider",
             ),
-            AgentEvent::Cancelled { reason } => self.visible_with_detail(
-                TuiCellKind::Notice,
-                "cancelled",
-                "current turn cancelled".to_string(),
+            AgentEvent::Cancelled { reason } => self.present_error_event(
+                ErrorCategory::Cancel,
+                "current turn cancelled",
                 "cancellation",
                 reason
                     .clone()
                     .unwrap_or_else(|| "current turn cancelled".to_string()),
+                "cancelled",
             ),
             AgentEvent::Completed { status, usage } => {
                 if *status != AgentRunStatus::Completed {
-                    self.visible_with_detail(
-                        TuiCellKind::Notice,
-                        "turn",
+                    self.present_error_event(
+                        if *status == AgentRunStatus::Cancelled {
+                            ErrorCategory::Cancel
+                        } else {
+                            ErrorCategory::Unknown
+                        },
                         format!("turn {}", format!("{status:?}").to_ascii_lowercase()),
                         "turn completion",
                         format!("status={status:?} usage={usage:?}"),
+                        "turn",
                     )
                 } else if usage.is_some() {
                     self.debug_only("usage", format!("{usage:?}"), "usage")
@@ -597,13 +650,37 @@ impl TuiPresentation {
     }
 
     pub(crate) fn present_error(&mut self, message: &str) -> TuiEvent {
-        self.visible_with_detail(
-            TuiCellKind::ErrorSummary,
-            "error",
-            "operation failed".to_string(),
+        let category = classify_error(message);
+        self.present_error_event(
+            category,
+            safe_error_context(category),
             "error",
             message.to_string(),
+            "error",
         )
+    }
+
+    fn present_error_event(
+        &mut self,
+        category: ErrorCategory,
+        context: impl Into<String>,
+        detail_label: &str,
+        detail_content: String,
+        prefix: &str,
+    ) -> TuiEvent {
+        let id = self.next_id(prefix);
+        let detail = self.presentation_detail(&id, detail_label, detail_content);
+        let error = ErrorPresentation::for_category(category, context)
+            .with_detail_ref(detail.id.to_string());
+        TuiEvent {
+            id,
+            kind: TuiCellKind::ErrorSummary,
+            visible_text: error.display_summary(),
+            detail: Some(detail),
+            stream: None,
+            visibility: PresentationVisibility::Transcript,
+            tool_update: None,
+        }
     }
 
     pub(crate) fn present_details(&mut self, message: String) -> TuiEvent {
@@ -906,7 +983,47 @@ fn format_execution_details(details: &yunxi_agent_core::CommandExecutionDetails)
 
 fn is_tool_warning(message: &str) -> bool {
     let lowered = message.to_ascii_lowercase();
-    lowered.contains("tool") || lowered.contains("command") || lowered.contains("exit code")
+    lowered.contains("tool")
+        || lowered.contains("command")
+        || lowered.contains("exit code")
+        || lowered.contains("approval")
+        || lowered.contains("declined")
+        || lowered.contains("cancel")
+}
+
+fn apply_tool_error(event: &mut TuiEvent, category: ErrorCategory, context: &str) {
+    let mut error = ErrorPresentation::for_category(category, context);
+    if let Some(detail) = event.detail.as_ref() {
+        error = error.with_detail_ref(detail.id.to_string());
+    }
+    if let Some(update) = event.tool_update.take() {
+        event.tool_update = Some(update.output_summary(error.display_summary()));
+    }
+}
+
+fn approval_phase(approved: bool, reason: Option<&str>) -> ToolPhase {
+    if approved {
+        return ToolPhase::Approved;
+    }
+    let lowered = reason.unwrap_or_default().to_ascii_lowercase();
+    if lowered.contains("policy") {
+        ToolPhase::PolicyDeclined
+    } else if lowered.contains("cancel") || lowered.contains("ctrl+c") {
+        ToolPhase::Cancelled
+    } else {
+        ToolPhase::Declined
+    }
+}
+
+fn safe_error_context(category: ErrorCategory) -> &'static str {
+    match category {
+        ErrorCategory::Provider => "provider request failed",
+        ErrorCategory::Tool => "tool execution failed",
+        ErrorCategory::Approval => "approval was not granted",
+        ErrorCategory::Cancel => "operation cancelled",
+        ErrorCategory::Terminal => "terminal interaction failed",
+        ErrorCategory::Unknown => "operation failed",
+    }
 }
 
 fn display_tool_name(name: &str) -> String {
@@ -1122,6 +1239,106 @@ mod tests {
                 .content
                 .contains("stack")
         );
+    }
+
+    #[test]
+    fn every_user_visible_error_event_uses_stable_code_and_next_step() {
+        let mut presentation = TuiPresentation::default();
+
+        let provider = presentation.present_agent_event(&AgentEvent::ProviderError {
+            provider: "deepseek".to_string(),
+            status: Some(500),
+            classification: "server_error".to_string(),
+            message: "wire body and stack".to_string(),
+        });
+        assert_error_summary(&provider, "YX-PROVIDER-001", true);
+
+        let tool = presentation.present_agent_event(&AgentEvent::CommandCompleted {
+            id: Some("tool-error".to_string()),
+            command: "echo secret-command".to_string(),
+            aggregated_output: "secret output".to_string(),
+            exit_code: Some(7),
+            status: CommandStatus::Failed,
+            execution_details: None,
+        });
+        assert_tool_error_summary(&tool, "YX-TOOL-001", true);
+
+        let declined = presentation.present_agent_event(&AgentEvent::ApprovalCompleted {
+            id: Some("approval-error".to_string()),
+            approved: false,
+            reason: Some("declined by user".to_string()),
+        });
+        assert_tool_error_summary(&declined, "YX-APPROVAL-001", false);
+
+        let policy_declined = presentation.present_agent_event(&AgentEvent::ApprovalCompleted {
+            id: Some("policy-error".to_string()),
+            approved: false,
+            reason: Some("declined by policy".to_string()),
+        });
+        assert_tool_error_summary(&policy_declined, "YX-APPROVAL-001", false);
+
+        let approval_cancelled = presentation.present_agent_event(&AgentEvent::ApprovalCompleted {
+            id: Some("approval-cancel".to_string()),
+            approved: false,
+            reason: Some("cancelled by user (Ctrl+C)".to_string()),
+        });
+        assert_tool_error_summary(&approval_cancelled, "YX-CANCEL-001", true);
+        assert_eq!(
+            approval_cancelled
+                .tool_update
+                .as_ref()
+                .expect("cancelled tool update")
+                .phase,
+            ToolPhase::Cancelled
+        );
+
+        let cancelled = presentation.present_agent_event(&AgentEvent::Cancelled {
+            reason: Some("cancelled by user".to_string()),
+        });
+        assert_error_summary(&cancelled, "YX-CANCEL-001", true);
+
+        let terminal = presentation.present_error("terminal resize failed\ninternal stack");
+        assert_error_summary(&terminal, "YX-TERMINAL-001", true);
+
+        let unknown = presentation.present_agent_event(&AgentEvent::Error {
+            message: "opaque internal failure".to_string(),
+        });
+        assert_error_summary(&unknown, "YX-UNKNOWN-001", true);
+
+        assert!(!terminal.visible_text.contains("internal stack"));
+        assert!(
+            terminal
+                .detail
+                .expect("terminal detail")
+                .content
+                .contains("internal stack")
+        );
+    }
+
+    fn assert_error_summary(event: &TuiEvent, code: &str, retryable: bool) {
+        assert_eq!(event.kind, TuiCellKind::ErrorSummary);
+        assert!(event.visible_text.contains(code));
+        assert!(event.visible_text.contains("next:"));
+        assert!(event.visible_text.contains(if retryable {
+            "retryable=yes"
+        } else {
+            "retryable=no"
+        }));
+    }
+
+    fn assert_tool_error_summary(event: &TuiEvent, code: &str, retryable: bool) {
+        let summary = event
+            .tool_update
+            .as_ref()
+            .and_then(|update| update.output_summary.as_deref())
+            .expect("tool error summary");
+        assert!(summary.contains(code));
+        assert!(summary.contains("next:"));
+        assert!(summary.contains(if retryable {
+            "retryable=yes"
+        } else {
+            "retryable=no"
+        }));
     }
 
     #[test]

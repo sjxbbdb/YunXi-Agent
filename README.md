@@ -151,6 +151,30 @@ with `[offline]` and `/cost` reports that no model call was made.
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
 
+## v2.0.5 Audit Remediation Candidate
+
+The published annotated `v2.0.5` tag remains immutable at its original release
+commit. This workspace contains the current-version audit remediation candidate;
+the owner-selected remediation tag has not yet been created.
+
+Provider, tool, approval, cancel, terminal, and unknown failures now enter one
+`ErrorPresentation` boundary. Normal transcript summaries contain a stable
+`YX-*-001` code, retryability, and an actionable next step. Provider wire,
+commands, internal stacks, decoder diagnostics, and full output remain in
+details/debug. A late structured Ctrl+C decision may refine the same tool
+activity from a generic decline to cancellation; all other terminal activity
+states remain frozen.
+
+Real DeepSeek `deepseek-chat` sessions were exercised through Windows ConPTY at
+80x24, 100x30, 120x40, and 200x50. The evidence covers decline-by-default
+approval, explicit approval, rejection, Ctrl+C, non-zero exit, invalid UTF-8,
+binary output, 2000-line output, details metadata, and successful input after
+errors. See
+`docs/reports/evidence/2026-07-20-v2-0-5-error-presentation-conpty-evidence.md`.
+The locked collector is stored in `scripts/conpty/v205`; sanitized raw frames
+and their SHA-256 manifest are committed under
+`docs/reports/evidence/frames/v205-conpty` for independent replay and review.
+
 ## Responsive Header Remediation v2.0.4-hotfix.1
 
 The published annotated `v2.0.4` tag remains immutable. The project owner

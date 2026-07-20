@@ -15,6 +15,7 @@ pub(crate) struct ErrorPresentation {
     pub(crate) summary: String,
     pub(crate) next_step: &'static str,
     pub(crate) retryable: bool,
+    pub(crate) detail_ref: Option<String>,
 }
 
 impl ErrorPresentation {
@@ -64,11 +65,23 @@ impl ErrorPresentation {
             summary,
             next_step,
             retryable,
+            detail_ref: None,
         }
     }
 
+    pub(crate) fn with_detail_ref(mut self, detail_ref: impl Into<String>) -> Self {
+        self.detail_ref = Some(detail_ref.into());
+        self
+    }
+
     pub(crate) fn display_summary(&self) -> String {
-        format!("{} {}; next: {}", self.code, self.summary, self.next_step)
+        format!(
+            "{} {}; retryable={}; next: {}",
+            self.code,
+            self.summary,
+            if self.retryable { "yes" } else { "no" },
+            self.next_step
+        )
     }
 }
 
@@ -109,7 +122,17 @@ mod tests {
             let presentation = ErrorPresentation::for_category(category, "test context");
             assert!(presentation.code.starts_with("YX-"));
             assert!(presentation.display_summary().contains("next:"));
+            assert!(presentation.display_summary().contains("retryable="));
         }
+    }
+
+    #[test]
+    fn detail_reference_is_explicit_and_not_part_of_the_safe_summary() {
+        let presentation = ErrorPresentation::for_category(ErrorCategory::Unknown, "failure")
+            .with_detail_ref("detail:unknown:1");
+
+        assert_eq!(presentation.detail_ref.as_deref(), Some("detail:unknown:1"));
+        assert!(!presentation.display_summary().contains("detail:unknown:1"));
     }
 
     #[test]

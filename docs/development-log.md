@@ -1293,7 +1293,7 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 - Git 状态仍显示 `docs/development-log.md`、`docs/reports/2026-07-20-085931-yunxi-agent-v2-0-5-error-presentation-conpty-remediation-development-report.md`、`docs/reports/2026-07-20-084839-yunxi-agent-v2-0-5-tool-approval-error-activity-audit-report.md` 以及 `crates/yunxi-agent-cli/.yunxi/`，未执行构建、测试、提交、推送或 Git tag。
 提交和推送状态：未执行提交、未执行推送、未创建新的 Git tag。
 
-开发报告撰写者
+署名：开发报告撰写者
 
 ## 2026-07-20 10:54:13 +08:00
 
@@ -1700,5 +1700,111 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 - `D:\YunXi Agent\target` 已清理并确认不存在。
 
 提交、推送与 tag 状态：本次只更新系统安装 binary 与开发日志，不修改源码，不移动、删除或覆盖 `v2.0.6` 及任何历史 tag；本条日志将作为 docs-only 收尾提交 non-force 推送到 `master`。
+
+署名：开发报告撰写者
+
+## 2026-07-20 21:42:14 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-20-204147-YunXi-Agent-v2.0.6-Composer输入恢复审核报告.md` 撰写面向开发者的 YunXi Agent v2.0.7 交互焦点、详情层与快捷键一致性开发报告，并将本地缺失的参考源码 `Aider` 拉取到 `D:\源码\aider`。
+
+执行流程：
+1. 读取 `v2.0.6` 审核报告，确认审核通过，可进入 `v2.0.7` 开发，并提取下一阶段建议主题为交互焦点、详情层与快捷键一致性。
+2. 核对 `D:\源码` 中已有参考源码，确认存在 `codex`、`k9s`、`lazygit`，但缺少报告里新增点名的 `Aider`。
+3. 使用 Git 从 `https://github.com/Aider-AI/aider.git` 以浅克隆方式拉取 `Aider` 到 `D:\源码\aider`。
+4. 使用 CodeGraph 和本地源码核对 `edit_buffer.rs`、`bottom_pane.rs`、`host.rs`、`render.rs`、`debug.rs` 与 `app.rs` 的真实职责，确认当前项目已经具备 `EditBuffer`、草稿挂起恢复、control snapshot、脱敏详情和底部面板输入核心，但尚未形成显式 `FocusTarget` 与 `TuiAction` 体系。
+5. 按固定流程在开发报告前部写入 14 条硬性约束，并明确 `v2.0.7` 的阶段目标、版本边界、必须保持的既有能力、源码接入点、参考源码建议、推荐执行顺序、测试验收要求和文档发布要求。
+6. 在项目内新增开发报告，并复制到桌面开发报告目录。
+7. 对项目内开发报告和桌面开发报告执行 SHA256 校验，确认内容一致。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-20-213832-yunxi-agent-v2-0-7-interaction-focus-details-shortcut-consistency-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-213832-yunxi-agent-v2-0-7-interaction-focus-details-shortcut-consistency-development-report.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 新拉取参考源码：`D:\源码\aider`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 审核报告来源：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-20-204147-YunXi-Agent-v2.0.6-Composer输入恢复审核报告.md`
+- 项目内审核报告归档：`D:\YunXi Agent\docs\reports\2026-07-20-204147-yunxi-agent-v2-0-6-composer-input-recovery-audit-report.md`
+- 新参考源码：`D:\源码\aider`
+
+验证结果：
+- 项目开发报告与桌面开发报告 SHA256 一致：`CD7ED88F27E9D0D34658E4E491838C6ACA20BE45AD62A2D8CD4586CC7E521885`。
+- `Aider` 已成功克隆为浅仓库，远程地址为 `https://github.com/Aider-AI/aider.git`。
+- 本次未修改 YunXi Rust 源码。
+- 未运行 `cargo fmt`、`cargo check`、`cargo test`、`cargo build` 或 ConPTY capture/verify。
+- 未执行编译产物清理；本次没有新增编译产物。
+- 未执行递归删除、强制移动、清空目录、系统级安装/卸载、PATH/注册表/系统配置修改。
+
+提交和推送状态：未提交、未推送、未创建新的 Git tag；既有历史 tag 不移动、不删除、不覆盖。`v2.0.7` 后续实现、验证和发布完成后必须创建新的 annotated Git tag。
+
+署名：开发报告撰写者
+
+## 2026-07-21 07:10:47 +08:00
+
+工作目标：依据 v2.0.7 交互焦点、详情层与快捷键一致性开发报告，在 v2.0.6 审核通过基线上实现并验证 v2.0.7 候选，不移动任何历史 tag。
+
+执行流程：
+1. 使用 CodeGraph 核对 `app.rs`、`bottom_pane.rs`、`host.rs`、`render.rs`、`debug.rs`、`chat.rs` 和 CLI TUI 接入链路。
+2. 新增纯 Rust `input_map.rs`，建立 Composer、History、Approval、Details 的 `FocusTarget` 以及统一 `TuiAction` 解析。
+3. 将 Enter、Esc、Tab/BackTab、Ctrl+C、PgUp/PgDown、paste 和滚轮事件接入统一焦点路由；Approval 保留默认拒绝。
+4. 将脱敏详情改为主内容区可滚动 Details 层，关闭后恢复先前焦点；Composer 草稿/光标、Approval 选择和 transcript viewport 不变。
+5. 按焦点更新 footer 最小动作提示，更新 80/100/120/200 列完整 frame snapshots，并把产品版本提升到 2.0.7。
+6. 运行 Rust workspace 门禁、release 构建、版本核对和 Companion Evaluation。
+7. 新建 `scripts\conpty\v207`。受限网络首次普通场景返回 `YX-PROVIDER-001`，随后在获准真实网络环境重新采集 8 个独立 DeepSeek/Windows ConPTY 会话并生成脱敏 manifest。
+8. 更新 README、TUI 设计、提取状态、脚本索引、开发报告和证据说明。
+
+主要修改文件与路径：
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\input_map.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\bottom_pane.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\host.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`
+- `D:\YunXi Agent\scripts\conpty\v207\*`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v207-conpty\*`
+- `D:\YunXi Agent\docs\reports\evidence\2026-07-21-v2-0-7-interaction-focus-conpty-evidence.md`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\docs\extraction-status.md`
+- `D:\YunXi Agent\docs\tui-presentation.md`
+- `D:\YunXi Agent\scripts\README.md`
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过；TUI 130/130。release 双 binary 均为 `yunxi 2.0.7`；Evaluation Harness 为 31/31、`golden_passed=true`。真实 v207 ConPTY 8/8，v207/v206 verifier 均为 `ok=true, scenarios=8`，`git diff --check` 通过。
+
+清理结果：尚未执行。当前 `target`、`scripts\conpty\v207\node_modules`、`scripts\conpty\v207\.work` 以及可能生成的 `.yunxi` 运行状态，必须在取得用户明确确认后按绝对路径精确清理。
+
+提交、推送与 Git tag 状态：当前为已验证候选，尚未提交、尚未创建 annotated `v2.0.7`、尚未推送；`v2.0.6` 和全部历史 tag 保持不移动、不删除、不覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-21 07:29:07 +08:00
+
+工作目标：根据用户明确确认，完成 v2.0.7 发布前中间产物精确清理，并保留 collector、依赖锁、正式证据、manifest、报告和历史 tag。
+
+执行流程：
+1. 将六个清理目标解析为绝对路径，逐项确认全部位于 `D:\YunXi Agent` 工作区内。
+2. 使用 PowerShell `Remove-Item -LiteralPath -Recurse -Force` 删除每个精确目标，不使用通配符。
+3. 使用 `Test-Path -LiteralPath` 逐项核验清理后状态。
+
+清理路径与结果：
+- `D:\YunXi Agent\target`：已删除，不存在。
+- `D:\YunXi Agent\scripts\conpty\v207\node_modules`：已删除，不存在。
+- `D:\YunXi Agent\scripts\conpty\v207\.work`：已删除，不存在。
+- `D:\YunXi Agent\.tmp\v207-gates`：已删除，不存在。
+- `D:\YunXi Agent\.yunxi`：已删除，不存在。
+- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`：已删除，不存在。
+
+保留内容：`scripts\conpty\v207` collector、`package.json`、`package-lock.json`、八份最终 DeepSeek/Windows ConPTY 脱敏帧、manifest、证据说明、开发报告和全部历史 tag。
+
+验证结果：清理前的最终门禁已通过；`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过，TUI 131/131；release 双 binary 均为 `yunxi 2.0.7`；Evaluation 31/31；v207/v206 verifier 均为 8/8。
+
+提交、推送与 Git tag 状态：清理完成后进入发布提交阶段；尚未创建 annotated `v2.0.7` 或执行 GitHub 推送，`v2.0.6` 和全部历史 tag 保持不变。
 
 署名：开发报告撰写者

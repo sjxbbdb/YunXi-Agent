@@ -1,0 +1,19 @@
+{
+  "name": "yunxi-v207-conpty-evidence",
+  "version": "2.0.7",
+  "private": true,
+  "description": "Reproducible Windows ConPTY evidence collector for YunXi Agent v2.0.7 composer and streaming consistency",
+  "scripts": {
+    "capture": "node capture.js",
+    "capture:scenario": "node capture-scenario.js",
+    "manifest": "node capture.js --manifest-only",
+    "verify": "node verify.js"
+  },
+  "dependencies": {
+    "@xterm/headless": "5.5.0",
+    "node-pty": "1.1.0"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
+  }
+}

@@ -26,6 +26,8 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     }
     if layout.transcript.width == 0 || layout.transcript.height == 0 {
         // The bottom pane gets priority on extremely small terminals.
+    } else if app.details().is_some() {
+        render_details(frame, app, layout.transcript);
     } else if app.control_snapshot().is_some() {
         render_controls(frame, app, layout.transcript);
     } else {
@@ -40,6 +42,21 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     if layout.bottom_pane.width > 0 && layout.bottom_pane.height > 0 {
         render_bottom_pane(frame, app, layout.bottom_pane);
     }
+}
+
+fn render_details(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
+    let Some(details) = app.details() else {
+        return;
+    };
+    let panel = Paragraph::new(details.to_string())
+        .block(
+            Block::default()
+                .title("Details | Esc close | PgUp/PgDown scroll")
+                .borders(Borders::ALL),
+        )
+        .scroll((app.details_scroll(), 0))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(panel, area);
 }
 
 fn render_controls(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
@@ -765,7 +782,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.6"));
+        assert!(rendered.contains("YunXi v2.0.7"));
         assert!(rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }
@@ -945,5 +962,35 @@ mod tests {
         let rendered = render_app(&app, 110, 32);
         assert!(rendered.contains("provider wire body"));
         assert!(rendered.contains("private stack frame"));
+    }
+
+    #[test]
+    fn details_layer_is_bounded_across_responsive_widths() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        app.push_agent_event(&yunxi_agent_core::AgentEvent::ProviderError {
+            provider: "deepseek".to_string(),
+            status: Some(500),
+            classification: "server_error".to_string(),
+            message: "provider detail line one\nprivate stack line two".to_string(),
+        });
+        app.show_details(None);
+
+        for width in [80, 100, 120, 200] {
+            let rendered = render_full_frame_snapshot(&app, width, 28);
+            assert!(rendered.contains("Details"), "width={width}");
+            assert!(rendered.contains("Esc close"), "width={width}");
+            assert!(
+                rendered.contains("provider detail line one"),
+                "width={width}"
+            );
+            assert!(
+                rendered.lines().all(|line| {
+                    let content = line.split_once('|').expect("snapshot row prefix").1;
+                    UnicodeWidthStr::width(content) <= width as usize
+                }),
+                "details overflow at width={width}"
+            );
+        }
     }
 }

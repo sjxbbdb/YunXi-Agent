@@ -250,3 +250,20 @@ serde-skipped and does not alter plain CLI, JSON, or JSONL AgentEvent output.
 Approval, user-input, follow-tail, and bottom-pane owners remain intact.
 The CLI TUI renderer forwards events and cancellation actions; it does not
 deduplicate text.
+
+## Focus And Details Routing
+
+v2.0.7 introduces `FocusTarget` values for Composer, History, Approval, and
+Details and a pure `input_map` resolver that classifies Enter, Esc, Tab,
+BackTab, Ctrl+C, PgUp/PgDown, paste, and wheel input before a view handles it.
+History and Details consume non-applicable keys so they cannot submit or clear
+the Composer underneath them. Approval approve/decline/cancel and selection
+keys use the same resolver while keeping the safe default decline selection.
+
+The Details layer renders redacted `DebugBuffer` content in the main content
+region with an independent scroll offset. Opening and closing it does not
+replace `BottomPaneMode`, mutate the grapheme-indexed `EditBuffer`, or touch
+`TranscriptViewport`; the previous focus, Composer snapshot, Approval
+selection, and transcript anchor are restored. Footer hints are generated from
+the active focus and prioritize only close/scroll or submit/cancel actions that
+are currently executable.

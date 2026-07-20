@@ -1,5 +1,6 @@
-use crate::bottom_pane::{ApprovalRequestView, BottomPane, UserInputRequestView};
+﻿use crate::bottom_pane::{ApprovalRequestView, BottomPane, BottomPaneMode, UserInputRequestView};
 use crate::chat::Transcript;
+use crate::input_map::FocusTarget;
 use crate::presentation::{TuiEvent, TuiPresentation};
 use crate::text_layout::{ClipPriority, PrioritySegment, TextLayout};
 use crate::timeline_store::TimelineStore;
@@ -27,12 +28,16 @@ pub(crate) struct YunxiTuiApp {
     viewport: TranscriptViewport,
     bottom_pane: BottomPane,
     control_snapshot: Option<ControlSnapshot>,
+    details: Option<String>,
+    details_scroll: u16,
+    focus: FocusTarget,
+    previous_focus: FocusTarget,
 }
 
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.6".to_string(),
+            version: "v2.0.7".to_string(),
             banner: None,
             presentation: TuiPresentation::default(),
             timeline: TimelineStore::default(),
@@ -40,6 +45,10 @@ impl Default for YunxiTuiApp {
             viewport: TranscriptViewport::default(),
             bottom_pane: BottomPane::default(),
             control_snapshot: None,
+            details: None,
+            details_scroll: 0,
+            focus: FocusTarget::Composer,
+            previous_focus: FocusTarget::Composer,
         }
     }
 }
@@ -70,15 +79,81 @@ impl YunxiTuiApp {
         self.control_snapshot.as_ref()
     }
 
+    pub(crate) fn details(&self) -> Option<&str> {
+        self.details.as_deref()
+    }
+
+    pub(crate) fn focus_target(&self) -> FocusTarget {
+        self.focus
+    }
+
+    pub(crate) fn focus_next(&mut self) {
+        self.focus = match self.focus {
+            FocusTarget::Composer => FocusTarget::History,
+            FocusTarget::History => FocusTarget::Composer,
+            other => other,
+        };
+    }
+
+    pub(crate) fn focus_previous(&mut self) {
+        self.focus_next();
+    }
+
+    pub(crate) fn detail_scroll_up(&mut self, lines: u16) {
+        self.details_scroll = self.details_scroll.saturating_sub(lines.max(1));
+    }
+
+    pub(crate) fn detail_scroll_down(&mut self, lines: u16) {
+        self.details_scroll = self.details_scroll.saturating_add(lines.max(1));
+    }
+
+    pub(crate) fn details_scroll(&self) -> u16 {
+        self.details_scroll
+    }
+
     pub(crate) fn show_control_snapshot(&mut self, snapshot: ControlSnapshot) {
+        self.previous_focus = self.focus;
+        self.details = None;
+        self.details_scroll = 0;
         self.control_snapshot = Some(snapshot);
+        self.focus = FocusTarget::Details;
     }
 
     pub(crate) fn show_transcript(&mut self) {
         self.control_snapshot = None;
+        self.details = None;
+        self.focus = match self.bottom_pane.mode() {
+            BottomPaneMode::Approval { .. } => FocusTarget::Approval,
+            BottomPaneMode::UserInput { .. } | BottomPaneMode::Composer => FocusTarget::Composer,
+        };
+    }
+
+    pub(crate) fn close_details(&mut self) {
+        self.details = None;
+        self.control_snapshot = None;
+        self.details_scroll = 0;
+        self.focus = self.previous_focus;
     }
 
     pub(crate) fn footer_for_width(&self, width: usize) -> String {
+        if self.focus == FocusTarget::Details {
+            return TextLayout::priority_line(
+                &[
+                    PrioritySegment::new("Esc close details", ClipPriority::MustKeep),
+                    PrioritySegment::new("PgUp/PgDown scroll", ClipPriority::Important),
+                ],
+                width,
+            );
+        }
+        if self.focus == FocusTarget::History {
+            return TextLayout::priority_line(
+                &[
+                    PrioritySegment::new("Tab composer", ClipPriority::MustKeep),
+                    PrioritySegment::new("PgUp/PgDown scroll", ClipPriority::Important),
+                ],
+                width,
+            );
+        }
         match self.viewport.scroll_status() {
             "new output below" => TextLayout::priority_line(
                 &[
@@ -240,15 +315,20 @@ impl YunxiTuiApp {
     }
 
     pub(crate) fn start_prompt(&mut self, prompt: &str) {
+        self.control_snapshot = None;
+        self.details = None;
+        self.focus = FocusTarget::Composer;
         self.bottom_pane.start_composer(prompt);
     }
 
     pub(crate) fn start_approval(&mut self, request: ApprovalRequestView) {
         self.bottom_pane.start_approval(request);
+        self.focus = FocusTarget::Approval;
     }
 
     pub(crate) fn start_user_input(&mut self, request: UserInputRequestView) {
         self.bottom_pane.start_user_input(request);
+        self.focus = FocusTarget::Composer;
     }
 
     pub(crate) fn push_user(&mut self, value: impl Into<String>) {
@@ -322,8 +402,11 @@ impl YunxiTuiApp {
 
     pub(crate) fn show_details(&mut self, id: Option<usize>) {
         let detail = self.transcript.detail_text(id);
-        let event = self.presentation.present_details(detail);
-        self.push_tui_event(event);
+        self.previous_focus = self.focus;
+        self.details = Some(detail);
+        self.details_scroll = 0;
+        self.control_snapshot = None;
+        self.focus = FocusTarget::Details;
     }
 
     pub(crate) fn push_notice(&mut self, kind: &str, message: &str) {
@@ -487,7 +570,7 @@ mod tests {
         assert!(TextLayout::measure(&header) <= 80);
         assert!(TextLayout::measure(&subheader) <= 80);
         assert!(TextLayout::measure(&footer) <= 80);
-        assert!(header.contains("YunXi v2.0.6"));
+        assert!(header.contains("YunXi v2.0.7"));
         assert!(header.contains("offline"));
         assert!(!header.contains("model="));
         assert!(!header.contains("D:/"));
@@ -508,7 +591,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.6"));
+        assert!(header.contains("YunXi Agent v2.0.7"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(header.contains("D:/"));
         assert!(header.contains("yunxi-agent-cli"));
@@ -554,7 +637,7 @@ mod tests {
             assert!(TextLayout::measure(&header) <= width, "width={width}");
             assert!(TextLayout::measure(&subheader) <= width, "width={width}");
             assert!(TextLayout::measure(&footer) <= width, "width={width}");
-            assert!(header.contains("v2.0.6"), "width={width}");
+            assert!(header.contains("v2.0.7"), "width={width}");
             assert!(header.contains("deepseek live"), "width={width}");
             assert!(subheader.contains("tail"), "width={width}");
             assert!(footer.contains("Enter submit"), "width={width}");
@@ -773,6 +856,43 @@ mod tests {
         });
         app.show_transcript();
         assert_eq!(app.bottom_pane().composer_snapshot(), expected);
+    }
+
+    #[test]
+    fn details_restore_prior_focus_draft_and_approval_selection() {
+        let mut app = YunxiTuiApp::default();
+        app.bottom_pane_mut().paste("details draft 中文👩‍💻");
+        let draft = app.bottom_pane().composer_snapshot();
+
+        app.show_details(None);
+        assert_eq!(app.focus_target(), FocusTarget::Details);
+        app.detail_scroll_down(4);
+        assert_eq!(app.details_scroll(), 4);
+        app.close_details();
+        assert_eq!(app.focus_target(), FocusTarget::Composer);
+        assert_eq!(app.bottom_pane().composer_snapshot(), draft);
+
+        app.start_approval(ApprovalRequestView {
+            id: Some("approval-details".to_string()),
+            tool_name: "shell".to_string(),
+            cwd: ".".to_string(),
+            command: Some("echo ok".to_string()),
+            reason: "test".to_string(),
+            risk_label: None,
+        });
+        app.bottom_pane_mut()
+            .handle_approval_key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Tab,
+                crossterm::event::KeyModifiers::NONE,
+            ));
+        let approval = app.bottom_pane().mode().clone();
+
+        app.show_details(None);
+        app.close_details();
+        assert_eq!(app.focus_target(), FocusTarget::Approval);
+        assert_eq!(app.bottom_pane().mode(), &approval);
+        app.start_prompt("yunxi> ");
+        assert_eq!(app.bottom_pane().composer_snapshot(), draft);
     }
 
     #[test]

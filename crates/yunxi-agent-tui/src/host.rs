@@ -5,6 +5,7 @@ use crate::bottom_pane::{
     UserInputRequestView, UserInputResponse,
 };
 use crate::frame::{RedrawPriority, RedrawReason, RedrawScheduler};
+use crate::input_map::{FocusTarget, TuiAction, resolve_event, resolve_key};
 use crate::layout::{compute_layout, rect_contains};
 use crate::render::render_tui_frame;
 use crate::scrollbar::{ScrollbarHit, TranscriptScrollbarGeometry};
@@ -306,7 +307,9 @@ impl YunxiTui {
         match event {
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    if rect_contains(metrics.layout.transcript, mouse.column, mouse.row) {
+                    if resolve_event(self.app.focus_target(), event) == TuiAction::ScrollUp
+                        && rect_contains(metrics.layout.transcript, mouse.column, mouse.row)
+                    {
                         self.app
                             .scroll_up(3, &metrics.wrapped, metrics.visible_height);
                         Ok(true)
@@ -315,7 +318,9 @@ impl YunxiTui {
                     }
                 }
                 MouseEventKind::ScrollDown => {
-                    if rect_contains(metrics.layout.transcript, mouse.column, mouse.row) {
+                    if resolve_event(self.app.focus_target(), event) == TuiAction::ScrollDown
+                        && rect_contains(metrics.layout.transcript, mouse.column, mouse.row)
+                    {
                         self.app
                             .scroll_down(3, &metrics.wrapped, metrics.visible_height);
                         Ok(true)
@@ -335,25 +340,60 @@ impl YunxiTui {
                 }
                 _ => Ok(false),
             },
-            Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                KeyCode::PageUp => {
-                    self.app.page_up(&metrics.wrapped, metrics.visible_height);
-                    Ok(true)
+            Event::Key(key) if key.kind == KeyEventKind::Press => {
+                match resolve_key(self.app.focus_target(), *key) {
+                    TuiAction::FocusNext => {
+                        self.app.focus_next();
+                        Ok(true)
+                    }
+                    TuiAction::FocusPrevious => {
+                        self.app.focus_previous();
+                        Ok(true)
+                    }
+                    TuiAction::CloseDetails => {
+                        self.app.close_details();
+                        Ok(true)
+                    }
+                    TuiAction::PageUp => {
+                        if self.app.focus_target() == FocusTarget::Details {
+                            self.app.detail_scroll_up(metrics.visible_height as u16);
+                        } else {
+                            self.app.page_up(&metrics.wrapped, metrics.visible_height);
+                        }
+                        Ok(true)
+                    }
+                    TuiAction::PageDown => {
+                        if self.app.focus_target() == FocusTarget::Details {
+                            self.app.detail_scroll_down(metrics.visible_height as u16);
+                        } else {
+                            self.app.page_down(&metrics.wrapped, metrics.visible_height);
+                        }
+                        Ok(true)
+                    }
+                    _ if matches!(key.code, KeyCode::Home)
+                        && !self.app.bottom_pane().text_input_active()
+                        && self.app.focus_target() != FocusTarget::Details =>
+                    {
+                        self.app.jump_top(&metrics.wrapped, metrics.visible_height);
+                        Ok(true)
+                    }
+                    _ if matches!(key.code, KeyCode::End)
+                        && !self.app.bottom_pane().text_input_active()
+                        && self.app.focus_target() != FocusTarget::Details =>
+                    {
+                        self.app.follow_tail();
+                        Ok(true)
+                    }
+                    _ if matches!(
+                        self.app.focus_target(),
+                        FocusTarget::History | FocusTarget::Details
+                    ) =>
+                    {
+                        Ok(true)
+                    }
+                    _ => Ok(false),
                 }
-                KeyCode::PageDown => {
-                    self.app.page_down(&metrics.wrapped, metrics.visible_height);
-                    Ok(true)
-                }
-                KeyCode::Home if !self.app.bottom_pane().text_input_active() => {
-                    self.app.jump_top(&metrics.wrapped, metrics.visible_height);
-                    Ok(true)
-                }
-                KeyCode::End if !self.app.bottom_pane().text_input_active() => {
-                    self.app.follow_tail();
-                    Ok(true)
-                }
-                _ => Ok(false),
-            },
+            }
             Event::Resize(_, _) => {
                 self.scroll_drag = None;
                 self.app

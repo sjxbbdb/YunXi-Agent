@@ -1,5 +1,6 @@
 use crate::approval_layout::approval_desired_height;
 use crate::edit_buffer::{EditBuffer, EditBufferSnapshot};
+use crate::input_map::{FocusTarget, TuiAction, resolve_key};
 use crate::text_layout::{TextLayout, WrapPolicy};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -160,56 +161,48 @@ impl BottomPane {
         if key.kind != KeyEventKind::Press {
             return ComposerAction::None;
         }
-        match key.code {
-            KeyCode::Enter
-                if key
-                    .modifiers
-                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
-            {
+        match resolve_key(FocusTarget::Composer, key) {
+            TuiAction::InsertNewline => {
                 self.composer.insert_newline();
                 ComposerAction::None
             }
-            KeyCode::Enter => ComposerAction::Submit(self.composer.submit_text()),
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                ComposerAction::Cancel
-            }
-            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.composer.insert_newline();
-                ComposerAction::None
-            }
-            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.composer.insert_text(&ch.to_string());
-                ComposerAction::None
-            }
-            KeyCode::Backspace => {
-                self.composer.delete_previous_grapheme();
-                ComposerAction::None
-            }
-            KeyCode::Delete => {
-                self.composer.delete_next_grapheme();
-                ComposerAction::None
-            }
-            KeyCode::Left => {
-                self.composer.move_left();
-                ComposerAction::None
-            }
-            KeyCode::Right => {
-                self.composer.move_right();
-                ComposerAction::None
-            }
-            KeyCode::Home => {
-                self.composer.move_home();
-                ComposerAction::None
-            }
-            KeyCode::End => {
-                self.composer.move_end();
-                ComposerAction::None
-            }
-            KeyCode::Esc => {
-                self.composer.clear();
-                ComposerAction::None
-            }
-            _ => ComposerAction::None,
+            TuiAction::Submit => ComposerAction::Submit(self.composer.submit_text()),
+            TuiAction::Cancel => ComposerAction::Cancel,
+            _ => match key.code {
+                KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.composer.insert_newline();
+                    ComposerAction::None
+                }
+                KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.composer.insert_text(&ch.to_string());
+                    ComposerAction::None
+                }
+                KeyCode::Backspace => {
+                    self.composer.delete_previous_grapheme();
+                    ComposerAction::None
+                }
+                KeyCode::Delete => {
+                    self.composer.delete_next_grapheme();
+                    ComposerAction::None
+                }
+                KeyCode::Left => {
+                    self.composer.move_left();
+                    ComposerAction::None
+                }
+                KeyCode::Right => {
+                    self.composer.move_right();
+                    ComposerAction::None
+                }
+                KeyCode::Home => {
+                    self.composer.move_home();
+                    ComposerAction::None
+                }
+                KeyCode::End => {
+                    self.composer.move_end();
+                    ComposerAction::None
+                }
+                _ => ComposerAction::None,
+            },
         }
     }
 
@@ -223,9 +216,10 @@ impl BottomPane {
         let before = self.composer.snapshot();
         match key.code {
             KeyCode::Enter
-                if key
-                    .modifiers
-                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+                if matches!(
+                    resolve_key(FocusTarget::Composer, key),
+                    TuiAction::InsertNewline
+                ) =>
             {
                 self.composer.insert_newline();
             }
@@ -255,6 +249,47 @@ impl BottomPane {
         if key.kind != KeyEventKind::Press {
             return ApprovalAction::None;
         }
+        let action = resolve_key(FocusTarget::Approval, key);
+        match action {
+            TuiAction::Cancel => {
+                return ApprovalAction::Decide(ApprovalDecision {
+                    approved: false,
+                    reason: Some("cancelled by user (Ctrl+C)".to_string()),
+                });
+            }
+            TuiAction::Decline => {
+                return ApprovalAction::Decide(ApprovalDecision {
+                    approved: false,
+                    reason: Some("declined by YunXi TUI".to_string()),
+                });
+            }
+            TuiAction::Approve => {
+                return ApprovalAction::Decide(ApprovalDecision {
+                    approved: true,
+                    reason: Some("approved by YunXi TUI".to_string()),
+                });
+            }
+            TuiAction::Submit => {
+                return ApprovalAction::Decide(ApprovalDecision {
+                    approved: *selected == 0,
+                    reason: Some(if *selected == 0 {
+                        "approved by YunXi TUI".to_string()
+                    } else {
+                        "declined by YunXi TUI".to_string()
+                    }),
+                });
+            }
+            TuiAction::InsertNewline
+            | TuiAction::None
+            | TuiAction::FocusNext
+            | TuiAction::FocusPrevious => {}
+            TuiAction::CloseDetails | TuiAction::PageUp | TuiAction::PageDown => {
+                return ApprovalAction::None;
+            }
+            TuiAction::Paste | TuiAction::ScrollUp | TuiAction::ScrollDown => {
+                return ApprovalAction::None;
+            }
+        }
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('a') | KeyCode::Char('A') => {
                 ApprovalAction::Decide(ApprovalDecision {
@@ -262,14 +297,12 @@ impl BottomPane {
                     reason: Some("approved by YunXi TUI".to_string()),
                 })
             }
-            KeyCode::Char('n')
-            | KeyCode::Char('N')
-            | KeyCode::Char('d')
-            | KeyCode::Char('D')
-            | KeyCode::Esc => ApprovalAction::Decide(ApprovalDecision {
-                approved: false,
-                reason: Some("declined by YunXi TUI".to_string()),
-            }),
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('d') | KeyCode::Char('D') => {
+                ApprovalAction::Decide(ApprovalDecision {
+                    approved: false,
+                    reason: Some("declined by YunXi TUI".to_string()),
+                })
+            }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 ApprovalAction::Decide(ApprovalDecision {
                     approved: false,
@@ -284,14 +317,7 @@ impl BottomPane {
                 *selected = if *selected == 0 { 1 } else { 0 };
                 ApprovalAction::None
             }
-            KeyCode::Enter => ApprovalAction::Decide(ApprovalDecision {
-                approved: *selected == 0,
-                reason: Some(if *selected == 0 {
-                    "approved by YunXi TUI".to_string()
-                } else {
-                    "declined by YunXi TUI".to_string()
-                }),
-            }),
+            KeyCode::Enter => ApprovalAction::None,
             _ => ApprovalAction::None,
         }
     }
@@ -303,55 +329,50 @@ impl BottomPane {
         if key.kind != KeyEventKind::Press {
             return UserInputAction::None;
         }
-        match key.code {
-            KeyCode::Enter
-                if key
-                    .modifiers
-                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
-            {
+        match resolve_key(FocusTarget::Composer, key) {
+            TuiAction::InsertNewline => {
                 buffer.insert_newline();
                 UserInputAction::None
             }
-            KeyCode::Enter => UserInputAction::Submit(UserInputResponse {
+            TuiAction::Submit => UserInputAction::Submit(UserInputResponse {
                 value: Some(buffer.submit_text()),
             }),
-            KeyCode::Esc => UserInputAction::Cancel,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                UserInputAction::Cancel
-            }
-            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                buffer.insert_newline();
-                UserInputAction::None
-            }
-            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                buffer.insert_text(&ch.to_string());
-                UserInputAction::None
-            }
-            KeyCode::Backspace => {
-                buffer.delete_previous_grapheme();
-                UserInputAction::None
-            }
-            KeyCode::Delete => {
-                buffer.delete_next_grapheme();
-                UserInputAction::None
-            }
-            KeyCode::Left => {
-                buffer.move_left();
-                UserInputAction::None
-            }
-            KeyCode::Right => {
-                buffer.move_right();
-                UserInputAction::None
-            }
-            KeyCode::Home => {
-                buffer.move_home();
-                UserInputAction::None
-            }
-            KeyCode::End => {
-                buffer.move_end();
-                UserInputAction::None
-            }
-            _ => UserInputAction::None,
+            TuiAction::Cancel => UserInputAction::Cancel,
+            _ => match key.code {
+                KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    buffer.insert_newline();
+                    UserInputAction::None
+                }
+                KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    buffer.insert_text(&ch.to_string());
+                    UserInputAction::None
+                }
+                KeyCode::Backspace => {
+                    buffer.delete_previous_grapheme();
+                    UserInputAction::None
+                }
+                KeyCode::Delete => {
+                    buffer.delete_next_grapheme();
+                    UserInputAction::None
+                }
+                KeyCode::Left => {
+                    buffer.move_left();
+                    UserInputAction::None
+                }
+                KeyCode::Right => {
+                    buffer.move_right();
+                    UserInputAction::None
+                }
+                KeyCode::Home => {
+                    buffer.move_home();
+                    UserInputAction::None
+                }
+                KeyCode::End => {
+                    buffer.move_end();
+                    UserInputAction::None
+                }
+                _ => UserInputAction::None,
+            },
         }
     }
 

@@ -8,6 +8,7 @@ mod error_presentation;
 mod event_filter;
 mod frame;
 mod host;
+mod input_map;
 mod layout;
 mod output_summary;
 mod presentation;

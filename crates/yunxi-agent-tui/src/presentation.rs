@@ -683,19 +683,6 @@ impl TuiPresentation {
         }
     }
 
-    pub(crate) fn present_details(&mut self, message: String) -> TuiEvent {
-        let id = self.next_id("details");
-        TuiEvent {
-            id,
-            kind: TuiCellKind::DebugDetail,
-            visible_text: message,
-            detail: None,
-            stream: None,
-            visibility: PresentationVisibility::Transcript,
-            tool_update: None,
-        }
-    }
-
     fn present_assistant_message(
         &mut self,
         content: &str,

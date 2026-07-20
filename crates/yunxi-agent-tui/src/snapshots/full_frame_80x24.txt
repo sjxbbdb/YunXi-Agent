@@ -1,4 +1,4 @@
-00|YunXi v2.0.6 | deepseek live
+00|YunXi v2.0.7 | deepseek live
 01|new output below | cells=38 | backend=yunxi | auto_live | debug off
 02|────────────────────────────────────────────────────────────────────────────────
 03|┌Transcript 29-43 / 51 | new output below──────────────────────────────────────┐

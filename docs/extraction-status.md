@@ -1932,6 +1932,30 @@ Verified on 2026-07-09:
 Live credential smoke was not run; it remains gated by
 `YUNXI_RUN_LIVE_CODEX_TESTS=1`.
 
+## YunXi Agent v2.0.7 Interaction Focus Construction
+
+Constructed and verified on 2026-07-21:
+
+- Workspace and CLI product version promoted to `2.0.7` without changing
+  persona-context or evaluation-harness schema versions.
+- Added the YunXi-owned pure Rust `input_map` module with explicit
+  `FocusTarget` and `TuiAction` semantics.
+- Composer, History, Approval, and Details route Enter, Esc, Tab/BackTab,
+  Ctrl+C, PgUp/PgDown, paste, and wheel actions without cross-view submission.
+- Details now use a scrollable redacted main-content layer and restore the
+  previous focus without changing Composer text/cursor, Approval selection, or
+  transcript viewport state.
+- Header/footer snapshots cover 80, 100, 120, and 200 columns; TUI tests pass
+  130/130.
+- `cargo fmt --all -- --check`, `cargo check --workspace`, and
+  `cargo test --workspace` pass.
+- Release `yunxi.exe` and `yunxi-agent-cli.exe` both report `yunxi 2.0.7`;
+  Companion Evaluation remains 31/31 with `golden_passed=true`.
+- Real DeepSeek/Windows ConPTY v207 capture passes all eight scenarios; both
+  v207 and historical v206 offline verifiers return `ok=true, scenarios=8`.
+- Default runtime remains YunXi-owned and does not depend on `vendor/codex-rs`,
+  `codex-*`, or `yunxi-agent-codex`.
+
 ## YunXi Agent v1.8.3 Memory Merge Fidelity Construction
 
 YunXi Agent v1.8.3 fixes the v1.8.2 memory merge fidelity gap where a later generic memory with the same `dedup_key` could overwrite a richer existing long-term memory.

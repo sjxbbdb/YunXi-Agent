@@ -1,5 +1,21 @@
 # Scripts
 
+## `conpty\v207`
+
+Contains the reproducible Windows ConPTY gate for the v2.0.7 interaction-focus,
+details-layer, and shortcut-consistency release. The locked collector preserves
+the eight v2.0.6 composer/streaming regressions while verifying the final
+v2.0.7 release binary against real DeepSeek sessions.
+
+```powershell
+npm ci --prefix scripts\conpty\v207
+npm run capture --prefix scripts\conpty\v207
+npm run verify --prefix scripts\conpty\v207
+```
+
+Sanitized frames and the SHA-256 manifest are stored under
+`docs/reports/evidence/frames/v207-conpty`.
+
 ## `conpty\v206`
 
 Contains the reproducible Windows ConPTY gate for the v2.0.6 Composer, input
@@ -40,7 +56,7 @@ and scenario details.
 
 ## `install\install-yunxi.ps1`
 
-Builds and installs the current YunXi Agent v2.0.6 terminal binaries:
+Builds and installs the current YunXi Agent v2.0.7 terminal binaries:
 
 ```powershell
 .\scripts\install\install-yunxi.ps1 -AddToPath

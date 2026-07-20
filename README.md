@@ -709,6 +709,12 @@ drafts, explicit overlay routing, Windows ConPTY paste reconstruction, and
 single-cell delta/final consistency. It adds a new immutable `v2.0.6` release
 tag without moving or deleting any earlier release or hotfix tag.
 
+v2.0.7 adds explicit Composer, History, Approval, and Details focus semantics;
+a pure Rust key/action resolver; a scrollable redacted details layer; and
+focus-specific narrow footer hints. Draft, cursor, approval selection, and
+transcript viewport state survive focus and details transitions. The v2.0.6
+grapheme editor and single-cell streaming lifecycle remain unchanged.
+
 ## Backend Capability Matrix
 
 | Backend | Default | Owner | Purpose |

@@ -1187,3 +1187,48 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 开发日志。整改候选仍需独立重新审核，不能提前宣称审核通过或进入下一版本。
 
 署名：开发者
+
+## 2026-07-19 22:09:53 +08:00
+
+工作目标：根据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-19-220157-YunXi-Agent-v2.0.4-hotfix.1-发布源码与TUI视觉审核报告.md` 撰写 YunXi Agent v2.0.5 工具、审批与错误的任务化呈现开发报告，并同步项目内开发日志、桌面开发报告与桌面开发日志。
+
+执行流程：1. 读取 v2.0.4-hotfix.1 发布源码与 TUI 视觉审核报告，确认审核通过，可以进入总纲图规定的 v2.0.5 开发报告撰写。2. 核对当前 Git 状态为 `master...origin/master`，存在发布后真实 Provider 请求生成的未跟踪目录 `crates\yunxi-agent-cli\.yunxi`。3. 使用 CodeGraph MCP 参考 `crates\yunxi-agent-exec\src\lib.rs` 中 `read_pipe`、TUI `bottom_pane.rs`、`approval_layout.rs`、`app.rs` 以及审批/工具参考路径，确认 v2.0.5 应聚焦 `ToolActivity`、审批 overlay/bottom pane、`ExecOutputDecoder` 和稳定错误分类。4. 按固定流程在开发报告前部写入 14 条硬性约束。5. 围绕 v2.0.5 范围撰写开发目标、版本边界、核心设计、源码接入点、参考源码建议、推荐执行顺序、测试要求、真实 TUI 复核要求和统一验证要求。6. 在项目内新增开发报告。7. 追加项目内开发日志，将报告复制到桌面开发报告目录，并追加桌面开发日志。
+
+修改文件：
+- 新增开发报告：`D:\YunXi Agent\docs\reports\2026-07-19-220953-yunxi-agent-v2-0-5-tool-approval-error-activity-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增/覆盖复制目标：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-220953-yunxi-agent-v2-0-5-tool-approval-error-activity-development-report.md`
+- 追加桌面日志目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：
+- 已完成 v2.0.5 工具、审批与错误的任务化呈现开发报告撰写，并同步到桌面开发报告目录。
+- 本次仅生成文档和追加日志，未修改 Rust 源码。
+- 尚未运行 `cargo fmt`、`cargo check`、`cargo test` 或 `cargo build`。
+- 尚未执行编译产物清理、提交、推送或创建 Git tag。
+- 当前未跟踪目录 `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi` 未被读取或清理；如需清理必须先取得用户确认。
+- 后续必须按报告完成 v2.0.5 开发、统一验证、真实 TUI 复核、清理和发布；验证通过前不得宣称完成。
+
+提交和推送状态：本次仅撰写开发报告并追加日志，未提交、未推送、未创建 Git tag；旧 `v2.0.2`、`v2.0.2-hotfix.1`、`v2.0.3`、`v2.0.3-hotfix.1`、`v2.0.4` 与 `v2.0.4-hotfix.1` tag 均不得移动、删除或覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-20 07:50:02 +08:00
+
+工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-19-220953-yunxi-agent-v2-0-5-tool-approval-error-activity-development-report.md` 完成 YunXi Agent v2.0.5 工具活动、审批、执行输出解码和错误任务化呈现开发，并同步版本文档、验证日志和发布准备状态。
+
+执行流程：1. 使用 CodeGraph 梳理 `timeline.rs`、`chat.rs`、`presentation.rs`、`bottom_pane.rs`、`approval_layout.rs` 与 `yunxi-agent-exec/src/lib.rs` 的调用链。2. 接入 `CommandExecutionDetails`、`DecodedExecOutput`、`OutputIntegrity`，保持 AgentEvent JSON/JSONL 兼容。3. 将工具更新收敛到稳定 activity cell，终态冻结迟到事件，普通视图改为单行安全摘要。4. 将 CommandUpdated 保持为 debug-only 载荷但仍更新对应 activity，避免主 transcript 重复日志。5. 将审批默认改为 Decline，明确 Y/Enter、N/Esc 和 Ctrl+C 状态路径。6. 新增 provider/tool/approval/cancel/terminal/unknown 错误分类、稳定错误码和下一步提示。7. 为 decoder、activity 终态和审批安全默认补充回归测试。8. 将活跃版本同步为 `2.0.5`，保留所有历史版本文档与 tag 记录。
+
+主要修改文件与路径：`D:\YunXi Agent\crates\yunxi-agent-core\src\event.rs`、`D:\YunXi Agent\crates\yunxi-agent-exec\src\lib.rs`、`D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`、`D:\YunXi Agent\crates\yunxi-agent-tui\src\timeline.rs`、`chat.rs`、`presentation.rs`、`bottom_pane.rs`、`error_presentation.rs`、`D:\YunXi Agent\crates\yunxi-agent-cli\src\jsonl_redaction.rs`、`main.rs`、`render.rs`、`D:\YunXi Agent\Cargo.toml`、`Cargo.lock`、`README.md`、`docs\extraction-status.md`、`docs\tui-presentation.md`、`docs\persona-memory.md` 及新增 v2.0.5 报告。
+
+验证结果：`cargo fmt --all`、fmt check、`cargo check --workspace`、`cargo test --workspace`、`cargo test -p yunxi-agent-tui`、`cargo test -p yunxi-agent-exec`、workspace/debug/release build 全部通过；TUI 105 项、exec 13 项。两个 release binary 均返回 `yunxi 2.0.5`。Evaluation Harness 为 31/31、golden true、approval bypass 0；offline JSON/JSONL 与 no-TUI smoke 通过。DeepSeek online no-TUI JSON 返回 `YUNXI_V205_LIVE_OK`；在线 TUI 需在真实 ConPTY 环境复核，本次未伪造 TTY。
+
+清理与发布状态：用户已明确授权，已删除精确路径 `D:\YunXi Agent\target` 与 `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`，未触碰 `.tmp` 或其他目录；两个目标均已核验不存在。尚未提交、创建 `v2.0.5` tag 或推送；最终发布前将执行 `git diff --check`、status、唯一提交、annotated tag 和远程 refs 核验。API key 未打印、未写入仓库、未写入 Git 配置或 remote URL。旧 tag 不移动、不删除、不覆盖。
+
+署名：开发者

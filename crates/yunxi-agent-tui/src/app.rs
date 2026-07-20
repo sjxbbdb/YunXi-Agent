@@ -32,7 +32,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.4-hotfix.1".to_string(),
+            version: "v2.0.5".to_string(),
             banner: None,
             presentation: TuiPresentation::default(),
             timeline: TimelineStore::default(),
@@ -486,7 +486,7 @@ mod tests {
         assert!(TextLayout::measure(&header) <= 80);
         assert!(TextLayout::measure(&subheader) <= 80);
         assert!(TextLayout::measure(&footer) <= 80);
-        assert!(header.contains("YunXi v2.0.4-hotfix.1"));
+        assert!(header.contains("YunXi v2.0.5"));
         assert!(header.contains("offline"));
         assert!(!header.contains("model="));
         assert!(!header.contains("D:/"));
@@ -507,7 +507,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.4-hotfix.1"));
+        assert!(header.contains("YunXi Agent v2.0.5"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(header.contains("D:/"));
         assert!(header.contains("yunxi-agent-cli"));
@@ -553,7 +553,7 @@ mod tests {
             assert!(TextLayout::measure(&header) <= width, "width={width}");
             assert!(TextLayout::measure(&subheader) <= width, "width={width}");
             assert!(TextLayout::measure(&footer) <= width, "width={width}");
-            assert!(header.contains("v2.0.4-hotfix.1"), "width={width}");
+            assert!(header.contains("v2.0.5"), "width={width}");
             assert!(header.contains("deepseek live"), "width={width}");
             assert!(subheader.contains("tail"), "width={width}");
             assert!(footer.contains("Enter submit"), "width={width}");

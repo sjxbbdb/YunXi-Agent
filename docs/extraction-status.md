@@ -1,10 +1,21 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.4-hotfix.1
+## Current Workspace Version: v2.0.5
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## v2.0.5 Tool Activity, Approval, And Decoder
+
+The current release consolidates tool lifecycle events into one stable TUI
+activity cell, uses a decline-by-default approval bottom pane, and separates
+safe summaries from details/debug diagnostics. `ExecOutputDecoder` reads raw
+stdout/stderr bytes, handles invalid UTF-8 and binary output without surfacing
+decoder exceptions, and records truncation/integrity metadata. Error summaries
+use stable category codes and actionable next steps. JSON and JSONL event
+shapes remain compatible because execution details are internal presentation
+metadata.
 
 ## v2.0.4-hotfix.1 Responsive Header Audit Remediation Candidate
 

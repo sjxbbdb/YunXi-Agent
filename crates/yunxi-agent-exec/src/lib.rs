@@ -8,6 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::sleep;
 use yunxi_agent_core::{AgentCancellationToken, AgentError, AgentResult};
+pub use yunxi_agent_core::{DecodedExecOutput, OutputIntegrity};
 use yunxi_agent_sandbox::{
     ApprovalRequirement, ExecutionPolicy, NetworkPolicy, SandboxRequirement,
     SandboxRunnerDiagnostic,
@@ -75,11 +76,15 @@ impl ExecCommand {
 
 pub const DEFAULT_EXEC_COMMAND_TIMEOUT_MILLIS: u64 = 10_000;
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExecOutput {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_decoded: Option<DecodedExecOutput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_decoded: Option<DecodedExecOutput>,
 }
 
 impl ExecOutput {
@@ -343,6 +348,7 @@ impl ExecManager {
                 stdout: String::new(),
                 stderr: "exec command cancelled before spawn".to_string(),
                 exit_code: None,
+                ..ExecOutput::default()
             };
             events.push(ExecLifecycleEvent::Completed {
                 id: command.id.clone(),
@@ -434,10 +440,11 @@ impl ExecManager {
             }
         };
 
-        let stdout = join_pipe(stdout_task).await?;
-        let stderr = join_pipe(stderr_task).await?;
-        let stdout = truncate_output(&stdout, self.output_limits);
-        let stderr = truncate_output(&stderr, self.output_limits);
+        let decoder = ExecOutputDecoder::new(self.output_limits);
+        let stdout_decoded = decoder.decode(join_pipe(stdout_task).await?);
+        let stderr_decoded = decoder.decode(join_pipe(stderr_task).await?);
+        let stdout = stdout_decoded.display_text.clone();
+        let stderr = stderr_decoded.display_text.clone();
         if !stdout.is_empty() {
             events.push(ExecLifecycleEvent::OutputDelta {
                 id: command.id.clone(),
@@ -457,6 +464,8 @@ impl ExecManager {
             stdout,
             stderr,
             exit_code: status.code(),
+            stdout_decoded: Some(stdout_decoded),
+            stderr_decoded: Some(stderr_decoded),
         };
         events.push(ExecLifecycleEvent::Completed {
             id: command.id.clone(),
@@ -619,6 +628,54 @@ pub struct OutputLimits {
     pub tail_lines: Option<usize>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExecOutputDecoder {
+    limits: OutputLimits,
+}
+
+impl ExecOutputDecoder {
+    pub const fn new(limits: OutputLimits) -> Self {
+        Self { limits }
+    }
+
+    pub fn decode(self, bytes: Vec<u8>) -> DecodedExecOutput {
+        let original_bytes = bytes.len();
+        if bytes.is_empty() {
+            return DecodedExecOutput::default();
+        }
+
+        let binary = is_probably_binary(&bytes);
+        let (lossy_text, replacement_count) = decode_lossy_utf8(&bytes);
+        let (display_text, truncated) = if binary {
+            let truncated = bytes.len() > self.limits.max_bytes;
+            (
+                format!(
+                    "[binary output omitted: {original_bytes} bytes, {replacement_count} invalid UTF-8 sequence(s)]"
+                ),
+                truncated,
+            )
+        } else {
+            truncate_text(&lossy_text, self.limits)
+        };
+        let integrity = if truncated {
+            OutputIntegrity::Partial
+        } else if binary || replacement_count > 0 {
+            OutputIntegrity::Lossy
+        } else {
+            OutputIntegrity::Clean
+        };
+
+        DecodedExecOutput {
+            displayed_bytes: display_text.len(),
+            display_text,
+            replacement_count,
+            truncated,
+            original_bytes,
+            integrity,
+        }
+    }
+}
+
 impl Default for OutputLimits {
     fn default() -> Self {
         Self {
@@ -656,9 +713,15 @@ pub fn combine_output(stdout: &str, stderr: &str) -> String {
 }
 
 pub fn truncate_output(output: &str, limits: OutputLimits) -> String {
-    let mut limited = limit_lines(output, limits);
+    ExecOutputDecoder::new(limits)
+        .decode(output.as_bytes().to_vec())
+        .display_text
+}
+
+fn truncate_text(output: &str, limits: OutputLimits) -> (String, bool) {
+    let (mut limited, mut truncated) = limit_lines(output, limits);
     if limited.len() <= limits.max_bytes {
-        return limited;
+        return (limited, truncated);
     }
     limited = limited
         .chars()
@@ -673,16 +736,17 @@ pub fn truncate_output(output: &str, limits: OutputLimits) -> String {
         })
         .collect::<String>();
     limited.push_str("\n[output truncated]");
-    limited
+    truncated = true;
+    (limited, truncated)
 }
 
-fn limit_lines(output: &str, limits: OutputLimits) -> String {
+fn limit_lines(output: &str, limits: OutputLimits) -> (String, bool) {
     let Some(max_lines) = limits.max_lines else {
-        return output.to_string();
+        return (output.to_string(), false);
     };
     let lines = output.lines().collect::<Vec<_>>();
     if lines.len() <= max_lines {
-        return output.to_string();
+        return (output.to_string(), false);
     }
     let tail_lines = limits.tail_lines.unwrap_or(max_lines).min(max_lines);
     let head_lines = max_lines.saturating_sub(tail_lines);
@@ -696,23 +760,57 @@ fn limit_lines(output: &str, limits: OutputLimits) -> String {
         limited.push_str(line);
         limited.push('\n');
     }
-    limited
+    (limited, true)
 }
 
-async fn read_pipe<T>(pipe: Option<T>) -> Result<String, std::io::Error>
+fn is_probably_binary(bytes: &[u8]) -> bool {
+    if bytes.contains(&0) {
+        return true;
+    }
+    let control_bytes = bytes
+        .iter()
+        .filter(|byte| matches!(**byte, 0x01..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f))
+        .count();
+    control_bytes.saturating_mul(10) > bytes.len()
+}
+
+fn decode_lossy_utf8(bytes: &[u8]) -> (String, usize) {
+    let mut remaining = bytes;
+    let mut replacement_count = 0usize;
+    while let Err(error) = std::str::from_utf8(remaining) {
+        replacement_count = replacement_count.saturating_add(1);
+        let invalid_start = error.valid_up_to();
+        let invalid_len = error
+            .error_len()
+            .unwrap_or_else(|| remaining.len().saturating_sub(invalid_start));
+        let next = invalid_start
+            .saturating_add(invalid_len)
+            .min(remaining.len());
+        remaining = &remaining[next..];
+        if remaining.is_empty() {
+            break;
+        }
+    }
+    (
+        String::from_utf8_lossy(bytes).into_owned(),
+        replacement_count,
+    )
+}
+
+async fn read_pipe<T>(pipe: Option<T>) -> Result<Vec<u8>, std::io::Error>
 where
     T: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
-    let mut output = String::new();
+    let mut output = Vec::new();
     if let Some(mut pipe) = pipe {
-        pipe.read_to_string(&mut output).await?;
+        pipe.read_to_end(&mut output).await?;
     }
     Ok(output)
 }
 
 async fn join_pipe(
-    task: tokio::task::JoinHandle<Result<String, std::io::Error>>,
-) -> AgentResult<String> {
+    task: tokio::task::JoinHandle<Result<Vec<u8>, std::io::Error>>,
+) -> AgentResult<Vec<u8>> {
     task.await
         .map_err(|error| AgentError::Execution {
             message: format!("failed to join exec output task: {error}"),
@@ -800,6 +898,7 @@ mod tests {
                 stdout: "out".to_string(),
                 stderr: "err".to_string(),
                 exit_code: Some(0),
+                ..ExecOutput::default()
             },
             false,
         );
@@ -818,6 +917,7 @@ mod tests {
                 stdout: "out".to_string(),
                 stderr: "err".to_string(),
                 exit_code: Some(0),
+                ..ExecOutput::default()
             },
             Some(Duration::from_millis(12)),
             false,
@@ -876,6 +976,64 @@ mod tests {
         assert!(limited.contains("[output truncated]"));
         assert!(limited.contains("line-8"));
         assert!(!limited.contains("line-5"));
+    }
+
+    #[test]
+    fn decoder_replaces_invalid_utf8_without_failing_the_stream() {
+        let decoded =
+            ExecOutputDecoder::new(OutputLimits::default()).decode(b"valid\xfftail".to_vec());
+
+        assert!(decoded.display_text.contains("valid"));
+        assert!(decoded.display_text.contains('\u{fffd}'));
+        assert!(
+            !decoded
+                .display_text
+                .contains("stream did not contain valid UTF-8")
+        );
+        assert_eq!(decoded.replacement_count, 1);
+        assert_eq!(decoded.original_bytes, 10);
+        assert_eq!(decoded.integrity, OutputIntegrity::Lossy);
+        assert!(!decoded.truncated);
+    }
+
+    #[test]
+    fn decoder_omits_binary_bytes_from_display_text() {
+        let decoded = ExecOutputDecoder::new(OutputLimits::default())
+            .decode(vec![0x00, 0x01, 0xfe, 0xff, b'x']);
+
+        assert!(decoded.display_text.contains("binary output omitted"));
+        assert_eq!(decoded.original_bytes, 5);
+        assert_eq!(decoded.integrity, OutputIntegrity::Lossy);
+        assert!(!decoded.display_text.contains('\0'));
+    }
+
+    #[test]
+    fn decoder_records_partial_integrity_and_byte_counts_when_truncated() {
+        let decoded = ExecOutputDecoder::new(OutputLimits {
+            max_bytes: 8,
+            max_lines: None,
+            tail_lines: None,
+        })
+        .decode(b"0123456789abcdef".to_vec());
+
+        assert!(decoded.truncated);
+        assert_eq!(decoded.original_bytes, 16);
+        assert_eq!(decoded.displayed_bytes, decoded.display_text.len());
+        assert_eq!(decoded.integrity, OutputIntegrity::Partial);
+        assert!(decoded.display_text.contains("output truncated"));
+    }
+
+    #[test]
+    fn stdout_and_stderr_share_decoder_contract() {
+        let decoder = ExecOutputDecoder::new(OutputLimits::default());
+        let stdout = decoder.decode(b"stdout\xff".to_vec());
+        let stderr = decoder.decode(b"stderr\xfe".to_vec());
+
+        for decoded in [stdout, stderr] {
+            assert_eq!(decoded.replacement_count, 1);
+            assert_eq!(decoded.integrity, OutputIntegrity::Lossy);
+            assert!(!decoded.truncated);
+        }
     }
 
     #[tokio::test]

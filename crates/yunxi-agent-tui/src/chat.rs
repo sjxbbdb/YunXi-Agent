@@ -1,7 +1,7 @@
 use crate::debug::DebugBuffer;
 use crate::event_filter::should_show;
 use crate::presentation::{TuiCellId, TuiCellKind, TuiEvent};
-use crate::timeline::{ToolTimelineEntry, ToolTimelineUpdate};
+use crate::timeline::{ToolActivity, ToolTimelineUpdate};
 use crate::timeline_store::AssistantTimelineUpdate;
 
 const MAX_HISTORY_CELLS: usize = 800;
@@ -20,7 +20,7 @@ pub(crate) enum HistoryCellKind {
         content: String,
         active: bool,
     },
-    Tool(ToolTimelineEntry),
+    Tool(ToolActivity),
     Event {
         kind: String,
         message: String,
@@ -96,7 +96,10 @@ impl Transcript {
     pub(crate) fn push_tui_event(&mut self, mut event: TuiEvent) {
         let source_id = event.id.clone();
         let detail_id = event.detail.take().map(|detail| self.debug.add(detail));
-        if !should_show(&event, self.debug.enabled()) {
+        let should_render = should_show(&event, self.debug.enabled());
+        // Debug-only command updates still update their stable tool activity;
+        // only the payload cell itself remains hidden in the normal transcript.
+        if !should_render && event.tool_update.is_none() {
             return;
         }
 
@@ -150,7 +153,8 @@ impl Transcript {
             }
         }
 
-        if self.debug.enabled()
+        if should_render
+            && self.debug.enabled()
             && let Some(id) = detail_id
         {
             self.push_debug_cell_if_enabled(&source_id, id);
@@ -242,7 +246,7 @@ impl Transcript {
         }
         self.push_cell(HistoryCell {
             id,
-            kind: HistoryCellKind::Tool(ToolTimelineEntry::new(update)),
+            kind: HistoryCellKind::Tool(ToolActivity::new(update)),
             detail_id,
         });
     }

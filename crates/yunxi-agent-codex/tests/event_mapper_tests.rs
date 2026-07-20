@@ -71,6 +71,7 @@ fn maps_command_file_patch_and_mcp_events() {
         aggregated_output: "ok".to_string(),
         exit_code: Some(0),
         status: CommandStatus::Completed,
+        execution_details: None,
     }));
     assert!(events.contains(&AgentEvent::FileChanged {
         path: "src/lib.rs".to_string(),

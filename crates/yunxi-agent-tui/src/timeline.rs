@@ -3,9 +3,9 @@ use yunxi_agent_core::CommandStatus;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ToolTimelineEntry {
-    pub(crate) id: Option<String>,
+    pub(crate) id: ToolActivityId,
     pub(crate) name: String,
-    pub(crate) phase: ToolPhase,
+    pub(crate) phase: ToolActivityPhase,
     pub(crate) steps: Vec<String>,
     pub(crate) command: Option<String>,
     pub(crate) status: Option<String>,
@@ -14,15 +14,21 @@ pub(crate) struct ToolTimelineEntry {
     pub(crate) detail_id: Option<usize>,
 }
 
+/// Stable identity for one tool activity. The external tool id is retained as
+/// an opaque value so it can be mapped to a single transcript cell.
+pub(crate) type ToolActivityId = Option<String>;
+
+pub(crate) type ToolActivity = ToolTimelineEntry;
+pub(crate) type ToolActivityPhase = ToolPhase;
+
 impl ToolTimelineEntry {
     pub(crate) fn new(update: ToolTimelineUpdate) -> Self {
         let id = update.id.clone();
         let name = update.name.clone();
-        let phase = update.phase;
         let mut entry = Self {
             id,
             name,
-            phase,
+            phase: ToolPhase::Requested,
             steps: Vec::new(),
             command: None,
             status: None,
@@ -35,7 +41,12 @@ impl ToolTimelineEntry {
     }
 
     pub(crate) fn apply(&mut self, update: ToolTimelineUpdate) {
-        if self.name == "tool" || self.name == "approval" || self.name == "escalation" {
+        // A terminal activity is immutable from the user's point of view.
+        // Provider retries and late duplicate events must not reopen it.
+        if self.phase.is_terminal() {
+            return;
+        }
+        if self.name != update.name && !update.name.is_empty() {
             self.name = update.name;
         }
         self.phase = update.phase;
@@ -58,27 +69,21 @@ impl ToolTimelineEntry {
     }
 
     pub(crate) fn display_text(&self) -> String {
-        let mut lines = Vec::new();
-        let mut header = format!("{}: {}", self.name, self.steps.join(" -> "));
+        let mut header = format!("{}: {}", self.name, self.phase.label());
         if let Some(status) = &self.status {
             header.push_str(&format!(" ({status})"));
         }
-        lines.push(header);
-        if let Some(approval) = &self.approval {
-            lines.push(format!("approval: {}", truncate_chars(approval, 180)));
-        }
-        if let Some(command) = &self.command {
-            lines.push(format!("command: {}", truncate_chars(command, 180)));
+        if self.steps.len() > 1 {
+            header.push_str("; path=");
+            header.push_str(&self.steps.join(" -> "));
         }
         if let Some(output_summary) = &self.output_summary {
-            lines.push(match self.detail_id {
-                Some(id) => format!("{output_summary}; details #{id}"),
-                None => output_summary.clone(),
-            });
+            header.push_str("; ");
+            header.push_str(&truncate_chars(output_summary, 180));
         } else if let Some(id) = self.detail_id {
-            lines.push(format!("details #{id}"));
+            header.push_str(&format!("; details #{id}"));
         }
-        lines.join("\n")
+        header
     }
 
     fn push_step(&mut self, step: &str) {
@@ -91,7 +96,7 @@ impl ToolTimelineEntry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ToolTimelineUpdate {
-    pub(crate) id: Option<String>,
+    pub(crate) id: ToolActivityId,
     pub(crate) name: String,
     pub(crate) phase: ToolPhase,
     pub(crate) command: Option<String>,
@@ -133,6 +138,7 @@ impl ToolTimelineUpdate {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ToolPhase {
+    Requested,
     ApprovalRequired,
     Approved,
     Running,
@@ -140,11 +146,13 @@ pub(crate) enum ToolPhase {
     Failed,
     Declined,
     Cancelled,
+    PolicyDeclined,
 }
 
 impl ToolPhase {
     pub(crate) fn label(self) -> &'static str {
         match self {
+            ToolPhase::Requested => "requested",
             ToolPhase::ApprovalRequired => "approval required",
             ToolPhase::Approved => "approved",
             ToolPhase::Running => "running",
@@ -152,7 +160,19 @@ impl ToolPhase {
             ToolPhase::Failed => "failed",
             ToolPhase::Declined => "declined",
             ToolPhase::Cancelled => "cancelled",
+            ToolPhase::PolicyDeclined => "policy declined",
         }
+    }
+
+    pub(crate) fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Completed
+                | Self::Failed
+                | Self::Declined
+                | Self::Cancelled
+                | Self::PolicyDeclined
+        )
     }
 }
 
@@ -173,5 +193,42 @@ pub(crate) fn status_label(status: CommandStatus) -> &'static str {
         CommandStatus::Failed => "failed",
         CommandStatus::Declined => "declined",
         CommandStatus::Cancelled => "cancelled",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_activity_cell_reaches_terminal_state_and_ignores_late_events() {
+        let mut activity = ToolActivity::new(ToolTimelineUpdate::new(
+            Some("tool-1".to_string()),
+            "shell",
+            ToolPhase::Requested,
+        ));
+        activity.apply(ToolTimelineUpdate::new(
+            Some("tool-1".to_string()),
+            "shell",
+            ToolPhase::ApprovalRequired,
+        ));
+        activity.apply(ToolTimelineUpdate::new(
+            Some("tool-1".to_string()),
+            "shell",
+            ToolPhase::Running,
+        ));
+        activity.apply(ToolTimelineUpdate::new(
+            Some("tool-1".to_string()),
+            "shell",
+            ToolPhase::Completed,
+        ));
+        activity.apply(ToolTimelineUpdate::new(
+            Some("tool-1".to_string()),
+            "shell",
+            ToolPhase::Running,
+        ));
+
+        assert_eq!(activity.phase, ToolPhase::Completed);
+        assert_eq!(activity.display_text().lines().count(), 1);
     }
 }

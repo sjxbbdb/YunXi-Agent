@@ -33,6 +33,7 @@ fn command_event_serializes_with_stable_shape() {
         aggregated_output: "ok".to_string(),
         exit_code: Some(0),
         status: CommandStatus::Completed,
+        execution_details: None,
     };
 
     let json = serde_json::to_value(event).expect("json");

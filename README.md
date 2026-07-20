@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.4-hotfix.1
+# YunXi Agent v2.0.5
 
-YunXi Agent v2.0.4-hotfix.1 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.5 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.4-hotfix.1 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.5 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.4-hotfix.1 TUI text layout, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.5 TUI text layout, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -43,6 +43,11 @@ with `[offline]` and `/cost` reports that no model call was made.
   sessions on the plain line reader
 - Renders approval and `request_user_input` inside the TUI bottom pane instead
   of leaking line prompts into the alternate screen
+- Collapses each tool call into one stable activity cell, keeps approval in a
+  decline-by-default bottom pane, and exposes command diagnostics through
+  details/debug without leaking raw payloads into the normal transcript
+- Decodes command stdout/stderr from bytes with safe binary, invalid UTF-8, and
+  truncation metadata while preserving JSON/JSONL event compatibility
 - Keeps the TUI composer fixed while the transcript can scroll through history
   without losing new streamed output below
 - Scrolls the TUI transcript by pre-wrapped screen rows, so long Chinese,
@@ -286,7 +291,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v2.0.4-hotfix.1 CLI into a user-local bin directory:
+Build and install the v2.0.5 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

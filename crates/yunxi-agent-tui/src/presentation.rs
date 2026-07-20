@@ -1,3 +1,4 @@
+use crate::error_presentation::{ErrorPresentation, classify_error};
 use crate::output_summary::{OutputSummary, redact_secrets, truncate_chars};
 use crate::timeline::{ToolPhase, ToolTimelineUpdate, phase_from_command_status, status_label};
 use std::fmt;
@@ -159,26 +160,45 @@ impl TuiPresentation {
                 id,
                 command,
                 aggregated_output,
-            } => self.debug_only_with_external_id(
-                "command update",
-                format!("command={command}\n{aggregated_output}"),
-                "command-update",
-                id.as_deref(),
-            ),
+            } => {
+                let mut event = self.tool_event(
+                    id.as_deref(),
+                    "shell",
+                    ToolPhase::Running,
+                    TuiCellKind::ToolStatusSummary,
+                    Some((
+                        "command update",
+                        format!("command={command}\n{}", redact_secrets(aggregated_output)),
+                    )),
+                );
+                if let Some(summary) = quiet_output_summary(aggregated_output)
+                    && let Some(update) = event.tool_update.take()
+                {
+                    event.tool_update = Some(update.output_summary(summary.visible));
+                }
+                event.visibility = PresentationVisibility::DebugOnly;
+                event.visible_text.clear();
+                event
+            }
             AgentEvent::CommandCompleted {
                 id,
                 command,
                 aggregated_output,
                 exit_code,
                 status,
+                execution_details,
             } => {
-                let detail = format!(
+                let mut detail = format!(
                     "command={command}\nstatus={} exit_code={}\n{aggregated_output}",
                     status_label(*status),
                     exit_code
                         .map(|value| value.to_string())
                         .unwrap_or_else(|| "none".to_string())
                 );
+                if let Some(execution_details) = execution_details {
+                    detail.push_str("\nexecution_details=");
+                    detail.push_str(&format_execution_details(execution_details));
+                }
                 let mut event = self.tool_event(
                     id.as_deref(),
                     "shell",
@@ -190,6 +210,18 @@ impl TuiPresentation {
                     && let Some(update) = event.tool_update.take()
                 {
                     event.tool_update = Some(update.output_summary(summary.visible));
+                }
+                if matches!(status, yunxi_agent_core::CommandStatus::Failed) {
+                    let error = ErrorPresentation::for_category(
+                        classify_error("tool execution failed"),
+                        "command returned a non-zero status",
+                    );
+                    if let Some(update) = event.tool_update.take() {
+                        event.tool_update = Some(update.output_summary(format!(
+                            "{}; details available",
+                            error.display_summary()
+                        )));
+                    }
                 }
                 event
             }
@@ -291,6 +323,11 @@ impl TuiPresentation {
                     "approval",
                     if *approved {
                         ToolPhase::Approved
+                    } else if reason
+                        .as_deref()
+                        .is_some_and(|value| value.to_ascii_lowercase().contains("policy"))
+                    {
+                        ToolPhase::PolicyDeclined
                     } else {
                         ToolPhase::Declined
                     },
@@ -338,6 +375,11 @@ impl TuiPresentation {
                     "escalation",
                     if *approved {
                         ToolPhase::Approved
+                    } else if reason
+                        .as_deref()
+                        .is_some_and(|value| value.to_ascii_lowercase().contains("policy"))
+                    {
+                        ToolPhase::PolicyDeclined
                     } else {
                         ToolPhase::Declined
                     },
@@ -387,6 +429,9 @@ impl TuiPresentation {
                     self.debug_only("mcp session", detail, "mcp-session")
                 }
             }
+            AgentEvent::Warning { message } if is_tool_warning(message) => {
+                self.debug_only("runtime warning", message.clone(), "runtime-warning")
+            }
             AgentEvent::Warning { message } => self.visible_with_detail(
                 TuiCellKind::Notice,
                 "warning",
@@ -400,7 +445,11 @@ impl TuiPresentation {
             AgentEvent::Error { message } => self.visible_with_detail(
                 TuiCellKind::ErrorSummary,
                 "error",
-                "agent operation failed".to_string(),
+                format!(
+                    "agent operation failed [{}]; next: {}",
+                    ErrorPresentation::for_category(classify_error(message), "agent operation failed").code,
+                    ErrorPresentation::for_category(classify_error(message), "agent operation failed").next_step,
+                ),
                 "agent error",
                 message.clone(),
             ),
@@ -412,13 +461,20 @@ impl TuiPresentation {
             } => self.visible_with_detail(
                 TuiCellKind::ErrorSummary,
                 "provider",
-                format!(
-                    "provider {} failed ({classification}{})",
-                    safe_identifier(provider),
-                    status
-                        .map(|value| format!("/{value}"))
-                        .unwrap_or_default()
-                ),
+                {
+                    let error = ErrorPresentation::for_category(
+                    crate::error_presentation::ErrorCategory::Provider,
+                    format!(
+                        "{} ({classification}{})",
+                        safe_identifier(provider),
+                        status.map(|value| format!("/{value}")).unwrap_or_default()
+                    ),
+                    );
+                    format!(
+                        "provider {} failed [{}]; next: {}",
+                        safe_identifier(provider), error.code, error.next_step
+                    )
+                },
                 "provider error",
                 message.clone(),
             ),
@@ -824,6 +880,33 @@ fn quiet_output_summary(output: &str) -> Option<OutputSummary> {
         char_count,
         hidden: true,
     })
+}
+
+fn format_execution_details(details: &yunxi_agent_core::CommandExecutionDetails) -> String {
+    fn format_stream(stream: &yunxi_agent_core::DecodedExecOutput) -> String {
+        format!(
+            "original_bytes={} displayed_bytes={} replacement_count={} truncated={} integrity={:?} display={}",
+            stream.original_bytes,
+            stream.displayed_bytes,
+            stream.replacement_count,
+            stream.truncated,
+            stream.integrity,
+            redact_secrets(&stream.display_text),
+        )
+    }
+
+    format!(
+        "duration_millis={:?} timed_out={} stdout{{{}}} stderr{{{}}}",
+        details.duration_millis,
+        details.timed_out,
+        format_stream(&details.stdout),
+        format_stream(&details.stderr),
+    )
+}
+
+fn is_tool_warning(message: &str) -> bool {
+    let lowered = message.to_ascii_lowercase();
+    lowered.contains("tool") || lowered.contains("command") || lowered.contains("exit code")
 }
 
 fn display_tool_name(name: &str) -> String {

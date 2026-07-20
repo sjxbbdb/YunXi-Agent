@@ -3,6 +3,33 @@ use std::collections::BTreeMap;
 
 pub type DeepParityData = BTreeMap<String, String>;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputIntegrity {
+    #[default]
+    Clean,
+    Lossy,
+    Partial,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DecodedExecOutput {
+    pub display_text: String,
+    pub replacement_count: usize,
+    pub truncated: bool,
+    pub original_bytes: usize,
+    pub displayed_bytes: usize,
+    pub integrity: OutputIntegrity,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CommandExecutionDetails {
+    pub stdout: DecodedExecOutput,
+    pub stderr: DecodedExecOutput,
+    pub duration_millis: Option<u64>,
+    pub timed_out: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentEvent {
@@ -154,6 +181,8 @@ pub enum AgentEvent {
         aggregated_output: String,
         exit_code: Option<i32>,
         status: CommandStatus,
+        #[serde(skip)]
+        execution_details: Option<CommandExecutionDetails>,
     },
     CommandFinished {
         command: String,

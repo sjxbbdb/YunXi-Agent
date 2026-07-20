@@ -508,12 +508,14 @@ fn redact_agent_event_for_json(event: AgentEvent) -> AgentEvent {
             aggregated_output,
             exit_code,
             status,
+            ..
         } => AgentEvent::CommandCompleted {
             id,
             command: redact_text(command),
             aggregated_output: redact_text(aggregated_output),
             exit_code,
             status,
+            execution_details: None,
         },
         AgentEvent::CommandFinished { command, exit_code } => AgentEvent::CommandFinished {
             command: redact_text(command),
@@ -1163,6 +1165,7 @@ mod tests {
                     aggregated_output: format!("tool printed {secret}"),
                     exit_code: Some(0),
                     status: CommandStatus::Completed,
+                    execution_details: None,
                 },
                 AgentEvent::ThreadState {
                     state: ThreadRuntimeState {

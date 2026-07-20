@@ -3,6 +3,7 @@ mod approval_layout;
 mod bottom_pane;
 mod chat;
 mod debug;
+mod error_presentation;
 mod event_filter;
 mod frame;
 mod host;

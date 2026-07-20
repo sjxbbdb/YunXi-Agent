@@ -101,7 +101,8 @@ impl BottomPane {
     pub(crate) fn start_approval(&mut self, request: ApprovalRequestView) {
         self.mode = BottomPaneMode::Approval {
             request,
-            selected: 0,
+            // Safe default: Enter confirms the explicitly selected decline.
+            selected: 1,
         };
     }
 
@@ -211,6 +212,12 @@ impl BottomPane {
                 approved: false,
                 reason: Some("declined by YunXi TUI".to_string()),
             }),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                ApprovalAction::Decide(ApprovalDecision {
+                    approved: false,
+                    reason: Some("cancelled by user (Ctrl+C)".to_string()),
+                })
+            }
             KeyCode::Tab | KeyCode::Down | KeyCode::Right => {
                 *selected = (*selected + 1) % 2;
                 ApprovalAction::None
@@ -445,6 +452,31 @@ mod tests {
             ApprovalAction::Decide(ApprovalDecision {
                 approved: true,
                 reason: Some("approved by YunXi TUI".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn approval_defaults_to_decline_and_ctrl_c_is_explicit_cancel() {
+        let mut pane = BottomPane::default();
+        pane.start_approval(ApprovalRequestView {
+            id: None,
+            tool_name: "shell".to_string(),
+            cwd: ".".to_string(),
+            command: None,
+            reason: "needs approval".to_string(),
+            risk_label: None,
+        });
+
+        assert!(matches!(
+            pane.mode(),
+            BottomPaneMode::Approval { selected: 1, .. }
+        ));
+        assert_eq!(
+            pane.handle_approval_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL,)),
+            ApprovalAction::Decide(ApprovalDecision {
+                approved: false,
+                reason: Some("cancelled by user (Ctrl+C)".to_string()),
             })
         );
     }

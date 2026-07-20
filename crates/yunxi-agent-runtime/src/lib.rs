@@ -24,9 +24,10 @@ use yunxi_agent_context::{
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
     AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase, AgentResult,
-    AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus, CommandStatus,
-    CompanionHistoryRecord, ControlScope, ControlScopeSnapshot, ControlSnapshot, ControlSource,
-    FileChangeKind, MemoryExtractionMode, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata,
+    AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus,
+    CommandExecutionDetails, CommandStatus, CompanionHistoryRecord, ControlScope,
+    ControlScopeSnapshot, ControlSnapshot, ControlSource, DecodedExecOutput, FileChangeKind,
+    MemoryExtractionMode, OutputIntegrity, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata,
     TurnRuntimeState,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
@@ -1718,6 +1719,7 @@ impl YunXiRuntimeBackend {
                     .to_string(),
             exit_code: Some(0),
             status: CommandStatus::Completed,
+            execution_details: None,
         })
         .await?;
         sink.emit(AgentEvent::ApprovalRequested {
@@ -4560,6 +4562,7 @@ where
                 aggregated_output: response.output.clone().unwrap_or_default(),
                 exit_code: response.exit_code,
                 status: map_tool_response_status(response),
+                execution_details: command_execution_details(response),
             })
             .await
         }
@@ -4647,6 +4650,44 @@ fn map_tool_response_status(response: &ToolResponse) -> CommandStatus {
         CommandStatus::Cancelled
     } else {
         map_tool_status(response.status)
+    }
+}
+
+fn command_execution_details(
+    response: &yunxi_agent_tools::ToolResponse,
+) -> Option<CommandExecutionDetails> {
+    response.lifecycle_events.iter().rev().find_map(|event| {
+        let ExecLifecycleEvent::Completed {
+            output,
+            duration_millis,
+            timed_out,
+            ..
+        } = event
+        else {
+            return None;
+        };
+        Some(CommandExecutionDetails {
+            stdout: output
+                .stdout_decoded
+                .clone()
+                .unwrap_or_else(|| decoded_text(&output.stdout)),
+            stderr: output
+                .stderr_decoded
+                .clone()
+                .unwrap_or_else(|| decoded_text(&output.stderr)),
+            duration_millis: *duration_millis,
+            timed_out: *timed_out,
+        })
+    })
+}
+
+fn decoded_text(value: &str) -> DecodedExecOutput {
+    DecodedExecOutput {
+        display_text: value.to_string(),
+        original_bytes: value.len(),
+        displayed_bytes: value.len(),
+        integrity: OutputIntegrity::Clean,
+        ..DecodedExecOutput::default()
     }
 }
 

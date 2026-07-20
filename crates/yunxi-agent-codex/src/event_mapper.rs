@@ -111,6 +111,7 @@ fn map_item(item: Option<&Value>, phase: ItemPhase) -> AgentResult<Vec<AgentEven
                     .and_then(Value::as_i64)
                     .map(|code| code as i32),
                 status: map_command_status(item.get("status").and_then(Value::as_str)),
+                execution_details: None,
             }]),
         },
         "file_change" => {

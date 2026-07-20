@@ -1,10 +1,31 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.4-hotfix.1 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
+YunXi Agent v2.0.5 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
 streaming timeline, and v2.0.3-hotfix.1 redraw/viewport guarantees, then adds
 one international text layout model and explicit responsive clipping priorities.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
 maps them into user-facing cells.
+
+## v2.0.5 Tool Activity And Error Presentation
+
+Tool calls are represented by one stable activity cell keyed by the external
+tool id. Requested, approval required, running, and terminal phases update that
+cell in place; late events cannot reopen a terminal activity. The normal
+transcript renders one safe summary line. Commands, working directories,
+exit codes, complete output, decoder metadata, and provider diagnostics remain
+available through details/debug.
+
+Approval is rendered in the dedicated bottom pane. The initial selection is
+Decline, Y/Enter is an explicit approval, N/Esc declines, and Ctrl+C records a
+cancelled decision. Waiting for approval does not add repeated transcript
+entries.
+
+Command output is read as bytes and passed through one `ExecOutputDecoder` for
+stdout and stderr. Invalid UTF-8 is lossily displayed with replacement counts,
+binary output is reduced to a safe summary, and long output records original
+bytes, displayed bytes, truncation, and `Clean`/`Lossy`/`Partial` integrity in
+details. Error summaries use stable provider/tool/approval/cancel/terminal/
+unknown codes with a user-actionable next step.
 
 ## Boundary
 

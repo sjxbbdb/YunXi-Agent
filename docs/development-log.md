@@ -1808,3 +1808,26 @@ non-force 推送。最终 commit、tag object、远程 refs 与所有旧 tag 不
 提交、推送与 Git tag 状态：清理完成后进入发布提交阶段；尚未创建 annotated `v2.0.7` 或执行 GitHub 推送，`v2.0.6` 和全部历史 tag 保持不变。
 
 署名：开发报告撰写者
+
+## 2026-07-21 07:51:53 +08:00
+
+工作目标：完成 YunXi Agent v2.0.7 发布收尾，创建 annotated tag，non-force 更新 GitHub master，并记录全部远程核验结果。
+
+执行流程：
+1. 读取 `C:\Users\24763\Desktop\GitHub apikey.txt` 中的 API key，仅在当前 PowerShell 进程的 HTTP Authorization header 中使用，不打印、不持久化。
+2. 发布前读取 GitHub `sjxbbdb/YunXi-Agent` 的 `master` 和全部 tag refs；基线为 `master=2b25d4a0bef4f05e0c7d37b6818eec34d8cbcb5b`，历史 tag 数为 45，且不存在 `v2.0.7`。
+3. 创建并核验发布 commit `a3b2c043a37af5e287ba16356a2300f5db62737e`，tree 为 `c7973ca05d7568fc1139f39152244a7e9f5df6aa`，parent 为 `2b25d4a0bef4f05e0c7d37b6818eec34d8cbcb5b`。
+4. 创建 annotated tag object `8ff0350189a8d91019ba95e84c0e677ef17ef257`，tagger 为 `开发者 <developer@yunxi-agent.local>`，目标为上述 commit；使用 `git mktag` 在本地复现并确认对象一致。
+5. 以 `force=false` 更新远程 `refs/heads/master`，创建 `refs/tags/v2.0.7`；发布后读取 46 个 tag，逐项比对原 45 个历史 tag，变化数为 0。
+6. 将本地 `master`、`origin/master` 和 `v2.0.7` 对齐到远程已核验对象；工作树保持无功能代码变更。
+
+修改内容与路径：
+- v2.0.7 功能实现、测试、证据和版本变更均已包含在发布提交 `a3b2c043...`，涉及 `D:\YunXi Agent\crates\yunxi-agent-tui\src\input_map.rs`、TUI/CLI 接入、`scripts\conpty\v207`、证据目录及相关文档。
+- 本次收尾更新 `D:\YunXi Agent\docs\reports\2026-07-20-213832-yunxi-agent-v2-0-7-interaction-focus-details-shortcut-consistency-development-report.md` 与 `D:\YunXi Agent\docs\development-log.md`。
+- 待本条 docs-only 收尾提交完成后，同步到 `C:\Users\24763\Desktop\YunXi Agent开发报告\` 对应报告和 `C:\Users\24763\Desktop\YunXi Agent开发日志.md`，并执行 SHA-256 一致性核验。
+
+验证与清理结果：v2.0.7 既有验证全部通过（workspace、TUI 131/131、Evaluation 31/31、ConPTY v207/v206 各 8/8、`git diff --check`）；`target`、v207 `node_modules`、v207 `.work`、`.tmp\v207-gates`、根目录 `.yunxi` 和 CLI `.yunxi` 均已删除并核验不存在；collector、lockfile、正式证据、manifest 和历史 tag 均保留。
+
+提交与 tag 状态：功能发布提交为 `a3b2c043...`，annotated `v2.0.7` tag object 为 `8ff0350189a8d91019ba95e84c0e677ef17ef257`；远程 `master` 已更新，远程 tag 数为 46，历史 tag 未移动、未删除、未覆盖。docs-only 收尾提交仅更新 `master`，不移动 `v2.0.7`。
+
+署名：开发报告撰写者

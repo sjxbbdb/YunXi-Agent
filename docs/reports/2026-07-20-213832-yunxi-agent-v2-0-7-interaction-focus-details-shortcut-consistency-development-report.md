@@ -251,7 +251,7 @@ git status --short
 
 - `cargo fmt --all -- --check`：通过。
 - `cargo check --workspace`：通过。
-- `cargo test --workspace`：通过；TUI 130/130。
+- `cargo test --workspace`：通过；TUI 131/131。
 - release 双 binary：均输出 `yunxi 2.0.7`。
 - Companion Evaluation Harness：31/31，`golden_passed=true`。
 - 真实 DeepSeek/Windows ConPTY v207：8/8；v207 与历史 v206 verifier 均返回
@@ -261,7 +261,45 @@ git status --short
   `target`、v207 `node_modules`、v207 `.work`、`.tmp/v207-gates`、根目录
   `.yunxi` 和 CLI `.yunxi` 均不存在；collector、lockfile、八份证据和
   manifest 全部保留。
-- 当前仍是已验证候选；尚未创建发布提交、annotated `v2.0.7` tag 或执行
-  GitHub 推送。全部历史 tag 保持不移动、不删除、不覆盖。
+- 已创建并核验发布提交 `a3b2c043a37af5e287ba16356a2300f5db62737e`，tree 为
+  `c7973ca05d7568fc1139f39152244a7e9f5df6aa`，parent 为
+  `2b25d4a0bef4f05e0c7d37b6818eec34d8cbcb5b`。
+- 已创建 annotated `v2.0.7` tag object
+  `8ff0350189a8d91019ba95e84c0e677ef17ef257`，其 peeled commit 为上述发布提交。
+- 以上发布对象已通过 GitHub Git Data REST API 发布；远程 `master` 已 non-force
+  更新到 `a3b2c043...`，远程 tag 总数由 45 增至 46，原有 45 个 tag 逐项核验为零变化。
+- GitHub API key 仅从 `C:\Users\24763\Desktop\GitHub apikey.txt` 临时读取，未打印、未写入仓库、Git 配置、报告或日志。
+- 当前已完成 v2.0.7 发布；全部历史 tag 保持不移动、不删除、不覆盖。
+
+署名：开发报告撰写者
+
+## 十三、发布完成与远程核验
+
+时间戳：2026-07-21 07:51:53 +08:00
+
+工作目标：完成 v2.0.7 annotated tag、远程 master 发布、历史 tag 不变性核验，并把最终状态写入报告与开发日志。
+
+执行内容与路径：
+
+1. 在 `D:\YunXi Agent` 使用 `git mktag` 复现 GitHub tag object，确认本地对象与
+   `8ff0350189a8d91019ba95e84c0e677ef17ef257` 完全一致。
+2. 通过 GitHub Git Data REST API 更新 `refs/heads/master`，目标为
+   `a3b2c043a37af5e287ba16356a2300f5db62737e`，使用 `force=false`。
+3. 通过 GitHub Git Data REST API 创建 `refs/tags/v2.0.7`，目标为
+   `8ff0350189a8d91019ba95e84c0e677ef17ef257`。
+4. 发布前读取远程 45 个历史 tag，发布后读取 46 个 tag 并逐项比对，历史 tag 变化数为 0。
+5. 对齐本地 `master`、`origin/master` 和 `v2.0.7`，当前三者分别指向已核验的远程对象。
+
+修改文件：
+
+- `D:\YunXi Agent\docs\reports\2026-07-20-213832-yunxi-agent-v2-0-7-interaction-focus-details-shortcut-consistency-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面同步副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-20-213832-yunxi-agent-v2-0-7-interaction-focus-details-shortcut-consistency-development-report.md`
+- 桌面同步日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：发布提交、tree、parent、tag object、peeled commit 均已核对；远程 `master`
+与本地 `master`/`origin/master` 一致；远程 tag 数为 46；历史 45 个 tag 未移动、未删除、未覆盖；清理目标仍不存在，正式证据与 collector 均保留。
+
+发布状态：v2.0.7 已发布。后续 docs-only 收尾提交只更新 `master`，不移动 `v2.0.7`。
 
 署名：开发报告撰写者

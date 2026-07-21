@@ -2207,3 +2207,25 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 提交、推送与 Git tag 状态：本次安装不修改功能源码，不移动、删除或覆盖 `v2.0.9` 及任何历史 tag。本条安装日志作为 docs-only 收尾提交非强制推送到 `master`。
 
 署名：开发报告撰写者
+
+## 2026-07-21 22:32:27 +08:00
+
+工作目标：根据用户对安装后构建产物清理的明确授权，精确删除 `D:\YunXi Agent\target`，不触碰任何用户目录、安装目录、正式证据或 Git tag。
+
+执行流程：
+
+1. 将唯一删除目标固定为绝对路径 `D:\YunXi Agent\target`，使用 `System.IO.Path.GetFullPath` 规范化路径。
+2. 验证目标严格位于 `D:\YunXi Agent\` 仓库内部，且不位于 `C:\Users\` 或其他用户目录。
+3. 验证目标本身不是重解析点，并递归检查全部子项，确认重解析点数量为 0。
+4. 在 `$ErrorActionPreference = 'Stop'` 下使用 `Remove-Item -LiteralPath 'D:\YunXi Agent\target' -Recurse -Force -ErrorAction Stop` 执行精确删除，不使用通配符。
+5. 删除完成后立即使用 `Test-Path -LiteralPath` 核验，确认目标不存在。
+
+清理路径与结果：
+
+- `D:\YunXi Agent\target`：已删除，`ExistsAfter=false`。
+- 重解析点：0。
+- 用户目录、C/D 两处 v2.0.9 安装目录、`.yunxi` 本地状态、正式证据和历史 tag：均未删除或修改。
+
+提交、推送与 Git tag 状态：本条清理日志作为 docs-only 提交非强制更新 `master`；annotated `v2.0.9` 和全部历史 tag 保持不变。
+
+署名：开发报告撰写者

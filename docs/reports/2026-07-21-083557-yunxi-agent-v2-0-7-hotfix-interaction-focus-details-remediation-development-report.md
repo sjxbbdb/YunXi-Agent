@@ -266,6 +266,8 @@
   `v2.0.7` tag object 仍为 `8ff0350189a8d91019ba95e84c0e677ef17ef257`，
   peel commit 仍为 `a3b2c043a37af5e287ba16356a2300f5db62737e`。
 - 本地 `master`、`origin/master`、`v2.0.7-hotfix` 已与远程对象对齐，工作树干净。
+- 发布后 docs-only 收尾提交：`0d5a8182961dd7bcef4ed6b67ee9835b3d0ecca1`，仅更新本报告
+  与开发日志，不移动 `v2.0.7-hotfix`。
 
 GitHub API key 仅从 `C:\Users\24763\Desktop\GitHub apikey.txt` 临时读取并用于请求头，
 未写入仓库、日志或提交内容。

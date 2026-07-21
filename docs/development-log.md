@@ -1965,6 +1965,7 @@ CLI `.yunxi`。正式证据、collector、lockfile、manifest 和旧版本 tag �
 GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 
 提交和推送状态：功能发布提交已推送到 `master`，`v2.0.7-hotfix` 已推送；`v2.0.7`
-及全部历史 tag 保持不变。收尾变更仅更新本日志和发布报告，不移动 hotfix tag。
+及全部历史 tag 保持不变。docs-only 收尾提交为
+`0d5a8182961dd7bcef4ed6b67ee9835b3d0ecca1`，仅更新本日志和发布报告，不移动 hotfix tag。
 
 署名：开发报告撰写者

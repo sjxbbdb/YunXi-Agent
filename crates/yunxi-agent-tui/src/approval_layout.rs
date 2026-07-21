@@ -4,7 +4,6 @@ use crate::text_layout::{TextLayout, WrapPolicy};
 const HEADER_LINES: usize = 1;
 const REASON_LINES: usize = 1;
 const RISK_LINES: usize = 1;
-const COMMAND_LINES: usize = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ApprovalLayout {
@@ -81,13 +80,20 @@ pub(crate) fn approval_layout_for_width(
         WrapPolicy::NaturalText,
     );
     if let Some(command) = &request.command {
+        let command_lines = if width < 80 {
+            1
+        } else if width < 120 {
+            2
+        } else {
+            3
+        };
         push_labeled(
             &mut lines,
             ApprovalLineKind::Command,
             "command  ",
             command,
             inner_width,
-            COMMAND_LINES,
+            command_lines,
             command_policy(command),
         );
     }
@@ -99,7 +105,7 @@ pub(crate) fn approval_layout_for_width(
         shortcut: "Enter/Y",
     });
     lines.push(ApprovalLayoutLine::Action {
-        label: "Decline",
+        label: "Decline (safe default)",
         selected: selected == 1,
         shortcut: "N/Esc",
     });
@@ -210,11 +216,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(labels, vec!["Approve", "Decline"]);
+        assert_eq!(labels, vec!["Approve", "Decline (safe default)"]);
         assert!(layout.lines.contains(&ApprovalLayoutLine::Hint(
             "Tab select | Enter confirm | Esc decline | Ctrl+C cancel"
         )));
-        assert!(layout.desired_height() <= 12);
+        assert!(layout.desired_height() <= 10);
     }
 
     #[test]
@@ -246,6 +252,7 @@ mod tests {
         assert!(rendered.contains("C:\\"));
         assert!(rendered.contains("Approve"));
         assert!(rendered.contains("Decline"));
+        assert!(rendered.contains("safe default"));
         assert!(rendered.contains("Tab select"));
         assert!(rendered.contains("Esc decline"));
     }

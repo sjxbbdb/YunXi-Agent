@@ -2,18 +2,25 @@ use crate::app::YunxiTuiApp;
 use crate::approval_layout::{ApprovalLayoutLine, ApprovalLineKind, approval_layout_for_width};
 use crate::bottom_pane::BottomPaneMode;
 use crate::edit_buffer::EditBuffer;
+use crate::input_map::FocusTarget;
 use crate::layout::compute_layout;
+use crate::styles::{TuiSemanticStyle, TuiStyleSet};
 use crate::text_layout::{TextLayout, WrapPolicy};
+#[cfg(test)]
 use crate::transcript_layout::build_wrapped_transcript;
+use crate::transcript_layout::build_wrapped_transcript_with_styles;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
 };
 
 pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
+    render_tui_frame_with_styles(frame, app, TuiStyleSet::detect());
+}
+
+fn render_tui_frame_with_styles(frame: &mut Frame<'_>, app: &YunxiTuiApp, styles: TuiStyleSet) {
     let area = frame.area();
     let layout = compute_layout(
         area,
@@ -22,14 +29,14 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     );
 
     if layout.header.width > 0 && layout.header.height > 0 {
-        render_header(frame, app, layout.header);
+        render_header(frame, app, layout.header, styles);
     }
     if layout.transcript.width == 0 || layout.transcript.height == 0 {
         // The bottom pane gets priority on extremely small terminals.
     } else if app.details().is_some() {
-        render_details(frame, app, layout.transcript);
+        render_details(frame, app, layout.transcript, styles);
     } else if app.control_snapshot().is_some() {
-        render_controls(frame, app, layout.transcript);
+        render_controls(frame, app, layout.transcript, styles);
     } else {
         render_transcript(
             frame,
@@ -37,61 +44,67 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
             layout.transcript,
             layout.transcript_inner,
             layout.transcript_scrollbar,
+            styles,
         );
     }
     if layout.bottom_pane.width > 0 && layout.bottom_pane.height > 0 {
-        render_bottom_pane(frame, app, layout.bottom_pane);
+        render_bottom_pane(frame, app, layout.bottom_pane, styles);
     }
 }
 
-fn render_details(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
+fn render_details(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect, styles: TuiStyleSet) {
     let Some(details) = app.details() else {
         return;
     };
     let panel = Paragraph::new(details.to_string())
         .block(
             Block::default()
-                .title("Details | Esc close | wheel/PgUp/PgDown scroll")
-                .borders(Borders::ALL),
+                .title(Span::styled(
+                    "Details | Esc close | wheel/PgUp/PgDown scroll",
+                    styles.style(TuiSemanticStyle::Focus),
+                ))
+                .borders(Borders::ALL)
+                .border_style(styles.style(TuiSemanticStyle::Focus)),
         )
         .scroll((app.details_scroll(), 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(panel, area);
 }
 
-fn render_controls(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
+fn render_controls(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect, styles: TuiStyleSet) {
     let Some(snapshot) = app.control_snapshot() else {
         return;
     };
     let mut lines = vec![
         Line::from(vec![
-            Span::styled("Local companion: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                "Local companion: ",
+                styles.style(TuiSemanticStyle::Subheader),
+            ),
             Span::styled(
                 if snapshot.companion_enabled {
                     "ON"
                 } else {
                     "OFF"
                 },
-                Style::default()
-                    .fg(if snapshot.companion_enabled {
-                        Color::Green
-                    } else {
-                        Color::Yellow
-                    })
-                    .add_modifier(Modifier::BOLD),
+                styles.style(if snapshot.companion_enabled {
+                    TuiSemanticStyle::Success
+                } else {
+                    TuiSemanticStyle::Notice
+                }),
             ),
             Span::raw("   "),
-            Span::styled("Cloud control: ", Style::default().fg(Color::Gray)),
+            Span::styled("Cloud control: ", styles.style(TuiSemanticStyle::Subheader)),
             Span::styled(
                 if snapshot.cloud_control_enabled {
                     "ON"
                 } else {
                     "OFF"
                 },
-                Style::default().fg(if snapshot.cloud_control_enabled {
-                    Color::Yellow
+                styles.style(if snapshot.cloud_control_enabled {
+                    TuiSemanticStyle::Warning
                 } else {
-                    Color::Green
+                    TuiSemanticStyle::Success
                 }),
             ),
         ]),
@@ -109,20 +122,18 @@ fn render_controls(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled(
                 format!("{:<13}", state.scope.as_str()),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
+                styles.style(TuiSemanticStyle::Header),
             ),
             Span::raw(format!(" {enabled:<9} source={} ", state.source.as_str())),
         ]));
         lines.push(Line::from(Span::styled(
             format!("  {}", state.summary),
-            Style::default().fg(Color::Gray),
+            styles.style(TuiSemanticStyle::Muted),
         )));
         if let Some(effect) = &state.clear_effect {
             lines.push(Line::from(Span::styled(
                 format!("  clear scope: {effect}"),
-                Style::default().fg(Color::Yellow),
+                styles.style(TuiSemanticStyle::Warning),
             )));
         }
     }
@@ -132,32 +143,38 @@ fn render_controls(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
     }
     lines.push(Line::from(Span::styled(
         "/controls refresh | /companion on|off | /controls clear memory",
-        Style::default().fg(Color::DarkGray),
+        styles.style(TuiSemanticStyle::Footer),
     )));
     let panel = Paragraph::new(lines)
         .block(
             Block::default()
-                .title("Companion UX & Controls")
-                .borders(Borders::ALL),
+                .title(Span::styled(
+                    "Companion UX & Controls",
+                    styles.style(TuiSemanticStyle::Header),
+                ))
+                .borders(Borders::ALL)
+                .border_style(styles.style(TuiSemanticStyle::Border)),
         )
         .wrap(Wrap { trim: false });
     frame.render_widget(panel, area);
 }
 
-fn render_header(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
+fn render_header(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect, styles: TuiStyleSet) {
     let header = Paragraph::new(vec![
         Line::from(Span::styled(
             app.header_for_width(area.width as usize),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            styles.style(TuiSemanticStyle::Header),
         )),
         Line::from(Span::styled(
             app.subheader_for_width(area.width as usize),
-            Style::default().fg(Color::Gray),
+            styles.style(TuiSemanticStyle::Subheader),
         )),
     ])
-    .block(Block::default().borders(Borders::BOTTOM));
+    .block(
+        Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(styles.style(TuiSemanticStyle::Border)),
+    );
     frame.render_widget(header, area);
 }
 
@@ -167,14 +184,31 @@ fn render_transcript(
     area: Rect,
     inner: Rect,
     scrollbar_area: Rect,
+    styles: TuiStyleSet,
 ) {
-    let wrapped = build_wrapped_transcript(app.transcript().cells(), inner.width as usize);
+    let wrapped = build_wrapped_transcript_with_styles(
+        app.transcript().cells(),
+        inner.width as usize,
+        styles,
+    );
     let visible = inner.height.max(1) as usize;
     let start = app.viewport().view_start(&wrapped, visible);
     let end = start.saturating_add(visible).min(wrapped.rows.len());
     let title = transcript_title(app, start, end, wrapped.rows.len(), visible);
-    let transcript = Paragraph::new(wrapped.rows[start..end].to_vec())
-        .block(Block::default().title(title).borders(Borders::ALL));
+    let border_semantic = if app.focus_target() == FocusTarget::History {
+        TuiSemanticStyle::Focus
+    } else {
+        TuiSemanticStyle::Border
+    };
+    let transcript = Paragraph::new(wrapped.rows[start..end].to_vec()).block(
+        Block::default()
+            .title(Span::styled(
+                title,
+                styles.style(TuiSemanticStyle::Subheader),
+            ))
+            .borders(Borders::ALL)
+            .border_style(styles.style(border_semantic)),
+    );
     frame.render_widget(transcript, area);
 
     if wrapped.rows.len() > visible {
@@ -188,7 +222,7 @@ fn render_transcript(
     }
 }
 
-fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
+fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect, styles: TuiStyleSet) {
     match app.bottom_pane().mode() {
         BottomPaneMode::Composer => render_composer(
             frame,
@@ -197,16 +231,25 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
             "Composer",
             app.bottom_pane().composer_prompt(),
             app.bottom_pane().composer_buffer(),
+            styles,
+            TuiSemanticStyle::Focus,
         ),
         BottomPaneMode::Approval { request, selected } => {
             let layout = approval_layout_for_width(request, *selected, area.width as usize);
             let lines = layout
                 .lines
                 .into_iter()
-                .map(render_approval_layout_line)
+                .map(|line| render_approval_layout_line(line, styles))
                 .collect::<Vec<_>>();
-            let pane = Paragraph::new(lines)
-                .block(Block::default().title("Approval").borders(Borders::ALL));
+            let pane = Paragraph::new(lines).block(
+                Block::default()
+                    .title(Span::styled(
+                        "Approval required | default: Decline",
+                        styles.style(TuiSemanticStyle::ActionRequired),
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(styles.style(TuiSemanticStyle::ActionRequired)),
+            );
             frame.render_widget(pane, area);
         }
         BottomPaneMode::UserInput { request, buffer } => {
@@ -218,26 +261,31 @@ fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
                 "Input",
                 &prompt,
                 buffer,
+                styles,
+                TuiSemanticStyle::ActionRequired,
             );
         }
     }
 }
 
-fn render_approval_layout_line(line: ApprovalLayoutLine) -> Line<'static> {
+fn render_approval_layout_line(line: ApprovalLayoutLine, styles: TuiStyleSet) -> Line<'static> {
     match line {
         ApprovalLayoutLine::Label { kind, label, text } => {
             let label_style = match kind {
                 ApprovalLineKind::Header | ApprovalLineKind::Risk => {
-                    Style::default().fg(Color::Yellow)
+                    styles.style(TuiSemanticStyle::ActionRequired)
                 }
                 ApprovalLineKind::Reason | ApprovalLineKind::Command => {
-                    Style::default().fg(Color::Gray)
+                    styles.style(TuiSemanticStyle::Subheader)
                 }
             };
             let text_style = match kind {
-                ApprovalLineKind::Header => Style::default().add_modifier(Modifier::BOLD),
-                ApprovalLineKind::Risk => Style::default().fg(Color::Yellow),
-                ApprovalLineKind::Reason | ApprovalLineKind::Command => Style::default(),
+                ApprovalLineKind::Header | ApprovalLineKind::Risk => {
+                    styles.style(TuiSemanticStyle::ActionRequired)
+                }
+                ApprovalLineKind::Reason | ApprovalLineKind::Command => {
+                    styles.style(TuiSemanticStyle::Notice)
+                }
             };
             Line::from(vec![
                 Span::styled(label, label_style),
@@ -249,9 +297,9 @@ fn render_approval_layout_line(line: ApprovalLayoutLine) -> Line<'static> {
             label,
             selected,
             shortcut,
-        } => option_line(label, selected, shortcut),
+        } => option_line(label, selected, shortcut, styles),
         ApprovalLayoutLine::Hint(value) => {
-            Line::from(Span::styled(value, Style::default().fg(Color::DarkGray)))
+            Line::from(Span::styled(value, styles.style(TuiSemanticStyle::Footer)))
         }
     }
 }
@@ -263,6 +311,8 @@ fn render_composer(
     title: &str,
     prompt: &str,
     buffer: &EditBuffer,
+    styles: TuiStyleSet,
+    title_semantic: TuiSemanticStyle,
 ) {
     let prompt_width = TextLayout::measure(prompt);
     let inner_width = area.width.saturating_sub(2).max(1) as usize;
@@ -287,12 +337,12 @@ fn render_composer(
         .map(|(index, line)| {
             if index == 0 {
                 Line::from(vec![
-                    Span::styled(prompt.to_string(), Style::default().fg(Color::Green)),
+                    Span::styled(prompt.to_string(), styles.style(TuiSemanticStyle::Focus)),
                     Span::raw(line.text),
                 ])
             } else {
                 Line::from(vec![
-                    Span::styled(" ".repeat(prompt_width), Style::default()),
+                    Span::raw(" ".repeat(prompt_width)),
                     Span::raw(line.text),
                 ])
             }
@@ -300,16 +350,24 @@ fn render_composer(
         .collect::<Vec<_>>();
     if lines.is_empty() {
         lines.push(Line::from(vec![
-            Span::styled(prompt.to_string(), Style::default().fg(Color::Green)),
+            Span::styled(prompt.to_string(), styles.style(TuiSemanticStyle::Focus)),
             Span::raw(String::new()),
         ]));
     }
     lines.push(Line::from(Span::styled(
         footer,
-        Style::default().fg(Color::DarkGray),
+        styles.style(TuiSemanticStyle::Footer),
     )));
     let pane = Paragraph::new(lines)
-        .block(Block::default().title(title).borders(Borders::ALL))
+        .block(
+            Block::default()
+                .title(Span::styled(
+                    title.to_string(),
+                    styles.style(title_semantic),
+                ))
+                .borders(Borders::ALL)
+                .border_style(styles.style(title_semantic)),
+        )
         .wrap(Wrap { trim: false });
     frame.render_widget(pane, area);
 
@@ -349,20 +407,20 @@ fn composer_cursor_position(
     }
 }
 
-fn option_line(label: &str, selected: bool, shortcut: &str) -> Line<'static> {
+fn option_line(label: &str, selected: bool, shortcut: &str, styles: TuiStyleSet) -> Line<'static> {
     let marker = if selected { ">" } else { " " };
     let style = if selected {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Yellow)
-            .add_modifier(Modifier::BOLD)
+        styles.style(TuiSemanticStyle::Selection)
     } else {
-        Style::default().fg(Color::White)
+        styles.style(TuiSemanticStyle::Notice)
     };
     Line::from(vec![
         Span::raw(format!("{marker} ")),
         Span::styled(format!("{label:<8}"), style),
-        Span::styled(format!(" {shortcut}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(" {shortcut}"),
+            styles.style(TuiSemanticStyle::Footer),
+        ),
     ])
 }
 
@@ -406,10 +464,19 @@ mod tests {
     }
 
     fn render_app(app: &YunxiTuiApp, width: u16, height: u16) -> String {
+        render_app_with_styles(app, width, height, TuiStyleSet::detect())
+    }
+
+    fn render_app_with_styles(
+        app: &YunxiTuiApp,
+        width: u16,
+        height: u16,
+        styles: TuiStyleSet,
+    ) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("terminal");
         terminal
-            .draw(|frame| render_tui_frame(frame, app))
+            .draw(|frame| render_tui_frame_with_styles(frame, app, styles))
             .expect("draw");
         format!("{:?}", terminal.backend().buffer())
     }
@@ -559,6 +626,11 @@ mod tests {
         }
         assert_eq!(snapshot, expected.trim_end_matches(['\r', '\n']));
         snapshot
+    }
+
+    #[test]
+    fn full_frame_snapshot_58x18_covers_tight_information_density() {
+        assert_full_frame_snapshot(58, 18, include_str!("snapshots/full_frame_58x18.txt"));
     }
 
     #[test]
@@ -760,6 +832,7 @@ mod tests {
         let rendered = render_app(&app, 100, 18);
 
         assert!(rendered.contains("Approval"));
+        assert!(rendered.contains("default: Decline"));
         assert!(rendered.contains("Approve"));
         assert!(rendered.contains("Decline"));
         assert!(rendered.contains("Tab select"));
@@ -783,8 +856,8 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.7"));
-        assert!(rendered.contains("debug off"));
+        assert!(rendered.contains("YunXi v2.0.8"));
+        assert!(!rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }
 
@@ -795,6 +868,7 @@ mod tests {
         assert!(rendered.contains("Approval"));
         assert!(rendered.contains("Approve"));
         assert!(rendered.contains("Decline"));
+        assert!(rendered.contains("safe default"));
         assert!(rendered.contains("Tab select"));
         assert!(rendered.contains("risk: destructive"));
     }
@@ -834,6 +908,28 @@ mod tests {
                 UnicodeWidthStr::width(row.split_once('|').unwrap().1) <= width as usize
             }));
         }
+    }
+
+    #[test]
+    fn monochrome_keeps_approval_error_warning_and_cancel_text_visible() {
+        let monochrome = TuiStyleSet::new(crate::styles::TuiColorCapability::Monochrome);
+        let approval = render_app_with_styles(&approval_app(), 58, 18, monochrome);
+        assert!(approval.contains("Approval required"));
+        assert!(approval.contains("default: Decline"));
+        assert!(approval.contains("risk: destructive"));
+
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        app.push_warning("configuration needs attention");
+        app.push_error("provider failed");
+        app.push_agent_event(&yunxi_agent_core::AgentEvent::Cancelled {
+            reason: Some("cancelled by user".to_string()),
+        });
+        let transcript = render_app_with_styles(&app, 80, 24, monochrome);
+        let lowercase = transcript.to_ascii_lowercase();
+        assert!(lowercase.contains("warning"));
+        assert!(lowercase.contains("error"));
+        assert!(lowercase.contains("cancel"));
     }
 
     #[test]

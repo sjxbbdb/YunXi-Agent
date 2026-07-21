@@ -1,0 +1,159 @@
+{
+  "schema_version": 3,
+  "version": "2.0.8",
+  "provider": "DeepSeek",
+  "model": "deepseek-chat",
+  "terminal": "Windows ConPTY",
+  "color_capability": "full",
+  "mode": "responsive-density",
+  "command": "xterm-256color",
+  "output_bytes": 27165,
+  "actions": [
+    {
+      "action": "prompt",
+      "value": "Reply exactly YUNXI_V208_CONVERSATION_OK followed by one short companion sentence. Do not call tools.",
+      "timestamp": "2026-07-21T09:29:03.356Z"
+    },
+    {
+      "action": "resize",
+      "value": "80x24",
+      "timestamp": "2026-07-21T09:29:05.129Z"
+    },
+    {
+      "action": "resize",
+      "value": "200x40",
+      "timestamp": "2026-07-21T09:29:05.632Z"
+    },
+    {
+      "action": "resize",
+      "value": "58x18",
+      "timestamp": "2026-07-21T09:29:06.140Z"
+    },
+    {
+      "action": "command",
+      "value": "/exit",
+      "timestamp": "2026-07-21T09:29:06.654Z"
+    }
+  ],
+  "checkpoints": [
+    {
+      "label": "startup",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-21T09:29:03.354Z",
+      "screen": "YunXi v2.0.8 | deepseek live\ntail | cells=0 | provider=deepseek\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│Ready.                                                                        │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 1822,
+        "colored_cells": 1751,
+        "background_cells": 0,
+        "bold_cells": 199,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "conversation-response",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-21T09:29:05.128Z",
+      "screen": "YunXi v2.0.8 | deepseek live\ntail | cells=2 | provider=deepseek\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Reply exactly YUNXI_V208_CONVERSATION_OK followed by one short         │\n│    companion sentence. Do not call tools.                                    │\n│[assistant] YUNXI_V208_CONVERSATION_OK                                        │\n│                                                                              │\n│    好的，我在。                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 1795,
+        "colored_cells": 1623,
+        "background_cells": 0,
+        "bold_cells": 206,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "conversation-idle",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-21T09:29:05.129Z",
+      "screen": "YunXi v2.0.8 | deepseek live\ntail | cells=2 | provider=deepseek\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Reply exactly YUNXI_V208_CONVERSATION_OK followed by one short         │\n│    companion sentence. Do not call tools.                                    │\n│[assistant] YUNXI_V208_CONVERSATION_OK                                        │\n│                                                                              │\n│    好的，我在。                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 1795,
+        "colored_cells": 1623,
+        "background_cells": 0,
+        "bold_cells": 206,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "conversation-80",
+      "cols": 80,
+      "rows": 24,
+      "timestamp": "2026-07-21T09:29:05.631Z",
+      "screen": "YunXi v2.0.8 | deepseek live\ntail | cells=2 | provider=deepseek\n────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────┐\n│[user] Reply exactly YUNXI_V208_CONVERSATION_OK followed by one short         │\n│    companion sentence. Do not call tools.                                    │\n│[assistant] YUNXI_V208_CONVERSATION_OK                                        │\n│                                                                              │\n│    好的，我在。                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n└──────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                        │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline               │\n└──────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 1816,
+        "colored_cells": 1466,
+        "background_cells": 0,
+        "bold_cells": 206,
+        "inverse_cells": 0
+      },
+      "header_row": 0,
+      "transcript_row": 3,
+      "bottom_row": 20,
+      "regions_ordered": true,
+      "composer_visible": true
+    },
+    {
+      "label": "conversation-200",
+      "cols": 200,
+      "rows": 40,
+      "timestamp": "2026-07-21T09:29:06.137Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat | D:/.../very-long-workspace-name-for-density-evidence\ntail | cells=2 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│[user] Reply exactly YUNXI_V208_CONVERSATION_OK followed by one short companion sentence. Do not call tools.                                                                                          │\n│[assistant] YUNXI_V208_CONVERSATION_OK                                                                                                                                                                │\n│                                                                                                                                                                                                      │\n│    好的，我在。                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n│                                                                                                                                                                                                      │\n└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                                                                                                                                │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll                                                                                                                   │\n└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 7768,
+        "colored_cells": 7012,
+        "background_cells": 0,
+        "bold_cells": 529,
+        "inverse_cells": 0
+      },
+      "header_row": 0,
+      "transcript_row": 3,
+      "bottom_row": 36,
+      "regions_ordered": true,
+      "composer_visible": true
+    },
+    {
+      "label": "conversation-58",
+      "cols": 58,
+      "rows": 18,
+      "timestamp": "2026-07-21T09:29:06.654Z",
+      "screen": "YunXi v2.0.8 | deepseek live\ntail | cells=2 | provider=deepseek\n──────────────────────────────────────────────────────────\n┌Transcript | tail───────────────────────────────────────┐\n│[user] Reply exactly YUNXI_V208_CONVERSATION_OK         │\n│    followed by one short companion sentence. Do not    │\n│    call tools.                                         │\n│[assistant] YUNXI_V208_CONVERSATION_OK                  │\n│                                                        │\n│    好的，我在。                                        │\n│                                                        │\n│                                                        │\n│                                                        │\n└────────────────────────────────────────────────────────┘\n┌Composer────────────────────────────────────────────────┐\n│yunxi>                                                  │\n│Enter submit | Ctrl+C exit | /help commands             │\n└────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 984,
+        "colored_cells": 692,
+        "background_cells": 0,
+        "bold_cells": 162,
+        "inverse_cells": 0
+      },
+      "header_row": 0,
+      "transcript_row": 3,
+      "bottom_row": 14,
+      "regions_ordered": true,
+      "composer_visible": true,
+      "diagnostics_deprioritized": true
+    },
+    {
+      "label": "exit",
+      "cols": 58,
+      "rows": 18,
+      "timestamp": "2026-07-21T09:29:08.376Z",
+      "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "style_stats": {
+        "visible_cells": 0,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 0,
+        "inverse_cells": 0
+      },
+      "matched": true,
+      "exited": true
+    }
+  ]
+}

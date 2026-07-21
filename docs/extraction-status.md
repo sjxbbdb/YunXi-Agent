@@ -1,10 +1,34 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.7-hotfix
+## Current Workspace Version: v2.0.8
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## v2.0.8 Visual Semantics And Information Density
+
+- `yunxi-agent-tui/src/styles.rs` now owns full-color, ANSI-16, and monochrome
+  semantic styles for transcript roles, activity states, headers, footers,
+  borders, focus, success, and selection.
+- `render.rs` and `transcript_layout.rs` consume semantic roles rather than
+  scattered color policy. Approval, warning, error, cancellation, and
+  action-required states retain explicit text/modifier redundancy with
+  `NO_COLOR`.
+- Header/subheader priority drops backend/source/debug diagnostics below 90
+  columns. Shared layout and Approval sizing cover 58, 80, 100, 120, and 200
+  columns without overlapping transcript and bottom-pane ownership.
+- A new 58x18 full-frame snapshot joins the existing 80x24, 100x30, 120x40,
+  and 200x50 baselines. TUI tests total 144 and preserve the v2.0.7-hotfix
+  Approval/Details focus guards, grapheme editing, drafts, and one-cell stream
+  lifecycle.
+- `scripts/conpty/v208` records two real DeepSeek/Windows ConPTY scenarios:
+  completed responsive conversation frames and a monochrome Approval/default
+  Decline/provider-error/active-stream-cancel sequence. The sanitized manifest
+  and frame hashes are independently verified; v207-hotfix and v207 historical
+  verifiers also remain green.
+- The default runtime remains YunXi-owned Rust. Node dependencies are confined
+  to evidence collection and do not enter the CLI or core dependency graph.
 
 ## v2.0.6 Composer, Input Recovery, And Dialog Consistency
 

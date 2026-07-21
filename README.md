@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.7-hotfix
+# YunXi Agent v2.0.8
 
-YunXi Agent v2.0.7-hotfix is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.8 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.7-hotfix terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.8 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.7-hotfix TUI input, focus routing, stable viewport anchors, streaming timeline, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.8 semantic styles, responsive density, focus routing, stable viewport anchors, streaming timeline, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -159,6 +159,30 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Runs 31 deterministic companion evaluation scenarios without a live provider
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
+
+## Visual Semantics And Information Density v2.0.8
+
+v2.0.8 centralizes TUI presentation policy in `TuiStyleSet`. User,
+assistant, progress, tool, action-required, notice, warning, error, muted,
+header, footer, border, focus, success, and selection semantics now resolve
+through full-color, ANSI-16, or monochrome terminal capabilities instead of
+scattered renderer colors. Important states keep explicit text labels and
+modifiers, so Approval, warnings, errors, and cancellation remain readable
+with `NO_COLOR`.
+
+The responsive density policy now includes a 58x18 full-frame baseline. Narrow
+headers retain product/provider state while backend, source, debug, cwd, and
+other diagnostics are clipped by priority. Approval reserves its safe-default
+Decline action and risk line before command detail; header, transcript, and
+bottom pane remain disjoint across 58, 80, 100, 120, and 200-column matrices.
+The v2.0.7-hotfix Approval/Details focus guards remain unchanged.
+
+Real DeepSeek sessions run through Windows ConPTY in `scripts/conpty/v208`.
+The locked collector verifies completed conversation frames at 80x24, 200x40,
+and 58x18, plus a `NO_COLOR` session containing a real Approval/default
+Decline, provider error, and active-stream cancellation. Sanitized evidence and
+its SHA-256 manifest live under
+`docs/reports/evidence/frames/v208-conpty`.
 
 ## Composer And Dialog Consistency v2.0.6
 
@@ -723,6 +747,13 @@ wheel and underlying scrollbar input without moving the transcript; Details
 maps wheel and PgUp/PgDown only to `details_scroll`; scrollbar click/drag/up is
 guarded again at the host state boundary. Composer and History retain history
 scrolling, and all four focus targets have deterministic key/paste/wheel tests.
+
+v2.0.8 adds one centralized terminal semantic-style facade and responsive
+information-density policy without changing the focus or stream state
+machines. Monochrome status labels, a 58x18 frame baseline, and two real
+DeepSeek/Windows ConPTY scenarios cover responsive layout and low-color
+Approval/error/cancellation behavior. Earlier release and hotfix tags remain
+immutable.
 
 ## Backend Capability Matrix
 

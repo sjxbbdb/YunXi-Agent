@@ -64,6 +64,48 @@
 
 署名：开发报告撰写者
 
+## 2026-07-21 16:22:10 +08:00
+
+工作目标：依据 `v2.0.7-hotfix` 焦点路由复审审核通过报告，检查报告提到的参考源码是否已在本机存在，并按固定流程撰写面向开发者的 `v2.0.8` 视觉语义、信息密度与陪伴界面一致性开发报告。
+
+执行流程：
+1. 读取审核报告 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-21-115531-YunXi-Agent-v2.0.7-hotfix-焦点路由复审审核报告.md`，确认 `v2.0.7-hotfix` 审核通过，可进入 `v2.0.8` 开发。
+2. 提取审核结论、发布提交 `3893a7c12cc51768dff583d216fe4563f613bd6b`、annotated tag 对象 `10e182ca46d095274d53b5a167e4f82e52091b1f`、当前 `HEAD` `47eb93334fc2758a69f62e7b19fa7d859e4b25e7` 及下一版本开发建议。
+3. 检查 `D:\源码`，确认审核报告点名的 `codex`、`lazygit`、`aider` 均已存在；报告提到的 Claude Code 为可观察交互原则参考，不是明确源码项目，本次未拉取新仓库。
+4. 使用 CodeGraph 复核 `crates\yunxi-agent-tui\src\app.rs`、`crates\yunxi-agent-tui\src\render.rs`、`crates\yunxi-agent-tui\src\layout.rs`、`crates\yunxi-agent-tui\src\bottom_pane.rs` 相关职责；因 CodeGraph 提示部分 TUI 文件存在索引秒级滞后，又直接读取项目内相关文件确认当前状态。
+5. 确认当前尚无 `crates\yunxi-agent-tui\src\styles.rs`，`render.rs` 仍直接使用 `ratatui::style::{Color, Modifier, Style}`，因此将 `v2.0.8` 开发重点写为抽取语义样式与治理信息密度。
+6. 按固定流程在开发报告前部写入 14 条硬性约束，并明确 `v2.0.8` 的阶段目标、版本边界、必须保持的 hotfix 能力、源码接入点、参考源码建议、实施顺序、测试验收、清理、日志和 tag 纪律。
+7. 在项目内新增开发报告，并经用户授权复制到桌面开发报告目录。
+8. 对项目内开发报告和桌面开发报告执行 SHA256 校验，确认内容一致。
+
+修改文件：
+- 新增项目开发报告：`D:\YunXi Agent\docs\reports\2026-07-21-162210-yunxi-agent-v2-0-8-visual-semantics-information-density-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-21-162210-yunxi-agent-v2-0-8-visual-semantics-information-density-development-report.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 审核报告来源：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-21-115531-YunXi-Agent-v2.0.7-hotfix-焦点路由复审审核报告.md`
+- 项目内审核报告归档：`D:\YunXi Agent\docs\reports\2026-07-21-115531-yunxi-agent-v2-0-7-hotfix-focus-routing-reaudit-report.md`
+- 已存在参考源码：`D:\源码\codex`、`D:\源码\lazygit`、`D:\源码\aider`
+
+验证结果：
+- 项目开发报告与桌面开发报告 SHA256 一致：`3B178370B6DDE33D9F62BF12D3A4AD9042844C552FDE58B30DE90A0EE83BF166`。
+- 本次审核报告未要求新增明确外部源码项目；`D:\源码\codex`、`D:\源码\lazygit`、`D:\源码\aider` 均已存在，未执行 `git clone` 或网络拉取。
+- 本次未修改 YunXi Rust 源码。
+- 未运行 `cargo fmt`、`cargo check`、`cargo test`、`cargo build` 或 ConPTY capture/verify；本次工作性质为开发报告撰写。
+- 未生成编译中间产物，因此无需清理 `target` 或 ConPTY `.work` 目录。
+- 未执行递归删除、强制移动、清空目录、系统级安装/卸载、PATH/注册表/系统配置修改；涉及 C 盘用户目录的操作仅为经授权写入桌面开发报告副本并同步桌面开发日志。
+
+提交和推送状态：未提交、未推送、未创建新的 Git tag；`v2.0.7-hotfix`、`v2.0.7` 和全部历史 tag 不移动、不删除、不覆盖。`v2.0.8` 后续实现、验证、清理和复审通过后，必须创建新的 annotated Git tag。
+
+署名：开发报告撰写者
+
 ## 2026-07-21 08:39:25 +08:00
 
 工作目标：依据 `v2.0.7` 交互焦点、详情层与快捷键一致性未通过审核报告，按用户确认将下个整改版本定为 `v2.0.7-hotfix`，撰写面向开发者的整改开发报告，并同步到项目报告目录和桌面开发报告目录。
@@ -1967,5 +2009,68 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 提交和推送状态：功能发布提交已推送到 `master`，`v2.0.7-hotfix` 已推送；`v2.0.7`
 及全部历史 tag 保持不变。docs-only 收尾提交为
 `0d5a8182961dd7bcef4ed6b67ee9835b3d0ecca1`，仅更新本日志和发布报告，不移动 hotfix tag。
+
+署名：开发报告撰写者
+
+## 2026-07-21 17:37:38 +08:00
+
+工作目标：依据 `2026-07-21-162210-yunxi-agent-v2-0-8-visual-semantics-information-density-development-report.md`，完成 v2.0.8 视觉语义集中化、信息密度治理、低色与窄屏验证，并保持 v2.0.7-hotfix 焦点、输入和流式能力不回退。
+
+执行流程：
+
+1. 使用 CodeGraph 核对 `render.rs`、`transcript_layout.rs`、`app.rs`、`layout.rs`、`bottom_pane.rs`、`approval_layout.rs` 及 Provider/CLI 接入链路。
+2. 新增 `styles.rs`，集中实现 Full、ANSI16、Monochrome 三档 `TuiStyleSet` 和稳定语义枚举；批量迁移 transcript、header、controls、Details、Approval、Composer 与 UserInput 样式。
+3. 将 90 列以下 backend/source/debug 降为可裁剪诊断，调整 58 列 Approval command 高度和安全默认文案，并增加 58/80/200 列与低高度布局矩阵。
+4. 增加 58x18 全帧 snapshot，更新 80x24、100x30、120x40、200x50 基线；补充低色文本冗余、Approval 默认拒绝和历史焦点隔离回归。
+5. 将 workspace/CLI/plain/runtime 版本统一提升到 2.0.8；全仓库首轮测试发现 `general_companion_tests.rs` 仍期望 `2.0.7-hotfix`，修正后完整重跑通过。
+6. 新增锁定的 `scripts\conpty\v208`。首次真实采集暴露采集器状态竞态：Composer 中的模型命令和用户提示标记被误判为已执行/已回复；随后改为等待 `[model] model:` 通知、`[assistant]` 终态和 `[assistant*]` 活动流，再完成最终两场景采集。
+7. 更新 README、TUI 设计、提取状态、脚本索引、开发报告和独立证据说明。
+
+主要修改文件与路径：
+
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\styles.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\transcript_layout.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\layout.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\bottom_pane.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\approval_layout.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_*.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\general_companion_tests.rs`
+- `D:\YunXi Agent\scripts\conpty\v208\*`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v208-conpty\*`
+- `D:\YunXi Agent\docs\reports\evidence\2026-07-21-v2-0-8-visual-semantics-conpty-evidence.md`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\docs\tui-presentation.md`
+- `D:\YunXi Agent\docs\extraction-status.md`
+- `D:\YunXi Agent\scripts\README.md`
+- `D:\YunXi Agent\docs\reports\2026-07-21-162210-yunxi-agent-v2-0-8-visual-semantics-information-density-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过；TUI 144/144；release binary 为 `yunxi 2.0.8`；Evaluation 31/31、`golden_passed=true`、tool approval bypass 0。真实 DeepSeek/Windows ConPTY v208 2/2、v207-hotfix 2/2、v207 8/8 verifier 均通过。v208 最终响应式/低色证据 SHA-256 分别为 `00d8620ae74cb3992c2a39918cde7c343fbdbed203e6312ba559c83037bff04b` 与 `3c0159861774cbc16d101a9dabe052c2037cc4d7ce2992f0b9ae3c99e8911063`。
+
+清理结果：用户确认后，先将全部目标规范化并验证都位于 `D:\YunXi Agent\` 内、不位于 `C:\Users`，再确认 12 个目标均存在且顶层/递归均无重解析点。删除脚本使用 `$ErrorActionPreference='Stop'`、`Remove-Item -LiteralPath -Recurse -Force -ErrorAction Stop`，无通配符；每项删除后立即 `Test-Path`。PowerShell 零错误退出，以下精确路径均已删除并核验不存在：
+
+- `D:\YunXi Agent\target`
+- `D:\YunXi Agent\scripts\conpty\v208\node_modules`
+- `D:\YunXi Agent\scripts\conpty\v208\.work`
+- `D:\YunXi Agent\scripts\conpty\v207-hotfix\node_modules`
+- `D:\YunXi Agent\scripts\conpty\v207-hotfix\.work`
+- `D:\YunXi Agent\scripts\conpty\v206\node_modules`
+- `D:\YunXi Agent\scripts\conpty\v206\.work`
+- `D:\YunXi Agent\.tmp\audit-v205-conpty-install-20260720-124813`
+- `D:\YunXi Agent\.tmp\audit-v206-conpty-20260720`
+- `D:\YunXi Agent\.tmp\audit-v207-hotfix-conpty-20260721`
+- `D:\YunXi Agent\.yunxi`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`
+
+没有删除 `C:\Users` 或其他用户目录。正式 v208/v207-hotfix/v207 证据、collector、依赖锁、报告和全部历史 tag 均保留。
+
+提交、推送与 Git tag 状态：当前为已验证候选，尚未提交、尚未创建 annotated `v2.0.8`、尚未推送。`v2.0.7-hotfix` 及全部历史 tag 保持不移动、不删除、不覆盖。
 
 署名：开发报告撰写者

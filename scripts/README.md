@@ -1,5 +1,22 @@
 # Scripts
 
+## `conpty\v208`
+
+Contains the real Windows ConPTY gate for the v2.0.8 semantic-style and
+responsive information-density release. It captures completed DeepSeek
+conversation frames at 80x24, 200x40, and 58x18, then runs a `NO_COLOR`
+Approval/default-Decline, provider-error, and active-stream-cancel scenario.
+
+```powershell
+npm ci --prefix scripts\conpty\v208
+npm run capture --prefix scripts\conpty\v208
+npm run verify --prefix scripts\conpty\v208
+```
+
+Sanitized frames and the SHA-256 manifest are stored under
+`docs/reports/evidence/frames/v208-conpty`. Node.js is used only by this
+evidence collector and is not part of the YunXi runtime path.
+
 ## `conpty\v207-hotfix`
 
 Contains the real Windows ConPTY gate for the v2.0.7-hotfix focus-routing
@@ -72,7 +89,7 @@ and scenario details.
 
 ## `install\install-yunxi.ps1`
 
-Builds and installs the current YunXi Agent v2.0.7-hotfix terminal binaries:
+Builds and installs the current YunXi Agent v2.0.8 terminal binaries:
 
 ```powershell
 .\scripts\install\install-yunxi.ps1 -AddToPath

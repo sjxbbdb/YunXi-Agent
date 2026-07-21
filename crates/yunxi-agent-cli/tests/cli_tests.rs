@@ -84,7 +84,7 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.0.7-hotfix"));
+        .stdout(predicate::str::contains("yunxi 2.0.8"));
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.0.7-hotfix"));
+        .stdout(predicate::str::contains("yunxi 2.0.8"));
 }
 
 #[test]
@@ -336,7 +336,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.7-hotfix interactive CLI",
+            "YunXi Agent v2.0.8 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -495,7 +495,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.7-hotfix interactive CLI",
+            "YunXi Agent v2.0.8 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -515,7 +515,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.7-hotfix interactive CLI",
+            "YunXi Agent v2.0.8 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

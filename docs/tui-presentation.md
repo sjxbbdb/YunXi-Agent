@@ -1,11 +1,41 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.7-hotfix keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
+YunXi Agent v2.0.8 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
 streaming timeline, and v2.0.3-hotfix.1 redraw/viewport guarantees, then adds
 one international text layout model, explicit responsive clipping priorities,
-and a recoverable grapheme-indexed input model.
+a recoverable grapheme-indexed input model, and centralized semantic styles.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
 maps them into user-facing cells.
+
+## v2.0.8 Semantic Styles And Responsive Density
+
+`styles.rs` owns `TuiStyleSet`, `TuiSemanticStyle`, and terminal capability
+detection. The renderer requests user, assistant, progress, tool,
+action-required, notice, warning, error, muted, header, subheader, footer,
+border, focus, success, and selection semantics without choosing terminal
+colors itself. Full-color and ANSI-16 palettes use terminal-native colors;
+`NO_COLOR` and low-capability terminals retain bold, reverse-video, and
+explicit text labels instead of depending on foreground/background color.
+
+Transcript cells map event/tool phases to those semantics before wrapping.
+Approval renders `Approval required | default: Decline` and `Decline (safe
+default)`; warning, error, cancellation, progress, and action-required states
+retain stable visible labels. Composer, UserInput, Details, controls, headers,
+borders, and selection use the same facade.
+
+At widths below 90, the subheader preserves view/cell/provider state and drops
+backend/source/debug diagnostics. The shared layout and Approval measurement
+tests cover 58, 80, and 200 columns plus low-height matrices. Approval at 58
+columns reserves decision, risk, and shortcut rows before command detail. The
+58x18, 80x24, 100x30, 120x40, and 200x50 full-frame snapshots prove bounded,
+non-overlapping regions with international text and an active Composer.
+
+The real Windows ConPTY gate in `scripts/conpty/v208` records completed
+DeepSeek conversation frames at 80x24, 200x40, and 58x18. Its independent
+`NO_COLOR` scenario proves zero colored/background cells at Approval while
+reverse-video selection, safe-default text, provider error code, and active
+stream cancellation remain visible. Evidence is stored under
+`docs/reports/evidence/frames/v208-conpty`.
 
 ## v2.0.6 Composer And Active Views
 

@@ -152,4 +152,29 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn responsive_density_matrix_keeps_bottom_pane_and_transcript_disjoint() {
+        for (width, height) in [(58, 7), (58, 18), (80, 24), (200, 18), (200, 50)] {
+            for requested_bottom_height in [3, 4, 10, 20] {
+                let layout =
+                    compute_layout(Rect::new(0, 0, width, height), requested_bottom_height);
+
+                assert_eq!(
+                    layout.header.height + layout.transcript.height + layout.bottom_pane.height,
+                    height,
+                    "{width}x{height} bottom={requested_bottom_height}"
+                );
+                assert_eq!(
+                    layout.transcript.y + layout.transcript.height,
+                    layout.bottom_pane.y,
+                    "{width}x{height} bottom={requested_bottom_height}"
+                );
+                assert!(layout.bottom_pane.y + layout.bottom_pane.height <= height);
+                if height >= 7 {
+                    assert!(layout.transcript.height >= 1);
+                }
+            }
+        }
+    }
 }

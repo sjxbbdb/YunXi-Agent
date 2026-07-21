@@ -1,7 +1,8 @@
 use crate::chat::{HistoryCell, HistoryCellKind};
 use crate::presentation::TuiCellId;
+use crate::styles::{TuiSemanticStyle, TuiStyle, TuiStyleSet};
 use crate::text_layout::{TextLayout, WrapPolicy};
-use ratatui::style::{Color, Modifier, Style};
+use crate::timeline::ToolPhase;
 use ratatui::text::{Line, Span};
 
 const CONTINUATION_GUTTER: &str = "    ";
@@ -39,12 +40,20 @@ impl WrappedTranscript {
 }
 
 pub(crate) fn build_wrapped_transcript(cells: &[HistoryCell], width: usize) -> WrappedTranscript {
+    build_wrapped_transcript_with_styles(cells, width, TuiStyleSet::detect())
+}
+
+pub(crate) fn build_wrapped_transcript_with_styles(
+    cells: &[HistoryCell],
+    width: usize,
+    styles: TuiStyleSet,
+) -> WrappedTranscript {
     let mut rows = Vec::new();
     let mut row_anchors = Vec::new();
     let width = width.max(1);
     for cell in cells {
         let first_row = rows.len();
-        push_cell_rows(&mut rows, cell, width);
+        push_cell_rows(&mut rows, cell, width, styles);
         row_anchors.extend(
             (0..rows.len().saturating_sub(first_row)).map(|line_offset| {
                 Some(TranscriptRowAnchor {
@@ -57,7 +66,7 @@ pub(crate) fn build_wrapped_transcript(cells: &[HistoryCell], width: usize) -> W
     if rows.is_empty() {
         rows.push(Line::from(Span::styled(
             "Ready.",
-            Style::default().fg(Color::DarkGray),
+            styles.style(TuiSemanticStyle::Muted),
         )));
         row_anchors.push(None);
     }
@@ -69,40 +78,73 @@ pub(crate) fn build_wrapped_transcript(cells: &[HistoryCell], width: usize) -> W
     }
 }
 
-fn push_cell_rows(rows: &mut Vec<Line<'static>>, cell: &HistoryCell, width: usize) {
+fn push_cell_rows(
+    rows: &mut Vec<Line<'static>>,
+    cell: &HistoryCell,
+    width: usize,
+    styles: TuiStyleSet,
+) {
     match cell.kind() {
-        HistoryCellKind::User(content) => push_labeled(rows, "user", Color::Green, content, width),
+        HistoryCellKind::User(content) => {
+            push_labeled(rows, "user", TuiSemanticStyle::User, content, width, styles)
+        }
         HistoryCellKind::Assistant { content, active } => {
             let label = if *active { "assistant*" } else { "assistant" };
-            push_labeled(rows, label, Color::LightGreen, content, width);
+            push_labeled(
+                rows,
+                label,
+                TuiSemanticStyle::Assistant,
+                content,
+                width,
+                styles,
+            );
         }
-        HistoryCellKind::Tool(entry) => {
-            push_labeled(rows, "tool", Color::Magenta, &entry.display_text(), width)
-        }
-        HistoryCellKind::Event { kind, message } => {
-            push_labeled(rows, kind, label_color(kind), message, width)
-        }
+        HistoryCellKind::Tool(entry) => push_labeled(
+            rows,
+            "tool",
+            tool_semantic(entry.phase),
+            &entry.display_text(),
+            width,
+            styles,
+        ),
+        HistoryCellKind::Event { kind, message } => push_labeled(
+            rows,
+            kind,
+            event_semantic(kind, message),
+            message,
+            width,
+            styles,
+        ),
         HistoryCellKind::Debug { id, label, message } => push_labeled(
             rows,
             "debug",
-            Color::DarkGray,
+            TuiSemanticStyle::Muted,
             &format!("#{id} {label}: {message}"),
             width,
+            styles,
         ),
-        HistoryCellKind::Error(message) => push_labeled(rows, "error", Color::Red, message, width),
+        HistoryCellKind::Error(message) => push_labeled(
+            rows,
+            "error",
+            TuiSemanticStyle::Error,
+            message,
+            width,
+            styles,
+        ),
     }
 }
 
 fn push_labeled(
     rows: &mut Vec<Line<'static>>,
     label: &str,
-    color: Color,
+    semantic: TuiSemanticStyle,
     content: &str,
     width: usize,
+    styles: TuiStyleSet,
 ) {
     let label_prefix = format!("[{label}] ");
-    let label_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
-    let gutter_style = Style::default().fg(Color::DarkGray);
+    let label_style = styles.style(semantic);
+    let gutter_style = styles.style(TuiSemanticStyle::Muted);
 
     let mut line_iter = content.lines();
     let first = line_iter.next().unwrap_or("");
@@ -111,6 +153,7 @@ fn push_labeled(
         StyledPrefix::new(label_prefix.clone(), label_style),
         first,
         width,
+        styles,
     );
 
     for rest in line_iter {
@@ -119,6 +162,7 @@ fn push_labeled(
             StyledPrefix::new(CONTINUATION_GUTTER.to_string(), gutter_style),
             rest,
             width,
+            styles,
         );
     }
 }
@@ -126,11 +170,11 @@ fn push_labeled(
 #[derive(Clone, Debug)]
 struct StyledPrefix {
     text: String,
-    style: Style,
+    style: TuiStyle,
 }
 
 impl StyledPrefix {
-    fn new(text: String, style: Style) -> Self {
+    fn new(text: String, style: TuiStyle) -> Self {
         Self { text, style }
     }
 }
@@ -140,10 +184,11 @@ fn push_wrapped_text(
     first_prefix: StyledPrefix,
     text: &str,
     width: usize,
+    styles: TuiStyleSet,
 ) {
     let gutter = StyledPrefix::new(
         CONTINUATION_GUTTER.to_string(),
-        Style::default().fg(Color::DarkGray),
+        styles.style(TuiSemanticStyle::Muted),
     );
     let first_capacity = content_capacity(width, &first_prefix.text);
     let rest_capacity = content_capacity(width, &gutter.text);
@@ -203,13 +248,31 @@ fn wrap_policy_for(text: &str) -> WrapPolicy {
     }
 }
 
-fn label_color(label: &str) -> Color {
+fn event_semantic(label: &str, message: &str) -> TuiSemanticStyle {
+    if label == "notice" && message.to_ascii_lowercase().starts_with("warning") {
+        return TuiSemanticStyle::Warning;
+    }
     match label {
-        "shell" | "tool" | "mcp" => Color::Magenta,
-        "approval" | "escalation" => Color::Yellow,
-        "context" | "session" | "usage" | "debug" | "details" => Color::Gray,
-        "cancelled" | "provider" => Color::Red,
-        _ => Color::White,
+        "shell" | "tool" | "mcp" => TuiSemanticStyle::Tool,
+        "approval" | "escalation" => TuiSemanticStyle::ActionRequired,
+        "warning" => TuiSemanticStyle::Warning,
+        "cancelled" => TuiSemanticStyle::Warning,
+        "provider" => TuiSemanticStyle::Error,
+        "progress" | "file" | "patch" => TuiSemanticStyle::Progress,
+        "context" | "session" | "usage" | "debug" | "details" => TuiSemanticStyle::Muted,
+        _ => TuiSemanticStyle::Notice,
+    }
+}
+
+fn tool_semantic(phase: ToolPhase) -> TuiSemanticStyle {
+    match phase {
+        ToolPhase::ApprovalRequired => TuiSemanticStyle::ActionRequired,
+        ToolPhase::Failed => TuiSemanticStyle::Error,
+        ToolPhase::Declined | ToolPhase::Cancelled | ToolPhase::PolicyDeclined => {
+            TuiSemanticStyle::Warning
+        }
+        ToolPhase::Completed => TuiSemanticStyle::Success,
+        ToolPhase::Requested | ToolPhase::Approved | ToolPhase::Running => TuiSemanticStyle::Tool,
     }
 }
 
@@ -341,6 +404,41 @@ mod tests {
             let body = wrapped.rows.iter().map(row_text).collect::<String>();
             assert_eq!(body.matches(emoji).count(), 2, "width={width}");
             assert_eq!(body.matches(combining).count(), 2, "width={width}");
+        }
+    }
+
+    #[test]
+    fn important_states_keep_text_labels_in_monochrome() {
+        let cells = vec![
+            cell(HistoryCellKind::Event {
+                kind: "warning".to_string(),
+                message: "check configuration".to_string(),
+            }),
+            cell(HistoryCellKind::Event {
+                kind: "approval".to_string(),
+                message: "action required".to_string(),
+            }),
+            cell(HistoryCellKind::Event {
+                kind: "cancelled".to_string(),
+                message: "turn stopped".to_string(),
+            }),
+            cell(HistoryCellKind::Error("provider failed".to_string())),
+        ];
+
+        let wrapped = build_wrapped_transcript_with_styles(
+            &cells,
+            80,
+            TuiStyleSet::new(crate::styles::TuiColorCapability::Monochrome),
+        );
+        let rendered = wrapped
+            .rows
+            .iter()
+            .map(row_text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for marker in ["[warning]", "[approval]", "[cancelled]", "[error]"] {
+            assert!(rendered.contains(marker));
         }
     }
 }

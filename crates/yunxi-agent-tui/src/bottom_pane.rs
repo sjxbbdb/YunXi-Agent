@@ -540,6 +540,27 @@ mod tests {
     }
 
     #[test]
+    fn narrow_approval_prioritizes_decision_over_command_height() {
+        let mut pane = BottomPane::default();
+        pane.start_approval(ApprovalRequestView {
+            id: None,
+            tool_name: "shell".to_string(),
+            cwd: "C:\\Users\\24763\\YunXi Agent\\very\\long\\workspace".to_string(),
+            command: Some(
+                "Remove-Item -Recurse -Force C:\\Users\\24763\\YunXi Agent\\generated".to_string(),
+            ),
+            reason: "destructive command requires explicit approval".to_string(),
+            risk_label: Some("risk: destructive".to_string()),
+        });
+
+        assert!(matches!(
+            pane.mode(),
+            BottomPaneMode::Approval { selected: 1, .. }
+        ));
+        assert!(pane.desired_height_for_width(58) <= 10);
+    }
+
+    #[test]
     fn composer_height_accounts_for_long_cjk_display_width() {
         let mut pane = BottomPane::default();
         pane.paste("这是一段很长的中文输入用于验证窄终端自动换行高度不会覆盖底部提示");

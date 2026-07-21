@@ -1,0 +1,281 @@
+{
+  "schema_version": 3,
+  "version": "2.0.8",
+  "provider": "DeepSeek",
+  "model": "deepseek-chat",
+  "terminal": "Windows ConPTY",
+  "color_capability": "monochrome",
+  "mode": "semantic-low-color",
+  "command": "xterm-256color",
+  "output_bytes": 28503,
+  "actions": [
+    {
+      "action": "prompt",
+      "value": "Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_V208_TOOL_OK\". Return the actual result.",
+      "timestamp": "2026-07-21T09:29:08.772Z"
+    },
+    {
+      "action": "resize",
+      "value": "58x18",
+      "timestamp": "2026-07-21T09:29:10.337Z"
+    },
+    {
+      "action": "resize",
+      "value": "100x30",
+      "timestamp": "2026-07-21T09:29:10.853Z"
+    },
+    {
+      "action": "key",
+      "value": "N decline",
+      "timestamp": "2026-07-21T09:29:10.853Z"
+    },
+    {
+      "action": "key",
+      "value": "Ctrl+C settle declined turn",
+      "timestamp": "2026-07-21T09:29:11.105Z"
+    },
+    {
+      "action": "command",
+      "value": "/model yunxi-v208-invalid-model",
+      "timestamp": "2026-07-21T09:29:11.357Z"
+    },
+    {
+      "action": "prompt",
+      "value": "Reply with YUNXI_V208_ERROR_PROBE.",
+      "timestamp": "2026-07-21T09:29:11.825Z"
+    },
+    {
+      "action": "command",
+      "value": "/model deepseek-chat",
+      "timestamp": "2026-07-21T09:29:12.857Z"
+    },
+    {
+      "action": "prompt",
+      "value": "Do not call tools. Start your response exactly with YUNXI_V208_CANCEL_PROBE, then write a long plain-text companion letter of at least 2000 words from your own language until cancelled.",
+      "timestamp": "2026-07-21T09:29:13.310Z"
+    },
+    {
+      "action": "key",
+      "value": "Ctrl+C cancel",
+      "timestamp": "2026-07-21T09:29:14.819Z"
+    },
+    {
+      "action": "command",
+      "value": "/exit",
+      "timestamp": "2026-07-21T09:29:15.075Z"
+    }
+  ],
+  "checkpoints": [
+    {
+      "label": "startup",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:08.770Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=0 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│Ready.                                                                                            │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2919,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 267,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "approval-overlay",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:10.335Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=2 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: running; path=running -> approval required -> running; output captured: 1 line(s),  │\n│    1 char(s)                                                                                     │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Approval required | default: Decline──────────────────────────────────────────────────────────────┐\n│approval shell in D:\\YunXi Agent\\scripts\\conpty\\v208\\.work\\semantic-low-color\\very-long-workspa...│\n│reason   tool execution requires approval                                                         │\n│risk     risk: low                                                                                │\n│command  powershell -NoProfile -Command \"Write-Output YUNXI_V208_TOOL_OK\"                         │\n│                                                                                                  │\n│  Approve  Enter/Y                                                                                │\n│> Decline (safe default) N/Esc                                                                    │\n│Tab select | Enter confirm | Esc decline | Ctrl+C cancel                                          │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2859,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 424,
+        "inverse_cells": 22
+      },
+      "matched": true
+    },
+    {
+      "label": "approval-required",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:10.336Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=2 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: running; path=running -> approval required -> running; output captured: 1 line(s),  │\n│    1 char(s)                                                                                     │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Approval required | default: Decline──────────────────────────────────────────────────────────────┐\n│approval shell in D:\\YunXi Agent\\scripts\\conpty\\v208\\.work\\semantic-low-color\\very-long-workspa...│\n│reason   tool execution requires approval                                                         │\n│risk     risk: low                                                                                │\n│command  powershell -NoProfile -Command \"Write-Output YUNXI_V208_TOOL_OK\"                         │\n│                                                                                                  │\n│  Approve  Enter/Y                                                                                │\n│> Decline (safe default) N/Esc                                                                    │\n│Tab select | Enter confirm | Esc decline | Ctrl+C cancel                                          │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2859,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 424,
+        "inverse_cells": 22
+      },
+      "approval_redundancy": true
+    },
+    {
+      "label": "approval-narrow",
+      "cols": 58,
+      "rows": 18,
+      "timestamp": "2026-07-21T09:29:10.853Z",
+      "screen": "YunXi v2.0.8 | deepseek live\ntail | cells=2 | provider=deepseek\n──────────────────────────────────────────────────────────\n┌Transcript 4-6 / 6 | tail───────────────────────────────┐\n│[tool] shell: running; path=running -> approval         ^\n│    required -> running; output captured: 1 line(s), 1  █\n│    char(s)                                             v\n└────────────────────────────────────────────────────────┘\n┌Approval required | default: Decline────────────────────┐\n│approval shell in D:\\YunXi Agent\\scripts\\conpty\\v208\\...│\n│reason   tool execution requires approval               │\n│risk     risk: low                                      │\n│command  powershell -NoProfile -Command \"Write-Output...│\n│                                                        │\n│  Approve  Enter/Y                                      │\n│> Decline (safe default) N/Esc                          │\n│Tab select | Enter confirm | Esc decline | Ctrl+C cancel│\n└────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 990,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 263,
+        "inverse_cells": 22
+      },
+      "approval_redundancy": true
+    },
+    {
+      "label": "approval-declined",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:11.105Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=2 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: declined; path=running -> approval required -> running -> declined; YX-APPROVAL-001 │\n│    approval was not granted: command request was declined; retryable=no; next: Review the        │\n│    request and choose an explicit safe action.                                                   │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2919,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 281,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "approval-turn-cancelled",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:11.357Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=5 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: declined; path=running -> approval required -> running -> declined; YX-APPROVAL-001 │\n│    approval was not granted: command request was declined; retryable=no; next: Review the        │\n│    request and choose an explicit safe action.                                                   │\n│[notice] warning: [cancelled] cancellation requested                                              │\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   │\n│    new request when ready.                                                                       │\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       │\n│    request when ready.                                                                           │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2919,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 306,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "invalid-model-selected",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:11.825Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=7 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: declined; path=running -> approval required -> running -> declined; YX-APPROVAL-001 │\n│    approval was not granted: command request was declined; retryable=no; next: Review the        │\n│    request and choose an explicit safe action.                                                   │\n│[notice] warning: [cancelled] cancellation requested                                              │\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   │\n│    new request when ready.                                                                       │\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       │\n│    request when ready.                                                                           │\n│[user] /model yunxi-v208-invalid-model                                                            │\n│[notice] model: yunxi-v208-invalid-model                                                          │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2895,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 313,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "provider-error-visible",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:12.856Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=9 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: declined; path=running -> approval required -> running -> declined; YX-APPROVAL-001 │\n│    approval was not granted: command request was declined; retryable=no; next: Review the        │\n│    request and choose an explicit safe action.                                                   │\n│[notice] warning: [cancelled] cancellation requested                                              │\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   │\n│    new request when ready.                                                                       │\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       │\n│    request when ready.                                                                           │\n│[user] /model yunxi-v208-invalid-model                                                            │\n│[notice] model: yunxi-v208-invalid-model                                                          │\n│[user] Reply with YUNXI_V208_ERROR_PROBE.                                                         │\n│[error] YX-PROVIDER-001 provider request failed: provider request failed; retryable=yes; next:    │\n│    Check provider settings or retry the request.                                                 │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2895,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 328,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "provider-error",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:12.856Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=9 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: declined; path=running -> approval required -> running -> declined; YX-APPROVAL-001 │\n│    approval was not granted: command request was declined; retryable=no; next: Review the        │\n│    request and choose an explicit safe action.                                                   │\n│[notice] warning: [cancelled] cancellation requested                                              │\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   │\n│    new request when ready.                                                                       │\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       │\n│    request when ready.                                                                           │\n│[user] /model yunxi-v208-invalid-model                                                            │\n│[notice] model: yunxi-v208-invalid-model                                                          │\n│[user] Reply with YUNXI_V208_ERROR_PROBE.                                                         │\n│[error] YX-PROVIDER-001 provider request failed: provider request failed; retryable=yes; next:    │\n│    Check provider settings or retry the request.                                                 │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2895,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 328,
+        "inverse_cells": 0
+      },
+      "error_text_visible": true
+    },
+    {
+      "label": "valid-model-restored",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:13.310Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=11 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: declined; path=running -> approval required -> running -> declined; YX-APPROVAL-001 │\n│    approval was not granted: command request was declined; retryable=no; next: Review the        │\n│    request and choose an explicit safe action.                                                   │\n│[notice] warning: [cancelled] cancellation requested                                              │\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   │\n│    new request when ready.                                                                       │\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       │\n│    request when ready.                                                                           │\n│[user] /model yunxi-v208-invalid-model                                                            │\n│[notice] model: yunxi-v208-invalid-model                                                          │\n│[user] Reply with YUNXI_V208_ERROR_PROBE.                                                         │\n│[error] YX-PROVIDER-001 provider request failed: provider request failed; retryable=yes; next:    │\n│    Check provider settings or retry the request.                                                 │\n│[user] /model deepseek-chat                                                                       │\n│[notice] model: deepseek-chat                                                                     │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n│                                                                                                  │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2893,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 335,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "stream-started",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:14.819Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=13 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐\n│[user] Call the shell tool now and run exactly powershell -NoProfile -Command \"Write-Output YUNXI_│\n│    V208_TOOL_OK\". Return the actual result.                                                      │\n│[tool] shell: declined; path=running -> approval required -> running -> declined; YX-APPROVAL-001 │\n│    approval was not granted: command request was declined; retryable=no; next: Review the        │\n│    request and choose an explicit safe action.                                                   │\n│[notice] warning: [cancelled] cancellation requested                                              │\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   │\n│    new request when ready.                                                                       │\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       │\n│    request when ready.                                                                           │\n│[user] /model yunxi-v208-invalid-model                                                            │\n│[notice] model: yunxi-v208-invalid-model                                                          │\n│[user] Reply with YUNXI_V208_ERROR_PROBE.                                                         │\n│[error] YX-PROVIDER-001 provider request failed: provider request failed; retryable=yes; next:    │\n│    Check provider settings or retry the request.                                                 │\n│[user] /model deepseek-chat                                                                       │\n│[notice] model: deepseek-chat                                                                     │\n│[user] Do not call tools. Start your response exactly with YUNXI_V208_CANCEL_PROBE, then write a  │\n│    long plain-text companion letter of at least 2000 words from your own language until          │\n│    cancelled.                                                                                    │\n│[assistant*] I understand                                                                         │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Ctrl+C cancel | typing saves draft | Enter waits for turn | history scroll available              │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2896,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 342,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "cancel-visible",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:15.074Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=16 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript 6-26 / 26 | tail───────────────────────────────────────────────────────────────────────┐\n│[notice] warning: [cancelled] cancellation requested                                              ^\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   ║\n│    new request when ready.                                                                       ║\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       █\n│    request when ready.                                                                           █\n│[user] /model yunxi-v208-invalid-model                                                            █\n│[notice] model: yunxi-v208-invalid-model                                                          █\n│[user] Reply with YUNXI_V208_ERROR_PROBE.                                                         █\n│[error] YX-PROVIDER-001 provider request failed: provider request failed; retryable=yes; next:    █\n│    Check provider settings or retry the request.                                                 █\n│[user] /model deepseek-chat                                                                       █\n│[notice] model: deepseek-chat                                                                     █\n│[user] Do not call tools. Start your response exactly with YUNXI_V208_CANCEL_PROBE, then write a  ║\n│    long plain-text companion letter of at least 2000 words from your own language until          ║\n│    cancelled.                                                                                    ║\n│[assistant] I understand you want me to respond, but I cannot follow the instructions             ║\n│[notice] warning: [cancelled] cancellation requested                                              ║\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   ║\n│    new request when ready.                                                                       ║\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       ║\n│    request when ready.                                                                           v\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2605,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 353,
+        "inverse_cells": 0
+      },
+      "matched": true
+    },
+    {
+      "label": "turn-cancelled",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:15.074Z",
+      "screen": "YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat\ntail | cells=16 | backend=yunxi | source=forced_live | debug off\n────────────────────────────────────────────────────────────────────────────────────────────────────\n┌Transcript 6-26 / 26 | tail───────────────────────────────────────────────────────────────────────┐\n│[notice] warning: [cancelled] cancellation requested                                              ^\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   ║\n│    new request when ready.                                                                       ║\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       █\n│    request when ready.                                                                           █\n│[user] /model yunxi-v208-invalid-model                                                            █\n│[notice] model: yunxi-v208-invalid-model                                                          █\n│[user] Reply with YUNXI_V208_ERROR_PROBE.                                                         █\n│[error] YX-PROVIDER-001 provider request failed: provider request failed; retryable=yes; next:    █\n│    Check provider settings or retry the request.                                                 █\n│[user] /model deepseek-chat                                                                       █\n│[notice] model: deepseek-chat                                                                     █\n│[user] Do not call tools. Start your response exactly with YUNXI_V208_CANCEL_PROBE, then write a  ║\n│    long plain-text companion letter of at least 2000 words from your own language until          ║\n│    cancelled.                                                                                    ║\n│[assistant] I understand you want me to respond, but I cannot follow the instructions             ║\n│[notice] warning: [cancelled] cancellation requested                                              ║\n│[error] YX-CANCEL-001 operation cancelled: current turn cancelled; retryable=yes; next: Enter a   ║\n│    new request when ready.                                                                       ║\n│[error] YX-CANCEL-001 operation cancelled: turn cancelled; retryable=yes; next: Enter a new       ║\n│    request when ready.                                                                           v\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘\n┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐\n│yunxi>                                                                                            │\n│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │\n└──────────────────────────────────────────────────────────────────────────────────────────────────┘",
+      "style_stats": {
+        "visible_cells": 2605,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 353,
+        "inverse_cells": 0
+      },
+      "cancel_text_visible": true
+    },
+    {
+      "label": "exit",
+      "cols": 100,
+      "rows": 30,
+      "timestamp": "2026-07-21T09:29:16.790Z",
+      "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n",
+      "style_stats": {
+        "visible_cells": 0,
+        "colored_cells": 0,
+        "background_cells": 0,
+        "bold_cells": 0,
+        "inverse_cells": 0
+      },
+      "matched": true,
+      "exited": true
+    }
+  ]
+}

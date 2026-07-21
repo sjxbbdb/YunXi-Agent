@@ -1,0 +1,29 @@
+{
+  "schema_version": 3,
+  "generated_at": "2026-07-21T09:29:16.896Z",
+  "version": "2.0.8",
+  "provider": "DeepSeek",
+  "model": "deepseek-chat",
+  "terminal": "Windows ConPTY",
+  "collector": "scripts/conpty/v208/capture.js",
+  "scenarios": [
+    {
+      "mode": "responsive-density",
+      "file": "responsive-density.json",
+      "sha256": "00d8620ae74cb3992c2a39918cde7c343fbdbed203e6312ba559c83037bff04b",
+      "output_bytes": 27165,
+      "checkpoint_count": 7,
+      "started_at": "2026-07-21T09:29:03.354Z",
+      "finished_at": "2026-07-21T09:29:08.376Z"
+    },
+    {
+      "mode": "semantic-low-color",
+      "file": "semantic-low-color.json",
+      "sha256": "3c0159861774cbc16d101a9dabe052c2037cc4d7ce2992f0b9ae3c99e8911063",
+      "output_bytes": 28503,
+      "checkpoint_count": 14,
+      "started_at": "2026-07-21T09:29:08.770Z",
+      "finished_at": "2026-07-21T09:29:16.790Z"
+    }
+  ]
+}

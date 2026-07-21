@@ -1,0 +1,18 @@
+00|YunXi v2.0.8 | deepseek live
+01|new output below | cells=38 | provider=deepseek
+02|──────────────────────────────────────────────────────────
+03|┌Transcript 74-82 / 93 | new output below────────────────┐
+04|│    answer streams.                                     ^
+05|│[assistant*] 国際化 layout 中文かな keeps one active    ║
+06|│    cell with emoji 👩‍💻 and é.                           ║
+07|│    URL https://very-long.example.test/api/v1/items?    ║
+08|│    search=中文&sort=desc#results                       ║
+09|│    Windows C:\Users\24763\YunXi Agent\输出目录\very-   ║
+10|│    long-file-name.txt                                  █
+11|│    ```rust                                             ║
+12|│        let greeting = "你好、世界"; // 日本語と中文    v
+13|└────────────────────────────────────────────────────────┘
+14|┌Composer────────────────────────────────────────────────┐
+15|│yunxi> 入力 中文かな 👩‍💻 é                               │
+16|│End follow tail | new output below | wheel/drag history │
+17|└────────────────────────────────────────────────────────┘

@@ -64,7 +64,6 @@
 
 署名：开发报告撰写者
 
-
 ## 2026-07-21 19:35:09 +08:00
 
 工作目标：依据 `v2.0.8` 视觉语义、信息密度与陪伴界面一致性审核通过报告，检查报告提到的参考源码是否已在本机存在，并按固定流程撰写面向开发者的 `v2.0.9` 跨路径兼容、终端恢复与流式故障韧性开发报告。
@@ -2150,5 +2149,31 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 清理结果：用户确认后已永久删除 `D:\YunXi Agent\target`、v209 `node_modules`、v209 `.work`、v208 `node_modules` 和两个 v208 `.tmp` 审计目录，并逐项验证不存在。两个 `.yunxi` 本地状态目录未删除；未删除 `C:\Users` 或其他用户目录。正式证据、collector、lockfile、报告和历史 tag 全部保留。
 
 提交、推送与 Git tag 状态：功能发布提交、annotated `v2.0.9` 和 GitHub 推送待执行；发布成功后追加实际 SHA 与远程历史 tag 核验记录。
+
+署名：开发报告撰写者
+
+## 2026-07-21 21:50:04 +08:00
+
+工作目标：完成 YunXi Agent v2.0.9 发布收尾，将已经通过全部门禁的功能发布提交和新 annotated tag 推送到 GitHub，核验所有历史 tag 不变，并更新开发报告与开发日志。
+
+执行流程：
+
+1. 核验本地发布提交、tree、annotated tag object 和 tag target，确认 `master` 为 `5e199dbac036fb0374f3fde69a389e009aa5a980`，tree 为 `aeeaa67977ad8594aa872bff5a6ad344f1b68be5`，`v2.0.9` tag object 为 `1bfb8c42b3d736c43f38a3f54aba9dda35c979ee`。
+2. 使用 GitHub Git Data REST API 和 Git 原始二进制对象逐项上传、核验 39 个 blob 与 release tree；API key 仅在进程内存的 Authorization header 中使用，未打印、未写入仓库或配置文件。
+3. GitHub REST 创建 commit 时会规范化提交时间的时区表示，无法复现本地已验证 commit 的精确对象 SHA，因此改用同一 API key 内存认证的 Git smart HTTP 传输，保留本地 commit/tag 原始对象字节。
+4. 使用 `git push --atomic` 将 `refs/heads/master` 和 `refs/tags/v2.0.9` 作为同一事务推送；未使用 `force`，任何一项不满足 fast-forward 或远程基线变化都会拒绝整个事务。
+5. 发布后通过 GitHub REST API 核验远程 `master`、tag object、tag target 和全部 tag refs；远程 tag 总数由 48 增至 49，原 48 个历史 tag 对象 SHA 变化数为 0。
+6. 推送已自动将本地 `refs/remotes/origin/master` 更新到发布提交，无需再次移动远程跟踪引用；`v2.0.9` 固定指向功能发布提交，后续 docs-only 收尾提交不移动该 tag。
+
+修改与同步路径：
+
+- `D:\YunXi Agent\docs\development-log.md`
+- `D:\YunXi Agent\docs\reports\2026-07-21-193509-yunxi-agent-v2-0-9-cross-path-terminal-recovery-streaming-resilience-development-report.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-21-193509-yunxi-agent-v2-0-9-cross-path-terminal-recovery-streaming-resilience-development-report.md`
+
+验证结果：发布前 Rust workspace、CLI、Provider、TUI、release、evaluation、v209/v208/v207-hotfix ConPTY 与 `git diff --check` 门禁均已通过；发布后远程 `master=5e199dbac036fb0374f3fde69a389e009aa5a980`，`v2.0.9` tag object 为 `1bfb8c42b3d736c43f38a3f54aba9dda35c979ee`，tag target 为 `5e199dbac036fb0374f3fde69a389e009aa5a980`，tag 总数 49，历史 tag 变化数 0。
+
+提交、推送与 Git tag 状态：功能发布提交 `5e199dbac036fb0374f3fde69a389e009aa5a980` 和 annotated `v2.0.9` 已原子、非强制推送到 GitHub。本文档和开发报告将进入 tag 后 docs-only 收尾提交并仅更新 `master`；`v2.0.9` 及全部历史 tag 不移动、不删除、不覆盖。
 
 署名：开发报告撰写者

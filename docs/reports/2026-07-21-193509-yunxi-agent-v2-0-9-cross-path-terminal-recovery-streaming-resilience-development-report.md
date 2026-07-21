@@ -279,3 +279,29 @@
 功能发布提交、annotated `v2.0.9` tag 和 GitHub 推送待执行。本节随功能发布提交进入 tag；发布成功后将追加 docs-only 收尾记录，写明实际 commit/tag object/远程校验结果，不移动 `v2.0.9` 或任何历史 tag。
 
 署名：开发报告撰写者
+
+## 十二、发布收尾结果（2026-07-21 21:50:04 +08:00）
+
+### 发布对象
+
+- 功能发布 commit：`5e199dbac036fb0374f3fde69a389e009aa5a980`
+- release tree：`aeeaa67977ad8594aa872bff5a6ad344f1b68be5`
+- annotated tag：`v2.0.9`
+- tag object：`1bfb8c42b3d736c43f38a3f54aba9dda35c979ee`
+- tag target：`5e199dbac036fb0374f3fde69a389e009aa5a980`
+- tagger：`开发者 <developer@yunxi-agent.local>`
+
+### 发布过程
+
+1. 发布前确认远程 `master` 为 `fa4d5ae6a2a5ead1a55362a924a352f5867e6f47`，远程精确 `refs/tags/v2.0.9` 不存在，历史 tag 数为 48。
+2. 使用 GitHub Git Data REST API 上传并逐项核验 39 个 blob 和 release tree。API key 仅在当前进程内存中使用，未输出或持久化。
+3. GitHub REST commit endpoint 会规范化时区表示，不能复现本地已验证 commit 的原始 SHA。为保留精确 commit/tag 对象，最终使用 API key 内存认证的 Git smart HTTP 和 `git push --atomic` 同时发布 `master` 与 `v2.0.9`。
+4. 推送未使用 `force`；远程 `master` fast-forward 到功能发布 commit，并创建新的 annotated `v2.0.9`。
+5. 发布后 GitHub REST 核验通过：`master`、tag object 和 tag target 均与本地一致；tag 总数为 49，原 48 个历史 tag 对象 SHA 变化数为 0。
+6. 本报告与开发日志作为 tag 后 docs-only 收尾提交仅更新 `master`，不会移动 `v2.0.9` 或任何历史 tag。
+
+### 最终状态
+
+YunXi Agent v2.0.9 的功能开发、测试、证据、精确清理、功能发布 commit、annotated tag 和 GitHub 推送均已完成。`v2.0.9` 固定指向 `5e199dbac036fb0374f3fde69a389e009aa5a980`，可用于版本回滚。
+
+署名：开发报告撰写者

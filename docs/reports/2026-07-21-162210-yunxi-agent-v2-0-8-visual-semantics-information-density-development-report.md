@@ -193,8 +193,8 @@
 
 ## 十、实现与验证状态
 
-- 状态更新时间：2026-07-21 17:57:27 +08:00
-- 当前阶段：实现、统一验证和发布前精确清理已完成；尚未执行 Git 提交、annotated tag 创建或 GitHub 推送。
+- 状态更新时间：2026-07-21 18:23:21 +08:00
+- 当前阶段：实现、统一验证、精确清理、功能发布提交、annotated tag 和 GitHub 推送均已完成；本报告与日志将通过 tag 后 docs-only 收尾提交同步到 `master`，不移动 release tag。
 
 已完成实现：
 
@@ -221,6 +221,6 @@
 
 清理状态：用户确认后，先对 12 个精确绝对路径执行工作区边界、`C:\Users` 禁止边界、存在性、顶层及递归重解析点预检；全部通过后以 `-LiteralPath`、无通配符和 `$ErrorActionPreference='Stop'` 逐项删除，并逐项核验不存在。已删除 `target`、v208/v207-hotfix/v206 的 `node_modules` 与 `.work`、三个 `.tmp` 审计目录、根目录 `.yunxi` 和 CLI `.yunxi`。没有删除用户目录；正式证据、collector、lockfile、报告和历史 tag 均保留。
 
-发布状态：即将创建 v2.0.8 功能发布提交和新的 annotated `v2.0.8` tag，并以 non-force 方式更新 GitHub `master`。`v2.0.7-hotfix` 及全部历史 tag 不得移动、删除或覆盖；远程核验成功前不得写为已发布。
+发布状态：GitHub Git Data REST API 已创建并核验功能发布 commit `93f9838c7b966ea12e8ab4934ffb45bb7ebd0de0`，tree 为 `40d5f9239b68281c3ccfd55de3ba297d7c58b314`，parent 为 `47eb93334fc2758a69f62e7b19fa7d859e4b25e7`。新的 annotated `v2.0.8` tag object 为 `7d0a75d63d5e8c437366ce9fcac2d33bbf6d8d04`，目标为上述发布 commit，tagger 为 `开发者 <developer@yunxi-agent.local>`。远程 `master` 使用 `force=false` 更新；tag 数从 47 增至 48，原 47 个历史 tag 对象 SHA 变化数为 0。本地 `master`、`origin/master`、tag object 和 tag 目标均已对齐并核验。后续 docs-only 收尾提交仅更新本报告和开发日志，不移动 `v2.0.8`。
 
 署名：开发报告撰写者

@@ -2071,6 +2071,6 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 
 没有删除 `C:\Users` 或其他用户目录。正式 v208/v207-hotfix/v207 证据、collector、依赖锁、报告和全部历史 tag 均保留。
 
-提交、推送与 Git tag 状态：当前为已验证候选，尚未提交、尚未创建 annotated `v2.0.8`、尚未推送。`v2.0.7-hotfix` 及全部历史 tag 保持不移动、不删除、不覆盖。
+提交、推送与 Git tag 状态：使用 GitHub Git Data REST API 创建并逐 SHA 核验 36 个 staged blob、tree `40d5f9239b68281c3ccfd55de3ba297d7c58b314` 和功能发布 commit `93f9838c7b966ea12e8ab4934ffb45bb7ebd0de0`；API key 只存在于当前请求头，未输出、未写入仓库。新的 annotated `v2.0.8` tag object 为 `7d0a75d63d5e8c437366ce9fcac2d33bbf6d8d04`，目标为发布 commit，tagger 为 `开发者 <developer@yunxi-agent.local>`。远程 `master` 以 `force=false` 更新，tag 数从 47 增至 48，原 47 个历史 tag 对象 SHA 变化数为 0。本地 `master` 与 `origin/master` 均为发布 commit，本地 tag object 与目标均与 GitHub 一致。本条报告/日志状态将作为 tag 后 docs-only 收尾提交推送到 `master`，不会移动 `v2.0.8`。
 
 署名：开发报告撰写者

@@ -1927,3 +1927,44 @@ CLI `.yunxi`。正式证据、collector、lockfile、manifest 和旧版本 tag �
 不得移动、删除或覆盖。
 
 署名：开发报告撰写者
+
+## 2026-07-21 11:11:12 +08:00
+
+工作目标：完成 YunXi Agent v2.0.7-hotfix 整改的发布收尾，创建新 annotated tag，
+推送 GitHub，并证明历史 tag 未被移动、删除或覆盖。
+
+执行流程：
+
+1. 按绝对路径清理并核验 `target`、hotfix `node_modules`、hotfix `.work`、根目录
+   `.yunxi` 和 CLI `.yunxi` 均不存在；正式证据、collector、lockfile 和 manifest 保留。
+2. 将整改代码、四焦点输入矩阵、host/app 状态守卫、Approval/Details footer、
+   ConPTY 采集器、脱敏证据和报告提交到发布提交。
+3. 使用 GitHub Git Data REST API（API key 仅在内存请求头中使用）创建并核验远程
+   commit `3893a7c12cc51768dff583d216fe4563f613bd6b`。
+4. 创建 annotated tag `v2.0.7-hotfix`，tag object 为
+   `10e182ca46d095274d53b5a167e4f82e52091b1f`，目标为发布 commit。
+5. 以 `force=false` 更新远程 `master`，再读取远程 tags 端点核验总数 47；本地原有
+   46 个 tag 按名称和 peel commit SHA 逐项对比，差异为 0。
+6. 将本地 `master`、`origin/master` 和新 tag refs 对齐远程对象，删除临时发布脚本，
+   保持工作树干净。
+
+修改和操作路径：
+
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\input_map.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\host.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\approval_layout.rs`
+- `D:\YunXi Agent\scripts\conpty\v207-hotfix`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v207-hotfix-conpty`
+- `D:\YunXi Agent\docs\reports\2026-07-21-083557-yunxi-agent-v2-0-7-hotfix-interaction-focus-details-remediation-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：Rust fmt/check/test、TUI 136/136、release `yunxi 2.0.7-hotfix`、Evaluation
+31/31、hotfix ConPTY 2/2、历史 v207/v206 verifier 各 8/8、`git diff --check` 均通过；
+GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
+
+提交和推送状态：功能发布提交已推送到 `master`，`v2.0.7-hotfix` 已推送；`v2.0.7`
+及全部历史 tag 保持不变。收尾变更仅更新本日志和发布报告，不移动 hotfix tag。
+
+署名：开发报告撰写者

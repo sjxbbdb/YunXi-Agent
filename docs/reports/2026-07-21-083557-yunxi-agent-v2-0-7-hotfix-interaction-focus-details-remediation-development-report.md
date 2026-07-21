@@ -254,7 +254,20 @@
 - `D:\YunXi Agent\crates\yunxi-agent-cli\.yunxi`
 
 正式证据、lockfile、collector、manifest 和历史 v2.0.7/v2.0.6 tag 均保留。
-本报告随整改代码和验证证据进入发布提交；`v2.0.7-hotfix` annotated tag 将在提交
-核验后创建，不移动、删除或覆盖 `v2.0.7` 及任何历史 tag。
+
+截至 2026-07-21 11:11:12 +08:00，发布已完成：
+
+- 远程发布提交：`3893a7c12cc51768dff583d216fe4563f613bd6b`。
+- `v2.0.7-hotfix` annotated tag 对象：`10e182ca46d095274d53b5a167e4f82e52091b1f`，
+  peel 目标为上述发布提交。
+- GitHub `master` 已使用 `force=false` 从 `b193041b3b17d333f97d239d85a5b8f5729acdde`
+  更新到发布提交。
+- 远程 tag 总数为 47；原有 46 个 tag 按名称和 peel commit SHA 逐项核验无变化。
+  `v2.0.7` tag object 仍为 `8ff0350189a8d91019ba95e84c0e677ef17ef257`，
+  peel commit 仍为 `a3b2c043a37af5e287ba16356a2300f5db62737e`。
+- 本地 `master`、`origin/master`、`v2.0.7-hotfix` 已与远程对象对齐，工作树干净。
+
+GitHub API key 仅从 `C:\Users\24763\Desktop\GitHub apikey.txt` 临时读取并用于请求头，
+未写入仓库、日志或提交内容。
 
 署名：开发报告撰写者

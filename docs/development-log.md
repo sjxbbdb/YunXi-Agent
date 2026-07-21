@@ -2177,3 +2177,33 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 提交、推送与 Git tag 状态：功能发布提交 `5e199dbac036fb0374f3fde69a389e009aa5a980` 和 annotated `v2.0.9` 已原子、非强制推送到 GitHub。本文档和开发报告将进入 tag 后 docs-only 收尾提交并仅更新 `master`；`v2.0.9` 及全部历史 tag 不移动、不删除、不覆盖。
 
 署名：开发报告撰写者
+
+## 2026-07-21 22:23:20 +08:00
+
+工作目标：按用户明确要求，将本机 C、D 两处现有 YunXi Agent 2.0.6 安装升级到已发布的 v2.0.9，确保 PATH 不再命中旧版 binary。
+
+执行流程：
+
+1. 检查当前 `Get-Command yunxi`、User PATH 和两处安装目录，确认 C、D 两处 `yunxi.exe` 与 `yunxi-agent-cli.exe` 均为 `yunxi 2.0.6`，且没有 YunXi 进程占用目标文件。
+2. 按仓库 `AGENTS.md` 要求先查询 CodeGraph；PowerShell shim 被本机执行策略拦截后，改用同一工具的 `codegraph.cmd` 入口完成只读查询，未修改系统执行策略。
+3. 核对 `D:\YunXi Agent\scripts\install\install-yunxi.ps1` 和历史双目录安装记录，确认需要同时升级用户级 C 盘安装与当前环境可解析的 D 盘安装。
+4. 从已发布、工作树干净的 v2.0.9 源码执行 `cargo build -p yunxi-agent-cli --release --bins`，两个 release binary 均输出 `yunxi 2.0.9`。
+5. 使用项目安装脚本和 `-Configuration release -SkipBuild` 先后覆盖 `C:\Users\24763\AppData\Local\YunXi Agent\bin` 与 `D:\Apps\YunXi Agent\bin`；两次安装均报告 `path_updated=False`，未修改 PATH、注册表或 YunXi 配置。
+6. 逐个核验四个已安装 binary 的版本和 SHA-256，并刷新 Machine/User PATH 后从 `C:\Windows\System32` 执行 `yunxi --version`。
+
+修改路径：
+
+- `C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi.exe`
+- `C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi-agent-cli.exe`
+- `D:\Apps\YunXi Agent\bin\yunxi.exe`
+- `D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe`
+- `D:\YunXi Agent\docs\development-log.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：四个安装后 binary 均输出 `yunxi 2.0.9`。两处 `yunxi.exe` SHA-256 均为 `B617B6F4809C3CD8563C7BB5823BAB352D54F005675D56F35F78FB0535B4C4F5`；两处 `yunxi-agent-cli.exe` SHA-256 均为 `427C5A32718DBE468CBAAF00F51405A171295E8C2A05FA09C76FD664EDC04C8C`，与 release 构建完全一致。刷新持久 PATH 后，`yunxi` 解析到 `C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi.exe`；从 `C:\Windows\System32` 执行返回 `yunxi 2.0.9`。
+
+清理状态：本次构建重新生成了 `D:\YunXi Agent\target`。该目录位于仓库内，但尚未取得本次精确删除授权，因此未删除；未删除或改动任何用户目录、YunXi 本地状态或正式证据。
+
+提交、推送与 Git tag 状态：本次安装不修改功能源码，不移动、删除或覆盖 `v2.0.9` 及任何历史 tag。本条安装日志作为 docs-only 收尾提交非强制推送到 `master`。
+
+署名：开发报告撰写者

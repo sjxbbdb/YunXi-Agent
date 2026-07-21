@@ -122,7 +122,7 @@ impl YunxiTui {
     }
 
     pub fn read_prompt(&mut self, prompt: &str) -> Result<Option<String>> {
-        self.app.start_prompt(prompt);
+        self.app.prepare_prompt(prompt);
         self.windows_input_burst.reset();
         self.request_draw_now()?;
         loop {
@@ -304,145 +304,12 @@ impl YunxiTui {
 
     fn handle_navigation_event(&mut self, event: &Event) -> Result<bool> {
         let metrics = self.transcript_metrics()?;
-        match event {
-            Event::Mouse(mouse) => match mouse.kind {
-                MouseEventKind::ScrollUp => {
-                    if resolve_event(self.app.focus_target(), event) == TuiAction::ScrollUp
-                        && rect_contains(metrics.layout.transcript, mouse.column, mouse.row)
-                    {
-                        self.app
-                            .scroll_up(3, &metrics.wrapped, metrics.visible_height);
-                        Ok(true)
-                    } else {
-                        Ok(false)
-                    }
-                }
-                MouseEventKind::ScrollDown => {
-                    if resolve_event(self.app.focus_target(), event) == TuiAction::ScrollDown
-                        && rect_contains(metrics.layout.transcript, mouse.column, mouse.row)
-                    {
-                        self.app
-                            .scroll_down(3, &metrics.wrapped, metrics.visible_height);
-                        Ok(true)
-                    } else {
-                        Ok(false)
-                    }
-                }
-                MouseEventKind::Down(MouseButton::Left) => {
-                    self.handle_scrollbar_down(&metrics, mouse.column, mouse.row)
-                }
-                MouseEventKind::Drag(MouseButton::Left) => {
-                    self.handle_scrollbar_drag(&metrics, mouse.row)
-                }
-                MouseEventKind::Up(MouseButton::Left) => {
-                    let was_dragging = self.scroll_drag.take().is_some();
-                    Ok(was_dragging)
-                }
-                _ => Ok(false),
-            },
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                match resolve_key(self.app.focus_target(), *key) {
-                    TuiAction::FocusNext => {
-                        self.app.focus_next();
-                        Ok(true)
-                    }
-                    TuiAction::FocusPrevious => {
-                        self.app.focus_previous();
-                        Ok(true)
-                    }
-                    TuiAction::CloseDetails => {
-                        self.app.close_details();
-                        Ok(true)
-                    }
-                    TuiAction::PageUp => {
-                        if self.app.focus_target() == FocusTarget::Details {
-                            self.app.detail_scroll_up(metrics.visible_height as u16);
-                        } else {
-                            self.app.page_up(&metrics.wrapped, metrics.visible_height);
-                        }
-                        Ok(true)
-                    }
-                    TuiAction::PageDown => {
-                        if self.app.focus_target() == FocusTarget::Details {
-                            self.app.detail_scroll_down(metrics.visible_height as u16);
-                        } else {
-                            self.app.page_down(&metrics.wrapped, metrics.visible_height);
-                        }
-                        Ok(true)
-                    }
-                    _ if matches!(key.code, KeyCode::Home)
-                        && !self.app.bottom_pane().text_input_active()
-                        && self.app.focus_target() != FocusTarget::Details =>
-                    {
-                        self.app.jump_top(&metrics.wrapped, metrics.visible_height);
-                        Ok(true)
-                    }
-                    _ if matches!(key.code, KeyCode::End)
-                        && !self.app.bottom_pane().text_input_active()
-                        && self.app.focus_target() != FocusTarget::Details =>
-                    {
-                        self.app.follow_tail();
-                        Ok(true)
-                    }
-                    _ if matches!(
-                        self.app.focus_target(),
-                        FocusTarget::History | FocusTarget::Details
-                    ) =>
-                    {
-                        Ok(true)
-                    }
-                    _ => Ok(false),
-                }
-            }
-            Event::Resize(_, _) => {
-                self.scroll_drag = None;
-                self.app
-                    .reanchor_viewport(&metrics.wrapped, metrics.visible_height);
-                Ok(true)
-            }
-            _ => Ok(false),
-        }
-    }
-
-    fn handle_scrollbar_down(
-        &mut self,
-        metrics: &TranscriptMetrics,
-        x: u16,
-        y: u16,
-    ) -> Result<bool> {
-        let Some(scrollbar) = metrics.scrollbar else {
-            return Ok(false);
-        };
-        match scrollbar.hit_test(x, y) {
-            ScrollbarHit::Thumb { grab_offset } => {
-                self.scroll_drag = Some(TranscriptScrollDrag { grab_offset });
-                Ok(true)
-            }
-            ScrollbarHit::PageUp => {
-                self.app.page_up(&metrics.wrapped, metrics.visible_height);
-                Ok(true)
-            }
-            ScrollbarHit::PageDown => {
-                self.app.page_down(&metrics.wrapped, metrics.visible_height);
-                Ok(true)
-            }
-            ScrollbarHit::Outside => Ok(false),
-        }
-    }
-
-    fn handle_scrollbar_drag(&mut self, metrics: &TranscriptMetrics, y: u16) -> Result<bool> {
-        let Some(drag) = self.scroll_drag else {
-            return Ok(false);
-        };
-        let Some(scrollbar) = metrics.scrollbar else {
-            self.scroll_drag = None;
-            return Ok(false);
-        };
-        let start = scrollbar.start_for_drag_y(y, drag.grab_offset);
-        let max_start = crate::viewport::max_start(metrics.content_height, metrics.visible_height);
-        self.app
-            .set_scroll_fraction(start, max_start, &metrics.wrapped, metrics.visible_height);
-        Ok(true)
+        Ok(handle_navigation_event_with_metrics(
+            &mut self.app,
+            &mut self.scroll_drag,
+            event,
+            &metrics,
+        ))
     }
 
     fn transcript_metrics(&self) -> Result<TranscriptMetrics> {
@@ -453,6 +320,184 @@ impl YunxiTui {
             &self.app,
         ))
     }
+}
+
+fn handle_navigation_event_with_metrics(
+    app: &mut YunxiTuiApp,
+    scroll_drag: &mut Option<TranscriptScrollDrag>,
+    event: &Event,
+    metrics: &TranscriptMetrics,
+) -> bool {
+    match event {
+        Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => handle_mouse_scroll_by_focus(
+                app,
+                resolve_event(app.focus_target(), event),
+                metrics,
+                mouse.column,
+                mouse.row,
+            ),
+            MouseEventKind::Down(MouseButton::Left) => {
+                handle_scrollbar_down(app, scroll_drag, metrics, mouse.column, mouse.row)
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                handle_scrollbar_drag(app, scroll_drag, metrics, mouse.row)
+            }
+            MouseEventKind::Up(MouseButton::Left) => scroll_drag.take().is_some(),
+            _ => false,
+        },
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            match resolve_key(app.focus_target(), *key) {
+                TuiAction::FocusNext => {
+                    app.focus_next();
+                    true
+                }
+                TuiAction::FocusPrevious => {
+                    app.focus_previous();
+                    true
+                }
+                TuiAction::CloseDetails => {
+                    app.close_details();
+                    true
+                }
+                TuiAction::PageUp => {
+                    if app.focus_target() == FocusTarget::Details {
+                        app.detail_scroll_up(metrics.visible_height as u16);
+                    } else {
+                        app.page_up(&metrics.wrapped, metrics.visible_height);
+                    }
+                    true
+                }
+                TuiAction::PageDown => {
+                    if app.focus_target() == FocusTarget::Details {
+                        app.detail_scroll_down(metrics.visible_height as u16);
+                    } else {
+                        app.page_down(&metrics.wrapped, metrics.visible_height);
+                    }
+                    true
+                }
+                _ if matches!(key.code, KeyCode::Home)
+                    && !app.bottom_pane().text_input_active()
+                    && app.focus_target() != FocusTarget::Details =>
+                {
+                    app.jump_top(&metrics.wrapped, metrics.visible_height);
+                    true
+                }
+                _ if matches!(key.code, KeyCode::End)
+                    && !app.bottom_pane().text_input_active()
+                    && app.focus_target() != FocusTarget::Details =>
+                {
+                    app.follow_tail();
+                    true
+                }
+                _ if matches!(
+                    app.focus_target(),
+                    FocusTarget::History | FocusTarget::Details
+                ) =>
+                {
+                    true
+                }
+                _ => false,
+            }
+        }
+        Event::Resize(_, _) => {
+            *scroll_drag = None;
+            app.reanchor_viewport(&metrics.wrapped, metrics.visible_height);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn handle_mouse_scroll_by_focus(
+    app: &mut YunxiTuiApp,
+    action: TuiAction,
+    metrics: &TranscriptMetrics,
+    x: u16,
+    y: u16,
+) -> bool {
+    if !rect_contains(metrics.layout.transcript, x, y) {
+        return false;
+    }
+    match action {
+        TuiAction::ScrollUp => {
+            app.scroll_up(3, &metrics.wrapped, metrics.visible_height);
+            true
+        }
+        TuiAction::ScrollDown => {
+            app.scroll_down(3, &metrics.wrapped, metrics.visible_height);
+            true
+        }
+        TuiAction::DetailScrollUp => {
+            app.detail_scroll_up(3);
+            true
+        }
+        TuiAction::DetailScrollDown => {
+            app.detail_scroll_down(3);
+            true
+        }
+        TuiAction::None if app.focus_target() == FocusTarget::Approval => true,
+        _ => false,
+    }
+}
+
+fn allows_transcript_scrollbar(focus: FocusTarget) -> bool {
+    matches!(focus, FocusTarget::Composer | FocusTarget::History)
+}
+
+fn handle_scrollbar_down(
+    app: &mut YunxiTuiApp,
+    scroll_drag: &mut Option<TranscriptScrollDrag>,
+    metrics: &TranscriptMetrics,
+    x: u16,
+    y: u16,
+) -> bool {
+    let Some(scrollbar) = metrics.scrollbar else {
+        return false;
+    };
+    let hit = scrollbar.hit_test(x, y);
+    if !allows_transcript_scrollbar(app.focus_target()) {
+        *scroll_drag = None;
+        return hit != ScrollbarHit::Outside;
+    }
+    match hit {
+        ScrollbarHit::Thumb { grab_offset } => {
+            *scroll_drag = Some(TranscriptScrollDrag { grab_offset });
+            true
+        }
+        ScrollbarHit::PageUp => {
+            app.page_up(&metrics.wrapped, metrics.visible_height);
+            true
+        }
+        ScrollbarHit::PageDown => {
+            app.page_down(&metrics.wrapped, metrics.visible_height);
+            true
+        }
+        ScrollbarHit::Outside => false,
+    }
+}
+
+fn handle_scrollbar_drag(
+    app: &mut YunxiTuiApp,
+    scroll_drag: &mut Option<TranscriptScrollDrag>,
+    metrics: &TranscriptMetrics,
+    y: u16,
+) -> bool {
+    if !allows_transcript_scrollbar(app.focus_target()) {
+        *scroll_drag = None;
+        return false;
+    }
+    let Some(drag) = *scroll_drag else {
+        return false;
+    };
+    let Some(scrollbar) = metrics.scrollbar else {
+        *scroll_drag = None;
+        return false;
+    };
+    let start = scrollbar.start_for_drag_y(y, drag.grab_offset);
+    let max_start = crate::viewport::max_start(metrics.content_height, metrics.visible_height);
+    app.set_scroll_fraction(start, max_start, &metrics.wrapped, metrics.visible_height);
+    true
 }
 
 fn apply_turn_draft_event(app: &mut YunxiTuiApp, event: &Event) -> bool {
@@ -812,5 +857,202 @@ mod tests {
 
         assert!(metrics.content_height > app.transcript().render_line_count());
         assert!(metrics.scrollbar.is_none() || metrics.content_height > metrics.visible_height);
+    }
+
+    #[test]
+    fn approval_mouse_wheel_click_drag_and_release_freeze_transcript() {
+        let mut app = populated_app();
+        app.bottom_pane_mut().paste("approval draft 中文👩‍💻");
+        app.start_approval(approval_request());
+        let approval = app.bottom_pane().mode().clone();
+        let metrics = metrics_for(&app);
+        let scrollbar = metrics.scrollbar.expect("scrollable transcript");
+        let before = app.viewport().clone();
+        let mut drag = None;
+
+        assert!(handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &mouse(
+                MouseEventKind::ScrollUp,
+                metrics.layout.transcript.x + 1,
+                metrics.layout.transcript.y + 1,
+            ),
+            &metrics,
+        ));
+        assert!(handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                scrollbar.track.x,
+                scrollbar.track.y,
+            ),
+            &metrics,
+        ));
+        drag = Some(TranscriptScrollDrag { grab_offset: 0 });
+        assert!(!handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &mouse(
+                MouseEventKind::Drag(MouseButton::Left),
+                scrollbar.track.x,
+                scrollbar.track.y + scrollbar.track.height - 1,
+            ),
+            &metrics,
+        ));
+        assert!(!handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &mouse(
+                MouseEventKind::Up(MouseButton::Left),
+                scrollbar.track.x,
+                scrollbar.track.y + scrollbar.track.height - 1,
+            ),
+            &metrics,
+        ));
+
+        assert_eq!(app.viewport(), &before);
+        assert_eq!(app.bottom_pane().mode(), &approval);
+        assert!(drag.is_none());
+    }
+
+    #[test]
+    fn details_wheel_and_page_keys_only_change_details_scroll() {
+        let mut app = populated_app();
+        app.bottom_pane_mut().paste("details draft 中文👩‍💻");
+        let draft = app.bottom_pane().composer_snapshot();
+        let metrics = metrics_for(&app);
+        app.scroll_up(6, &metrics.wrapped, metrics.visible_height);
+        let viewport = app.viewport().clone();
+        app.show_details(None);
+        let mut drag = None;
+
+        assert!(handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &mouse(
+                MouseEventKind::ScrollDown,
+                metrics.layout.transcript.x + 1,
+                metrics.layout.transcript.y + 1,
+            ),
+            &metrics,
+        ));
+        assert_eq!(app.details_scroll(), 3);
+        assert!(handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &Event::Key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE)),
+            &metrics,
+        ));
+        assert_eq!(
+            app.details_scroll(),
+            3u16.saturating_add(metrics.visible_height as u16)
+        );
+        assert_eq!(app.viewport(), &viewport);
+
+        let scrollbar = metrics.scrollbar.expect("scrollable transcript");
+        assert!(handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                scrollbar.track.x,
+                scrollbar.track.y,
+            ),
+            &metrics,
+        ));
+        assert!(drag.is_none());
+        assert_eq!(app.viewport(), &viewport);
+
+        assert!(handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            &metrics,
+        ));
+        assert_eq!(app.focus_target(), FocusTarget::Composer);
+        assert_eq!(app.viewport(), &viewport);
+        assert_eq!(app.bottom_pane().composer_snapshot(), draft);
+    }
+
+    #[test]
+    fn composer_and_history_keep_transcript_mouse_scrolling() {
+        let mut app = populated_app();
+        let metrics = metrics_for(&app);
+        let tail = app.viewport().clone();
+        let mut drag = None;
+
+        assert!(handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &mouse(
+                MouseEventKind::ScrollUp,
+                metrics.layout.transcript.x + 1,
+                metrics.layout.transcript.y + 1,
+            ),
+            &metrics,
+        ));
+        assert_ne!(app.viewport(), &tail);
+
+        app.focus_next();
+        let history_before = app.viewport().clone();
+        assert!(handle_navigation_event_with_metrics(
+            &mut app,
+            &mut drag,
+            &mouse(
+                MouseEventKind::ScrollUp,
+                metrics.layout.transcript.x + 1,
+                metrics.layout.transcript.y + 1,
+            ),
+            &metrics,
+        ));
+        assert_ne!(app.viewport(), &history_before);
+        assert!(allows_transcript_scrollbar(FocusTarget::Composer));
+        assert!(allows_transcript_scrollbar(FocusTarget::History));
+        assert!(!allows_transcript_scrollbar(FocusTarget::Approval));
+        assert!(!allows_transcript_scrollbar(FocusTarget::Details));
+    }
+
+    fn populated_app() -> YunxiTuiApp {
+        let mut app = YunxiTuiApp::default();
+        for index in 0..48 {
+            app.push_notice(
+                "history",
+                &format!("history row {index:02} with enough content for mouse scrolling"),
+            );
+        }
+        app
+    }
+
+    fn metrics_for(app: &YunxiTuiApp) -> TranscriptMetrics {
+        transcript_metrics_for_size(
+            Size {
+                width: 100,
+                height: 30,
+            },
+            app.bottom_pane().desired_height(),
+            app,
+        )
+    }
+
+    fn approval_request() -> ApprovalRequestView {
+        ApprovalRequestView {
+            id: Some("approval-focus-test".to_string()),
+            tool_name: "shell".to_string(),
+            cwd: ".".to_string(),
+            command: Some("echo safe".to_string()),
+            reason: "focus routing test".to_string(),
+            risk_label: None,
+        }
+    }
+
+    fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
     }
 }

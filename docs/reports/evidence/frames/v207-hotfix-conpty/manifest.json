@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "generated_at": "2026-07-21T01:50:56.122Z",
+  "version": "2.0.7-hotfix",
+  "provider": "DeepSeek",
+  "model": "deepseek-chat",
+  "terminal": "Windows ConPTY",
+  "collector": "scripts/conpty/v207-hotfix/capture.js",
+  "scenarios": [
+    {
+      "mode": "approval-freeze",
+      "file": "approval-freeze.json",
+      "sha256": "8c73c76fc340b5884cd190b7953c6353bead406e550bd1c05e989168837c288a",
+      "output_bytes": 162369,
+      "checkpoint_count": 12,
+      "started_at": "2026-07-21T01:50:26.906Z",
+      "finished_at": "2026-07-21T01:50:46.712Z"
+    },
+    {
+      "mode": "details-scroll",
+      "file": "details-scroll.json",
+      "sha256": "42204e981a26ebe44fa73573ece18a3b4f0f1d9862716b400a0c843cceecea91",
+      "output_bytes": 65501,
+      "checkpoint_count": 19,
+      "started_at": "2026-07-21T01:50:47.100Z",
+      "finished_at": "2026-07-21T01:50:56.108Z"
+    }
+  ]
+}

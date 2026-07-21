@@ -1,5 +1,21 @@
 # Scripts
 
+## `conpty\v207-hotfix`
+
+Contains the real Windows ConPTY gate for the v2.0.7-hotfix focus-routing
+remediation. It verifies Approval wheel/scrollbar freeze and Details
+wheel/PgDown/close behavior, including 58x18 responsive frames, against real
+DeepSeek sessions.
+
+```powershell
+npm ci --prefix scripts\conpty\v207-hotfix
+npm run capture --prefix scripts\conpty\v207-hotfix
+npm run verify --prefix scripts\conpty\v207-hotfix
+```
+
+Sanitized frames and the SHA-256 manifest are stored under
+`docs/reports/evidence/frames/v207-hotfix-conpty`.
+
 ## `conpty\v207`
 
 Contains the reproducible Windows ConPTY gate for the v2.0.7 interaction-focus,
@@ -56,7 +72,7 @@ and scenario details.
 
 ## `install\install-yunxi.ps1`
 
-Builds and installs the current YunXi Agent v2.0.7 terminal binaries:
+Builds and installs the current YunXi Agent v2.0.7-hotfix terminal binaries:
 
 ```powershell
 .\scripts\install\install-yunxi.ps1 -AddToPath

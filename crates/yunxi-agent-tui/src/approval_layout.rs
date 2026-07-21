@@ -103,7 +103,9 @@ pub(crate) fn approval_layout_for_width(
         selected: selected == 1,
         shortcut: "N/Esc",
     });
-    lines.push(ApprovalLayoutLine::Hint("Tab changes selection"));
+    lines.push(ApprovalLayoutLine::Hint(
+        "Tab select | Enter confirm | Esc decline | Ctrl+C cancel",
+    ));
 
     ApprovalLayout { lines }
 }
@@ -209,11 +211,9 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(labels, vec!["Approve", "Decline"]);
-        assert!(
-            layout
-                .lines
-                .contains(&ApprovalLayoutLine::Hint("Tab changes selection"))
-        );
+        assert!(layout.lines.contains(&ApprovalLayoutLine::Hint(
+            "Tab select | Enter confirm | Esc decline | Ctrl+C cancel"
+        )));
         assert!(layout.desired_height() <= 12);
     }
 
@@ -246,6 +246,7 @@ mod tests {
         assert!(rendered.contains("C:\\"));
         assert!(rendered.contains("Approve"));
         assert!(rendered.contains("Decline"));
-        assert!(rendered.contains("Tab changes selection"));
+        assert!(rendered.contains("Tab select"));
+        assert!(rendered.contains("Esc decline"));
     }
 }

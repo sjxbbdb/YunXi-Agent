@@ -286,7 +286,11 @@ impl BottomPane {
             TuiAction::CloseDetails | TuiAction::PageUp | TuiAction::PageDown => {
                 return ApprovalAction::None;
             }
-            TuiAction::Paste | TuiAction::ScrollUp | TuiAction::ScrollDown => {
+            TuiAction::Paste
+            | TuiAction::ScrollUp
+            | TuiAction::ScrollDown
+            | TuiAction::DetailScrollUp
+            | TuiAction::DetailScrollDown => {
                 return ApprovalAction::None;
             }
         }

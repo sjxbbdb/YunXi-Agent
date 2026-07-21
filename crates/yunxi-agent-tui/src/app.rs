@@ -1,4 +1,4 @@
-﻿use crate::bottom_pane::{ApprovalRequestView, BottomPane, BottomPaneMode, UserInputRequestView};
+use crate::bottom_pane::{ApprovalRequestView, BottomPane, BottomPaneMode, UserInputRequestView};
 use crate::chat::Transcript;
 use crate::input_map::FocusTarget;
 use crate::presentation::{TuiEvent, TuiPresentation};
@@ -37,7 +37,7 @@ pub(crate) struct YunxiTuiApp {
 impl Default for YunxiTuiApp {
     fn default() -> Self {
         Self {
-            version: "v2.0.7".to_string(),
+            version: format!("v{}", env!("CARGO_PKG_VERSION")),
             banner: None,
             presentation: TuiPresentation::default(),
             timeline: TimelineStore::default(),
@@ -140,7 +140,7 @@ impl YunxiTuiApp {
             return TextLayout::priority_line(
                 &[
                     PrioritySegment::new("Esc close details", ClipPriority::MustKeep),
-                    PrioritySegment::new("PgUp/PgDown scroll", ClipPriority::Important),
+                    PrioritySegment::new("wheel/PgUp/PgDown scroll", ClipPriority::Important),
                 ],
                 width,
             );
@@ -149,7 +149,18 @@ impl YunxiTuiApp {
             return TextLayout::priority_line(
                 &[
                     PrioritySegment::new("Tab composer", ClipPriority::MustKeep),
-                    PrioritySegment::new("PgUp/PgDown scroll", ClipPriority::Important),
+                    PrioritySegment::new("wheel/drag/PgUp/PgDown scroll", ClipPriority::Important),
+                ],
+                width,
+            );
+        }
+        if self.focus == FocusTarget::Approval {
+            return TextLayout::priority_line(
+                &[
+                    PrioritySegment::new("Tab select", ClipPriority::MustKeep),
+                    PrioritySegment::new("Enter confirm", ClipPriority::MustKeep),
+                    PrioritySegment::new("Esc decline", ClipPriority::Important),
+                    PrioritySegment::new("Ctrl+C cancel", ClipPriority::Optional),
                 ],
                 width,
             );
@@ -319,6 +330,12 @@ impl YunxiTuiApp {
         self.details = None;
         self.focus = FocusTarget::Composer;
         self.bottom_pane.start_composer(prompt);
+    }
+
+    pub(crate) fn prepare_prompt(&mut self, prompt: &str) {
+        if self.focus != FocusTarget::Details {
+            self.start_prompt(prompt);
+        }
     }
 
     pub(crate) fn start_approval(&mut self, request: ApprovalRequestView) {
@@ -750,6 +767,36 @@ mod tests {
     }
 
     #[test]
+    fn focus_footers_only_advertise_available_actions() {
+        let mut app = YunxiTuiApp::default();
+        let composer = app.footer_for_width(100);
+        assert!(composer.contains("Enter submit"));
+        assert!(composer.contains("wheel/drag scroll"));
+
+        app.focus_next();
+        let history = app.footer_for_width(100);
+        assert!(history.contains("wheel/drag/PgUp/PgDown scroll"));
+
+        app.start_approval(ApprovalRequestView {
+            id: None,
+            tool_name: "shell".to_string(),
+            cwd: ".".to_string(),
+            command: Some("echo safe".to_string()),
+            reason: "test".to_string(),
+            risk_label: None,
+        });
+        let approval = app.footer_for_width(100);
+        assert!(approval.contains("Enter confirm"));
+        assert!(approval.contains("Esc decline"));
+        assert!(!approval.contains("wheel"));
+
+        app.show_details(None);
+        let details = app.footer_for_width(100);
+        assert!(details.contains("Esc close details"));
+        assert!(details.contains("wheel/PgUp/PgDown scroll"));
+    }
+
+    #[test]
     fn active_stream_resize_then_cancel_preserves_pinned_cell() {
         let mut app = YunxiTuiApp::default();
         for index in 0..24 {
@@ -893,6 +940,21 @@ mod tests {
         assert_eq!(app.bottom_pane().mode(), &approval);
         app.start_prompt("yunxi> ");
         assert_eq!(app.bottom_pane().composer_snapshot(), draft);
+    }
+
+    #[test]
+    fn prompt_preparation_keeps_details_open_until_escape_closes_it() {
+        let mut app = YunxiTuiApp::default();
+        app.bottom_pane_mut().paste("details draft");
+        app.show_details(None);
+        app.prepare_prompt("yunxi> ");
+
+        assert_eq!(app.focus_target(), FocusTarget::Details);
+        assert!(app.details().is_some());
+        app.close_details();
+        app.prepare_prompt("yunxi> ");
+        assert_eq!(app.focus_target(), FocusTarget::Composer);
+        assert!(app.details().is_none());
     }
 
     #[test]

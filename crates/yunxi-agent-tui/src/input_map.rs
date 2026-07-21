@@ -24,14 +24,24 @@ pub(crate) enum TuiAction {
     Paste,
     ScrollUp,
     ScrollDown,
+    DetailScrollUp,
+    DetailScrollDown,
 }
 
 pub(crate) fn resolve_event(focus: FocusTarget, event: &Event) -> TuiAction {
     match event {
         Event::Key(key) => resolve_key(focus, *key),
         Event::Paste(_) if focus == FocusTarget::Composer => TuiAction::Paste,
-        Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollUp => TuiAction::ScrollUp,
-        Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollDown => TuiAction::ScrollDown,
+        Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollUp => match focus {
+            FocusTarget::Composer | FocusTarget::History => TuiAction::ScrollUp,
+            FocusTarget::Approval => TuiAction::None,
+            FocusTarget::Details => TuiAction::DetailScrollUp,
+        },
+        Event::Mouse(mouse) if mouse.kind == MouseEventKind::ScrollDown => match focus {
+            FocusTarget::Composer | FocusTarget::History => TuiAction::ScrollDown,
+            FocusTarget::Approval => TuiAction::None,
+            FocusTarget::Details => TuiAction::DetailScrollDown,
+        },
         _ => TuiAction::None,
     }
 }
@@ -92,6 +102,8 @@ pub(crate) fn resolve_key(focus: FocusTarget, key: KeyEvent) -> TuiAction {
                 KeyCode::BackTab if matches!(focus, FocusTarget::Composer) => {
                     TuiAction::FocusPrevious
                 }
+                KeyCode::PageUp if matches!(focus, FocusTarget::Composer) => TuiAction::PageUp,
+                KeyCode::PageDown if matches!(focus, FocusTarget::Composer) => TuiAction::PageDown,
                 KeyCode::Enter => TuiAction::Submit,
                 _ => TuiAction::None,
             }
@@ -139,7 +151,7 @@ mod tests {
                 FocusTarget::Composer,
                 key(KeyCode::PageUp, KeyModifiers::NONE)
             ),
-            TuiAction::None
+            TuiAction::PageUp
         );
         assert_eq!(
             resolve_key(
@@ -155,24 +167,91 @@ mod tests {
     }
 
     #[test]
-    fn paste_and_wheel_are_classified_before_view_handlers() {
-        assert_eq!(
-            resolve_event(FocusTarget::Composer, &Event::Paste("draft".to_string())),
-            TuiAction::Paste
-        );
-        assert_eq!(
-            resolve_event(FocusTarget::Approval, &Event::Paste("ignored".to_string())),
-            TuiAction::None
-        );
-        let wheel_up = Event::Mouse(crossterm::event::MouseEvent {
-            kind: MouseEventKind::ScrollUp,
+    fn focus_action_matrix_is_explicit() {
+        let wheel_up = mouse(MouseEventKind::ScrollUp);
+        let wheel_down = mouse(MouseEventKind::ScrollDown);
+        let paste = Event::Paste("draft".to_string());
+        let cases = [
+            (
+                FocusTarget::Composer,
+                [
+                    TuiAction::Cancel,
+                    TuiAction::Submit,
+                    TuiAction::PageUp,
+                    TuiAction::PageDown,
+                    TuiAction::FocusNext,
+                    TuiAction::Cancel,
+                    TuiAction::Paste,
+                    TuiAction::ScrollUp,
+                    TuiAction::ScrollDown,
+                ],
+            ),
+            (
+                FocusTarget::History,
+                [
+                    TuiAction::None,
+                    TuiAction::None,
+                    TuiAction::PageUp,
+                    TuiAction::PageDown,
+                    TuiAction::FocusNext,
+                    TuiAction::None,
+                    TuiAction::None,
+                    TuiAction::ScrollUp,
+                    TuiAction::ScrollDown,
+                ],
+            ),
+            (
+                FocusTarget::Approval,
+                [
+                    TuiAction::Decline,
+                    TuiAction::Submit,
+                    TuiAction::None,
+                    TuiAction::None,
+                    TuiAction::None,
+                    TuiAction::Cancel,
+                    TuiAction::None,
+                    TuiAction::None,
+                    TuiAction::None,
+                ],
+            ),
+            (
+                FocusTarget::Details,
+                [
+                    TuiAction::CloseDetails,
+                    TuiAction::None,
+                    TuiAction::PageUp,
+                    TuiAction::PageDown,
+                    TuiAction::None,
+                    TuiAction::None,
+                    TuiAction::None,
+                    TuiAction::DetailScrollUp,
+                    TuiAction::DetailScrollDown,
+                ],
+            ),
+        ];
+
+        for (focus, expected) in cases {
+            let actual = [
+                resolve_key(focus, key(KeyCode::Esc, KeyModifiers::NONE)),
+                resolve_key(focus, key(KeyCode::Enter, KeyModifiers::NONE)),
+                resolve_key(focus, key(KeyCode::PageUp, KeyModifiers::NONE)),
+                resolve_key(focus, key(KeyCode::PageDown, KeyModifiers::NONE)),
+                resolve_key(focus, key(KeyCode::Tab, KeyModifiers::NONE)),
+                resolve_key(focus, key(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+                resolve_event(focus, &paste),
+                resolve_event(focus, &wheel_up),
+                resolve_event(focus, &wheel_down),
+            ];
+            assert_eq!(actual, expected, "focus={focus:?}");
+        }
+    }
+
+    fn mouse(kind: MouseEventKind) -> Event {
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind,
             column: 1,
             row: 1,
             modifiers: KeyModifiers::NONE,
-        });
-        assert_eq!(
-            resolve_event(FocusTarget::History, &wheel_up),
-            TuiAction::ScrollUp
-        );
+        })
     }
 }

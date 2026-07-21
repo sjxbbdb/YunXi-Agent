@@ -1,6 +1,6 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.6
+## Current Workspace Version: v2.0.7-hotfix
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
@@ -1953,6 +1953,28 @@ Constructed and verified on 2026-07-21:
   Companion Evaluation remains 31/31 with `golden_passed=true`.
 - Real DeepSeek/Windows ConPTY v207 capture passes all eight scenarios; both
   v207 and historical v206 offline verifiers return `ok=true, scenarios=8`.
+- Default runtime remains YunXi-owned and does not depend on `vendor/codex-rs`,
+  `codex-*`, or `yunxi-agent-codex`.
+
+## YunXi Agent v2.0.7-hotfix Focus Routing Remediation
+
+Constructed as the v2.0.7 audit remediation candidate on 2026-07-21:
+
+- Workspace and CLI product version are promoted to `2.0.7-hotfix`; persona
+  context and Evaluation Harness schema versions remain independent.
+- `input_map` classifies wheel input by `FocusTarget`: Composer/History scroll
+  transcript rows, Approval is a no-op, and Details emits dedicated detail
+  scroll actions.
+- The terminal host shares one state handler for wheel, scrollbar click, drag,
+  mouse-up, keys, and resize. Approval and Details cannot start or apply a
+  `TranscriptScrollDrag`; Details wheel changes only `details_scroll`.
+- Composer and History retain wheel, scrollbar, and PgUp/PgDown history
+  navigation without mutating the grapheme-indexed Composer draft.
+- TUI tests cover the four-focus action matrix, Approval viewport freeze,
+  Details wheel/page scrolling and close restoration, and responsive footer
+  behavior. Workspace/release/Evaluation gates pass; real hotfix ConPTY evidence
+  covers Approval freeze and Details scroll/restore in 2/2 scenarios, while the
+  historical v207/v206 verifiers remain 8/8 each.
 - Default runtime remains YunXi-owned and does not depend on `vendor/codex-rs`,
   `codex-*`, or `yunxi-agent-codex`.
 

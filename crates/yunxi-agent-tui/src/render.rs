@@ -51,7 +51,7 @@ fn render_details(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect) {
     let panel = Paragraph::new(details.to_string())
         .block(
             Block::default()
-                .title("Details | Esc close | PgUp/PgDown scroll")
+                .title("Details | Esc close | wheel/PgUp/PgDown scroll")
                 .borders(Borders::ALL),
         )
         .scroll((app.details_scroll(), 0))
@@ -762,7 +762,8 @@ mod tests {
         assert!(rendered.contains("Approval"));
         assert!(rendered.contains("Approve"));
         assert!(rendered.contains("Decline"));
-        assert!(rendered.contains("Tab changes selection"));
+        assert!(rendered.contains("Tab select"));
+        assert!(rendered.contains("Esc decline"));
         assert!(rendered.contains("risk"));
         assert!(rendered.contains("risk: low"));
         assert!(!rendered.contains("approve? y/N"));
@@ -794,7 +795,7 @@ mod tests {
         assert!(rendered.contains("Approval"));
         assert!(rendered.contains("Approve"));
         assert!(rendered.contains("Decline"));
-        assert!(rendered.contains("Tab changes selection"));
+        assert!(rendered.contains("Tab select"));
         assert!(rendered.contains("risk: destructive"));
     }
 
@@ -804,7 +805,7 @@ mod tests {
 
         assert!(rendered.contains("Approve"));
         assert!(rendered.contains("Decline"));
-        assert!(rendered.contains("Tab changes selection"));
+        assert!(rendered.contains("Tab select"));
     }
 
     #[test]
@@ -814,7 +815,7 @@ mod tests {
 
             assert!(rendered.contains("Approve"));
             assert!(rendered.contains("Decline"));
-            assert!(rendered.contains("Tab changes selection"));
+            assert!(rendered.contains("Tab select"));
             assert!(rendered.contains("risk: destructive"));
         }
     }
@@ -828,7 +829,7 @@ mod tests {
             assert!(snapshot.contains("Remove-Item"), "width={width}");
             assert!(snapshot.contains("Approve"), "width={width}");
             assert!(snapshot.contains("Decline"), "width={width}");
-            assert!(snapshot.contains("Tab changes selection"), "width={width}");
+            assert!(snapshot.contains("Tab select"), "width={width}");
             assert!(snapshot.lines().all(|row| {
                 UnicodeWidthStr::width(row.split_once('|').unwrap().1) <= width as usize
             }));

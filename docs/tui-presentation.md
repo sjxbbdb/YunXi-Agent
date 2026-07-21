@@ -1,6 +1,6 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.6 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
+YunXi Agent v2.0.7-hotfix keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
 streaming timeline, and v2.0.3-hotfix.1 redraw/viewport guarantees, then adds
 one international text layout model, explicit responsive clipping priorities,
 and a recoverable grapheme-indexed input model.
@@ -267,3 +267,18 @@ replace `BottomPaneMode`, mutate the grapheme-indexed `EditBuffer`, or touch
 selection, and transcript anchor are restored. Footer hints are generated from
 the active focus and prioritize only close/scroll or submit/cancel actions that
 are currently executable.
+
+### v2.0.7-hotfix Mouse Routing
+
+`resolve_event` now gives wheel input one unambiguous result per focus.
+Composer and History return transcript scroll actions, Approval returns no-op,
+and Details returns dedicated detail-scroll actions. The terminal host applies
+the same focus check before scrollbar click, drag, and mouse-up state can touch
+`TranscriptViewport`; a second host guard therefore remains effective even if
+a future resolver change is incomplete.
+
+Details wheel input and PgUp/PgDown share the existing `details_scroll` owner.
+Approval never starts `TranscriptScrollDrag`, and entering or leaving Details
+does not modify the transcript anchor, Composer snapshot, cursor, or approval
+selection. The visible Approval hint lists selection/confirm/decline/cancel
+only; Composer, History, and Details advertise only their actual scroll paths.

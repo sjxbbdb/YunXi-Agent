@@ -136,7 +136,7 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 }
 
 pub(crate) fn print_banner(banner: &InteractiveBanner) {
-    println!("YunXi Agent v2.0.7 interactive CLI");
+    println!("YunXi Agent v2.0.7-hotfix interactive CLI");
     println!("cwd: {}", banner.cwd);
     println!("backend: {}", banner.backend);
     println!(

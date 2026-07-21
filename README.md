@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.6
+# YunXi Agent v2.0.7-hotfix
 
-YunXi Agent v2.0.6 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.7-hotfix is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.6 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.7-hotfix terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.6 TUI input, text layout, redraw scheduling, stable viewport anchors, streaming timeline, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.7-hotfix TUI input, focus routing, stable viewport anchors, streaming timeline, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -39,6 +39,9 @@ with `[offline]` and `/cost` reports that no model call was made.
   real terminals, with mouse wheel/PageUp/PageDown/Home/End transcript
   navigation, draggable transcript scrollbar, and `--no-tui` available for the
   stable plain REPL
+- Routes mouse wheel and scrollbar input by active focus: Composer/History may
+  navigate transcript history, Approval freezes the underlying viewport, and
+  Details scrolls only its independent redacted detail offset
 - Uses a TUI composer for terminal input while keeping piped stdin and scripted
   sessions on the plain line reader
 - Uses one grapheme-indexed `EditBuffer` for Composer and `request_user_input`,
@@ -714,6 +717,12 @@ a pure Rust key/action resolver; a scrollable redacted details layer; and
 focus-specific narrow footer hints. Draft, cursor, approval selection, and
 transcript viewport state survive focus and details transitions. The v2.0.6
 grapheme editor and single-cell streaming lifecycle remain unchanged.
+
+v2.0.7-hotfix closes the audit-blocking mouse route gap. Approval now consumes
+wheel and underlying scrollbar input without moving the transcript; Details
+maps wheel and PgUp/PgDown only to `details_scroll`; scrollbar click/drag/up is
+guarded again at the host state boundary. Composer and History retain history
+scrolling, and all four focus targets have deterministic key/paste/wheel tests.
 
 ## Backend Capability Matrix
 

@@ -1,4 +1,4 @@
-00|YunXi Agent v2.0.8 | deepseek live | model=deepseek-chat-ultra-long-model-name | C:\Users\24763\YunXi Agent\国际化工作区\crates\yunxi-agent-cli
+00|YunXi Agent v2.0.9 | deepseek live | model=deepseek-chat-ultra-long-model-name | C:\Users\24763\YunXi Agent\国际化工作区\crates\yunxi-agent-cli
 01|new output below | cells=38 | backend=yunxi | source=auto_live | debug off
 02|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 03|┌Transcript 2-42 / 49 | new output below───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐

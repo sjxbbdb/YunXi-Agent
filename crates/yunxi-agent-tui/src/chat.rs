@@ -1,10 +1,12 @@
 use crate::debug::DebugBuffer;
 use crate::event_filter::should_show;
+use crate::output_summary::{redact_secrets, truncate_graphemes_with_notice};
 use crate::presentation::{TuiCellId, TuiCellKind, TuiEvent};
 use crate::timeline::{ToolActivity, ToolTimelineUpdate};
 use crate::timeline_store::AssistantTimelineUpdate;
 
-const MAX_HISTORY_CELLS: usize = 800;
+pub(crate) const MAX_HISTORY_CELLS: usize = 800;
+const MAX_HISTORY_CELL_GRAPHEMES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct HistoryCell {
@@ -162,21 +164,22 @@ impl Transcript {
     }
 
     pub(crate) fn apply_assistant_update(&mut self, update: AssistantTimelineUpdate) -> bool {
+        let bounded_content = bound_history_text(&update.content, true);
         if let Some(cell) = self.cells.iter_mut().find(|cell| cell.id == update.cell_id)
             && let HistoryCellKind::Assistant { content, active } = &mut cell.kind
         {
-            let changed = *content != update.content || *active != update.active;
-            *content = update.content;
+            let changed = *content != bounded_content || *active != update.active;
+            *content = bounded_content;
             *active = update.active;
             return changed;
         }
-        if update.content.is_empty() {
+        if bounded_content.is_empty() {
             return false;
         }
         self.push_cell(HistoryCell {
             id: update.cell_id,
             kind: HistoryCellKind::Assistant {
-                content: update.content,
+                content: bounded_content,
                 active: update.active,
             },
             detail_id: None,
@@ -185,6 +188,7 @@ impl Transcript {
     }
 
     fn push_assistant(&mut self, id: TuiCellId, content: String, detail_id: Option<usize>) {
+        let content = bound_history_text(&content, true);
         if content.trim().is_empty() {
             return;
         }
@@ -220,7 +224,8 @@ impl Transcript {
         }
     }
 
-    fn push_cell(&mut self, cell: HistoryCell) {
+    fn push_cell(&mut self, mut cell: HistoryCell) {
+        bound_history_cell(&mut cell);
         self.cells.push(cell);
         if self.cells.len() > MAX_HISTORY_CELLS {
             let overflow = self.cells.len() - MAX_HISTORY_CELLS;
@@ -267,6 +272,31 @@ impl Transcript {
                 detail_id: Some(id),
             });
         }
+    }
+}
+
+fn bound_history_text(value: &str, retain_tail: bool) -> String {
+    let redacted = redact_secrets(value);
+    truncate_graphemes_with_notice(&redacted, MAX_HISTORY_CELL_GRAPHEMES, retain_tail)
+}
+
+fn bound_history_cell(cell: &mut HistoryCell) {
+    match &mut cell.kind {
+        HistoryCellKind::User(value) | HistoryCellKind::Error(value) => {
+            *value = bound_history_text(value, true);
+        }
+        HistoryCellKind::Assistant { content, .. } => {
+            *content = bound_history_text(content, true);
+        }
+        HistoryCellKind::Event { kind, message } => {
+            *kind = truncate_graphemes_with_notice(&redact_secrets(kind), 128, false);
+            *message = bound_history_text(message, true);
+        }
+        HistoryCellKind::Debug { label, message, .. } => {
+            *label = truncate_graphemes_with_notice(&redact_secrets(label), 256, false);
+            *message = bound_history_text(message, true);
+        }
+        HistoryCellKind::Tool(_) => {}
     }
 }
 
@@ -596,6 +626,57 @@ mod tests {
                 HistoryCellKind::Event { message, .. } if message.contains("cancelled by user")
             )
         }));
+    }
+
+    #[test]
+    fn oversized_history_cell_is_redacted_and_retains_latest_graphemes() {
+        let mut transcript = Transcript::default();
+        let content = format!(
+            "sk-secret-value\n{}latest 👩‍💻e\u{301}",
+            "old".repeat(MAX_HISTORY_CELL_GRAPHEMES)
+        );
+        transcript.apply_assistant_update(AssistantTimelineUpdate {
+            cell_id: TuiCellId::from_test("assistant-large"),
+            content,
+            active: false,
+        });
+
+        let HistoryCellKind::Assistant { content, active } = transcript.cells()[0].kind() else {
+            panic!("assistant cell");
+        };
+        assert!(!active);
+        assert!(!content.contains("secret-value"));
+        assert!(content.contains("older content truncated"));
+        assert!(content.ends_with("latest 👩‍💻e\u{301}"));
+        assert!(
+            unicode_segmentation::UnicodeSegmentation::graphemes(content.as_str(), true).count()
+                <= MAX_HISTORY_CELL_GRAPHEMES
+        );
+    }
+
+    #[test]
+    fn history_cell_limit_evicts_oldest_and_keeps_latest() {
+        let mut transcript = Transcript::default();
+        for index in 0..(MAX_HISTORY_CELLS + 3) {
+            transcript.push_cell(HistoryCell {
+                id: TuiCellId::from_test(&format!("notice-{index}")),
+                kind: HistoryCellKind::Event {
+                    kind: "notice".to_string(),
+                    message: format!("message-{index}"),
+                },
+                detail_id: None,
+            });
+        }
+
+        assert_eq!(transcript.cells().len(), MAX_HISTORY_CELLS);
+        assert_eq!(
+            transcript.cells().first().expect("first retained").id(),
+            &TuiCellId::from_test("notice-3")
+        );
+        assert_eq!(
+            transcript.cells().last().expect("latest retained").id(),
+            &TuiCellId::from_test(&format!("notice-{}", MAX_HISTORY_CELLS + 2))
+        );
     }
 
     fn cell_text(cell: &HistoryCell) -> String {

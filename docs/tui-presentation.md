@@ -1,11 +1,44 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.8 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
+YunXi Agent v2.0.9 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
 streaming timeline, and v2.0.3-hotfix.1 redraw/viewport guarantees, then adds
 one international text layout model, explicit responsive clipping priorities,
-a recoverable grapheme-indexed input model, and centralized semantic styles.
+a recoverable grapheme-indexed input model, centralized semantic styles,
+explicit terminal lifecycle rollback, and bounded stream/transcript storage.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
 maps them into user-facing cells.
+
+## v2.0.9 Terminal Lifecycle And Bounded Streaming
+
+The CLI mode resolver classifies Interactive, OneShot, Command, JSON, and JSONL
+invocations before dispatch. JSON/JSONL, pipe, CI, one-shot, command, and
+`--no-tui` routes are always plain. `--tui` enters the alternate screen only
+when stdin and stdout are terminals in an interactive invocation; otherwise a
+plain fallback notice is emitted only to interactive stderr. Byte-level CLI
+tests exclude ESC bytes, alternate-screen controls, and TUI footer text from
+every non-TUI route.
+
+`TerminalLifecycleState` records raw mode, alternate screen, bracketed paste,
+focus tracking, mouse capture, and hidden cursor only after each operation
+succeeds. Entry failure immediately restores completed operations in reverse
+order. `TerminalGuard::drop` uses the same order, so normal exit, Ctrl+C,
+Provider/tool errors, panic, and early returns share one restoration contract.
+
+Network streaming preserves an incomplete UTF-8 suffix across response chunks
+and rejects confirmed invalid bytes without echoing them. Markdown collection
+drains committed prefixes instead of retaining them indefinitely. The live
+tail is capped at 64 KiB and combined stream content at 256 KiB. Transcript
+history keeps at most 800 cells and 64 Ki graphemes per cell; debug/details,
+tool fields, seen event IDs, and archived stream sessions have explicit caps.
+Redaction precedes grapheme-aligned truncation, which keeps recent content and
+adds a visible notice.
+
+Timeout/disconnect error boundaries freeze partial assistant content and
+release the active session. Duplicate final, reliable out-of-order delta, and
+late post-cancel events cannot recreate or mutate an archived stream. The next
+turn can start normally. `scripts/conpty/v209` exercises terminal restoration,
+cross-path byte isolation, Provider recovery, long-stream cancellation, and
+post-cancel recovery through Windows ConPTY.
 
 ## v2.0.8 Semantic Styles And Responsive Density
 

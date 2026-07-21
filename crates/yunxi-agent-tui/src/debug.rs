@@ -1,4 +1,7 @@
-use crate::output_summary::{debug_inline_summary, detail_display, redact_secrets};
+use crate::output_summary::{
+    MAX_STORED_DETAIL_GRAPHEMES, debug_inline_summary, detail_display, redact_secrets,
+    truncate_graphemes_with_notice,
+};
 use crate::presentation::{PresentationDetail, TuiCellId};
 
 const MAX_DEBUG_ENTRIES: usize = 200;
@@ -42,13 +45,16 @@ impl DebugBuffer {
     }
 
     pub(crate) fn add(&mut self, detail: PresentationDetail) -> usize {
+        let label = truncate_graphemes_with_notice(&detail.label, 256, false);
+        let redacted = redact_secrets(&detail.content);
+        let content = truncate_graphemes_with_notice(&redacted, MAX_STORED_DETAIL_GRAPHEMES, true);
         if let Some(entry) = self
             .entries
             .iter_mut()
             .find(|entry| entry.stable_id == detail.id)
         {
-            entry.label = detail.label;
-            entry.detail = redact_secrets(&detail.content);
+            entry.label = label;
+            entry.detail = content;
             return entry.id;
         }
 
@@ -59,8 +65,8 @@ impl DebugBuffer {
         self.entries.push(DebugEntry {
             id,
             stable_id: detail.id,
-            label: detail.label,
-            detail: redact_secrets(&detail.content),
+            label,
+            detail: content,
         });
         if self.entries.len() > MAX_DEBUG_ENTRIES {
             let overflow = self.entries.len() - MAX_DEBUG_ENTRIES;
@@ -146,5 +152,30 @@ mod tests {
         assert_eq!(first, second);
         assert!(buffer.detail_text(Some(first)).contains("second"));
         assert_eq!(buffer.status(), "debug=off hidden=1");
+    }
+
+    #[test]
+    fn debug_detail_is_redacted_before_bounded_storage() {
+        let mut buffer = DebugBuffer::default();
+        let secret = "sk-secret-value";
+        let content = format!(
+            "{secret}\n{}tail",
+            "x".repeat(MAX_STORED_DETAIL_GRAPHEMES + 500)
+        );
+        let id = buffer.add(PresentationDetail {
+            id: TuiCellId::from_test("detail:large"),
+            label: "provider".to_string(),
+            content,
+        });
+        let entry = buffer.get(id).expect("stored entry");
+
+        assert!(!entry.detail.contains("secret-value"));
+        assert!(entry.detail.contains("older content truncated"));
+        assert!(entry.detail.ends_with("tail"));
+        assert!(
+            unicode_segmentation::UnicodeSegmentation::graphemes(entry.detail.as_str(), true)
+                .count()
+                <= MAX_STORED_DETAIL_GRAPHEMES
+        );
     }
 }

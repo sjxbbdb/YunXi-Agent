@@ -561,13 +561,23 @@ mod tests {
     }
 
     fn assistant_event(content: &str, sequence: u64, phase: AgentMessageStreamPhase) -> AgentEvent {
+        assistant_event_for("turn-live", "message-live", content, sequence, phase)
+    }
+
+    fn assistant_event_for(
+        turn_id: &str,
+        stream_id: &str,
+        content: &str,
+        sequence: u64,
+        phase: AgentMessageStreamPhase,
+    ) -> AgentEvent {
         AgentEvent::Message {
             content: content.to_string(),
             stream: Some(AgentMessageStream {
                 thread_id: "thread-live".to_string(),
-                turn_id: "turn-live".to_string(),
-                stream_id: "message-live".to_string(),
-                event_id: format!("fallback:app-test:{sequence}"),
+                turn_id: turn_id.to_string(),
+                stream_id: stream_id.to_string(),
+                event_id: format!("fallback:app-test:{turn_id}:{stream_id}:{sequence}"),
                 source_sequence: AgentMessageSequence::LocalFallback(sequence),
                 phase,
             }),
@@ -586,7 +596,7 @@ mod tests {
         assert!(TextLayout::measure(&header) <= 80);
         assert!(TextLayout::measure(&subheader) <= 80);
         assert!(TextLayout::measure(&footer) <= 80);
-        assert!(header.contains("YunXi v2.0.8"));
+        assert!(header.contains("YunXi v2.0.9"));
         assert!(header.contains("offline"));
         assert!(!header.contains("model="));
         assert!(!header.contains("D:/"));
@@ -607,7 +617,7 @@ mod tests {
         let header = app.header_for_width(120);
         let subheader = app.subheader_for_width(120);
 
-        assert!(header.contains("YunXi Agent v2.0.8"));
+        assert!(header.contains("YunXi Agent v2.0.9"));
         assert!(header.contains("model=deepseek-chat"));
         assert!(header.contains("D:/"));
         assert!(header.contains("yunxi-agent-cli"));
@@ -653,7 +663,7 @@ mod tests {
             assert!(TextLayout::measure(&header) <= width, "width={width}");
             assert!(TextLayout::measure(&subheader) <= width, "width={width}");
             assert!(TextLayout::measure(&footer) <= width, "width={width}");
-            assert!(header.contains("v2.0.8"), "width={width}");
+            assert!(header.contains("v2.0.9"), "width={width}");
             assert!(header.contains("deepseek live"), "width={width}");
             assert!(subheader.contains("tail"), "width={width}");
             assert!(footer.contains("Enter submit"), "width={width}");
@@ -868,6 +878,68 @@ mod tests {
             HistoryCellKind::User(content) if content == "next prompt"
         )));
         assert!(!app.timeline.has_active_sessions());
+    }
+
+    #[test]
+    fn provider_disconnect_freezes_partial_cell_shows_summary_and_allows_next_turn() {
+        let mut app = YunxiTuiApp::default();
+        app.push_user("first prompt");
+        app.push_agent_event(&assistant_event_for(
+            "turn-disconnect",
+            "message-disconnect",
+            "partial response",
+            1,
+            AgentMessageStreamPhase::Delta,
+        ));
+        app.push_agent_event(&AgentEvent::ProviderError {
+            provider: "fixture".to_string(),
+            status: None,
+            classification: "network".to_string(),
+            message: "stream disconnected".to_string(),
+        });
+        app.push_user("next prompt");
+        app.push_agent_event(&assistant_event_for(
+            "turn-next",
+            "message-next",
+            "next answer",
+            1,
+            AgentMessageStreamPhase::Final,
+        ));
+
+        assert!(app.transcript().cells().iter().any(|cell| matches!(
+            cell.kind(),
+            HistoryCellKind::Assistant { content, active }
+                if content == "partial response" && !active
+        )));
+        assert!(app.transcript().cells().iter().any(|cell| matches!(
+            cell.kind(),
+            HistoryCellKind::Error(content) if content.contains("YX-PROVIDER-001")
+        )));
+        assert!(app.transcript().cells().iter().any(|cell| matches!(
+            cell.kind(),
+            HistoryCellKind::Assistant { content, active }
+                if content == "next answer" && !active
+        )));
+        assert!(!app.timeline.has_active_sessions());
+    }
+
+    #[test]
+    fn history_eviction_keeps_viewport_anchor_within_retained_rows() {
+        let mut app = YunxiTuiApp::default();
+        for index in 0..900 {
+            app.push_notice("history", &format!("retained history line {index}"));
+        }
+        let wrapped =
+            crate::transcript_layout::build_wrapped_transcript(app.transcript().cells(), 58);
+        app.scroll_up(200, &wrapped, 18);
+        app.push_notice("history", "latest after eviction");
+        let updated =
+            crate::transcript_layout::build_wrapped_transcript(app.transcript().cells(), 58);
+        let start = app.viewport().view_start(&updated, 18);
+
+        assert!(start <= crate::viewport::max_start(updated.rows.len(), 18));
+        assert!(updated.anchor_at(start).is_some());
+        assert!(app.transcript().cells().len() <= crate::chat::MAX_HISTORY_CELLS);
     }
 
     #[test]

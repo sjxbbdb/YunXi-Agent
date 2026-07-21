@@ -1,5 +1,5 @@
 use crate::presentation::{TuiCellId, TuiEvent, TuiSourceSequence, TuiStreamPhase};
-use crate::streaming::MarkdownStreamController;
+use crate::streaming::{MarkdownStreamController, bounded_stream_content};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 const ARCHIVED_SESSION_LIMIT: usize = 256;
@@ -146,7 +146,7 @@ impl TimelineStore {
         };
         session.controller.clear();
         let frame = session.controller.push_delta(&event.visible_text);
-        session.content = format!("{}{}", frame.stable_source, frame.live_tail);
+        session.content = bounded_stream_content(&frame.stable_source, &frame.live_tail);
         apply_offline_label(session);
         update_stream_frame(
             event,
@@ -177,7 +177,7 @@ impl TimelineStore {
         }
         observe_reliable_sequence(&mut session.last_reliable_sequence, sequence);
         let frame = session.controller.push_delta(&event.visible_text);
-        session.content = format!("{}{}", frame.stable_source, frame.live_tail);
+        session.content = bounded_stream_content(&frame.stable_source, &frame.live_tail);
         apply_offline_label(session);
         update_stream_frame(
             event,
@@ -205,7 +205,7 @@ impl TimelineStore {
         session.controller.clear();
         if !event.visible_text.is_empty() {
             let frame = session.controller.push_delta(&event.visible_text);
-            session.content = format!("{}{}", frame.stable_source, frame.live_tail);
+            session.content = bounded_stream_content(&frame.stable_source, &frame.live_tail);
             update_stream_frame(
                 event,
                 &frame.stable_source,
@@ -589,6 +589,94 @@ mod tests {
                 .expect("second fallback")
                 .content,
             "甲乙"
+        );
+    }
+
+    #[test]
+    fn provider_disconnect_freezes_partial_content_and_releases_active_session() {
+        let mut store = TimelineStore::default();
+        let mut partial = local_event(
+            "turn-disconnect",
+            "message-disconnect",
+            1,
+            TuiStreamPhase::Delta,
+            "partial answer",
+        );
+        let active = store.apply(&mut partial).expect("active partial");
+
+        let updates = store.finish_active();
+
+        assert!(active.active);
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].content, "partial answer");
+        assert!(!updates[0].active);
+        assert!(!store.has_active_sessions());
+    }
+
+    #[test]
+    fn duplicate_final_and_reliable_out_of_order_delta_cannot_change_content() {
+        let mut store = TimelineStore::default();
+        let mut newest = event(
+            "turn-order",
+            "message-order",
+            "provider:20",
+            TuiSourceSequence::ProviderReliable(20),
+            TuiStreamPhase::Delta,
+            "newest",
+        );
+        store.apply(&mut newest).expect("newest delta");
+        let mut late = event(
+            "turn-order",
+            "message-order",
+            "provider:19",
+            TuiSourceSequence::ProviderReliable(19),
+            TuiStreamPhase::Delta,
+            "stale",
+        );
+        assert_eq!(store.apply(&mut late), None);
+        assert_eq!(store.finish_active()[0].content, "newest");
+
+        let mut final_event = local_event(
+            "turn-final",
+            "message-final",
+            1,
+            TuiStreamPhase::Final,
+            "answer",
+        );
+        let final_update = store.apply(&mut final_event).expect("first final");
+        let mut duplicate_final = local_event(
+            "turn-final",
+            "message-final",
+            2,
+            TuiStreamPhase::Final,
+            "different answer",
+        );
+        assert_eq!(store.apply(&mut duplicate_final), None);
+        assert_eq!(final_update.content, "answer");
+    }
+
+    #[test]
+    fn seen_event_ids_are_bounded_and_oldest_id_is_predictably_evicted() {
+        let mut store = TimelineStore::default();
+        for index in 0..=SEEN_EVENT_LIMIT {
+            let mut delta = event(
+                "turn-seen",
+                "message-seen",
+                &format!("provider:{index}"),
+                TuiSourceSequence::LocalFallback(index as u64),
+                TuiStreamPhase::Delta,
+                "x",
+            );
+            store.apply(&mut delta).expect("unique event");
+        }
+
+        assert_eq!(store.seen_event_ids.len(), SEEN_EVENT_LIMIT);
+        assert_eq!(store.seen_event_order.len(), SEEN_EVENT_LIMIT);
+        assert!(!store.seen_event_ids.contains("provider:0"));
+        assert!(
+            store
+                .seen_event_ids
+                .contains(&format!("provider:{SEEN_EVENT_LIMIT}"))
         );
     }
 

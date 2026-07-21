@@ -77,6 +77,22 @@ fn spawn_sequence_http_server(responses: Vec<(u16, String)>) -> String {
     format!("http://{address}")
 }
 
+fn assert_no_tui_bytes(label: &str, output: &std::process::Output) {
+    for (stream_name, bytes) in [("stdout", &output.stdout), ("stderr", &output.stderr)] {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !bytes.contains(&0x1b),
+            "{label} {stream_name} contained ANSI escape bytes: {text:?}"
+        );
+        for forbidden in ["Enter submit", "Enter confirm", "Alt+Enter newline"] {
+            assert!(
+                !text.contains(forbidden),
+                "{label} {stream_name} leaked TUI footer text {forbidden:?}: {text:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn yunxi_primary_binary_prints_v2_version() {
     let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
@@ -84,7 +100,7 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.0.8"));
+        .stdout(predicate::str::contains("yunxi 2.0.9"));
 }
 
 #[test]
@@ -94,7 +110,7 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.0.8"));
+        .stdout(predicate::str::contains("yunxi 2.0.9"));
 }
 
 #[test]
@@ -336,7 +352,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.8 interactive CLI",
+            "YunXi Agent v2.0.9 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -495,7 +511,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.8 interactive CLI",
+            "YunXi Agent v2.0.9 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -515,9 +531,68 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.0.8 interactive CLI",
+            "YunXi Agent v2.0.9 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn cli_plain_pipe_ci_json_and_jsonl_paths_never_emit_tui_bytes() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
+
+    let one_shot = Command::cargo_bin("yunxi")
+        .expect("binary should build")
+        .args(["--offline", "--cwd", cwd, "one shot"])
+        .output()
+        .expect("one-shot output");
+    assert!(one_shot.status.success());
+    assert_no_tui_bytes("one-shot", &one_shot);
+
+    let json = Command::cargo_bin("yunxi")
+        .expect("binary should build")
+        .args(["--offline", "--cwd", cwd, "--json", "json output"])
+        .output()
+        .expect("json output");
+    assert!(json.status.success());
+    assert_no_tui_bytes("json", &json);
+    serde_json::from_slice::<Value>(&json.stdout).expect("structured JSON stdout");
+
+    let jsonl = Command::cargo_bin("yunxi")
+        .expect("binary should build")
+        .args(["--offline", "--cwd", cwd, "--jsonl", "jsonl output"])
+        .output()
+        .expect("jsonl output");
+    assert!(jsonl.status.success());
+    assert_no_tui_bytes("jsonl", &jsonl);
+    for line in jsonl
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        serde_json::from_slice::<Value>(line).expect("each JSONL line is structured");
+    }
+
+    let ci = Command::cargo_bin("yunxi")
+        .expect("binary should build")
+        .env("CI", "1")
+        .args(["--offline", "--cwd", cwd])
+        .write_stdin("/exit\n")
+        .output()
+        .expect("CI interactive output");
+    assert!(ci.status.success());
+    assert_no_tui_bytes("CI", &ci);
+
+    let forced_fallback = Command::cargo_bin("yunxi")
+        .expect("binary should build")
+        .env_remove("CI")
+        .args(["--offline", "--cwd", cwd, "--tui"])
+        .write_stdin("/exit\n")
+        .output()
+        .expect("forced TUI fallback output");
+    assert!(forced_fallback.status.success());
+    assert_no_tui_bytes("forced TUI fallback", &forced_fallback);
+    assert!(String::from_utf8_lossy(&forced_fallback.stderr).contains("using plain mode"));
 }
 
 #[test]

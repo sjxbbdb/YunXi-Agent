@@ -1,6 +1,6 @@
-# YunXi Agent v2.0.8
+# YunXi Agent v2.0.9
 
-YunXi Agent v2.0.8 is a terminal-first Rust general companion Agent CLI and reusable core library
+YunXi Agent v2.0.9 is a terminal-first Rust general companion Agent CLI and reusable core library
 built from the Codex CLI source extraction work. The default runtime is
 YunXi-owned and does not depend on the upstream Codex runtime.
 
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.8 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.0.9 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.8 semantic styles, responsive density, focus routing, stable viewport anchors, streaming timeline, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.0.9 terminal recovery, bounded streaming, semantic styles, responsive density, focus routing, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -44,6 +44,10 @@ with `[offline]` and `/cost` reports that no model call was made.
   Details scrolls only its independent redacted detail offset
 - Uses a TUI composer for terminal input while keeping piped stdin and scripted
   sessions on the plain line reader
+- Resolves interactive TUI, plain, pipe, CI, one-shot, command, JSON, JSONL,
+  `--no-tui`, and `--tui` fallback through one explicit mode matrix; all
+  non-TUI paths are byte-tested to exclude ANSI, alternate-screen, and TUI
+  footer output
 - Uses one grapheme-indexed `EditBuffer` for Composer and `request_user_input`,
   including CRLF normalization, multi-line/long paste, CJK, combining text,
   emoji ZWJ, Home/End, deletion, snapshot, and restore semantics
@@ -79,6 +83,9 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Keeps committed Markdown source separate from the live tail, commits at
   complete line, paragraph, closed-fence, or safe grapheme boundaries, and lets
   final update the active cell in place without forcing history view back to tail
+- Bounds live stream tails, finalized stream content, history cells, detail/debug
+  records, tool fields, event-ID deduplication, and archived sessions while
+  retaining recent grapheme-aligned content with a visible truncation marker
 - Shows tool work as compact timeline cells with approval, running,
   completion, output-summary, and details references
 - Provides `/debug events on|off` and `/details [id]` for TUI diagnostics
@@ -89,6 +96,9 @@ with `[offline]` and `/cost` reports that no model call was made.
   into the provider future, runtime, and shell exec layer without exiting the REPL
 - Provides REPL status commands for tools, MCP config, usage, and turn summaries
 - Keeps the interactive session open when one provider or tool turn fails
+- Restores raw mode, alternate screen, bracketed paste, focus tracking, mouse
+  capture, and cursor state in reverse order after normal exit, Ctrl+C, partial
+  terminal entry failure, Provider failure, tool failure, panic, or early return
 - Preserves assistant tool calls and matching tool result ids across provider turns
 - Preserves one-shot execution through `yunxi "your task"`
 - Provides explicit `yunxi run ...` one-shot execution for prompts that would
@@ -159,6 +169,31 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Runs 31 deterministic companion evaluation scenarios without a live provider
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
+
+## Cross-Path Terminal Recovery And Streaming Resilience v2.0.9
+
+v2.0.9 makes terminal selection an explicit, testable contract. Only an
+interactive invocation with terminal stdin/stdout and no CI override enters
+the TUI. One-shot, command, pipe, CI, `--no-tui`, JSON, and JSONL remain plain;
+an unavailable forced `--tui` request reports its fallback only on interactive
+stderr and never contaminates structured output.
+
+The TUI terminal guard now records each successfully entered state and rolls
+back only those states in strict reverse order. Provider streams retain an
+incomplete UTF-8 tail across network chunks and reject only confirmed invalid
+sequences. Live Markdown tails are limited to 64 KiB, stream content to 256
+KiB, history cells to 64 Ki graphemes, details/debug to 32 Ki graphemes, with
+bounded tool fields, 8,192 seen event IDs, 256 archived streams, and 800
+history cells. Truncation preserves the newest grapheme-aligned content after
+redaction.
+
+`scripts/conpty/v209` verifies normal and Ctrl+C terminal restoration, the
+plain/pipe/CI/JSON/JSONL byte contract, Provider failure followed by a
+successful next turn, and oversized SSE cancellation followed by recovery.
+Evidence and its SHA-256 manifest are stored under
+`docs/reports/evidence/frames/v209-conpty`. The v2.0.8 visual semantics,
+58x18/80x24/100x30/120x40/200x50 snapshots, and v2.0.7-hotfix focus isolation
+remain unchanged.
 
 ## Visual Semantics And Information Density v2.0.8
 

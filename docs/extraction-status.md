@@ -1,10 +1,37 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.8
+## Current Workspace Version: v2.0.9
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## v2.0.9 Cross-Path Terminal Recovery And Streaming Resilience
+
+- `yunxi-agent-cli/src/terminal_mode.rs` owns one resolver matrix for TUI,
+  plain, pipe, CI, one-shot, command, JSON, JSONL, `--no-tui`, and forced-TUI
+  fallback. Non-TUI integration tests reject ANSI, alternate-screen, and TUI
+  footer bytes.
+- `yunxi-agent-tui/src/host.rs` records terminal entry actions and restores
+  cursor, mouse capture, focus tracking, bracketed paste, alternate screen, and
+  raw mode in reverse order. Tests cover complete enter/drop and partial-entry
+  rollback.
+- Provider network parsing now carries incomplete UTF-8 bytes between chunks,
+  preserves split CJK/emoji input, and rejects confirmed invalid sequences
+  without exposing raw bytes.
+- Markdown live tails are capped at 64 KiB and combined content at 256 KiB.
+  History cells, debug/details, tool fields, seen event IDs, archived streams,
+  and total history cells have explicit deterministic limits with
+  redaction-before-grapheme-truncation.
+- Timeline tests cover disconnect/timeout-style finalization, duplicate final,
+  reliable out-of-order delta, cancel followed by late delta, and predictable
+  archive/seen-event eviction. Partial content is frozen and the next turn can
+  proceed.
+- The existing v2.0.8 semantic palettes and 58/80/100/120/200-column snapshots
+  remain green, as do v2.0.7-hotfix Approval/Details focus guards.
+- `scripts/conpty/v209` is an evidence-only Windows ConPTY verifier for terminal
+  restoration, non-TUI byte isolation, Provider recovery, and oversized stream
+  cancellation/recovery. Node is not part of the product runtime.
 
 ## v2.0.8 Visual Semantics And Information Density
 

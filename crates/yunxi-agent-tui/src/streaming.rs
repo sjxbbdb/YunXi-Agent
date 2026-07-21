@@ -1,7 +1,12 @@
+use unicode_segmentation::UnicodeSegmentation;
+
+pub(crate) const MAX_STREAM_LIVE_TAIL_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_STREAM_CONTENT_BYTES: usize = 256 * 1024;
+const STREAM_TRUNCATION_NOTICE: &str = "[stream truncated: older content omitted]\n";
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MarkdownStreamCollector {
     buffer: String,
-    committed_source_len: usize,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -25,6 +30,7 @@ impl MarkdownStreamController {
             .commit_complete_source()
             .map(|source| {
                 self.stable_source.push_str(&source);
+                bound_stream_tail(&mut self.stable_source, MAX_STREAM_CONTENT_BYTES);
             })
             .is_some();
         self.frame(committed)
@@ -36,6 +42,7 @@ impl MarkdownStreamController {
             return None;
         }
         self.stable_source.push_str(&tail);
+        bound_stream_tail(&mut self.stable_source, MAX_STREAM_CONTENT_BYTES);
         Some(std::mem::take(&mut self.stable_source))
     }
 
@@ -59,39 +66,64 @@ impl MarkdownStreamCollector {
     }
 
     pub fn commit_complete_source(&mut self) -> Option<String> {
-        let uncommitted = &self.buffer[self.committed_source_len..];
-        let commit_offset = match markdown_boundary(uncommitted) {
+        let commit_offset = match markdown_boundary(&self.buffer) {
             MarkdownBoundary::Commit(offset) => Some(offset),
             MarkdownBoundary::OpenFence => None,
-            MarkdownBoundary::None => safe_grapheme_commit_end(uncommitted),
-        }?;
-        let commit_end = self.committed_source_len.saturating_add(commit_offset);
-        if commit_end <= self.committed_source_len {
+            MarkdownBoundary::None => safe_grapheme_commit_end(&self.buffer),
+        };
+        let Some(commit_offset) = commit_offset else {
+            bound_stream_tail(&mut self.buffer, MAX_STREAM_LIVE_TAIL_BYTES);
+            return None;
+        };
+        if commit_offset == 0 {
+            bound_stream_tail(&mut self.buffer, MAX_STREAM_LIVE_TAIL_BYTES);
             return None;
         }
-        let out = self.buffer[self.committed_source_len..commit_end].to_string();
-        self.committed_source_len = commit_end;
+        let out = self.buffer[..commit_offset].to_string();
+        self.buffer.drain(..commit_offset);
+        bound_stream_tail(&mut self.buffer, MAX_STREAM_LIVE_TAIL_BYTES);
         Some(out)
     }
 
     pub fn live_tail(&self) -> &str {
-        &self.buffer[self.committed_source_len..]
+        &self.buffer
     }
 
     pub fn finalize_and_drain_source(&mut self) -> String {
-        if self.committed_source_len >= self.buffer.len() {
-            self.clear();
-            return String::new();
-        }
-        let out = self.buffer[self.committed_source_len..].to_string();
-        self.clear();
-        out
+        std::mem::take(&mut self.buffer)
     }
 
     pub fn clear(&mut self) {
         self.buffer.clear();
-        self.committed_source_len = 0;
     }
+}
+
+fn bound_stream_tail(value: &mut String, max_bytes: usize) -> bool {
+    if value.len() <= max_bytes {
+        return false;
+    }
+
+    let source = value
+        .strip_prefix(STREAM_TRUNCATION_NOTICE)
+        .unwrap_or(value.as_str());
+    let available = max_bytes.saturating_sub(STREAM_TRUNCATION_NOTICE.len());
+    let mut start = source.len();
+    for (index, _) in source.grapheme_indices(true).rev() {
+        if source.len().saturating_sub(index) > available {
+            break;
+        }
+        start = index;
+    }
+    *value = format!("{STREAM_TRUNCATION_NOTICE}{}", &source[start..]);
+    true
+}
+
+pub(crate) fn bounded_stream_content(stable_source: &str, live_tail: &str) -> String {
+    let mut content = String::with_capacity(stable_source.len().saturating_add(live_tail.len()));
+    content.push_str(stable_source);
+    content.push_str(live_tail);
+    bound_stream_tail(&mut content, MAX_STREAM_CONTENT_BYTES);
+    content
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -386,5 +418,41 @@ mod tests {
         assert_eq!(frame.stable_source, "");
         assert_eq!(frame.live_tail, "``");
     }
+
+    #[test]
+    fn open_code_fence_live_tail_is_bounded_and_finalization_recovers() {
+        let mut controller = MarkdownStreamController::default();
+        let payload = format!(
+            "```text\n{}",
+            "👩‍💻e\u{301}".repeat(MAX_STREAM_LIVE_TAIL_BYTES)
+        );
+        let frame = controller.push_delta(&payload);
+
+        assert!(frame.live_tail.len() <= MAX_STREAM_LIVE_TAIL_BYTES);
+        assert!(
+            format!("{}{}", frame.stable_source, frame.live_tail)
+                .starts_with(STREAM_TRUNCATION_NOTICE)
+        );
+        let finalized = controller.finalize().expect("bounded partial response");
+        assert!(finalized.len() <= MAX_STREAM_CONTENT_BYTES);
+        assert!(!finalized.contains('\u{fffd}'));
+        assert_eq!(controller.push_delta("next").live_tail, "t");
+    }
+
+    #[test]
+    fn long_committed_stream_keeps_latest_content_with_one_visible_notice() {
+        let mut controller = MarkdownStreamController::default();
+        let mut payload = String::new();
+        for index in 0..20_000 {
+            payload.push_str(&format!("line {index} 中文 👩‍💻\n"));
+        }
+        controller.push_delta(&payload);
+        let output = controller.finalize().expect("stream output");
+
+        assert!(output.len() <= MAX_STREAM_CONTENT_BYTES);
+        assert!(output.starts_with(STREAM_TRUNCATION_NOTICE));
+        assert_eq!(output.matches(STREAM_TRUNCATION_NOTICE).count(), 1);
+        assert!(output.contains("line 19999"));
+        assert!(!output.contains('\u{fffd}'));
+    }
 }
-use unicode_segmentation::UnicodeSegmentation;

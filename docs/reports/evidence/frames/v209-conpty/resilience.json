@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "version": "2.0.9",
+  "terminal": "Windows ConPTY",
+  "generated_at": "2026-07-21T12:54:19.874Z",
+  "mode_matrix": [
+    {
+      "label": "plain-one-shot",
+      "status": 0,
+      "stdout_bytes": 67,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "plain-pipe",
+      "status": 0,
+      "stdout_bytes": 338,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "ci",
+      "status": 0,
+      "stdout_bytes": 338,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "no-tui",
+      "status": 0,
+      "stdout_bytes": 338,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "forced-tui-fallback",
+      "status": 0,
+      "stdout_bytes": 338,
+      "stderr_bytes": 82
+    },
+    {
+      "label": "json",
+      "status": 0,
+      "stdout_bytes": 6034,
+      "stderr_bytes": 0
+    },
+    {
+      "label": "jsonl",
+      "status": 0,
+      "stdout_bytes": 5630,
+      "stderr_bytes": 0
+    }
+  ],
+  "terminal_recovery": [
+    {
+      "label": "normal-exit",
+      "exit_code": 0,
+      "output_bytes": 4666,
+      "conpty_focus_disable_echoed": false,
+      "focus_disable_action_unit_tested": true
+    },
+    {
+      "label": "ctrl-c-exit",
+      "exit_code": 0,
+      "output_bytes": 4567,
+      "conpty_focus_disable_echoed": false,
+      "focus_disable_action_unit_tested": true
+    }
+  ],
+  "provider_recovery": {
+    "requests": 3,
+    "exit_code": 0,
+    "recovered": true
+  },
+  "stream_cancellation": {
+    "requests": 2,
+    "streamed_bytes": 371375,
+    "exit_code": 0,
+    "recovered": true
+  }
+}

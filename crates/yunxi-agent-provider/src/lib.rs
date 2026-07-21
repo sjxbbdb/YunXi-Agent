@@ -1319,6 +1319,7 @@ struct OpenAiNetworkStreamParser<'a> {
     accumulator: OpenAiStreamAccumulator,
     sink: Option<&'a mut dyn ProviderStreamEventSink>,
     initial_emitted: bool,
+    pending_utf8: Vec<u8>,
 }
 
 impl<'a> OpenAiNetworkStreamParser<'a> {
@@ -1332,6 +1333,7 @@ impl<'a> OpenAiNetworkStreamParser<'a> {
             accumulator: OpenAiStreamAccumulator::new(thread_id, turn_id),
             sink,
             initial_emitted: false,
+            pending_utf8: Vec::new(),
         }
     }
 
@@ -1355,6 +1357,14 @@ impl<'a> OpenAiNetworkStreamParser<'a> {
 
     async fn finish(mut self) -> AgentResult<Vec<StreamEvent>> {
         self.emit_initial_if_needed().await?;
+        if !self.pending_utf8.is_empty() {
+            return Err(AgentError::Execution {
+                message: format!(
+                    "provider stream ended with an incomplete UTF-8 sequence ({} buffered byte(s))",
+                    self.pending_utf8.len()
+                ),
+            });
+        }
         let events = self.accumulator.finish_incremental(&mut self.decoder)?;
         self.emit_events(&events).await?;
         Ok(self.accumulator.events())
@@ -1365,10 +1375,28 @@ impl<'a> OpenAiNetworkStreamParser<'a> {
 impl ProviderByteStreamSink for OpenAiNetworkStreamParser<'_> {
     async fn push_bytes(&mut self, chunk: &[u8]) -> AgentResult<()> {
         self.emit_initial_if_needed().await?;
-        let text = std::str::from_utf8(chunk).map_err(|error| AgentError::Execution {
-            message: format!("provider stream chunk was not valid UTF-8: {error}"),
+        self.pending_utf8.extend_from_slice(chunk);
+        let valid_len = match std::str::from_utf8(&self.pending_utf8) {
+            Ok(_) => self.pending_utf8.len(),
+            Err(error) if error.error_len().is_none() => error.valid_up_to(),
+            Err(error) => {
+                return Err(AgentError::Execution {
+                    message: format!(
+                        "provider stream contained invalid UTF-8 at byte {}",
+                        error.valid_up_to()
+                    ),
+                });
+            }
+        };
+        if valid_len == 0 {
+            return Ok(());
+        }
+
+        let valid = self.pending_utf8.drain(..valid_len).collect::<Vec<_>>();
+        let text = String::from_utf8(valid).map_err(|error| AgentError::Execution {
+            message: format!("provider stream UTF-8 boundary conversion failed: {error}"),
         })?;
-        let events = self.accumulator.push_raw_chunk(&mut self.decoder, text)?;
+        let events = self.accumulator.push_raw_chunk(&mut self.decoder, &text)?;
         self.emit_events(&events).await
     }
 }

@@ -671,34 +671,131 @@ impl WindowsInputBurst {
     }
 }
 
-struct TerminalGuard;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalLifecycleAction {
+    EnableRawMode,
+    EnterAlternateScreen,
+    EnableBracketedPaste,
+    EnableFocusChange,
+    EnableMouseCapture,
+    HideCursor,
+    ShowCursor,
+    DisableMouseCapture,
+    DisableFocusChange,
+    DisableBracketedPaste,
+    LeaveAlternateScreen,
+    DisableRawMode,
+}
+
+impl TerminalLifecycleAction {
+    fn recovery(self) -> Self {
+        match self {
+            Self::EnableRawMode => Self::DisableRawMode,
+            Self::EnterAlternateScreen => Self::LeaveAlternateScreen,
+            Self::EnableBracketedPaste => Self::DisableBracketedPaste,
+            Self::EnableFocusChange => Self::DisableFocusChange,
+            Self::EnableMouseCapture => Self::DisableMouseCapture,
+            Self::HideCursor => Self::ShowCursor,
+            recovery => recovery,
+        }
+    }
+}
+
+const TERMINAL_ENTER_ACTIONS: [TerminalLifecycleAction; 6] = [
+    TerminalLifecycleAction::EnableRawMode,
+    TerminalLifecycleAction::EnterAlternateScreen,
+    TerminalLifecycleAction::EnableBracketedPaste,
+    TerminalLifecycleAction::EnableFocusChange,
+    TerminalLifecycleAction::EnableMouseCapture,
+    TerminalLifecycleAction::HideCursor,
+];
+
+trait TerminalLifecycleSink {
+    fn apply(&mut self, action: TerminalLifecycleAction) -> Result<()>;
+}
+
+struct CrosstermLifecycleSink;
+
+impl TerminalLifecycleSink for CrosstermLifecycleSink {
+    fn apply(&mut self, action: TerminalLifecycleAction) -> Result<()> {
+        match action {
+            TerminalLifecycleAction::EnableRawMode => enable_raw_mode()?,
+            TerminalLifecycleAction::EnterAlternateScreen => {
+                execute!(io::stdout(), EnterAlternateScreen)?;
+            }
+            TerminalLifecycleAction::EnableBracketedPaste => {
+                execute!(io::stdout(), EnableBracketedPaste)?;
+            }
+            TerminalLifecycleAction::EnableFocusChange => {
+                execute!(io::stdout(), EnableFocusChange)?;
+            }
+            TerminalLifecycleAction::EnableMouseCapture => {
+                execute!(io::stdout(), EnableMouseCapture)?;
+            }
+            TerminalLifecycleAction::HideCursor => {
+                execute!(io::stdout(), Hide)?;
+            }
+            TerminalLifecycleAction::ShowCursor => {
+                execute!(io::stdout(), Show)?;
+            }
+            TerminalLifecycleAction::DisableMouseCapture => {
+                execute!(io::stdout(), DisableMouseCapture)?;
+            }
+            TerminalLifecycleAction::DisableFocusChange => {
+                execute!(io::stdout(), DisableFocusChange)?;
+            }
+            TerminalLifecycleAction::DisableBracketedPaste => {
+                execute!(io::stdout(), DisableBracketedPaste)?;
+            }
+            TerminalLifecycleAction::LeaveAlternateScreen => {
+                execute!(io::stdout(), LeaveAlternateScreen)?;
+            }
+            TerminalLifecycleAction::DisableRawMode => disable_raw_mode()?,
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default)]
+struct TerminalLifecycleState {
+    entered: Vec<TerminalLifecycleAction>,
+}
+
+impl TerminalLifecycleState {
+    fn enter(sink: &mut impl TerminalLifecycleSink) -> Result<Self> {
+        let mut state = Self::default();
+        for action in TERMINAL_ENTER_ACTIONS {
+            if let Err(error) = sink.apply(action) {
+                state.restore(sink);
+                return Err(error);
+            }
+            state.entered.push(action);
+        }
+        Ok(state)
+    }
+
+    fn restore(&mut self, sink: &mut impl TerminalLifecycleSink) {
+        while let Some(action) = self.entered.pop() {
+            let _ = sink.apply(action.recovery());
+        }
+    }
+}
+
+struct TerminalGuard {
+    state: TerminalLifecycleState,
+}
 
 impl TerminalGuard {
     fn enter() -> Result<Self> {
-        enable_raw_mode()?;
-        execute!(
-            io::stdout(),
-            EnterAlternateScreen,
-            EnableBracketedPaste,
-            EnableFocusChange,
-            EnableMouseCapture,
-            Hide
-        )?;
-        Ok(Self)
+        let mut sink = CrosstermLifecycleSink;
+        let state = TerminalLifecycleState::enter(&mut sink)?;
+        Ok(Self { state })
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = execute!(
-            io::stdout(),
-            Show,
-            DisableMouseCapture,
-            DisableFocusChange,
-            DisableBracketedPaste,
-            LeaveAlternateScreen
-        );
-        let _ = disable_raw_mode();
+        self.state.restore(&mut CrosstermLifecycleSink);
     }
 }
 
@@ -706,6 +803,68 @@ impl Drop for TerminalGuard {
 mod tests {
     use super::*;
     use crate::bottom_pane::BottomPaneMode;
+
+    #[derive(Default)]
+    struct RecordingLifecycleSink {
+        actions: Vec<TerminalLifecycleAction>,
+        fail_on: Option<TerminalLifecycleAction>,
+    }
+
+    impl TerminalLifecycleSink for RecordingLifecycleSink {
+        fn apply(&mut self, action: TerminalLifecycleAction) -> Result<()> {
+            self.actions.push(action);
+            if self.fail_on == Some(action) {
+                anyhow::bail!("injected terminal lifecycle failure");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn terminal_lifecycle_restores_every_state_in_reverse_order() {
+        let mut sink = RecordingLifecycleSink::default();
+        let mut state = TerminalLifecycleState::enter(&mut sink).expect("terminal enter");
+        state.restore(&mut sink);
+
+        assert_eq!(
+            sink.actions,
+            [
+                TERMINAL_ENTER_ACTIONS.as_slice(),
+                &[
+                    TerminalLifecycleAction::ShowCursor,
+                    TerminalLifecycleAction::DisableMouseCapture,
+                    TerminalLifecycleAction::DisableFocusChange,
+                    TerminalLifecycleAction::DisableBracketedPaste,
+                    TerminalLifecycleAction::LeaveAlternateScreen,
+                    TerminalLifecycleAction::DisableRawMode,
+                ],
+            ]
+            .concat()
+        );
+        assert!(state.entered.is_empty());
+    }
+
+    #[test]
+    fn partial_terminal_enter_rolls_back_only_completed_actions() {
+        let mut sink = RecordingLifecycleSink {
+            fail_on: Some(TerminalLifecycleAction::EnableFocusChange),
+            ..RecordingLifecycleSink::default()
+        };
+
+        assert!(TerminalLifecycleState::enter(&mut sink).is_err());
+        assert_eq!(
+            sink.actions,
+            vec![
+                TerminalLifecycleAction::EnableRawMode,
+                TerminalLifecycleAction::EnterAlternateScreen,
+                TerminalLifecycleAction::EnableBracketedPaste,
+                TerminalLifecycleAction::EnableFocusChange,
+                TerminalLifecycleAction::DisableBracketedPaste,
+                TerminalLifecycleAction::LeaveAlternateScreen,
+                TerminalLifecycleAction::DisableRawMode,
+            ]
+        );
+    }
 
     #[test]
     fn transcript_visible_height_matches_tui_layout() {

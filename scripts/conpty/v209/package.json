@@ -1,0 +1,16 @@
+{
+  "name": "yunxi-v209-conpty-evidence",
+  "version": "2.0.9",
+  "private": true,
+  "description": "Windows ConPTY evidence for YunXi Agent v2.0.9 terminal recovery and streaming resilience",
+  "scripts": {
+    "verify": "node verify.js"
+  },
+  "dependencies": {
+    "@xterm/headless": "5.5.0",
+    "node-pty": "1.1.0"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
+  }
+}

@@ -1,5 +1,21 @@
 # Scripts
 
+## `conpty\v209`
+
+Contains the Windows ConPTY release gate for v2.0.9 cross-path mode isolation,
+terminal lifecycle restoration, Provider failure recovery, and oversized
+stream cancellation followed by a successful next turn.
+
+```powershell
+npm.cmd ci --prefix scripts\conpty\v209
+npm.cmd run verify --prefix scripts\conpty\v209
+```
+
+Sanitized evidence and its SHA-256 manifest are stored under
+`docs/reports/evidence/frames/v209-conpty`. The loopback Provider fixtures are
+used only to reproduce deterministic HTTP/SSE failures. Node.js remains an
+evidence dependency and is not part of the YunXi runtime path.
+
 ## `conpty\v208`
 
 Contains the real Windows ConPTY gate for the v2.0.8 semantic-style and
@@ -89,7 +105,7 @@ and scenario details.
 
 ## `install\install-yunxi.ps1`
 
-Builds and installs the current YunXi Agent v2.0.8 terminal binaries:
+Builds and installs the current YunXi Agent v2.0.9 terminal binaries:
 
 ```powershell
 .\scripts\install\install-yunxi.ps1 -AddToPath

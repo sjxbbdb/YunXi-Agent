@@ -1,9 +1,15 @@
+use unicode_segmentation::UnicodeSegmentation;
+
 #[cfg(test)]
 const SHORT_OUTPUT_MAX_CHARS: usize = 240;
 #[cfg(test)]
 const SHORT_OUTPUT_MAX_LINES: usize = 3;
 const DETAIL_DISPLAY_MAX_LINES: usize = 40;
+const DETAIL_DISPLAY_MAX_GRAPHEMES: usize = 8 * 1024;
 const MAX_DEBUG_INLINE_CHARS: usize = 180;
+pub(crate) const MAX_STORED_DETAIL_GRAPHEMES: usize = 32 * 1024;
+const TRUNCATED_HEAD_NOTICE: &str = "\n[... content truncated ...]";
+const TRUNCATED_TAIL_NOTICE: &str = "[... older content truncated ...]\n";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OutputSummary {
@@ -48,6 +54,8 @@ pub(crate) fn detail_display(label: &str, detail: &str) -> String {
     if detail.is_empty() {
         return format!("{label}: empty");
     }
+    let detail = truncate_graphemes_with_notice(&detail, DETAIL_DISPLAY_MAX_GRAPHEMES, true);
+    let label = truncate_graphemes_with_notice(label, 256, false);
 
     let lines = detail.lines().collect::<Vec<_>>();
     if lines.len() <= DETAIL_DISPLAY_MAX_LINES {
@@ -95,12 +103,35 @@ pub(crate) fn redact_secrets(input: &str) -> String {
 }
 
 pub(crate) fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let truncated = chars.by_ref().take(max_chars).collect::<String>();
-    if chars.next().is_some() {
-        format!("{truncated}...")
+    truncate_graphemes_with_notice(value, max_chars, false)
+}
+
+pub(crate) fn truncate_graphemes_with_notice(
+    value: &str,
+    max_graphemes: usize,
+    retain_tail: bool,
+) -> String {
+    let graphemes = value.graphemes(true).collect::<Vec<_>>();
+    if graphemes.len() <= max_graphemes {
+        return value.to_string();
+    }
+
+    let notice = if retain_tail {
+        TRUNCATED_TAIL_NOTICE
     } else {
-        truncated
+        TRUNCATED_HEAD_NOTICE
+    };
+    let notice_len = notice.graphemes(true).count();
+    if notice_len >= max_graphemes {
+        return notice.graphemes(true).take(max_graphemes).collect();
+    }
+    let keep = max_graphemes - notice_len;
+    if retain_tail {
+        let tail = graphemes[graphemes.len() - keep..].concat();
+        format!("{notice}{tail}")
+    } else {
+        let head = graphemes[..keep].concat();
+        format!("{head}{notice}")
     }
 }
 
@@ -178,5 +209,26 @@ mod tests {
         assert!(redacted.contains("sk-[redacted]"));
         assert!(redacted.contains("github_pat_[redacted]"));
         assert!(!redacted.contains("abc123"));
+    }
+
+    #[test]
+    fn grapheme_truncation_keeps_emoji_and_combining_sequences_intact() {
+        let source = format!("old{}new", "👩‍💻e\u{301}".repeat(100));
+        let bounded = truncate_graphemes_with_notice(&source, 64, true);
+
+        assert!(bounded.contains("older content truncated"));
+        assert!(bounded.ends_with("new"));
+        assert!(bounded.graphemes(true).count() <= 64);
+        assert!(!bounded.contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn detail_display_applies_character_and_line_bounds_after_redaction() {
+        let detail = format!("sk-secret-value\n{}", "line\n".repeat(10_000));
+        let displayed = detail_display("provider", &detail);
+
+        assert!(!displayed.contains("secret-value"));
+        assert!(displayed.contains("truncated") || displayed.contains("hidden"));
+        assert!(displayed.lines().count() <= DETAIL_DISPLAY_MAX_LINES + 1);
     }
 }

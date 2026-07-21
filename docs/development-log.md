@@ -64,6 +64,49 @@
 
 署名：开发报告撰写者
 
+
+## 2026-07-21 19:35:09 +08:00
+
+工作目标：依据 `v2.0.8` 视觉语义、信息密度与陪伴界面一致性审核通过报告，检查报告提到的参考源码是否已在本机存在，并按固定流程撰写面向开发者的 `v2.0.9` 跨路径兼容、终端恢复与流式故障韧性开发报告。
+
+执行流程：
+1. 读取审核报告 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-21-190909-YunXi-Agent-v2.0.8-视觉语义信息密度审核报告.md`，确认 `v2.0.8` 审核通过，可进入 `v2.0.9` 开发。
+2. 提取审核结论、发布提交 `93f9838c7b966ea12e8ab4934ffb45bb7ebd0de0`、annotated tag 对象 `7d0a75d63d5e8c437366ce9fcac2d33bbf6d8d04`、当前 `HEAD/origin/master` `fa4d5ae6a2a5ead1a55362a924a352f5867e6f47` 及下一版本开发建议。
+3. 检查 `D:\源码`，确认审核报告点名的 `codex` 与新增参考 `k9s` 均已存在；无需拉取新仓库。
+4. 使用 CodeGraph 复核 `crates\yunxi-agent-cli\src\main.rs`、`crates\yunxi-agent-cli\src\terminal_mode.rs`、`crates\yunxi-agent-tui\src\host.rs`、`crates\yunxi-agent-tui\src\timeline_store.rs` 等相关职责。
+5. 直接读取 `interactive.rs`、`terminal_mode.rs`、`streaming.rs`、`debug.rs`、`chat.rs`、`timeline_store.rs` 和 `host.rs` 关键片段，确认当前已有 TUI/plain 分发、`TerminalGuard` Drop 恢复、Markdown stream collector、history/debug 上限和 timeline archive/seen event 上限，但仍需围绕跨路径字节契约、终端异常恢复、流式故障韧性和截断语义形成下一阶段开发任务。
+6. 按固定流程在开发报告前部写入 14 条硬性约束，并明确 `v2.0.9` 的阶段目标、版本边界、必须保持的 v2.0.8 能力、源码接入点、参考源码建议、实施顺序、测试验收、清理、日志和 tag 纪律。
+7. 在项目内新增开发报告，并经用户授权复制到桌面开发报告目录。
+8. 对项目内开发报告和桌面开发报告执行 SHA256 校验，确认内容一致。
+
+修改文件：
+- 新增项目开发报告：`D:\YunXi Agent\docs\reports\2026-07-21-193509-yunxi-agent-v2-0-9-cross-path-terminal-recovery-streaming-resilience-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-21-193509-yunxi-agent-v2-0-9-cross-path-terminal-recovery-streaming-resilience-development-report.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 审核报告来源：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-21-190909-YunXi-Agent-v2.0.8-视觉语义信息密度审核报告.md`
+- 项目内审核报告归档：`D:\YunXi Agent\docs\reports\2026-07-21-190909-yunxi-agent-v2-0-8-visual-semantics-audit-report.md`
+- 已存在参考源码：`D:\源码\codex`、`D:\源码\k9s`
+
+验证结果：
+- 项目开发报告与桌面开发报告 SHA256 一致：`4013B62DE1D8AE23F75E019A928ABD3FBEB2F03D312EB1654746581DD965DC7C`。
+- 本次审核报告新增点名的 `D:\源码\k9s` 已存在，`D:\源码\codex` 也已存在，未执行 `git clone` 或网络拉取。
+- 本次未修改 YunXi Rust 源码。
+- 未运行 `cargo fmt`、`cargo check`、`cargo test`、`cargo build` 或 ConPTY capture/verify；本次工作性质为开发报告撰写。
+- 未生成编译中间产物，因此无需清理 `target` 或 ConPTY `.work` 目录。
+- 未执行递归删除、强制移动、清空目录、系统级安装/卸载、PATH/注册表/系统配置修改；涉及 C 盘用户目录的操作仅为经授权写入桌面开发报告副本并同步桌面开发日志。
+
+提交和推送状态：未提交、未推送、未创建新的 Git tag；`v2.0.8`、`v2.0.7-hotfix` 和全部历史 tag 不移动、不删除、不覆盖。`v2.0.9` 后续实现、验证、清理和复审通过后，必须创建新的 annotated Git tag。
+
+署名：开发报告撰写者
+
 ## 2026-07-21 16:22:10 +08:00
 
 工作目标：依据 `v2.0.7-hotfix` 焦点路由复审审核通过报告，检查报告提到的参考源码是否已在本机存在，并按固定流程撰写面向开发者的 `v2.0.8` 视觉语义、信息密度与陪伴界面一致性开发报告。
@@ -2072,5 +2115,40 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 没有删除 `C:\Users` 或其他用户目录。正式 v208/v207-hotfix/v207 证据、collector、依赖锁、报告和全部历史 tag 均保留。
 
 提交、推送与 Git tag 状态：使用 GitHub Git Data REST API 创建并逐 SHA 核验 36 个 staged blob、tree `40d5f9239b68281c3ccfd55de3ba297d7c58b314` 和功能发布 commit `93f9838c7b966ea12e8ab4934ffb45bb7ebd0de0`；API key 只存在于当前请求头，未输出、未写入仓库。新的 annotated `v2.0.8` tag object 为 `7d0a75d63d5e8c437366ce9fcac2d33bbf6d8d04`，目标为发布 commit，tagger 为 `开发者 <developer@yunxi-agent.local>`。远程 `master` 以 `force=false` 更新，tag 数从 47 增至 48，原 47 个历史 tag 对象 SHA 变化数为 0。本地 `master` 与 `origin/master` 均为发布 commit，本地 tag object 与目标均与 GitHub 一致。本条报告/日志状态将作为 tag 后 docs-only 收尾提交推送到 `master`，不会移动 `v2.0.8`。
+
+署名：开发报告撰写者
+
+## 2026-07-21 21:04:30 +08:00
+
+工作目标：依据 `2026-07-21-193509-yunxi-agent-v2-0-9-cross-path-terminal-recovery-streaming-resilience-development-report.md`，完成 YunXi Agent v2.0.9 跨路径兼容、终端恢复与流式故障韧性开发，并保持 v2.0.8 视觉语义和 v2.0.7-hotfix 焦点隔离不回退。
+
+执行流程：1. 使用 CodeGraph 核对 CLI mode resolver、interactive、TerminalGuard、stream collector、timeline、history/debug/tool 数据链。2. 实现 Interactive/OneShot/Command/JSON/JSONL 决议矩阵和仅交互 stderr 的强制 TUI 回落说明。3. 将 TerminalGuard 改造为逐项记录、部分进入失败可回滚、Drop 反序恢复的生命周期状态机。4. 修复 Provider UTF-8 跨网络 chunk 边界，拒绝确定非法字节。5. 为 live tail、stream content、history cell、details/debug、tool 字段、history/archive/seen-event 设置上限和 grapheme 截断。6. 增加断流、重复 final、乱序/迟到事件、取消恢复、超长 Unicode、viewport 与非 TUI 无 ANSI 测试。7. 新增并校准 v209 Windows ConPTY 采集器，验证终端恢复、Provider 错误后下一轮和长 SSE 取消后下一轮。8. 统一运行 Rust workspace、release、evaluation、v209/v208/v207-hotfix ConPTY 和 diff 门禁。9. 用户确认后精确清理 6 个可再生成目录。
+
+主要修改文件与路径：
+
+- `D:\YunXi Agent\Cargo.toml`、`D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\terminal_mode.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-provider\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-provider\tests\provider_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\host.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\streaming.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\timeline_store.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\chat.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\debug.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\output_summary.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\timeline.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\scripts\conpty\v209\*`
+- `D:\YunXi Agent\docs\reports\evidence\frames\v209-conpty\*`
+- `D:\YunXi Agent\README.md`、`D:\YunXi Agent\docs\tui-presentation.md`、`D:\YunXi Agent\docs\extraction-status.md`、`D:\YunXi Agent\scripts\README.md`
+- 本开发报告与 `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过；CLI 定向测试全部通过；Provider 46/46；TUI 159/159；release 构建通过，版本为 `yunxi 2.0.9`；companion evaluation 31/31、`golden_passed=true`、工具审批绕过 0；v209/v208/v207-hotfix Windows ConPTY verifier 分别通过，v209 manifest SHA-256 为 `714b9c2d9c01b1616ffc8789e940ea778559335e20998679a904b5c335fcfdc8`；`git diff --check` 通过。
+
+清理结果：用户确认后已永久删除 `D:\YunXi Agent\target`、v209 `node_modules`、v209 `.work`、v208 `node_modules` 和两个 v208 `.tmp` 审计目录，并逐项验证不存在。两个 `.yunxi` 本地状态目录未删除；未删除 `C:\Users` 或其他用户目录。正式证据、collector、lockfile、报告和历史 tag 全部保留。
+
+提交、推送与 Git tag 状态：功能发布提交、annotated `v2.0.9` 和 GitHub 推送待执行；发布成功后追加实际 SHA 与远程历史 tag 核验记录。
 
 署名：开发报告撰写者

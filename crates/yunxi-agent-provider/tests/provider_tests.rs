@@ -970,6 +970,63 @@ async fn streaming_transport_pushes_network_chunks_incrementally() {
 }
 
 #[tokio::test]
+async fn streaming_transport_preserves_utf8_character_split_across_chunks() {
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model"),
+        ProviderAuth::None,
+        ChunkedStreamingTransport {
+            chunks: Arc::new(vec![
+                b"data: {\"choices\":[{\"delta\":{\"content\":\"\xe4".as_slice(),
+                b"\xb8\xad\"},\"finish_reason\":\"stop\"}]}\n\n".as_slice(),
+            ]),
+        },
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("split utf8"),
+    );
+
+    let events = provider
+        .stream_events(request, "thread-utf8", "turn-utf8")
+        .await
+        .expect("split UTF-8 stream");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        StreamEvent::ItemDelta {
+            delta: ResponseItemDelta::MessageContent { delta, .. },
+            ..
+        } if delta == "中"
+    )));
+}
+
+#[tokio::test]
+async fn streaming_transport_rejects_invalid_utf8_without_echoing_raw_bytes() {
+    let provider = OpenAiTransportProvider::new(
+        ProviderConfig::openai_compatible("fixture-model"),
+        ProviderAuth::None,
+        ChunkedStreamingTransport {
+            chunks: Arc::new(vec![
+                b"data: {\"choices\":[{\"delta\":{\"content\":\"\xff\"}}]}\n\n".as_slice(),
+            ]),
+        },
+    );
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("invalid utf8"),
+    );
+
+    let error = provider
+        .stream_events(request, "thread-invalid", "turn-invalid")
+        .await
+        .expect_err("invalid UTF-8 must be rejected");
+    let message = error.to_string();
+
+    assert!(message.contains("invalid UTF-8"));
+    assert!(!message.contains('\u{fffd}'));
+}
+
+#[tokio::test]
 async fn streaming_retries_429_before_body_starts() {
     let transport = SequenceTransport::new([
         ProviderTransportResponse::new(429, r#"{"error":"slow down"}"#)

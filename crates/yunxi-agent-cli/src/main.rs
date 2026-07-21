@@ -80,7 +80,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v2.0.8 interactive terminal CLI")]
+#[command(about = "YunXi Agent v2.0.9 interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -475,6 +475,26 @@ async fn run_cli() -> Result<()> {
     let Some(cli) = parse_cli()? else {
         return Ok(());
     };
+    let invocation = if cli.jsonl {
+        terminal_mode::InvocationKind::Jsonl
+    } else if cli.json {
+        terminal_mode::InvocationKind::Json
+    } else if cli.command.is_some() {
+        terminal_mode::InvocationKind::Command
+    } else if cli.prompt.iter().all(|part| part.trim().is_empty()) {
+        terminal_mode::InvocationKind::Interactive
+    } else {
+        terminal_mode::InvocationKind::OneShot
+    };
+    let terminal_resolution = terminal_mode::TerminalModeRequest {
+        tui: cli.tui,
+        no_tui: cli.no_tui,
+        stdin_is_terminal: std::io::stdin().is_terminal(),
+        stdout_is_terminal: std::io::stdout().is_terminal(),
+        ci: continuous_integration_environment(),
+        invocation,
+    }
+    .resolve();
     let provider_mode =
         provider_mode::ProviderMode::from_flags(cli.provider_live || cli.live, cli.offline);
 
@@ -524,18 +544,14 @@ async fn run_cli() -> Result<()> {
     let prompt = cli.prompt.join(" ");
     if prompt.trim().is_empty() {
         if !cli.json && !cli.jsonl {
-            let terminal_mode = terminal_mode::TerminalModeRequest {
-                tui: cli.tui,
-                no_tui: cli.no_tui,
-                stdin_is_terminal: std::io::stdin().is_terminal(),
-                stdout_is_terminal: std::io::stdout().is_terminal(),
+            if let Some(notice) = terminal_resolution.fallback_notice {
+                eprintln!("{notice}");
             }
-            .resolve();
             return interactive::run_interactive(interactive::InteractiveOptions {
                 config,
                 backend,
                 provider_mode,
-                terminal_mode,
+                terminal_mode: terminal_resolution.mode,
             })
             .await;
         }
@@ -543,6 +559,16 @@ async fn run_cli() -> Result<()> {
     }
 
     run_prompt(prompt, config, backend, provider_mode, cli.json, cli.jsonl).await
+}
+
+fn continuous_integration_environment() -> bool {
+    std::env::var("CI")
+        .map(|value| {
+            let value = value.trim();
+            !value.is_empty()
+                && !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off")
+        })
+        .unwrap_or(false)
 }
 
 fn parse_cli() -> Result<Option<Cli>> {
@@ -1658,22 +1684,22 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.0.8; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v2.0.9; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.0.8; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v2.0.9; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.0.8; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v2.0.9; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.0.8; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v2.0.9; use --json for memory management commands"
         ),
         CliCommand::Companion { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.0.8; use --json for companion management commands"
+            "--jsonl is only supported for agent execution commands in v2.0.9; use --json for companion management commands"
         ),
         CliCommand::Controls { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.0.8; use --json for control commands"
+            "--jsonl is only supported for agent execution commands in v2.0.9; use --json for control commands"
         ),
         CliCommand::Eval { .. } => Ok(()),
     }

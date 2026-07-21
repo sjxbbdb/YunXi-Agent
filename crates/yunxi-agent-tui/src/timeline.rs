@@ -1,5 +1,10 @@
-use crate::output_summary::truncate_chars;
+use crate::output_summary::{redact_secrets, truncate_chars, truncate_graphemes_with_notice};
 use yunxi_agent_core::CommandStatus;
+
+const MAX_TOOL_ID_GRAPHEMES: usize = 512;
+const MAX_TOOL_NAME_GRAPHEMES: usize = 256;
+const MAX_TOOL_FIELD_GRAPHEMES: usize = 4 * 1024;
+const MAX_TOOL_OUTPUT_SUMMARY_GRAPHEMES: usize = 8 * 1024;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ToolTimelineEntry {
@@ -23,8 +28,11 @@ pub(crate) type ToolActivityPhase = ToolPhase;
 
 impl ToolTimelineEntry {
     pub(crate) fn new(update: ToolTimelineUpdate) -> Self {
-        let id = update.id.clone();
-        let name = update.name.clone();
+        let id = update
+            .id
+            .as_deref()
+            .map(|id| bounded_tool_field(id, MAX_TOOL_ID_GRAPHEMES, false));
+        let name = bounded_tool_field(&update.name, MAX_TOOL_NAME_GRAPHEMES, false);
         let mut entry = Self {
             id,
             name,
@@ -50,21 +58,29 @@ impl ToolTimelineEntry {
             return;
         }
         if !corrects_decline_to_cancel && self.name != update.name && !update.name.is_empty() {
-            self.name = update.name;
+            self.name = bounded_tool_field(&update.name, MAX_TOOL_NAME_GRAPHEMES, false);
         }
         self.phase = update.phase;
         self.push_step(update.phase.label());
         if let Some(command) = update.command {
-            self.command = Some(command);
+            self.command = Some(bounded_tool_field(&command, MAX_TOOL_FIELD_GRAPHEMES, true));
         }
         if let Some(status) = update.status {
-            self.status = Some(status);
+            self.status = Some(bounded_tool_field(&status, MAX_TOOL_FIELD_GRAPHEMES, true));
         }
         if let Some(approval) = update.approval {
-            self.approval = Some(approval);
+            self.approval = Some(bounded_tool_field(
+                &approval,
+                MAX_TOOL_FIELD_GRAPHEMES,
+                true,
+            ));
         }
         if let Some(output_summary) = update.output_summary {
-            self.output_summary = Some(output_summary);
+            self.output_summary = Some(bounded_tool_field(
+                &output_summary,
+                MAX_TOOL_OUTPUT_SUMMARY_GRAPHEMES,
+                true,
+            ));
         }
         if let Some(detail_id) = update.detail_id {
             self.detail_id = Some(detail_id);
@@ -95,6 +111,11 @@ impl ToolTimelineEntry {
         }
         self.steps.push(step.to_string());
     }
+}
+
+fn bounded_tool_field(value: &str, max_graphemes: usize, retain_tail: bool) -> String {
+    let redacted = redact_secrets(value);
+    truncate_graphemes_with_notice(&redacted, max_graphemes, retain_tail)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -259,5 +280,51 @@ mod tests {
         );
         assert!(activity.display_text().contains("YX-CANCEL-001"));
         assert!(!activity.display_text().contains("YX-APPROVAL-001"));
+    }
+
+    #[test]
+    fn tool_fields_are_redacted_and_bounded_before_storage() {
+        let mut update = ToolTimelineUpdate::new(
+            Some("id".repeat(MAX_TOOL_ID_GRAPHEMES)),
+            "shell",
+            ToolPhase::Running,
+        );
+        update.command = Some(format!(
+            "sk-secret-value\n{}latest-command",
+            "x".repeat(MAX_TOOL_FIELD_GRAPHEMES + 100)
+        ));
+        update.status = Some("s".repeat(MAX_TOOL_FIELD_GRAPHEMES + 100));
+        update.approval = Some("a".repeat(MAX_TOOL_FIELD_GRAPHEMES + 100));
+        update.output_summary = Some("o".repeat(MAX_TOOL_OUTPUT_SUMMARY_GRAPHEMES + 100));
+
+        let activity = ToolActivity::new(update);
+
+        assert!(
+            activity
+                .id
+                .as_ref()
+                .is_some_and(|id| id.len() <= MAX_TOOL_ID_GRAPHEMES)
+        );
+        let command = activity.command.as_deref().expect("command");
+        assert!(!command.contains("secret-value"));
+        assert!(command.contains("older content truncated"));
+        assert!(command.ends_with("latest-command"));
+        for value in [
+            activity.status.as_deref().expect("status"),
+            activity.approval.as_deref().expect("approval"),
+        ] {
+            assert!(
+                unicode_segmentation::UnicodeSegmentation::graphemes(value, true).count()
+                    <= MAX_TOOL_FIELD_GRAPHEMES
+            );
+        }
+        assert!(
+            unicode_segmentation::UnicodeSegmentation::graphemes(
+                activity.output_summary.as_deref().expect("output summary"),
+                true,
+            )
+            .count()
+                <= MAX_TOOL_OUTPUT_SUMMARY_GRAPHEMES
+        );
     }
 }

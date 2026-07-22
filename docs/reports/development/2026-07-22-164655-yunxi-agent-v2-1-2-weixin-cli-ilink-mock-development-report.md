@@ -292,3 +292,18 @@ yunxi weixin logout [--account default] --confirm
 本节作为发布后 docs-only 收口只允许继续推进 master，不得移动 `v2.1.2`。发布完成不等于独立复审通过；在 v2.1.2 审核通过前不得进入 v2.1.3。
 
 署名：开发报告撰写者
+
+## 十五、用户授权的发布后中间产物清理
+
+`2026-07-22 18:48:53 +08:00`，用户明确要求清理中间构建和编译产物。删除前完成只读盘点、绝对路径解析和工作区边界校验，确认目标全部位于 `D:\YunXi Agent` 内、均不是工作区根目录且不属于 `C:\Users\`。随后使用 PowerShell `Remove-Item -LiteralPath -Recurse -Force -ErrorAction Stop` 精确删除以下四个目录：
+
+- `D:\YunXi Agent\target`：22,148 个文件，6,423,070,997 字节。
+- `D:\YunXi Agent\.tmp`：11 个文件，158,810 字节。
+- `D:\YunXi Agent\scripts\conpty\v210\.tmp`：9 个文件，38,094 字节。
+- `D:\YunXi Agent\scripts\conpty\v210\node_modules`：53 个文件，32,558,228 字节。
+
+四次精确删除均无 PowerShell 错误，删除后四个路径逐项核验为不存在。`D:\YunXi Agent\.git`、`D:\YunXi Agent\.yunxi`、源码、正式 evidence、报告和日志均确认存在；没有触碰任何用户目录，没有删除 ConPTY 脚本、lockfile、历史 golden 或正式 evidence。清理前后 Git 工作树均为干净状态。
+
+清理不会改变发布引用：本地 `v2.1.2` tag object 仍为 `7aa184e4b58fddad050d9affb64a5ce27121489b`，目标仍为 `b09f442adeaebc854f0ec00fb4c497bc6ec90e41`。本节只记录用户授权的发布后清理结果，后续 docs-only 提交不得移动任何 tag。
+
+署名：开发报告撰写者

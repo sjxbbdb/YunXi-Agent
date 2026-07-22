@@ -121,6 +121,30 @@
 
 署名：开发报告撰写者
 
+## 2026-07-22 18:48:53 +08:00
+
+工作目标：根据用户明确授权，精确清理 `v2.1.2` 开发和验证阶段产生的中间构建、编译与 ConPTY 本地依赖目录，保留用户状态、源码、正式证据、日志和全部 Git 引用。
+
+执行流程：
+1. 只读盘点 `D:\YunXi Agent\target`、根 `.tmp` 和 `scripts\conpty` 下名称为 `node_modules`、`.work`、`.tmp` 的生成目录，统计文件数与字节数。
+2. 将候选解析为规范绝对路径，逐项验证路径以 `D:\YunXi Agent\` 为前缀、不是工作区根目录、不是 `C:\Users\` 下路径；检查通过后才进入删除阶段。
+3. 在单个 PowerShell 进程内按四个固定绝对路径执行 `Remove-Item -LiteralPath -Recurse -Force -ErrorAction Stop`。删除过程无命令错误；若任一删除发生错误，命令会立即停止。
+4. 删除后逐项核验四个目标不存在，并确认 `.git`、`.yunxi`、微信 crate 源码和 `docs\reports\evidence` 继续存在；复核工作树干净和 `v2.1.2` tag 不变。
+
+精确删除路径与清理量：
+- `D:\YunXi Agent\target`：22,148 个文件，6,423,070,997 字节。
+- `D:\YunXi Agent\.tmp`：11 个文件，158,810 字节。
+- `D:\YunXi Agent\scripts\conpty\v210\.tmp`：9 个文件，38,094 字节。
+- `D:\YunXi Agent\scripts\conpty\v210\node_modules`：53 个文件，32,558,228 字节。
+
+清理结果：4 个目标均已删除并核验不存在，合计清理 22,221 个文件、6,455,826,129 字节，约 6.46 GB。没有发现或删除 `.work` 目录。首次只读盘点和清理后只读核验在受限 runner 中因 Windows `CreateProcessAsUserW` 访问被拒绝而未启动任何命令；随后按授权在沙箱外执行同一只读检查，删除命令本身一次成功且无 PowerShell 错误。
+
+保留与安全状态：`D:\YunXi Agent\.git`、`D:\YunXi Agent\.yunxi`、全部源码、Cargo 清单与锁文件、ConPTY 脚本、正式 evidence、报告、日志和历史 tag 均保留。没有触碰、遍历删除或清理 `C:\Users\24763`，没有执行 `git clean`、gc、prune、目录移动、系统安装、PATH/注册表或系统配置修改。清理后 Git 工作树变更数为 0。
+
+Git 状态：清理前 HEAD 为 `35d70bcf9760c5fbc9d3bbac45f8ab76cb1a9b90`；`v2.1.2` tag object 仍为 `7aa184e4b58fddad050d9affb64a5ce27121489b`，目标仍为发布提交 `b09f442adeaebc854f0ec00fb4c497bc6ec90e41`。本条日志和开发报告清理段将作为 docs-only 记录提交并非强制推进 master，不移动或覆盖任何 tag。
+
+署名：开发报告撰写者
+
 ## 2026-07-22 16:46:55 +08:00
 
 工作目标：依据 `v2.1.1-hotfix.1` 独立复审审核报告和项目总纲图，撰写面向开发者的 `v2.1.2` 微信模块、CLI 骨架、iLink 协议客户端与确定性 Mock 测试开发报告。

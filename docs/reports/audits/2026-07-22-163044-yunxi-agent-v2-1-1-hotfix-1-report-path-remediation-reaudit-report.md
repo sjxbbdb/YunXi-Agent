@@ -79,3 +79,21 @@
 本报告生成时，功能发布提交、annotated tag 和发布后开发日志均已在 GitHub；本复审报告、报告索引和复审日志待作为 docs-only 审核收口提交到 master。桌面审核报告只作为项目正本的单向分发副本。
 
 署名：审核者
+
+## 七、提交与分发结果
+
+记录时间：2026-07-22 16:34:27 +08:00
+
+- 独立复审提交：`eb3ddd27099a9c1c3f7311b108ddcb1560437f3b`
+- parent：`b01357dc12c04011639ad1501940d49580e0f1d4`
+- author/committer：`开发者 <developer@yunxi-agent.local>`
+- GitHub master：`eb3ddd27099a9c1c3f7311b108ddcb1560437f3b`
+- GitHub tag 总数：52
+- 推送前后 tag SHA 变化数：0
+- `v2.1.1-hotfix.1` tag object：`12262fa6a19cd444403414606810077d6dfc81f3`，保持不变
+- `v2.1.1` tag object：`75c4169d09344a359239f820ca89f052408d1e76`，保持不变
+- force：未使用
+
+本节与最终日志作为第二个 docs-only 收口提交仅推进 master，不移动任何 tag。项目正本已单向同步到桌面指定审核报告和开发日志文件，并执行 SHA-256 一致性校验。
+
+署名：审核者

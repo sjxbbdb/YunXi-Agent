@@ -1,5 +1,7 @@
 # Scripts
 
+所有 Windows ConPTY 版本的场景、入口、依赖、生成目录和正式 evidence 映射见 [`conpty/README.md`](conpty/README.md)。现有版本目录保持原路径，不通过目录整理抽取或重写采集代码。
+
 ## `conpty\v210`
 
 Contains the integrated Windows ConPTY release gate for v2.1.0. Capture writes

@@ -2389,3 +2389,33 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 提交、推送与 Git tag 状态：阶段 0、1、2 已形成三个独立回滚提交；本条日志和实施结果作为最终 docs-only 收尾提交。项目版本保持 `2.1.0`，不创建新 tag，不移动、删除或覆盖 `v2.1.0` 及任何历史 tag。
 
 署名：开发报告撰写者
+
+## 2026-07-22 11:29:13 +08:00
+
+工作目标：继续依据 `D:\YunXi Agent\docs\reports\2026-07-22-105338-yunxi-agent-project-directory-organization-report.md` 整理项目目录，完成阶段 3 的受控报告迁移、阶段 4 的 ConPTY 验证资产索引和阶段 5 的清理前只读盘点；不移动源码，不删除文件，不写入或删除用户目录。
+
+执行流程：
+1. 将 v2.1.0 审核报告和开发报告分别迁移至 `docs/reports/audits/` 与 `docs/reports/development/`，同步活动索引并生成旧路径到新路径的迁移映射；迁移前后逐文件校验 SHA-256。
+2. 完善 `scripts/conpty/README.md` 的 v205 至 v210 版本矩阵，并从 `scripts/README.md` 提供稳定入口；保留所有现有版本目录、脚本、锁文件和正式 evidence。
+3. 直接运行七组现有 Node 只读验证器，避免产生 npm 安装或用户缓存；检查最新三份审核报告、最新三份开发报告和本地 Markdown 链接。
+4. 执行 `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace`，确认目录整理没有改变 Rust 工作区行为。
+5. 使用精确绝对路径盘点可再生目录，检查 Git 跟踪文件、重解析点、文件数和体积；仅形成清理候选清单，没有执行删除。
+
+修改与迁移路径：
+- `D:\YunXi Agent\docs\reports\audits\2026-07-22-100333-yunxi-agent-v2-1-0-integrated-release-audit-report.md`
+- `D:\YunXi Agent\docs\reports\development\2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md`
+- `D:\YunXi Agent\docs\reports\2026-07-22-111558-yunxi-agent-v2-1-0-report-path-migration-map.md`
+- `D:\YunXi Agent\docs\README.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\scripts\README.md`
+- `D:\YunXi Agent\scripts\conpty\README.md`
+- `D:\YunXi Agent\docs\reports\2026-07-22-105338-yunxi-agent-project-directory-organization-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：两份报告的 Git 迁移均识别为 R100；审核报告 SHA-256 保持 `A56EB0C6D0E7B79EF6C95FD337398B3C48F89D1D7100EACFDE2F6E44C46E4A90`，开发报告 SHA-256 保持 `B70BF0D3F3BBDEEB7DE1DB515D8FA60B09BB161F63C47160AF28997EB61D0413`。迁移后 24 个本地 Markdown 链接和 15 个 ConPTY 索引链接均无断链。v205/v206/v207 验证器各通过 8 个场景，v207-hotfix/v208 各通过 2 个场景；v209/v210 均返回 `read_only=true`，正式 evidence 哈希保持不变。Rust 格式、检查和全工作区测试全部通过，CLI integration 45/45、JSONL 10/10、Provider 46/46、TUI 161/161 等测试无失败。
+
+清理前盘点：`D:\YunXi Agent\target` 约 3.079 GiB；`D:\YunXi Agent\.codegraph` 约 183.73 MiB；`D:\YunXi Agent\.tmp\conpty` 为 0 字节；v207、v207-hotfix、v208、v209、v210 的五个 `node_modules` 各约 63.72 MiB。上述目录均未包含 Git 跟踪文件，递归重解析点数量为 0。`D:\YunXi Agent\.tmp\audit-v210-live-provider-20260722` 约 0.15 MiB 且包含审核采集资产，默认保留。首次盘点因当前 Windows PowerShell/.NET 不支持 `System.IO.EnumerationOptions` 而出现运行时错误，已立即停止且没有写入或删除；首次无效零值已丢弃，用户要求继续后才使用 PowerShell 5.1 兼容的只读逐层队列重新盘点。
+
+提交、推送与边界状态：阶段 3 提交为 `ddd4cd4e05e7e5fa0c99fea9ad82f8e237e1c3ef`，阶段 4 提交为 `b1e6124ffdf5d075226fda3b3ce7b6426f513f79`。本轮没有执行 `Remove-Item`、`git clean`、递归删除、强制推送、tag 移动或用户目录写入；清理必须等待用户对精确绝对路径的单独确认。项目版本保持 `2.1.0`，`v2.1.0` 和全部历史 release tag 不移动、不删除、不覆盖。
+
+署名：开发报告撰写者

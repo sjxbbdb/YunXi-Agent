@@ -247,19 +247,17 @@ git diff --check
 
 署名：开发者
 
-## 九、阶段 0 至阶段 2 实施结果
+## 十、阶段 3、阶段 4 与阶段 5 清理前盘点结果
 
-实施时间：2026-07-22 11:09:06 +08:00
+实施时间：2026-07-22 11:29:13 +08:00
 
-按本报告建议，本轮仅实施阶段 0、阶段 1 和阶段 2，没有进入历史文档迁移、ConPTY 共享代码抽取或再生产物清理。
+1. 阶段 3 仅迁移 v2.1.0 的一组报告：审核报告归档至 `docs/reports/audits/`，开发报告归档至 `docs/reports/development/`；使用 `git mv` 保留历史并同步两个活动索引。迁移前后审核报告 SHA-256 均为 `A56EB0C6D0E7B79EF6C95FD337398B3C48F89D1D7100EACFDE2F6E44C46E4A90`，开发报告 SHA-256 均为 `B70BF0D3F3BBDEEB7DE1DB515D8FA60B09BB161F63C47160AF28997EB61D0413`。迁移映射记录在 `docs/reports/2026-07-22-111558-yunxi-agent-v2-1-0-report-path-migration-map.md`，独立回滚提交为 `ddd4cd4e05e7e5fa0c99fea9ad82f8e237e1c3ef`。
+2. 阶段 4 完善 `scripts/conpty/README.md`，建立 v205、v206、v207、v207-hotfix、v208、v209、v210 的场景、入口、依赖、生成目录和正式 evidence 对照表，并在 `scripts/README.md` 增加稳定入口。未抽取未经两个版本验证复用的共享代码，现有版本路径和执行入口保持不变；独立回滚提交为 `b1e6124ffdf5d075226fda3b3ce7b6426f513f79`。
+3. 七组 ConPTY 只读验证器全部通过：v205、v206、v207 分别通过 8 个场景，v207-hotfix、v208 分别通过 2 个场景；v209 与 v210 返回 `read_only=true`，正式 evidence SHA-256 分别保持 `714b9c2d9c01b1616ffc8789e940ea778559335e20998679a904b5c335fcfdc8` 与 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6`。
+4. 报告迁移后共检查 24 个本地 Markdown 链接和 15 个 ConPTY 索引链接，断链数均为 0；最近三份审核报告和最近三份开发报告均可读取。`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过；CLI integration 45/45、JSONL 10/10、Provider 46/46、TUI 161/161 等测试无失败。
+5. 阶段 5 仅完成只读盘点，尚未删除任何内容。候选目录均位于 `D:\YunXi Agent` 内、未包含 Git 跟踪文件且递归重解析点数量为 0：`target` 约 3.079 GiB；`.codegraph` 约 183.73 MiB；五个 v207 至 v210 ConPTY `node_modules` 各约 63.72 MiB；空目录 `.tmp\conpty` 为 0 字节。`.tmp\audit-v210-live-provider-20260722` 仅约 0.15 MiB，但包含审核采集资产，默认保留。
+6. 首次体积盘点使用了当前 Windows PowerShell/.NET 不支持的 `System.IO.EnumerationOptions`，产生运行时错误和无效的零值结果；当场停止，未执行写入或删除。用户明确要求继续后，改用 PowerShell 5.1 兼容的逐层只读队列重新盘点，并丢弃首次无效结果。
 
-1. 阶段 0 建立 `docs/reports/2026-07-22-110139-yunxi-agent-project-directory-baseline-report.md`，记录 HEAD、版本、50 个 tag、根目录边界、未跟踪正式资产、再生产物和四类受保护路径的完整引用文件清单；正式审核报告、本整理报告和个人微信路线图原样纳入 Git。
-2. 阶段 1 将 v205/v206 的 ConPTY 忽略特例收敛为 `/scripts/conpty/**/node_modules/` 与 `/scripts/conpty/**/.work/`，并增加显式 `/.tmp/`。`git ls-files` 证明这些模式不包含已跟踪文件；v205、v206、v207、v207-hotfix、v208、v209、v210 探针均由预期规则命中。
-3. 阶段 2 新增 `docs/README.md`，更新 `docs/reports/README.md` 的命名与归档规则，并在根 `README.md` 增加稳定入口。历史报告、spec、plan、evidence 和脚本均未移动或改名。
-4. 三阶段分别建立独立回滚提交：`a8d539810dd51829c21fdc2877609e8329de3bf7`、`6116369d8aa035a4a0bafa4957459806317572b5`、`13ea19bdf0a57fe9500418bd82ef1ba57e2b5406`。
-
-验证结果：23 个本地 Markdown 链接全部存在；`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过；v210 与 v209 verifier 均返回 `read_only=true`，evidence SHA-256 分别保持 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6` 与 `714b9c2d9c01b1616ffc8789e940ea778559335e20998679a904b5c335fcfdc8`。
-
-边界结果：未执行删除、递归清理、目录移动、强制覆盖、`git clean`、`git reset`、tag 修改或用户目录写入。五个现存 ConPTY `node_modules` 目录仍在磁盘上，只是不再污染 Git 状态；`target/`、`.tmp/`、`.codegraph/`、`.yunxi/`、`.worktrees/`、源码、安装目录和全部 release tag 均保持原位。
+边界结果：本阶段没有执行 `Remove-Item`、`git clean`、递归删除、强制覆盖、`git reset`、tag 修改或用户目录写入。阶段 5 必须在用户对精确绝对路径再次确认后才能执行；`v2.1.0` 和全部历史 release tag 保持不变。
 
 署名：开发者

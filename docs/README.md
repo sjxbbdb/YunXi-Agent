@@ -20,6 +20,7 @@
 ## 报告与证据
 
 - [报告索引与归档规则](reports/README.md)：报告命名、分类和历史兼容规则。
+- [v2.1.1-hotfix.1 路径整改独立复审报告](reports/audits/2026-07-22-163044-yunxi-agent-v2-1-1-hotfix-1-report-path-remediation-reaudit-report.md)：确认原唯一阻塞点关闭，允许进入 v2.1.2 开发阶段。
 - [v2.1.1 审核报告](reports/audits/2026-07-22-154559-yunxi-agent-v2-1-1-audit-report.md)：记录历史开发报告路径迁移这一唯一阻塞点；结论为审核不通过。
 - [v2.1.1 历史报告路径整改开发报告](reports/development/2026-07-22-155306-yunxi-agent-v2-1-1-hotfix-report-path-remediation-development-report.md)：`v2.1.1-hotfix.1` 整改依据与复审门禁。
 - [v2.1.0 集成发布审核报告](reports/audits/2026-07-22-100333-yunxi-agent-v2-1-0-integrated-release-audit-report.md)：当前发布审核基线。

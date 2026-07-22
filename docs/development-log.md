@@ -2787,3 +2787,31 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 提交和推送状态：整改发布提交与新 annotated tag 已成功推送。本条发布结果与整改报告的发布结果段作为 docs-only 收口仅推进 master，不移动任何 tag。当前正式口径仍是“`v2.1.1-hotfix.1` 整改候选已完成，待独立复审”；在复审通过前不得宣称 v2.1.1 审核通过或进入 v2.1.2。
 
 署名：开发报告撰写者
+
+## 2026-07-22 16:30:44 +08:00
+
+工作目标：对已发布的 `v2.1.1-hotfix.1` 历史报告路径整改进行独立复审，确认原 v2.1.1 审核唯一阻塞点是否关闭，并判断是否允许进入 v2.1.2。
+
+执行流程：
+1. 核对本地与 GitHub master、52 个 tag、`v2.1.1` 和 `v2.1.1-hotfix.1` 的 annotated tag 对象及目标，确认发布引用无漂移、工作树干净。
+2. 核对历史旧路径存在、误迁移新路径缺失、正文 SHA-256、单一正本语义和 `v2.1.0..v2.1.1-hotfix.1` rename 结果。
+3. 检查治理入口活动链接、受保护范围、已跟踪且被忽略文件、ConPTY ignore 规则和 Git 空白门禁。
+4. 独立运行 Rust workspace 格式/check/test、陪伴评测和 v210 ConPTY 只读 verifier；复核真实 Provider 继承依据和三张 TUI 基线帧。
+
+复审报告与修改路径：
+- `D:\YunXi Agent\docs\reports\audits\2026-07-22-163044-yunxi-agent-v2-1-1-hotfix-1-report-path-remediation-reaudit-report.md`
+- `D:\YunXi Agent\docs\README.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面分发副本：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-163044-YunXi-Agent-v2.1.1-hotfix.1-历史报告路径整改独立复审报告.md`
+- 桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：历史旧路径存在、新路径缺失，正文 SHA-256 为 `B70BF0D3F3BBDEEB7DE1DB515D8FA60B09BB161F63C47160AF28997EB61D0413`；相对 `v2.1.0` 不再出现 `R092`。50 个本地 Markdown 链接失效 0，误迁移新路径活动引用 0，受保护范围变更 0，已跟踪且被忽略文件 0，`git diff --check` 通过。`cargo fmt`、workspace offline check/test 全部通过，CLI 45/45、JSONL 10/10、TUI 161/161；陪伴评测 31/31、`golden_passed=true`、审批绕过和主动边界违规均为 0。v210 verifier 返回 `ok=true`、`read_only=true` 且 evidence 哈希未变；真实 Provider 继承证据适用，三张 TUI 帧无重叠、越界或不可读。
+
+复审结论：`v2.1.1-hotfix.1` 独立复审通过，原唯一阻塞点已关闭，可以进入 v2.1.2 开发阶段。该结论不代表 v2.1.2 已实现，后续仍须依据新的开发报告执行完整开发、验证、tag、推送和审核流程。
+
+清理与安全状态：未执行删除、递归清理、目录移动、`git clean`、gc、prune、系统安装、PATH/注册表/系统配置修改或用户目录清理；所有本地产物和用户状态继续保留。
+
+提交和推送状态：复审报告、索引和日志待形成 docs-only 审核收口提交并非强制推送 master；不会移动、删除或覆盖任何 tag。
+
+署名：开发报告撰写者

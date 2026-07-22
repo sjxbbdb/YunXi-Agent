@@ -1,6 +1,6 @@
 # YunXi Agent 文档索引
 
-本页是 `docs/` 的稳定导航入口。当前阶段只建立索引，不移动历史文档；已有路径继续保持兼容。
+本页是 `docs/` 的稳定导航入口。`v2.1.1` 只建立目录治理、Git 忽略边界与文档索引基线，不实现微信功能，也不移动历史文档；已有路径继续保持兼容。
 
 ## 架构与运行边界
 
@@ -15,13 +15,16 @@
 
 - [设计规格目录](superpowers/specs/)：历史设计规格，保持现有路径。
 - [实施计划目录](superpowers/plans/)：版本实施计划，保持现有路径。
-- [v2.1.1 至 v2.2.0 个人微信接入路线图](superpowers/plans/2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md)：当前后续版本总纲。
+- [v2.1.1 至 v2.2.0 个人微信接入与目录治理路线图](superpowers/plans/2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md)：唯一可编辑正本，SHA-256 为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`；桌面分发副本已由正本重新生成并校验一致。
 
 ## 报告与证据
 
 - [报告索引与归档规则](reports/README.md)：报告命名、分类和历史兼容规则。
 - [v2.1.0 集成发布审核报告](reports/audits/2026-07-22-100333-yunxi-agent-v2-1-0-integrated-release-audit-report.md)：当前发布审核基线。
 - [v2.1.0 集成发布开发报告](reports/development/2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md)：当前功能发布记录。
+- [v2.1.0 进入 v2.1.1 准入审核](reports/audits/2026-07-22-120829-yunxi-agent-v2-1-0-v2-1-1-entry-audit-report.md)：目录治理版本的开发准入依据。
+- [v2.1.1 目录治理开发报告](reports/development/2026-07-22-130141-yunxi-agent-v2-1-1-directory-governance-development-report.md)：本版本的硬性边界、实施顺序和验收门禁。
+- [v2.1.1 项目目录治理基线](directory-governance.md)：根目录资产、跟踪规则、本地状态、清理条件和路线图副本状态。
 - [项目目录整理报告](reports/2026-07-22-105338-yunxi-agent-project-directory-organization-report.md)：目录治理原则与阶段边界。
 - [项目目录整理阶段 0 基线](reports/2026-07-22-110139-yunxi-agent-project-directory-baseline-report.md)：受保护路径引用和整理前状态。
 - [可复核证据目录](reports/evidence/)：脱敏说明、ConPTY frames 和 SHA-256 manifest。
@@ -29,6 +32,7 @@
 ## 工程与操作入口
 
 - [脚本索引](../scripts/README.md)：安装、迁移、Provider 与版本化 ConPTY 验证入口。
+- [Windows ConPTY 验证总览](../scripts/conpty/README.md)：v205 至 v210 场景、依赖、输出和正式 evidence 对照表。
 - [开发日志](development-log.md)：按时间记录开发、验证、发布和安装操作。
 
 ## 目录治理规则

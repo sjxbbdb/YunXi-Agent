@@ -64,6 +64,52 @@
 
 署名：开发报告撰写者
 
+## 2026-07-22 13:01:40 +08:00
+
+工作目标：依据 `v2.1.0` 进入 `v2.1.1` 开发准入审核报告和项目内总纲正本，按固定流程撰写面向开发者的 `v2.1.1` 项目目录治理、Git 忽略边界与文档索引基线开发报告。
+
+执行流程：
+1. 读取审核报告 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-120829-YunXi-Agent-v2.1.0-进入v2.1.1开发准入审核报告.md`，确认 `v2.1.0` 审核通过，可以进入总纲图 `v2.1.1` 开发。
+2. 读取桌面路线图副本 `C:\Users\24763\Desktop\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，发现其 `v2.1.1` 内容仍为微信模块/CLI 骨架。
+3. 读取项目内总纲正本 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，确认正本规定 `v2.1.1` 为项目目录治理、Git 忽略边界与文档索引基线，微信模块/CLI 骨架推迟到 `v2.1.2`。
+4. 核验项目内总纲正本 SHA-256 为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`，桌面路线图副本 SHA-256 为 `ECE3375748A6EF4BD70DCA03FFB65941AE2F566CCC32FBCC12505DB511987372`；两者不一致，本次开发报告以项目内正本和准入审核报告为准。
+5. 依据审核报告与总纲正本提取 `v2.1.1` 的开发范围：根目录资产清单、统一 `.gitignore`、文档索引、报告落位规则、ConPTY 脚本总览、清理候选记录和路线图正本/副本状态。
+6. 按固定流程在开发报告前部写入 14 条硬性约束，并明确本版本不得新增 `crates\yunxi-agent-weixin`、不得实现 iLink 网络、不得修改 Rust 源码、不得移动历史证据或参考源码。
+7. 检查参考源码要求，确认本次 `v2.1.1` 只需参考本机 `D:\源码\reasonix` 的目录治理方式，不需要拉取新的源码项目。
+8. 在项目内新增开发报告，并经用户授权复制到桌面开发报告目录。
+9. 对项目内开发报告和桌面开发报告执行 SHA256 校验，确认内容一致。
+
+修改文件：
+- 新增项目开发报告：`D:\YunXi Agent\docs\reports\development\2026-07-22-130141-yunxi-agent-v2-1-1-directory-governance-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-22-130141-yunxi-agent-v2-1-1-directory-governance-development-report.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目开发报告：`D:\YunXi Agent\docs\reports\development\2026-07-22-130141-yunxi-agent-v2-1-1-directory-governance-development-report.md`
+- 桌面开发报告：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-22-130141-yunxi-agent-v2-1-1-directory-governance-development-report.md`
+- 项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 审核报告来源：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-120829-YunXi-Agent-v2.1.0-进入v2.1.1开发准入审核报告.md`
+- 项目内审核报告归档：`D:\YunXi Agent\docs\reports\audits\2026-07-22-120829-yunxi-agent-v2-1-0-v2-1-1-entry-audit-report.md`
+- 总纲正本：`D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`
+- 桌面路线图副本：`C:\Users\24763\Desktop\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`
+- 已存在参考源码：`D:\源码\reasonix`
+
+验证结果：
+- 项目开发报告与桌面开发报告 SHA256 一致：`0EAD89CD2014354F60344BE2C6E9CDC39E7BD833359C77786BBD7BE83DFDC218`。
+- 项目内总纲正本与桌面路线图副本 SHA-256 不一致；本次报告以项目内正本为准，并将该差异写入开发报告。
+- 本次审核报告和总纲正本未要求新增外部源码项目；`D:\源码\reasonix` 已存在，未执行 `git clone` 或网络拉取。
+- 本次未修改 YunXi Rust 源码。
+- 未运行 `cargo fmt`、`cargo check`、`cargo test`、`cargo build` 或 ConPTY capture/verify；本次工作性质为开发报告撰写。
+- 未生成编译中间产物，因此无需清理 `target` 或 ConPTY `.work` 目录。
+- 未执行递归删除、强制移动、清空目录、系统级安装/卸载、PATH/注册表/系统配置修改；涉及 C 盘用户目录的操作仅为经授权写入桌面开发报告副本并同步桌面开发日志。
+
+提交和推送状态：未提交、未推送、未创建新的 Git tag；`v2.1.0` 和全部历史 tag 不移动、不删除、不覆盖。`v2.1.1` 后续实现、验证、清理和审核通过后，必须创建新的 annotated Git tag。
+
+署名：开发报告撰写者
+
 ## 2026-07-21 19:35:09 +08:00
 
 工作目标：依据 `v2.0.8` 视觉语义、信息密度与陪伴界面一致性审核通过报告，检查报告提到的参考源码是否已在本机存在，并按固定流程撰写面向开发者的 `v2.0.9` 跨路径兼容、终端恢复与流式故障韧性开发报告。
@@ -2417,5 +2463,188 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 清理前盘点：`D:\YunXi Agent\target` 约 3.079 GiB；`D:\YunXi Agent\.codegraph` 约 183.73 MiB；`D:\YunXi Agent\.tmp\conpty` 为 0 字节；v207、v207-hotfix、v208、v209、v210 的五个 `node_modules` 各约 63.72 MiB。上述目录均未包含 Git 跟踪文件，递归重解析点数量为 0。`D:\YunXi Agent\.tmp\audit-v210-live-provider-20260722` 约 0.15 MiB 且包含审核采集资产，默认保留。首次盘点因当前 Windows PowerShell/.NET 不支持 `System.IO.EnumerationOptions` 而出现运行时错误，已立即停止且没有写入或删除；首次无效零值已丢弃，用户要求继续后才使用 PowerShell 5.1 兼容的只读逐层队列重新盘点。
 
 提交、推送与边界状态：阶段 3 提交为 `ddd4cd4e05e7e5fa0c99fea9ad82f8e237e1c3ef`，阶段 4 提交为 `b1e6124ffdf5d075226fda3b3ce7b6426f513f79`。本轮没有执行 `Remove-Item`、`git clean`、递归删除、强制推送、tag 移动或用户目录写入；清理必须等待用户对精确绝对路径的单独确认。项目版本保持 `2.1.0`，`v2.1.0` 和全部历史 release tag 不移动、不删除、不覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-22 11:55:14 +08:00
+
+工作目标：依据用户提出的“先整理项目文件夹、且不得整理崩项目”的要求，复核并重构
+v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发布版本，同时保持 CLI 为核心、
+个人微信私聊优先、最终 v2.2.0 完成接入的既定目标。
+
+执行流程：
+1. 以只读方式检查 `D:\源码\reasonix` 的根目录、`internal/`、`docs/`、`scripts/` 与
+   `.gitignore`，提取“稳定资产、产品表面、维护工具、再生产物”相互隔离的分类原则。
+2. 通过 CodeGraph 核对 YunXi 当前 `AgentInput`、`AgentRunControl`、
+   `Agent::run_with_backend_stream`、`YunXiRuntimeBackend`、`SessionStore`、
+   `FileSessionStore` 和 CLI/TUI 的真实边界，确认微信不得修改 `SessionRecord`，且当前
+   文件 session store 不具备原子写、跨进程锁或加密能力。
+3. 新增项目目录整理报告，并将路线图的 `v2.1.1` 改为目录治理、Git 忽略边界与文档索引
+   基线；原微信 crate/CLI 骨架与 iLink Mock 协议层合并至 `v2.1.2`。版本数量仍为十个，
+   tag 顺序保持 `v2.1.1` 至 `v2.1.9`、`v2.2.0`。
+4. 完整复核路线图的版本依赖、安全边界与现实可实现性，补入独立 `WeixinStateStore`、
+   系统凭证保护的加密待处理队列、账户级跨进程锁、配对请求 ID、远程审批/追问超时、
+   iLink 协议漂移安全失败、结果不明投递的待诊断语义，以及项目内正本/桌面副本 SHA-256
+   一致性规则。
+5. 尝试将项目内总纲图同步覆盖到用户明确指定的桌面 Markdown 文件；受控执行环境禁止
+   对 C 盘桌面路径执行写入，操作被策略拦截，未绕过该限制。项目内路线图因此被标记为
+   唯一可编辑正本，桌面副本状态须在后续发布或审核报告中如实记录。
+
+修改与新增路径：
+- `D:\YunXi Agent\docs\reports\2026-07-22-105338-yunxi-agent-project-directory-organization-report.md`
+- `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：使用 CodeGraph 完成运行时、存储和 CLI/TUI 边界核对；路线图版本表与版本章节
+均为十项且一一对应；检索确认不再包含无法兑现的“恰好一次”承诺，并已改为同一消息 ID
+不并发 dispatch、外部网络结果不明时待诊断的明确语义。`git diff --check` 通过。项目内
+总纲图当前 SHA-256 为
+`2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`。本次为文档与
+路线图重构，未修改 Rust 源码，未运行 Cargo 构建或测试，不能据此宣称任何微信功能完成。
+
+清理与外部路径状态：未执行 `Remove-Item`、`git clean`、递归删除、移动、重命名、强制
+覆盖、系统安装、PATH/注册表/系统配置修改或任何编译产物清理。未向 `C:\Users`、桌面或
+其他用户目录写入；桌面副本同步因策略阻止而未发生。
+
+提交、推送与 Git tag 状态：当前分支为 `master`，记录时 HEAD 为
+`d6b6132ce9ad73b980f0208b618959671889fbf4`。本次未创建 commit、未推送、未创建新 tag，
+未移动、删除或覆盖 `v2.1.0` 及任何历史 tag；工作树中路线图与本日志为待提交的文档修改。
+
+署名：审核者
+
+## 2026-07-22 12:08:29 +08:00
+
+工作目标：依据个人微信接入与目录治理总纲图，审核当前 `v2.1.0` 是否具备进入
+`v2.1.1`“项目目录治理、Git 忽略边界与文档索引基线”开发的条件；不审核 v2.1.1 是否
+已经完成，不比较任何后续版本。
+
+执行流程：
+1. 核验 `Cargo.toml`、annotated `v2.1.0` tag object、发布提交、当前 HEAD、tag 后提交
+   范围和工作树状态，确认 tag 后没有 Rust、CLI、TUI、Runtime、Provider、存储或协议功能
+   代码变更。
+2. 使用 CodeGraph 核验 CLI、TUI、`YunXiRuntimeBackend` 与 `SessionStore` 的 crate 边界，
+   确认 v2.1.1 的目录治理无需改动核心功能模块。
+3. 独立执行 Rust 格式、workspace check 和 workspace test；核验调试二进制、两处已安装
+   二进制、陪伴评测、v209/v210 ConPTY 正式 evidence 的只读 verifier、Git 完整性和 tag
+   祖先关系。
+4. 读取 v2.1.0 已归档审核报告的真实 DeepSeek/Windows ConPTY 证据，并人工检查 100x30
+   主会话、Details 与 58x18 窄屏帧。因 tag 后没有功能代码改动，真实 Provider 证据作为
+   当前版本基线继承。
+5. 阅读 `scripts/provider/deepseek-live-smoke.ps1` 后确认其 finally 中包含 `%TEMP%` 的
+   `Remove-Item -Recurse -Force`；根据用户 shell 安全强约束，未获得单独清理授权前不执行
+   该脚本，也未将历史 live 证据虚报为新的在线执行结果。
+6. 对照总纲 v2.1.1 的参考源码条目，核对 `D:\源码\reasonix`、YunXi 提取索引、
+   `vendor/codex-rs` 与 `extracted/codex-core-agent-sources` 的可用性和不可移动边界。
+
+审核报告与路径：
+- `D:\YunXi Agent\docs\reports\audits\2026-07-22-120829-yunxi-agent-v2-1-0-v2-1-1-entry-audit-report.md`
+- 总纲正本：`D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`
+- 项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 目标桌面审核目录：`C:\Users\24763\Desktop\YunXi Agent审核报告\`
+- 目标桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：`Cargo.toml=2.1.0`；`v2.1.0` 为有效 annotated tag，tag object 为
+`c42ca8b4e2837dcff1e8ae0cd3860936c947875d`，发布提交为
+`a8293905af55d659d647515786699ab313a51a07`。`cargo fmt --all -- --check`、
+`cargo check --workspace`、`cargo test --workspace` 全部通过。调试与已安装二进制均返回
+`yunxi 2.1.0`；D、C 两处已安装 `yunxi.exe` SHA-256 相同，为
+`350766A63FE978E404B112CB0BB4623646514B4A9630F0D3849DEF552C514355`。陪伴评测为 31/31，
+`tool_approval_bypass_count=0`。v210/v209 的只读 verifier 均通过。人工视觉复核无布局
+重叠、控件越界或 Details 泄漏；forced-offline header 的 `offline offline` 重复文案记为
+非阻塞观感观察。`git fsck --full` 未报告损坏对象或 tag 引用错误，仅列出历史 dangling
+对象；`git diff --check` 通过。
+
+审核结论：`v2.1.0` 审核通过，可以进入总纲图 `v2.1.1` 开发。该结论不表示 v2.1.1 已经
+完成；v2.1.1 完成后必须单独创建新的 annotated tag，并重新按总纲审核。
+
+桌面同步与清理状态：本次未执行删除、移动、重命名、系统安装、PATH/注册表/系统配置
+修改或编译产物清理。桌面路线图副本与项目内总纲正本哈希不一致；项目内正本为审核依据。
+桌面审核报告和桌面开发日志同步需要写入 C 盘用户目录，受当前受控权限环境限制，尚未执行
+写入，不得伪称已同步。
+
+提交、推送与 Git tag 状态：本次未创建 commit、未推送、未创建新 tag，未移动、删除或覆盖
+`v2.1.0` 及任何历史 tag。审核时 `HEAD` 为 `d6b6132ce9ad73b980f0208b618959671889fbf4`；
+项目内审核报告和本日志为待提交文档记录。
+
+署名：审核者
+
+## 2026-07-22 12:12:58 +08:00
+
+工作目标：在用户明确允许写入桌面文件夹后，将 `v2.1.0` 进入 `v2.1.1` 开发准入审核报告
+同步到桌面审核报告目录，并准备向桌面开发日志追加审核记录。
+
+执行流程：
+1. 读取 `C:\Users\24763\Desktop\YunXi Agent开发日志.md` 尾部，确认桌面日志存在；
+   核验 `C:\Users\24763\Desktop\YunXi Agent审核报告\` 目录存在。
+2. 使用精确源文件
+   `D:\YunXi Agent\docs\reports\audits\2026-07-22-120829-yunxi-agent-v2-1-0-v2-1-1-entry-audit-report.md`
+   和精确目标文件
+   `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-120829-YunXi-Agent-v2.1.0-进入v2.1.1开发准入审核报告.md`
+   执行单文件复制；不使用递归、移动、覆盖、删除或宽泛通配符。
+
+验证与同步结果：复制操作被当前受控执行环境以 `AccessDenied` 拒绝，目标桌面文件未创建；
+因此未对桌面开发日志执行追加，也无法进行项目内/桌面报告 SHA-256 一致性校验。项目内审核
+报告仍完整保留，审核结论不变：`v2.1.0` 审核通过，可以进入 `v2.1.1` 开发。
+
+清理与仓库状态：未执行删除、移动、重命名、强制覆盖、系统安装、PATH/注册表/系统配置
+修改或编译产物清理；未修改任何桌面文件。
+
+提交、推送与 Git tag 状态：本次未创建 commit、未推送、未创建新 tag，未移动、删除或覆盖
+`v2.1.0` 及任何历史 tag。
+
+署名：审核者
+
+## 2026-07-22 12:22:24 +08:00
+
+工作目标：在用户完成提权后，闭环 v2.1.0 进入 v2.1.1 开发准入审核报告的桌面投递，并更正项目内报告中“首次受控写入失败”的临时交付状态。
+
+执行流程：1. 保留 12:12:58 的首次 `AccessDenied` 事实记录；2. 将项目内报告的交付段落更新为“提权后精确单文件复制成功”；3. 仅覆盖已存在的同名桌面报告文件；4. 对项目内与桌面副本分别计算 SHA-256 并比对。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\reports\audits\2026-07-22-120829-yunxi-agent-v2-1-0-v2-1-1-entry-audit-report.md`
+- `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-120829-YunXi-Agent-v2.1.0-进入v2.1.1开发准入审核报告.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：桌面审核报告已成功同步；项目内与桌面报告 SHA-256 均为 `F3BFF6542D2C82A864BA57E1F36E5963FD6F1C12BC4DA319044937F6F7F7FE96`。v2.1.0 的既有准入结论不变：审核通过，可以进入 v2.1.1 开发。
+
+清理结果：未执行删除、移动、递归清理、编译产物清理或任何系统配置修改。
+
+提交、推送与 Git tag 状态：本次仅同步和更正审核文档；未创建 commit、未推送、未创建、移动、删除或覆盖任何 Git tag。
+
+署名：审核者
+
+## 2026-07-22 15:04:21 +08:00
+
+工作目标：严格依据 `D:\YunXi Agent\docs\reports\development\2026-07-22-130141-yunxi-agent-v2-1-1-directory-governance-development-report.md` 完成 v2.1.1 项目目录治理、Git 忽略边界与文档索引基线；不修改 Cargo/Rust/CLI/TUI/Runtime/Provider/Storage/Protocol，不实现微信功能，不迁移历史目录，不执行清理。
+
+执行流程：
+1. 完整读取开发报告和准入审核，固定 14 条硬性约束；通过 `codegraph.cmd` 核对默认 runtime 边界，并只读参考 `D:\源码\reasonix` 的 `.gitignore`、`docs/` 与 `scripts/` 分类方式，不复制其语言、站点、桌面端或发布结构。
+2. 核对 `HEAD=origin/master=d6b6132ce9ad73b980f0208b618959671889fbf4`、50 个历史 tag、现有工作树前置资产、路线图正本/桌面副本哈希和受保护路径。
+3. 盘点 6,674 个已跟踪文件和本地状态/再生产物；新增 `docs/directory-governance.md`，记录顶层资产用途、跟踪决策、引用方、绝对清理候选和精确授权条件。
+4. 验证根 `.gitignore` 已具备统一 `/.tmp/`、ConPTY `node_modules/.work` 规则且不隐藏跟踪文件；没有重复修改规则，也没有删除磁盘内容。
+5. 更新根 README、文档索引、报告落位规则和脚本说明；复用并保留现有 `scripts/conpty/README.md` v205 至 v210 矩阵，不抽取共享代码、不改变 capture/verify。
+6. 经授权将项目内路线图正本精确覆盖到桌面同名分发副本，分别计算同步前后 SHA-256；项目正本仍是唯一可编辑来源。
+7. 批量完成 Markdown、Git ignore、ConPTY 和 Rust 门禁；重新盘点测试后的本地产物，只记录候选，不执行清理。
+
+修改与新增路径：
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\docs\README.md`
+- `D:\YunXi Agent\docs\directory-governance.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\scripts\README.md`
+- `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`
+- `D:\YunXi Agent\docs\reports\audits\2026-07-22-120829-yunxi-agent-v2-1-0-v2-1-1-entry-audit-report.md`
+- `D:\YunXi Agent\docs\reports\development\2026-07-22-130141-yunxi-agent-v2-1-1-directory-governance-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面路线图分发副本：`C:\Users\24763\Desktop\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`
+
+验证结果：统一忽略规则匹配 0 个跟踪文件，8 个 ignore probe 全部命中；46 个关键 Markdown 本地链接无断链，根 README 两步入口 4/4 可达。v205/v206/v207、v207-hotfix/v208、v209/v210 七组只读 verifier 全部通过且未改 evidence。`cargo fmt --all -- --check`、`cargo check --workspace --offline`、`cargo test --workspace --offline` 全部通过，CLI integration 45/45、JSONL 10/10、TUI 161/161 等无失败；默认 CLI 依赖树不含 `yunxi-agent-codex` 或 `codex-*`，微信 crate 不存在。受保护源码、Cargo、评测、参考输入、历史 evidence 和 ConPTY 脚本变更数为 0，`git diff --check` 通过。
+
+路线图同步：项目正本 SHA-256 保持 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`；桌面副本由同步前 `ECE3375748A6EF4BD70DCA03FFB65941AE2F566CCC32FBCC12505DB511987372` 更新为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`，已与正本一致。
+
+清理与安全状态：本版只记录候选，不执行清理。统一测试后 `target` 为 2,507,699,882 字节，`.tmp` 为 158,810 字节，两处 `.yunxi` 分别为 14,601 和 6,240 字节，`.codegraph` 为 192,658,181 字节，`.worktrees` 为空，v210 部分 `node_modules` 为 32,558,228 字节；其余 ConPTY `node_modules` 和全部 `.work` 不存在。未执行删除、递归清理、移动、`git clean`、force、PATH/注册表/系统配置修改或用户目录清理。
+
+提交、推送与 Git tag 状态：发布前 `HEAD=origin/master=d6b6132ce9ad73b980f0208b618959671889fbf4`，本地 50 个 tag 保持不变且 `v2.1.1` 不存在。上述治理资产待创建新的发布提交与 annotated `v2.1.1` tag；发布只允许非强制推送，全部历史 tag 不移动、不删除、不覆盖。
 
 署名：开发报告撰写者

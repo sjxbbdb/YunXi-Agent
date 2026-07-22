@@ -1,6 +1,6 @@
 # Scripts
 
-所有 Windows ConPTY 版本的场景、入口、依赖、生成目录和正式 evidence 映射见 [`conpty/README.md`](conpty/README.md)。现有版本目录保持原路径，不通过目录整理抽取或重写采集代码。
+所有 Windows ConPTY 版本的场景、入口、依赖、生成目录和正式 evidence 映射见 [`conpty/README.md`](conpty/README.md)。现有版本目录保持原路径，不通过目录整理抽取或重写采集代码。Node.js 和 `node_modules` 只属于证据采集，不进入 YunXi 默认运行路径。
 
 ## `conpty\v210`
 
@@ -122,7 +122,7 @@ and scenario details.
 
 ## `install\install-yunxi.ps1`
 
-Builds and installs the current YunXi Agent v2.0.9 terminal binaries:
+Builds and installs the current YunXi Agent terminal binaries:
 
 ```powershell
 .\scripts\install\install-yunxi.ps1 -AddToPath

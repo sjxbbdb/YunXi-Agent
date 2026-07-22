@@ -9,6 +9,15 @@ the real DeepSeek provider automatically. Without credentials it remains usable
 through the inline-labelled offline provider; offline assistant output is marked
 with `[offline]` and `/cost` reports that no model call was made.
 
+## Development Track
+
+The `v2.1.1` release is limited to project-directory governance, Git ignore
+boundaries, and documentation indexing. It does not add Weixin networking,
+login, credentials, polling, session bridging, or a channel runtime. The
+Weixin module/CLI skeleton and deterministic iLink mock work begin in `v2.1.2`.
+See the [documentation index](docs/README.md) for the canonical roadmap,
+governance baseline, reports, evidence, and engineering entry points.
+
 ## Layout
 
 - `crates/yunxi-agent-core`: reusable Agent facade and extraction boundary

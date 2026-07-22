@@ -20,8 +20,8 @@
 ## 报告与证据
 
 - [报告索引与归档规则](reports/README.md)：报告命名、分类和历史兼容规则。
-- [v2.1.0 集成发布审核报告](reports/2026-07-22-100333-yunxi-agent-v2-1-0-integrated-release-audit-report.md)：当前发布审核基线。
-- [v2.1.0 集成发布开发报告](reports/2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md)：当前功能发布记录。
+- [v2.1.0 集成发布审核报告](reports/audits/2026-07-22-100333-yunxi-agent-v2-1-0-integrated-release-audit-report.md)：当前发布审核基线。
+- [v2.1.0 集成发布开发报告](reports/development/2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md)：当前功能发布记录。
 - [项目目录整理报告](reports/2026-07-22-105338-yunxi-agent-project-directory-organization-report.md)：目录治理原则与阶段边界。
 - [项目目录整理阶段 0 基线](reports/2026-07-22-110139-yunxi-agent-project-directory-baseline-report.md)：受保护路径引用和整理前状态。
 - [可复核证据目录](reports/evidence/)：脱敏说明、ConPTY frames 和 SHA-256 manifest。

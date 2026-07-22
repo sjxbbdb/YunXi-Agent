@@ -4,8 +4,9 @@
 
 ## 当前入口
 
-- [v2.1.0 集成发布审核报告](2026-07-22-100333-yunxi-agent-v2-1-0-integrated-release-audit-report.md)
-- [v2.1.0 集成发布开发报告](2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md)
+- [v2.1.0 集成发布审核报告](audits/2026-07-22-100333-yunxi-agent-v2-1-0-integrated-release-audit-report.md)
+- [v2.1.0 集成发布开发报告](development/2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md)
+- [v2.1.0 报告路径迁移映射](2026-07-22-111558-yunxi-agent-v2-1-0-report-path-migration-map.md)
 - [项目目录整理报告](2026-07-22-105338-yunxi-agent-project-directory-organization-report.md)
 - [项目目录整理阶段 0 基线](2026-07-22-110139-yunxi-agent-project-directory-baseline-report.md)
 - [证据目录](evidence/)

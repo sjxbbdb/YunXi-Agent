@@ -90,6 +90,37 @@
 
 署名：开发报告撰写者
 
+## 2026-07-22 18:09:14 +08:00
+
+工作目标：将通过全部门禁的 YunXi Agent `v2.1.2` 微信 CLI/iLink Mock 骨架候选包装为新的 annotated tag，原子、非强制推送 GitHub，并记录真实远程状态与历史 tag 不变性。
+
+执行流程：
+1. 将源码、测试、文档、开发报告及开发开始前已存在且核验有效的 v2.1.1 独立复审正本加入暂存区；检查 staged diff 空白、秘密模式、历史 v210 golden 和保护区变更。
+2. 以固定作者 `开发者 <developer@yunxi-agent.local>` 创建发布提交 `b09f442adeaebc854f0ec00fb4c497bc6ec90e41`。
+3. 使用桌面 `C:\Users\24763\Desktop\GitHub apikey.txt` 中的 API key 在单个受控进程内只读核验 GitHub master、52 个历史 tag 和 `v2.1.2` 缺失状态；密钥未输出、未写入仓库、未写入 Git 配置，并在进程结束时清除变量。
+4. 首次 tag 计数因 PowerShell 5 将 JSON 顶层数组包装为单一对象而得到错误计数 1；该检查在任何远程写入前停止。改为显式逐项展开后确认远程 tag 为 52 个、`v2.1.1-hotfix.1` 对象正确，再继续发布。
+5. 创建全新 annotated `v2.1.2`，使用临时内存 Authorization header 执行 `git push --atomic origin master refs/tags/v2.1.2`；不使用 force。
+6. 推送后通过 GitHub API 重新读取 master、全部 tag 和 annotated tag 目标，逐项比较发布前 52 个历史 tag 对象 SHA。
+
+提交、tag 与远程结果：
+- 发布 commit：`b09f442adeaebc854f0ec00fb4c497bc6ec90e41`
+- tree：`08f65e02562c7123d8a6dde3dc3c83b2915605b8`
+- parent：`74da1c4e32fe47942edbaca59a0bd85ed166cb90`
+- annotated tag：`v2.1.2`
+- tag object：`7aa184e4b58fddad050d9affb64a5ce27121489b`
+- tag target：`b09f442adeaebc854f0ec00fb4c497bc6ec90e41`
+- GitHub master：`b09f442adeaebc854f0ec00fb4c497bc6ec90e41`
+- GitHub tag 总数：53
+- 发布前 52 个历史 tag SHA 变化数：0
+- `v2.1.1-hotfix.1` tag object：`12262fa6a19cd444403414606810077d6dfc81f3`，保持不变
+- force：未使用
+
+安全与清理状态：发布阶段未执行删除、递归清理、目录移动、`git clean`、gc、prune、系统安装、PATH/注册表/系统配置修改或用户目录清理。`target`、`.tmp`、`.yunxi`、ConPTY `node_modules`/`.work` 仅保留为清理候选，本轮不清理。
+
+提交和推送状态：发布提交与新 annotated tag 已成功原子推送。本条记录与开发报告发布结果作为 docs-only 收口只推进 master，不移动 `v2.1.2` 或任何历史 tag。当前状态是“v2.1.2 已发布，待独立审核”；审核通过前不进入 v2.1.3。
+
+署名：开发报告撰写者
+
 ## 2026-07-22 16:46:55 +08:00
 
 工作目标：依据 `v2.1.1-hotfix.1` 独立复审审核报告和项目总纲图，撰写面向开发者的 `v2.1.2` 微信模块、CLI 骨架、iLink 协议客户端与确定性 Mock 测试开发报告。

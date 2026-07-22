@@ -282,3 +282,13 @@ yunxi weixin logout [--account default] --confirm
 清理候选仅记录为 `D:\YunXi Agent\target`、`D:\YunXi Agent\.tmp`、`D:\YunXi Agent\.yunxi`、`D:\YunXi Agent\scripts\conpty\*\node_modules` 和 `D:\YunXi Agent\scripts\conpty\*\.work`。本阶段没有执行删除、递归清理、目录移动、`git clean`、gc、prune 或用户目录清理，任何后续清理仍须列出精确绝对路径并另行取得确认。
 
 署名：开发报告撰写者
+
+## 十四、发布结果
+
+`2026-07-22 18:09:14 +08:00`，发布提交 `b09f442adeaebc854f0ec00fb4c497bc6ec90e41` 已创建并通过原子、非强制推送发布到 GitHub master。提交 tree 为 `08f65e02562c7123d8a6dde3dc3c83b2915605b8`，parent 为 `74da1c4e32fe47942edbaca59a0bd85ed166cb90`，作者为 `开发者 <developer@yunxi-agent.local>`。
+
+全新 annotated `v2.1.2` tag object 为 `7aa184e4b58fddad050d9affb64a5ce27121489b`，目标为发布提交 `b09f442adeaebc854f0ec00fb4c497bc6ec90e41`。GitHub master 与本地发布提交一致，远程 tag 总数由 52 增至 53；发布前 52 个历史 tag 对象 SHA 变化数为 0，`v2.1.1-hotfix.1` tag object 继续保持 `12262fa6a19cd444403414606810077d6dfc81f3`。未使用 force，未移动、删除或覆盖任何历史 tag。
+
+本节作为发布后 docs-only 收口只允许继续推进 master，不得移动 `v2.1.2`。发布完成不等于独立复审通过；在 v2.1.2 审核通过前不得进入 v2.1.3。
+
+署名：开发报告撰写者

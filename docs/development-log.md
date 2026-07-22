@@ -30,6 +30,136 @@
 
 署名：审核者
 
+## 2026-07-22 18:04:39 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md` 完成 `v2.1.2` 微信 CLI、iLink 协议客户端和确定性 Mock 骨架开发；严格保持“本版本不提供真实微信能力”的边界，并在统一门禁通过后准备新 annotated tag 与非强制发布。
+
+执行流程：
+1. 全量读取开发报告并核对 Git、本地参考源码和受保护目录基线；使用 CodeGraph 定位 CLI 配置构造、命令派发、Provider 模式和 TUI 版本快照边界。
+2. 新增唯一正式生产 crate `yunxi-agent-weixin`，建立 domain、error、redaction、iLink models/client、QR、poll、send 模块；固定生产 endpoint 为 `https://ilinkai.weixin.qq.com/`，仅测试构造器允许 loopback mock endpoint。
+3. 实现 15 秒显式超时、1 MiB 响应上限、逐请求 ID、官方必要 headers、数字/字符串 message ID 兼容、游标模型、HTTP/API/JSON/协议错误归一化和强脱敏；错误中不回显 token、二维码、payload、原始账户、用户 ID 或消息正文。
+4. 使用 `wiremock 0.6.5` 建立确定性 Rust HTTP 测试，覆盖授权头、请求头、游标、API 错误、非法 JSON、超时、响应大小上限、未知字段、缺失关键字段和秘密输出边界；没有使用真实腾讯凭证、公网微信或手写 HTTP 解析器。
+5. 在 CLI 接入 `yunxi weixin login|status|doctor|serve|pair|logout`，从主流程抽取私有共享 `AgentConfig` 构造函数；`status`、`doctor`、`pair list` 只输出无秘密离线元数据，其他未实现能力明确失败，`serve` 只校验 workspace/Provider 配置，不启动长轮询或 Agent runtime。
+6. 将 workspace 版本升至 `2.1.2`，更新当前 TUI 版本断言和五个当前 UI 快照；历史 `integrated_release_v210.txt` 保持原哈希，并通过仅测试用版本注入继续验证 v2.1.0 历史 golden。
+7. 更新根 README、文档索引、报告索引和 `docs/weixin.md`；同步记录协议参考快照、真实能力边界、后续版本范围和安全约束。
+8. 集中运行 Rust workspace、release、CLI、TUI、评测、ConPTY、依赖树、Markdown 链接与 Git 完整性门禁。首次链接检查错误地包含上游 `vendor/`/`extracted/` 示例，修正为 YunXi 自有文档后通过；没有因此修改上游文件。
+
+主要修改路径：
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\Cargo.toml`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\domain.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\error.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\redaction.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\ilink\client.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\ilink\models.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\ilink\qr.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\ilink\poll.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\ilink\send.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\tests\ilink_client_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\tests\ilink_models_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\tests\redaction_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\Cargo.toml`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\weixin.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\general_companion_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\integrated_regression.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_100x30.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_200x50.txt`
+- `D:\YunXi Agent\docs\README.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\docs\weixin.md`
+- `D:\YunXi Agent\docs\reports\development\2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+依赖获取与锁文件：首次 `cargo fetch` 因网络连接阶段无输出超过外层时限，但进程正常结束并写入锁文件；随后沙箱内定向编译因无法访问 `static.crates.io` 失败，按普通非破坏性错误流程在获授权联网权限下补齐 `wiremock 0.6.5`、`h2 0.4.15` 等锁定依赖。token、API key 和微信凭证均未参与、未输出、未持久化。
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 和 `cargo build --workspace --release` 全部通过。微信 crate 定向测试 7/7，CLI 主集成测试 48/48，JSONL 10/10，Provider 46/46，TUI 161/161；release 输出 `yunxi 2.1.2`，10 组 `weixin` 帮助全部可用。陪伴评测 31/31、失败 0、`golden_passed=true`、`tool_approval_bypass_count=0`、`proactive_boundary_violation_count=0`。ConPTY v210 verifier 返回 `ok=true`、`read_only=true`，正式 evidence SHA-256 为 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6`。默认 CLI 正常依赖树 421 行，禁止的 Codex 依赖 0；YunXi 自有 124 个 Markdown 文件检查 42 个本地链接，失效 0；受保护目录变更 0、已跟踪且被忽略文件 0、`git diff --check` 与 `git fsck --full` 通过。
+
+安全与清理状态：未执行删除、递归清理、目录移动、`git clean`、gc、prune、系统安装、PATH/注册表/系统配置修改或用户目录清理。只记录清理候选 `D:\YunXi Agent\target`、`D:\YunXi Agent\.tmp`、`D:\YunXi Agent\.yunxi`、`D:\YunXi Agent\scripts\conpty\*\node_modules` 和 `D:\YunXi Agent\scripts\conpty\*\.work`；本轮不清理，任何后续清理必须再次列出精确绝对路径并取得确认。
+
+提交、tag 与推送状态：发布前本地和 GitHub master 均为 `74da1c4e32fe47942edbaca59a0bd85ed166cb90`，历史 tag 共 52 个，`v2.1.2` 不存在。当前开发候选已完成，待创建作者 `开发者 <developer@yunxi-agent.local>` 的发布 commit 和全新 annotated `v2.1.2` 并非强制推送；不会移动、删除、覆盖任何历史 tag，复审通过前不进入 v2.1.3。
+
+署名：开发报告撰写者
+
+## 2026-07-22 16:46:55 +08:00
+
+工作目标：依据 `v2.1.1-hotfix.1` 独立复审审核报告和项目总纲图，撰写面向开发者的 `v2.1.2` 微信模块、CLI 骨架、iLink 协议客户端与确定性 Mock 测试开发报告。
+
+执行流程：
+1. 读取桌面审核报告 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-164039-YunXi-Agent-v2.1.1-hotfix.1-独立复审审核报告.md`，确认项目内审核报告副本 SHA-256 与桌面原件一致，均为 `21F052C2C2604D836BCD363CA5C2C706CDFEF659318468C519D07A31ADA24E20`。
+2. 读取桌面总纲图和项目内总纲正本，确认两者 SHA-256 均为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`，并以项目内正本作为开发依据。
+3. 使用 CodeGraph 复核 `crates\yunxi-agent-cli\src\main.rs`、`provider_mode.rs`、`yunxi-agent-core` 的 `AgentInput`、`Agent::run_with_backend_stream`、`AgentRunControl` 以及 `yunxi-agent-storage` 的 `SessionStore` 接入边界。
+4. 核对 `Cargo.toml`，确认当前 workspace 尚未包含 `crates/yunxi-agent-weixin`，默认 exclude 仍包含 `vendor/codex-rs`、`codex-*` 兼容边界。
+5. 核对本机参考源码：`D:\源码\reasonix` 及其 `internal\bot\weixin\weixin_login.go`、`weixin.go`、`weixin_test.go` 已存在；`D:\源码\openclaw-weixin` 不存在。
+6. 按参考源码补齐要求尝试执行 `git clone --depth 1 https://github.com/Tencent/openclaw-weixin.git D:\源码\openclaw-weixin`，但 GitHub 连接失败，错误为 `Failed to connect to github.com:443`，本次未成功拉取新源码。
+7. 新增 `v2.1.2` 开发报告，并更新 `docs\reports\README.md` 当前入口。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\reports\development\2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md`
+- 桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：已完成审核报告哈希核对、总纲正本/桌面副本哈希核对、CodeGraph 接入点复核、Cargo workspace 边界核对、Reasonix 本机参考源码核对和 `Tencent/openclaw-weixin` 拉取尝试。开发报告已同步到桌面指定目录，项目内报告与桌面报告 SHA-256 均为 `76B71AF741BA7862638597CB94FED3295291583DEB492DCACF6FC2C387A1171E`；桌面日志由项目日志同步生成。`Tencent/openclaw-weixin` 因 GitHub 连接失败未成功拉取，本机 `D:\源码\openclaw-weixin` 不存在。本次是开发报告撰写任务，未修改 Rust 源码，未新增 crate，未运行 `cargo fmt`、`cargo check`、`cargo test`、ConPTY verifier、真实 Provider、真实微信或 TUI 视觉验证；这些属于开发者完成 `v2.1.2` 实现后的统一验证。未执行删除、移动、重命名、递归清理、`git clean`、系统安装、PATH/注册表/系统配置修改或用户目录清理。
+
+提交和推送状态：本次仅生成开发报告、更新报告索引并追加日志；未创建 commit、未推送、未创建或移动 tag。`v2.1.2` 必须在实现和验证通过后创建新的 annotated tag；`v2.1.1-hotfix.1`、`v2.1.1` 及全部历史 tag 不得移动、删除或覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-22 17:25:04 +08:00
+
+工作目标：按用户要求改用 GitHub 直连重新拉取 `Tencent/openclaw-weixin`，补齐 `v2.1.2` iLink 协议客户端开发所需的本地参考源码，并同步更新开发报告中的参考源码状态。
+
+执行流程：
+1. 在确认 `D:\源码\openclaw-weixin` 不存在后，执行 `git clone --depth 1 https://github.com/Tencent/openclaw-weixin.git D:\源码\openclaw-weixin`。
+2. 拉取成功后读取本地参考仓库 commit 和 remote，确认 HEAD 为 `cef0bfc390393f716903e16d50408118047f87e0`，remote 为 `https://github.com/Tencent/openclaw-weixin.git`。
+3. 核对关键参考文件存在：`D:\源码\openclaw-weixin\src\api\api.ts`、`D:\源码\openclaw-weixin\src\api\types.ts`、`D:\源码\openclaw-weixin\README.md`、`D:\源码\openclaw-weixin\README.zh_CN.md`、`D:\源码\openclaw-weixin\package.json`。
+4. 更新 `v2.1.2` 开发报告中的参考源码状态，从“本机缺失/拉取失败”修正为“已通过 GitHub 直连补齐”，并记录 remote、HEAD 和关键文件。
+
+修改文件与路径：
+- `D:\源码\openclaw-weixin`
+- `D:\YunXi Agent\docs\reports\development\2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md`
+- 桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：`D:\源码\openclaw-weixin` 已存在，Git HEAD 为 `cef0bfc390393f716903e16d50408118047f87e0`，关键协议与说明文件均存在。更新后的 `v2.1.2` 开发报告已同步到桌面指定目录，项目内报告与桌面报告 SHA-256 均为 `A0C64A90255BCB746E524E5A15942F447332EAF2712CFFC6FDE0141697D990A9`；桌面日志由项目日志同步生成。本次只拉取外部参考源码并更新开发报告/日志，未修改 YunXi Rust 源码，未新增 crate，未运行构建、测试、ConPTY、真实 Provider、真实微信或 TUI 验证。未执行删除、移动、重命名、递归清理、`git clean`、系统安装、PATH/注册表/系统配置修改或用户目录清理。
+
+提交和推送状态：本次仅拉取外部参考源码、更新开发报告并追加日志；未创建 commit、未推送、未创建或移动 tag。`v2.1.2` 仍需后续实现与验证通过后创建新的 annotated tag；全部历史 tag 不移动、不删除、不覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-22 17:23:19 +08:00
+
+工作目标：按用户要求核对 `D:\源码` 中仍未成功拉取的参考源码，并尝试通过清华 TUNA 镜像重新拉取当前 `v2.1.2` 阶段最关键的 `Tencent/openclaw-weixin`。
+
+执行流程：
+1. 复核上一份 `v2.1.2` 开发报告中的外部参考源码状态，确认当前阶段明确拉取失败且构成协议实现前置参考的是 `Tencent/openclaw-weixin`。
+2. 执行 `git clone --depth 1 https://mirrors.tuna.tsinghua.edu.cn/git/github.com/Tencent/openclaw-weixin.git D:\源码\openclaw-weixin`，清华 TUNA 自动线路返回 `repository not found`。
+3. 执行 `git clone --depth 1 https://mirrors4.tuna.tsinghua.edu.cn/git/github.com/Tencent/openclaw-weixin.git D:\源码\openclaw-weixin`，清华 TUNA IPv4 线路同样返回 `repository not found`。
+4. 核对 `D:\源码\openclaw-weixin` 不存在，确认没有留下半成品目录。
+5. 核对后续总纲参考源码路径：`D:\源码\reasonix` 存在，`D:\源码\letta` 存在；`D:\源码\CowAgent`、`D:\源码\OpenAkita`、`D:\源码\leon`、`D:\源码\letta-code`、`D:\源码\N.E.K.O` 当前不存在。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\development-log.md`
+- 待同步桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：`D:\源码\openclaw-weixin` 当前仍不存在；清华 TUNA 两个 Git 路径均未提供该 GitHub 仓库镜像。`Tencent/openclaw-weixin` 仍是 `v2.1.2` 协议字段实现前需要补齐的参考源码；其他缺失项目属于后续版本参考，不是当前 `v2.1.2` 的直接阻塞。未修改 Rust 源码，未新增 crate，未运行构建、测试、ConPTY、真实 Provider、真实微信或 TUI 验证。未执行删除、移动、重命名、递归清理、`git clean`、系统安装、PATH/注册表/系统配置修改或用户目录清理。
+
+提交和推送状态：本次仅追加日志；未创建 commit、未推送、未创建或移动 tag。`v2.1.2` 仍需后续实现与验证通过后创建新的 annotated tag；全部历史 tag 不移动、不删除、不覆盖。
+
+署名：开发报告撰写者
+
 ## 2026-07-22 15:53:06 +08:00
 
 工作目标：依据 `2026-07-22-154559-YunXi-Agent-v2.1.1-审核报告.md` 撰写面向开发者的 v2.1.1 历史报告路径整改开发报告，明确当前版本未通过审核、不得进入 v2.1.2，并给出新的 `v2.1.1-hotfix.1` tag 承接建议。
@@ -2833,3 +2963,31 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 清理与安全状态：未执行删除、递归清理、目录移动、`git clean`、gc、prune、系统安装、PATH/注册表/系统配置修改或用户目录清理；只精确写入用户指定的桌面审核报告和开发日志分发文件。
 
 署名：开发报告撰写者
+
+## 2026-07-22 16:40:39 +08:00
+
+工作目标：依据 v2.1.1 总纲，对 `v2.1.1-hotfix.1` 进行独立复审，确认历史 v2.1.0 报告路径整改是否关闭原唯一阻塞点，并判断是否允许进入 v2.1.2。
+
+执行流程：
+1. 使用 CodeGraph 核验 CLI、TUI、Runtime、Storage、Provider 和兼容层边界，确认整改没有触及运行时代码。
+2. 核对旧历史报告路径存在、新分类路径不存在、正文 SHA-256、单一正本和 `v2.1.0..v2.1.1-hotfix.1` 的 rename 结果；确认活动导航没有引用不存在的新路径。
+3. 复核 `.gitignore`、已跟踪且被忽略文件、52 个本地 Markdown 链接、路线图项目正本与桌面副本哈希、tag 对象和 Git 完整性。
+4. 统一运行 Rust workspace 格式/check/test、31 场陪伴评测、v210 ConPTY 只读 verifier，并重新目视检查 100x30、Details、58x18 TUI 帧；真实 Provider 采用无功能代码变化时继承的 v2.1.0 在线证据。
+
+审核报告与文件路径：
+- 项目内报告：`D:\YunXi Agent\docs\reports\audits\2026-07-22-164039-yunxi-agent-v2-1-1-hotfix-1-independent-reaudit-report.md`
+- 桌面报告：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-164039-YunXi-Agent-v2.1.1-hotfix.1-独立复审审核报告.md`
+- 项目内日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：旧路径存在、新路径缺失，旧报告 SHA-256 为 `B70BF0D3F3BBDEEB7DE1DB515D8FA60B09BB161F63C47160AF28997EB61D0413`；相对 v2.1.0 不再显示该历史报告迁移。52 个本地 Markdown 链接失效 0，ConPTY 生成目录 1 个且统一命中忽略规则，已跟踪且被忽略文件 0。`cargo fmt`、workspace check/test 全部通过，CLI 45/45、JSONL 10/10、Provider 46/46、TUI 161/161；陪伴评测 31/31，`golden_passed=true`，审批绕过和主动边界违规均为 0。v210 verifier 返回 `ok=true`、`read_only=true` 且 evidence 哈希未变；路线图两份副本 SHA-256 一致；`git diff --check` 和 `git fsck --full` 通过。
+
+复审结论：`v2.1.1-hotfix.1` 独立复审通过，原 v2.1.1 唯一阻塞点已关闭，可以进入 v2.1.2 开发阶段。该结论不代表 v2.1.2 已完成；后续仍须依据新的开发报告执行开发、验证、annotated tag、推送和审核流程。
+
+清理与安全状态：未执行删除、移动、重命名、递归清理、`git clean`、gc、prune、系统安装、PATH/注册表/系统配置修改或用户目录清理；所有构建、采集、本地状态和用户目录资产均保留。
+
+提交、推送与 Git tag 状态：本次只生成、同步复审报告并追加日志；未创建 commit、未推送、未创建或移动 tag。`v2.1.1-hotfix.1`、`v2.1.1` 及全部历史 tag 保持不变。
+
+桌面同步结果：项目内报告与桌面报告已成功同步，SHA-256 均为 `21F052C2C2604D836BCD363CA5C2C706CDFEF659318468C519D07A31ADA24E20`。
+
+署名：审核者

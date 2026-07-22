@@ -36,6 +36,12 @@ fn banner(provider_live: bool) -> YunxiTuiBanner {
     }
 }
 
+fn historical_v210_app() -> YunxiTuiApp {
+    let mut app = YunxiTuiApp::default();
+    app.set_version_for_snapshot("v2.1.0");
+    app
+}
+
 fn stream_event(content: &str, sequence: u64, phase: AgentMessageStreamPhase) -> AgentEvent {
     AgentEvent::Message {
         content: content.to_string(),
@@ -51,7 +57,7 @@ fn stream_event(content: &str, sequence: u64, phase: AgentMessageStreamPhase) ->
 }
 
 fn normal_companion_fixture() -> IntegratedFixture {
-    let mut app = YunxiTuiApp::default();
+    let mut app = historical_v210_app();
     app.set_banner(banner(false));
     app.push_user("请用三点总结今天的开发进度。".to_string());
     app.push_agent_event(&stream_event(
@@ -74,7 +80,7 @@ fn normal_companion_fixture() -> IntegratedFixture {
 }
 
 fn long_stream_fixture() -> IntegratedFixture {
-    let mut app = YunxiTuiApp::default();
+    let mut app = historical_v210_app();
     app.set_banner(banner(true));
     app.push_user("生成包含 Markdown、中文与 Emoji 的长说明。".to_string());
     let content = (0..18)
@@ -101,7 +107,7 @@ fn long_stream_fixture() -> IntegratedFixture {
 }
 
 fn tool_approval_failure_fixture() -> IntegratedFixture {
-    let mut app = YunxiTuiApp::default();
+    let mut app = historical_v210_app();
     app.set_banner(banner(true));
     app.push_user("检查生成目录。".to_string());
     app.push_agent_event(&AgentEvent::ToolCallStarted {
@@ -135,7 +141,7 @@ fn tool_approval_failure_fixture() -> IntegratedFixture {
 }
 
 fn history_resize_fixture() -> IntegratedFixture {
-    let mut app = YunxiTuiApp::default();
+    let mut app = historical_v210_app();
     app.set_banner(banner(false));
     for index in 0..36 {
         app.push_notice(
@@ -163,7 +169,7 @@ fn history_resize_fixture() -> IntegratedFixture {
 }
 
 fn stream_fault_fixture() -> IntegratedFixture {
-    let mut app = YunxiTuiApp::default();
+    let mut app = historical_v210_app();
     app.set_banner(banner(true));
     app.push_user("验证断流恢复。".to_string());
     app.push_agent_event(&stream_event(
@@ -189,7 +195,7 @@ fn stream_fault_fixture() -> IntegratedFixture {
 }
 
 fn low_color_fixture() -> IntegratedFixture {
-    let mut app = YunxiTuiApp::default();
+    let mut app = historical_v210_app();
     app.set_banner(banner(false));
     app.push_warning("配置需要检查");
     app.push_error("离线夹具错误可见");

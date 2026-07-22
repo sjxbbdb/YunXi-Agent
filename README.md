@@ -1,6 +1,6 @@
-# YunXi Agent v2.1.0
+# YunXi Agent v2.1.2
 
-YunXi Agent v2.1.0 is a terminal-first Rust general companion Agent CLI and reusable core library.
+YunXi Agent v2.1.2 is a terminal-first Rust general companion Agent CLI and reusable core library.
 The default runtime is YunXi-owned and does not depend on the upstream Codex
 runtime.
 
@@ -11,10 +11,10 @@ with `[offline]` and `/cost` reports that no model call was made.
 
 ## Development Track
 
-The `v2.1.1` release is limited to project-directory governance, Git ignore
-boundaries, and documentation indexing. It does not add Weixin networking,
-login, credentials, polling, session bridging, or a channel runtime. The
-Weixin module/CLI skeleton and deterministic iLink mock work begin in `v2.1.2`.
+The `v2.1.2` release adds a narrow Weixin Rust crate, CLI command skeleton,
+fixed-endpoint iLink protocol client, and deterministic HTTP mock coverage. It
+does not provide real QR login, credentials, polling service, message delivery,
+session bridging, remote approval, streaming replies, or group chat.
 See the [documentation index](docs/README.md) for the canonical roadmap,
 governance baseline, reports, evidence, and engineering entry points.
 
@@ -31,7 +31,8 @@ governance baseline, reports, evidence, and engineering entry points.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.1.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-weixin`: v2.1.2 private-chat-only domain, redaction, iLink model, fixed-endpoint client, and deterministic mock boundary
+- `crates/yunxi-agent-cli`: v2.1.2 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/README.md`: stable documentation index, report archive policy, and current roadmap/audit entry points

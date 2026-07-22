@@ -35,6 +35,7 @@ yunxi-agent-storage = { path = "../yunxi-agent-storage" }
 yunxi-agent-tools = { path = "../yunxi-agent-tools" }
 yunxi-agent-mcp = { path = "../yunxi-agent-mcp" }
 yunxi-agent-tui = { path = "../yunxi-agent-tui" }
+yunxi-agent-weixin = { path = "../yunxi-agent-weixin" }
 
 [dev-dependencies]
 assert_cmd.workspace = true

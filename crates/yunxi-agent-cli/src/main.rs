@@ -46,6 +46,7 @@ mod render {
 mod terminal_mode {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/terminal_mode.rs"));
 }
+mod weixin;
 mod workspace;
 mod tui {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/tui/mod.rs"));
@@ -80,7 +81,7 @@ impl CliExitCode {
 #[derive(Debug, Parser)]
 #[command(name = "yunxi")]
 #[command(version)]
-#[command(about = "YunXi Agent v2.1.0 interactive terminal CLI")]
+#[command(about = "YunXi Agent interactive terminal CLI")]
 struct Cli {
     #[arg(
         long,
@@ -206,6 +207,10 @@ enum CliCommand {
     Eval {
         #[command(subcommand)]
         command: EvalCommand,
+    },
+    Weixin {
+        #[command(subcommand)]
+        command: weixin::WeixinCommand,
     },
 }
 
@@ -500,40 +505,7 @@ async fn run_cli() -> Result<()> {
 
     let backend = cli.backend.into();
 
-    let cwd = workspace::resolve_cli_cwd(cli.cwd.clone())?;
-    let mut config = AgentConfig::new(cwd)
-        .with_approval_mode(cli.approval.into())
-        .with_sandbox_mode(cli.sandbox.into());
-    if let Some(model) = cli.model.clone() {
-        config = config.with_model(model);
-    }
-    if let Some(provider) = cli.provider.clone() {
-        config = config.with_provider(provider);
-    }
-    if let Some(codex_home) = cli.codex_home.clone() {
-        config = config.with_codex_home(codex_home);
-    }
-    if let Some(context_window_tokens) = cli.context_window_tokens {
-        config = config.with_context_window_tokens(context_window_tokens);
-    }
-    if let Some(auto_compact_threshold_tokens) = cli.auto_compact_threshold_tokens {
-        config = config.with_auto_compact_threshold_tokens(auto_compact_threshold_tokens);
-    }
-    config = config.with_memory_extraction_mode(cli.memory_extraction.into());
-    let persisted_settings = PersonaSettings::load();
-    config.companion.enabled = persisted_settings.companion_enabled;
-    config.companion.cloud_control_enabled = persisted_settings.cloud_control_enabled;
-    if cli.companion
-        || matches!(
-            cli.command,
-            Some(CliCommand::Companion {
-                command: CompanionCommand::Check { .. }
-            })
-        )
-    {
-        config.companion.enabled = true;
-        config.companion.allow_tool_requests = true;
-    }
+    let config = build_agent_config(&cli)?;
 
     reject_detached_codex_backend(backend)?;
 
@@ -559,6 +531,44 @@ async fn run_cli() -> Result<()> {
     }
 
     run_prompt(prompt, config, backend, provider_mode, cli.json, cli.jsonl).await
+}
+
+fn build_agent_config(cli: &Cli) -> Result<AgentConfig> {
+    let cwd = workspace::resolve_cli_cwd(cli.cwd.clone())?;
+    let mut config = AgentConfig::new(cwd)
+        .with_approval_mode(cli.approval.into())
+        .with_sandbox_mode(cli.sandbox.into());
+    if let Some(model) = cli.model.clone() {
+        config = config.with_model(model);
+    }
+    if let Some(provider) = cli.provider.clone() {
+        config = config.with_provider(provider);
+    }
+    if let Some(codex_home) = cli.codex_home.clone() {
+        config = config.with_codex_home(codex_home);
+    }
+    if let Some(context_window_tokens) = cli.context_window_tokens {
+        config = config.with_context_window_tokens(context_window_tokens);
+    }
+    if let Some(auto_compact_threshold_tokens) = cli.auto_compact_threshold_tokens {
+        config = config.with_auto_compact_threshold_tokens(auto_compact_threshold_tokens);
+    }
+    config = config.with_memory_extraction_mode(cli.memory_extraction.into());
+    let persisted_settings = PersonaSettings::load();
+    config.companion.enabled = persisted_settings.companion_enabled;
+    config.companion.cloud_control_enabled = persisted_settings.cloud_control_enabled;
+    if cli.companion
+        || matches!(
+            cli.command.as_ref(),
+            Some(CliCommand::Companion {
+                command: CompanionCommand::Check { .. }
+            })
+        )
+    {
+        config.companion.enabled = true;
+        config.companion.allow_tool_requests = true;
+    }
+    Ok(config)
 }
 
 fn continuous_integration_environment() -> bool {
@@ -1671,6 +1681,9 @@ async fn run_command(
         }
         CliCommand::Controls { command } => run_control_command(command, config, json).await,
         CliCommand::Eval { command } => run_eval_command(command, json, jsonl).await,
+        CliCommand::Weixin { command } => {
+            weixin::run(command, config, backend, provider_mode, json).await
+        }
     }
 }
 
@@ -1684,24 +1697,27 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.0; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.0; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.0; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.0; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for memory management commands"
         ),
         CliCommand::Companion { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.0; use --json for companion management commands"
+            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for companion management commands"
         ),
         CliCommand::Controls { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.0; use --json for control commands"
+            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for control commands"
         ),
         CliCommand::Eval { .. } => Ok(()),
+        CliCommand::Weixin { .. } => bail!(
+            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for weixin metadata commands"
+        ),
     }
 }
 

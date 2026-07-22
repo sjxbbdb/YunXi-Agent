@@ -17,6 +17,7 @@ members = [
     "crates/yunxi-agent-storage",
     "crates/yunxi-agent-runtime",
     "crates/yunxi-agent-tui",
+    "crates/yunxi-agent-weixin",
     "crates/yunxi-agent-cli",
 ]
 default-members = [
@@ -37,6 +38,7 @@ default-members = [
     "crates/yunxi-agent-storage",
     "crates/yunxi-agent-runtime",
     "crates/yunxi-agent-tui",
+    "crates/yunxi-agent-weixin",
     "crates/yunxi-agent-cli",
 ]
 resolver = "2"
@@ -45,7 +47,7 @@ exclude = ["external/codex-rs", "vendor/codex-rs", "crates/yunxi-agent-codex"]
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "2.1.0"
+version = "2.1.2"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -66,6 +68,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
 unicode-segmentation = "1"
 unicode-width = "0.2"
+wiremock = "0.6"
 
 [profile.dev]
 debug = 1

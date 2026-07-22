@@ -4,6 +4,8 @@
 
 ## 当前入口
 
+- [v2.1.1-hotfix.1 独立复审审核报告](audits/2026-07-22-164039-yunxi-agent-v2-1-1-hotfix-1-independent-reaudit-report.md)
+- [v2.1.2 微信模块、CLI 骨架与 iLink Mock 开发报告](development/2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md)
 - [v2.1.1-hotfix.1 路径整改独立复审报告](audits/2026-07-22-163044-yunxi-agent-v2-1-1-hotfix-1-report-path-remediation-reaudit-report.md)
 - [v2.1.1 审核报告](audits/2026-07-22-154559-yunxi-agent-v2-1-1-audit-report.md)
 - [v2.1.1 历史报告路径整改开发报告](development/2026-07-22-155306-yunxi-agent-v2-1-1-hotfix-report-path-remediation-development-report.md)

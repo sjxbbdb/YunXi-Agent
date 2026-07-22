@@ -1,6 +1,6 @@
 # YunXi Agent 文档索引
 
-本页是 `docs/` 的稳定导航入口。`v2.1.1` 只建立目录治理、Git 忽略边界与文档索引基线，不实现微信功能，也不移动历史文档；已有路径继续保持兼容。
+本页是 `docs/` 的稳定导航入口。`v2.1.2` 在已通过复审的目录治理基线上增加微信模块、CLI 骨架、固定端点 iLink 客户端和确定性 Mock；真实登录与消息服务仍未开放。
 
 ## 架构与运行边界
 
@@ -10,6 +10,7 @@
 - [人格与记忆](persona-memory.md)：人格、Memory Schema、召回、隐私和审核边界。
 - [TUI 表现与终端生命周期](tui-presentation.md)：布局、流式输出、焦点和恢复约束。
 - [Sandbox 协议事件](protocol/sandbox-events.md)：执行策略与协议事件说明。
+- [微信接入边界](weixin.md)：v2.1.2 CLI/协议骨架、脱敏边界、可用命令和明确未实现能力。
 
 ## 规格与路线图
 
@@ -20,6 +21,8 @@
 ## 报告与证据
 
 - [报告索引与归档规则](reports/README.md)：报告命名、分类和历史兼容规则。
+- [v2.1.2 微信模块、CLI 骨架与 iLink Mock 开发报告](reports/development/2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md)：本版本实现范围、参考快照与发布门禁。
+- [v2.1.1-hotfix.1 独立复审审核报告](reports/audits/2026-07-22-164039-yunxi-agent-v2-1-1-hotfix-1-independent-reaudit-report.md)：v2.1.2 的正式准入依据。
 - [v2.1.1-hotfix.1 路径整改独立复审报告](reports/audits/2026-07-22-163044-yunxi-agent-v2-1-1-hotfix-1-report-path-remediation-reaudit-report.md)：确认原唯一阻塞点关闭，允许进入 v2.1.2 开发阶段。
 - [v2.1.1 审核报告](reports/audits/2026-07-22-154559-yunxi-agent-v2-1-1-audit-report.md)：记录历史开发报告路径迁移这一唯一阻塞点；结论为审核不通过。
 - [v2.1.1 历史报告路径整改开发报告](reports/development/2026-07-22-155306-yunxi-agent-v2-1-1-hotfix-report-path-remediation-development-report.md)：`v2.1.1-hotfix.1` 整改依据与复审门禁。

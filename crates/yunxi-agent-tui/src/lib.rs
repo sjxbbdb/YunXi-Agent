@@ -9,6 +9,8 @@ mod event_filter;
 mod frame;
 mod host;
 mod input_map;
+#[cfg(test)]
+mod integrated_regression;
 mod layout;
 mod output_summary;
 mod presentation;

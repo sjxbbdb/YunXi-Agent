@@ -1,12 +1,35 @@
 # TUI Presentation, Streaming Timeline, And Quiet Transcript
 
-YunXi Agent v2.0.9 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
+YunXi Agent v2.1.0 keeps the v2.0.1 presentation boundary, v2.0.2-hotfix.1
 streaming timeline, and v2.0.3-hotfix.1 redraw/viewport guarantees, then adds
 one international text layout model, explicit responsive clipping priorities,
 a recoverable grapheme-indexed input model, centralized semantic styles,
 explicit terminal lifecycle rollback, and bounded stream/transcript storage.
 Runtime events remain complete and ordered in `yunxi-agent-core`; only the TUI
 maps them into user-facing cells.
+
+## v2.1.0 Integrated Release Regression
+
+The integrated release gate is fixture-driven rather than tied to a single
+renderer detail. Ratatui TestBackend snapshots pair the normal main view with
+the corresponding Details view for normal companion output, long streaming
+Markdown, approval/tool failure, CJK/Emoji at 58 columns, history scroll and
+resize, Provider stream failure, and low-color semantics. Every pair proves
+that raw internal payload stays out of the main transcript and remains
+available through an explicit Details action.
+
+The separate VT100 transcript suite fixes the terminal protocol boundary:
+alternate screen, bracketed paste, focus tracking, mouse capture, cursor
+visibility, terminal resize, ANSI reset, and reverse restoration. It applies
+the same terminal-exit contract to normal exit, Ctrl+C, tool failure, and
+Provider error. Existing CLI byte tests keep TUI/plain/JSON/JSONL mode
+selection isolated.
+
+The Windows evidence workflow now has two explicit roles. `capture` writes to
+an explicit `.tmp` directory; `verify` reads formal evidence without changing
+it and checks a before/after directory fingerprint. The v2.1.0 ConPTY gate
+also binds the Rust main/Details and VT100 golden hashes so unit and terminal
+evidence cannot drift independently.
 
 ## v2.0.9 Terminal Lifecycle And Bounded Streaming
 

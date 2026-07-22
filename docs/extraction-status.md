@@ -1,10 +1,31 @@
 # Extraction Status
 
-## Current Workspace Version: v2.0.9
+## Current Workspace Version: v2.1.0
 
 The current workspace integrates the pure Rust persona, memory, relationship,
 companion, control, and evaluation boundaries into one auditable general
 companion runtime. Earlier sections are retained as historical release records.
+
+## v2.1.0 Integrated TUI And Streaming Release Regression
+
+- A fixture-driven Ratatui TestBackend suite stores paired main-view and
+  Details goldens for normal companion output, long streaming Markdown,
+  approval/tool failure, CJK/Emoji narrow layout, history scroll/resize,
+  stream fault recovery, and monochrome semantics.
+- Normal-view goldens enforce the quiet transcript boundary; raw reasoning,
+  Provider wire bodies, tool arguments, and complete tool output remain
+  available only in the paired Details frame.
+- A VT100 transcript golden covers ANSI reset, resize, alternate screen,
+  bracketed paste, focus tracking, mouse capture, cursor hide/show, and reverse
+  restoration for normal, Ctrl+C, tool-failure, and Provider-error exits.
+- Existing CLI mode-matrix tests continue to prove that plain, pipe, CI,
+  one-shot, command, JSON, JSONL, `--no-tui`, and forced-TUI fallback paths do
+  not emit TUI bytes.
+- `scripts/conpty/v209` now separates explicit `.tmp` capture from pure
+  read-only formal verification. `scripts/conpty/v210` adds the consolidated
+  Windows ConPTY release gate and binds its evidence to the Rust golden hashes.
+- The runtime remains YunXi-owned Rust; evidence-only Node dependencies do not
+  enter the product dependency graph.
 
 ## v2.0.9 Cross-Path Terminal Recovery And Streaming Resilience
 

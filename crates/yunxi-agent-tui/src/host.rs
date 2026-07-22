@@ -24,7 +24,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Rect, Size};
-use std::io::{self, Stdout};
+use std::io::{self, Stdout, Write};
 use std::time::{Duration, Instant};
 use yunxi_agent_core::{AgentEvent, AgentMessageStreamPhase, ControlSnapshot};
 
@@ -685,6 +685,7 @@ enum TerminalLifecycleAction {
     DisableBracketedPaste,
     LeaveAlternateScreen,
     DisableRawMode,
+    ResetStyle,
 }
 
 impl TerminalLifecycleAction {
@@ -751,6 +752,11 @@ impl TerminalLifecycleSink for CrosstermLifecycleSink {
                 execute!(io::stdout(), LeaveAlternateScreen)?;
             }
             TerminalLifecycleAction::DisableRawMode => disable_raw_mode()?,
+            TerminalLifecycleAction::ResetStyle => {
+                let mut stdout = io::stdout();
+                stdout.write_all(b"\x1b[0m")?;
+                stdout.flush()?;
+            }
         }
         Ok(())
     }
@@ -775,6 +781,7 @@ impl TerminalLifecycleState {
     }
 
     fn restore(&mut self, sink: &mut impl TerminalLifecycleSink) {
+        let _ = sink.apply(TerminalLifecycleAction::ResetStyle);
         while let Some(action) = self.entered.pop() {
             let _ = sink.apply(action.recovery());
         }
@@ -803,6 +810,9 @@ impl Drop for TerminalGuard {
 mod tests {
     use super::*;
     use crate::bottom_pane::BottomPaneMode;
+    use crossterm::Command;
+    use crossterm::style::ResetColor;
+    use crossterm::terminal::SetSize;
 
     #[derive(Default)]
     struct RecordingLifecycleSink {
@@ -831,6 +841,7 @@ mod tests {
             [
                 TERMINAL_ENTER_ACTIONS.as_slice(),
                 &[
+                    TerminalLifecycleAction::ResetStyle,
                     TerminalLifecycleAction::ShowCursor,
                     TerminalLifecycleAction::DisableMouseCapture,
                     TerminalLifecycleAction::DisableFocusChange,
@@ -859,10 +870,84 @@ mod tests {
                 TerminalLifecycleAction::EnterAlternateScreen,
                 TerminalLifecycleAction::EnableBracketedPaste,
                 TerminalLifecycleAction::EnableFocusChange,
+                TerminalLifecycleAction::ResetStyle,
                 TerminalLifecycleAction::DisableBracketedPaste,
                 TerminalLifecycleAction::LeaveAlternateScreen,
                 TerminalLifecycleAction::DisableRawMode,
             ]
+        );
+    }
+
+    fn push_vt_command(command: impl Command, transcript: &mut String) {
+        command.write_ansi(transcript).expect("write VT100 command");
+    }
+
+    fn lifecycle_vt100_transcript() -> String {
+        let mut transcript = String::new();
+        push_vt_command(EnterAlternateScreen, &mut transcript);
+        push_vt_command(EnableBracketedPaste, &mut transcript);
+        push_vt_command(EnableFocusChange, &mut transcript);
+        push_vt_command(EnableMouseCapture, &mut transcript);
+        push_vt_command(Hide, &mut transcript);
+        push_vt_command(SetSize(58, 18), &mut transcript);
+        push_vt_command(ResetColor, &mut transcript);
+        push_vt_command(Show, &mut transcript);
+        push_vt_command(DisableMouseCapture, &mut transcript);
+        push_vt_command(DisableFocusChange, &mut transcript);
+        push_vt_command(DisableBracketedPaste, &mut transcript);
+        push_vt_command(LeaveAlternateScreen, &mut transcript);
+        transcript
+    }
+
+    fn visible_vt100(transcript: &str) -> String {
+        transcript
+            .replace('\u{1b}', "<ESC>")
+            .replace('\r', "<CR>")
+            .replace('\n', "<LF>")
+    }
+
+    #[test]
+    fn vt100_exit_scenarios_reset_resize_and_restore_terminal_state() {
+        let transcript = lifecycle_vt100_transcript();
+        for token in [
+            "\u{1b}[?1049h",
+            "\u{1b}[?2004h",
+            "\u{1b}[?1004h",
+            "\u{1b}[?25l",
+            "\u{1b}[8;18;58t",
+            "\u{1b}[0m",
+            "\u{1b}[?25h",
+            "\u{1b}[?1004l",
+            "\u{1b}[?2004l",
+            "\u{1b}[?1049l",
+        ] {
+            assert!(transcript.contains(token), "missing VT100 token {token:?}");
+        }
+        let reset = transcript.find("\u{1b}[0m").expect("ANSI reset");
+        let cursor = transcript.find("\u{1b}[?25h").expect("cursor restore");
+        let leave = transcript.find("\u{1b}[?1049l").expect("alternate leave");
+        assert!(reset < cursor && cursor < leave);
+
+        let visible = visible_vt100(&transcript);
+        let snapshot = [
+            "normal-exit",
+            "ctrl-c-exit",
+            "tool-failure-exit",
+            "provider-error-exit",
+        ]
+        .map(|scenario| format!("{scenario}|{visible}"))
+        .join("\n");
+        if std::env::var_os("YUNXI_UPDATE_SNAPSHOTS").is_some() {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join("snapshots")
+                .join("vt100_lifecycle_v210.txt");
+            std::fs::write(path, format!("{snapshot}\n")).expect("write VT100 golden");
+            return;
+        }
+        assert_eq!(
+            snapshot,
+            include_str!("snapshots/vt100_lifecycle_v210.txt").trim_end_matches(['\r', '\n'])
         );
     }
 

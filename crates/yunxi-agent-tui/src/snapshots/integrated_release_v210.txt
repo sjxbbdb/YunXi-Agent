@@ -1,0 +1,317 @@
+=== normal-companion/main 100x30 style=full ===
+00|YunXi Agent v2.1.0 | deepseek offline | model=deepseek-chat
+01|tail | cells=2 | backend=yunxi | source=offline_static | debug off
+02|────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐
+04|│[user] 请用三点总结今天的开发进度。                                                               │
+05|│[assistant] [offline] 当然可以：                                                                  │
+06|│                                                                                                  │
+07|│    1. 已固定终端模式选择。                                                                       │
+08|│    2. 已加固流式恢复。                                                                           │
+09|│    3. 正在执行集成发布回归。                                                                     │
+10|│                                                                                                  │
+11|│                                                                                                  │
+12|│                                                                                                  │
+13|│                                                                                                  │
+14|│                                                                                                  │
+15|│                                                                                                  │
+16|│                                                                                                  │
+17|│                                                                                                  │
+18|│                                                                                                  │
+19|│                                                                                                  │
+20|│                                                                                                  │
+21|│                                                                                                  │
+22|│                                                                                                  │
+23|│                                                                                                  │
+24|│                                                                                                  │
+25|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+26|┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐
+27|│yunxi>                                                                                            │
+28|│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │
+29|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+=== normal-companion/details 100x30 style=full ===
+00|YunXi Agent v2.1.0 | deepseek offline | model=deepseek-chat
+01|tail | cells=2 | backend=yunxi | source=offline_static | debug off
+02|────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌Details | Esc close | wheel/PgUp/PgDown scroll────────────────────────────────────────────────────┐
+04|│debug #1 reasoning                                                                                │
+05|│PRIVATE_NORMAL_CONTEXT                                                                            │
+06|│                                                                                                  │
+07|│                                                                                                  │
+08|│                                                                                                  │
+09|│                                                                                                  │
+10|│                                                                                                  │
+11|│                                                                                                  │
+12|│                                                                                                  │
+13|│                                                                                                  │
+14|│                                                                                                  │
+15|│                                                                                                  │
+16|│                                                                                                  │
+17|│                                                                                                  │
+18|│                                                                                                  │
+19|│                                                                                                  │
+20|│                                                                                                  │
+21|│                                                                                                  │
+22|│                                                                                                  │
+23|│                                                                                                  │
+24|│                                                                                                  │
+25|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+26|┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐
+27|│yunxi>                                                                                            │
+28|│Esc close details | wheel/PgUp/PgDown scroll                                                      │
+29|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+=== long-stream-markdown-cjk/main 58x18 style=full ===
+00|YunXi v2.1.0 | deepseek live
+01|tail | cells=2 | provider=deepseek
+02|──────────────────────────────────────────────────────────
+03|┌Transcript 100-108 / 108 | tail─────────────────────────┐
+04|│    - 路径：`C:/Workspace/云汐/阶段-16`                 ^
+05|│    - 说明：流式 Markdown 保持单一消息单元，Emoji 👩‍💻 与 ║
+06|│    组合字符 é 不破坏布局。                             ║
+07|│                                                        ║
+08|│    ## 阶段 17                                          ║
+09|│    - 状态：稳定 ✅                                     ║
+10|│    - 路径：`C:/Workspace/云汐/阶段-17`                 ║
+11|│    - 说明：流式 Markdown 保持单一消息单元，Emoji 👩‍💻 与 █
+12|│    组合字符 é 不破坏布局。                             v
+13|└────────────────────────────────────────────────────────┘
+14|┌Composer────────────────────────────────────────────────┐
+15|│yunxi>                                                  │
+16|│Ctrl+C cancel | typing saves draft | Enter waits for    │
+17|└────────────────────────────────────────────────────────┘
+=== long-stream-markdown-cjk/details 58x18 style=full ===
+00|YunXi v2.1.0 | deepseek live
+01|tail | cells=2 | provider=deepseek
+02|──────────────────────────────────────────────────────────
+03|┌Details | Esc close | wheel/PgUp/PgDown scroll──────────┐
+04|│debug #1 reasoning                                      │
+05|│PRIVATE_LONG_STREAM_TRACE                               │
+06|│                                                        │
+07|│                                                        │
+08|│                                                        │
+09|│                                                        │
+10|│                                                        │
+11|│                                                        │
+12|│                                                        │
+13|└────────────────────────────────────────────────────────┘
+14|┌Composer────────────────────────────────────────────────┐
+15|│yunxi>                                                  │
+16|│Esc close details | wheel/PgUp/PgDown scroll            │
+17|└────────────────────────────────────────────────────────┘
+
+=== tool-approval-failure/main 80x24 style=full ===
+00|YunXi v2.1.0 | deepseek live
+01|tail | cells=2 | provider=deepseek
+02|────────────────────────────────────────────────────────────────────────────────
+03|┌Transcript | tail─────────────────────────────────────────────────────────────┐
+04|│[user] 检查生成目录。                                                         │
+05|│[tool] shell: failed; path=running -> failed; YX-TOOL-001 tool execution      │
+06|│    failed: tool returned a failure; retryable=yes; next: Review tool details │
+07|│    and retry when safe.                                                      │
+08|│                                                                              │
+09|│                                                                              │
+10|│                                                                              │
+11|│                                                                              │
+12|│                                                                              │
+13|└──────────────────────────────────────────────────────────────────────────────┘
+14|┌Approval required | default: Decline──────────────────────────────────────────┐
+15|│approval shell in C:/Workspace/云汐                                           │
+16|│reason   删除生成目录前需要明确批准                                           │
+17|│risk     risk: destructive                                                    │
+18|│command  Remove-Item -Recurse C:/Workspace/云汐/generated                     │
+19|│                                                                              │
+20|│  Approve  Enter/Y                                                            │
+21|│> Decline (safe default) N/Esc                                                │
+22|│Tab select | Enter confirm | Esc decline | Ctrl+C cancel                      │
+23|└──────────────────────────────────────────────────────────────────────────────┘
+=== tool-approval-failure/details 80x24 style=full ===
+00|YunXi v2.1.0 | deepseek live
+01|tail | cells=2 | provider=deepseek
+02|────────────────────────────────────────────────────────────────────────────────
+03|┌Details | Esc close | wheel/PgUp/PgDown scroll────────────────────────────────┐
+04|│debug #2 tool output                                                          │
+05|│PRIVATE_TOOL_FAILURE_OUTPUT                                                   │
+06|│                                                                              │
+07|│                                                                              │
+08|│                                                                              │
+09|│                                                                              │
+10|│                                                                              │
+11|│                                                                              │
+12|│                                                                              │
+13|└──────────────────────────────────────────────────────────────────────────────┘
+14|┌Approval required | default: Decline──────────────────────────────────────────┐
+15|│approval shell in C:/Workspace/云汐                                           │
+16|│reason   删除生成目录前需要明确批准                                           │
+17|│risk     risk: destructive                                                    │
+18|│command  Remove-Item -Recurse C:/Workspace/云汐/generated                     │
+19|│                                                                              │
+20|│  Approve  Enter/Y                                                            │
+21|│> Decline (safe default) N/Esc                                                │
+22|│Tab select | Enter confirm | Esc decline | Ctrl+C cancel                      │
+23|└──────────────────────────────────────────────────────────────────────────────┘
+
+=== history-scroll-resize/main 100x30 style=ansi16 ===
+00|YunXi Agent v2.1.0 | deepseek offline | model=deepseek-chat
+01|new output below | cells=37 | backend=yunxi | source=offline_static | debug off
+02|────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌Transcript 17-37 / 37 | new output below──────────────────────────────────────────────────────────┐
+04|│[notice] 历史记录 16：窗口缩放后保持当前锚点。                                                    ^
+05|│[notice] 历史记录 17：窗口缩放后保持当前锚点。                                                    ║
+06|│[notice] 历史记录 18：窗口缩放后保持当前锚点。                                                    ║
+07|│[notice] 历史记录 19：窗口缩放后保持当前锚点。                                                    ║
+08|│[notice] 历史记录 20：窗口缩放后保持当前锚点。                                                    ║
+09|│[notice] 历史记录 21：窗口缩放后保持当前锚点。                                                    ║
+10|│[notice] 历史记录 22：窗口缩放后保持当前锚点。                                                    █
+11|│[notice] 历史记录 23：窗口缩放后保持当前锚点。                                                    █
+12|│[notice] 历史记录 24：窗口缩放后保持当前锚点。                                                    █
+13|│[notice] 历史记录 25：窗口缩放后保持当前锚点。                                                    █
+14|│[notice] 历史记录 26：窗口缩放后保持当前锚点。                                                    █
+15|│[notice] 历史记录 27：窗口缩放后保持当前锚点。                                                    █
+16|│[notice] 历史记录 28：窗口缩放后保持当前锚点。                                                    █
+17|│[notice] 历史记录 29：窗口缩放后保持当前锚点。                                                    ║
+18|│[notice] 历史记录 30：窗口缩放后保持当前锚点。                                                    ║
+19|│[notice] 历史记录 31：窗口缩放后保持当前锚点。                                                    ║
+20|│[notice] 历史记录 32：窗口缩放后保持当前锚点。                                                    ║
+21|│[notice] 历史记录 33：窗口缩放后保持当前锚点。                                                    ║
+22|│[notice] 历史记录 34：窗口缩放后保持当前锚点。                                                    ║
+23|│[notice] 历史记录 35：窗口缩放后保持当前锚点。                                                    ║
+24|│[notice] 缩放后到达的新输出                                                                       v
+25|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+26|┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐
+27|│yunxi>                                                                                            │
+28|│End follow tail | new output below | wheel/drag history                                           │
+29|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+=== history-scroll-resize/details 100x30 style=ansi16 ===
+00|YunXi Agent v2.1.0 | deepseek offline | model=deepseek-chat
+01|new output below | cells=37 | backend=yunxi | source=offline_static | debug off
+02|────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌Details | Esc close | wheel/PgUp/PgDown scroll────────────────────────────────────────────────────┐
+04|│debug #1 reasoning                                                                                │
+05|│PRIVATE_RESIZE_ANCHOR                                                                             │
+06|│                                                                                                  │
+07|│                                                                                                  │
+08|│                                                                                                  │
+09|│                                                                                                  │
+10|│                                                                                                  │
+11|│                                                                                                  │
+12|│                                                                                                  │
+13|│                                                                                                  │
+14|│                                                                                                  │
+15|│                                                                                                  │
+16|│                                                                                                  │
+17|│                                                                                                  │
+18|│                                                                                                  │
+19|│                                                                                                  │
+20|│                                                                                                  │
+21|│                                                                                                  │
+22|│                                                                                                  │
+23|│                                                                                                  │
+24|│                                                                                                  │
+25|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+26|┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐
+27|│yunxi>                                                                                            │
+28|│Esc close details | wheel/PgUp/PgDown scroll                                                      │
+29|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+=== stream-fault-recovery/main 100x30 style=full ===
+00|YunXi Agent v2.1.0 | deepseek live | model=deepseek-chat
+01|tail | cells=3 | backend=yunxi | source=fixture_live | debug off
+02|────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌Transcript | tail─────────────────────────────────────────────────────────────────────────────────┐
+04|│[user] 验证断流恢复。                                                                             │
+05|│[assistant] 已接收部分响应，等待后续数据……                                                        │
+06|│[error] YX-PROVIDER-001 provider request failed: provider deepseek failed (stream_disconnected/   │
+07|│    502); retryable=yes; next: Check provider settings or retry the request.                      │
+08|│                                                                                                  │
+09|│                                                                                                  │
+10|│                                                                                                  │
+11|│                                                                                                  │
+12|│                                                                                                  │
+13|│                                                                                                  │
+14|│                                                                                                  │
+15|│                                                                                                  │
+16|│                                                                                                  │
+17|│                                                                                                  │
+18|│                                                                                                  │
+19|│                                                                                                  │
+20|│                                                                                                  │
+21|│                                                                                                  │
+22|│                                                                                                  │
+23|│                                                                                                  │
+24|│                                                                                                  │
+25|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+26|┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐
+27|│yunxi>                                                                                            │
+28|│Enter submit | Ctrl+C exit | /help commands | Alt+Enter newline | wheel/drag scroll               │
+29|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+=== stream-fault-recovery/details 100x30 style=full ===
+00|YunXi Agent v2.1.0 | deepseek live | model=deepseek-chat
+01|tail | cells=3 | backend=yunxi | source=fixture_live | debug off
+02|────────────────────────────────────────────────────────────────────────────────────────────────────
+03|┌Details | Esc close | wheel/PgUp/PgDown scroll────────────────────────────────────────────────────┐
+04|│debug #1 provider error                                                                           │
+05|│PRIVATE_PROVIDER_WIRE_BODY                                                                        │
+06|│fixture connection reset                                                                          │
+07|│                                                                                                  │
+08|│                                                                                                  │
+09|│                                                                                                  │
+10|│                                                                                                  │
+11|│                                                                                                  │
+12|│                                                                                                  │
+13|│                                                                                                  │
+14|│                                                                                                  │
+15|│                                                                                                  │
+16|│                                                                                                  │
+17|│                                                                                                  │
+18|│                                                                                                  │
+19|│                                                                                                  │
+20|│                                                                                                  │
+21|│                                                                                                  │
+22|│                                                                                                  │
+23|│                                                                                                  │
+24|│                                                                                                  │
+25|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+26|┌Composer──────────────────────────────────────────────────────────────────────────────────────────┐
+27|│yunxi>                                                                                            │
+28|│Esc close details | wheel/PgUp/PgDown scroll                                                      │
+29|└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+=== low-color-semantics/main 58x18 style=monochrome ===
+00|YunXi v2.1.0 | deepseek offline
+01|tail | cells=3 | provider=deepseek
+02|──────────────────────────────────────────────────────────
+03|┌Transcript 5-7 / 7 | tail───────────────────────────────┐
+04|│[error] YX-PROVIDER-001 provider request failed:        ^
+05|│    provider fixture failed (offline); retryable=yes;   █
+06|│    next: Check provider settings or retry the request. v
+07|└────────────────────────────────────────────────────────┘
+08|┌Approval required | default: Decline────────────────────┐
+09|│approval shell in C:/Workspace/云汐                     │
+10|│reason   低色终端也必须保留动作语义                     │
+11|│risk     risk: review                                   │
+12|│command  echo safe                                      │
+13|│                                                        │
+14|│  Approve  Enter/Y                                      │
+15|│> Decline (safe default) N/Esc                          │
+16|│Tab select | Enter confirm | Esc decline | Ctrl+C cancel│
+17|└────────────────────────────────────────────────────────┘
+=== low-color-semantics/details 58x18 style=monochrome ===
+00|YunXi v2.1.0 | deepseek offline
+01|tail | cells=3 | provider=deepseek
+02|──────────────────────────────────────────────────────────
+03|┌Details | Esc close | wheel/PgUp/PgDown scroll──────────┐
+04|│debug #3 provider error                                 │
+05|│PRIVATE_MONOCHROME_DETAIL                               │
+06|│                                                        │
+07|└────────────────────────────────────────────────────────┘
+08|┌Approval required | default: Decline────────────────────┐
+09|│approval shell in C:/Workspace/云汐                     │
+10|│reason   低色终端也必须保留动作语义                     │
+11|│risk     risk: review                                   │
+12|│command  echo safe                                      │
+13|│                                                        │
+14|│  Approve  Enter/Y                                      │
+15|│> Decline (safe default) N/Esc                          │
+16|│Tab select | Enter confirm | Esc decline | Ctrl+C cancel│
+17|└────────────────────────────────────────────────────────┘

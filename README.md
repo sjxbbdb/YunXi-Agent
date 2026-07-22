@@ -1,8 +1,8 @@
-# YunXi Agent v2.0.9
+# YunXi Agent v2.1.0
 
-YunXi Agent v2.0.9 is a terminal-first Rust general companion Agent CLI and reusable core library
-built from the Codex CLI source extraction work. The default runtime is
-YunXi-owned and does not depend on the upstream Codex runtime.
+YunXi Agent v2.1.0 is a terminal-first Rust general companion Agent CLI and reusable core library.
+The default runtime is YunXi-owned and does not depend on the upstream Codex
+runtime.
 
 When DeepSeek credentials are configured, the default `yunxi` command now uses
 the real DeepSeek provider automatically. Without credentials it remains usable
@@ -22,11 +22,11 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-cli`: v2.0.9 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.1.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/extraction-status.md`: current extraction status and known gaps
-- `docs/tui-presentation.md`: v2.0.9 terminal recovery, bounded streaming, semantic styles, responsive density, focus routing, and quiet transcript boundary
+- `docs/tui-presentation.md`: v2.1.0 integrated TUI/streaming regression, terminal recovery, responsive density, focus routing, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs
 - `docs/superpowers/plans`: implementation plans
 
@@ -169,6 +169,27 @@ with `[offline]` and `/cost` reports that no model call was made.
 - Runs 31 deterministic companion evaluation scenarios without a live provider
   or cloud judge, with persona, memory, relationship, proactive, tool-approval,
   and control metrics available as text, JSON, or one-line JSONL
+
+## Integrated TUI And Streaming Release Regression v2.1.0
+
+v2.1.0 consolidates the v2.0.1-v2.0.9 presentation, streaming, focus,
+responsive-layout, mode-isolation, and terminal-recovery contracts into one
+release gate without introducing a new UI concept or companion module.
+
+The fixture-driven Ratatui TestBackend suite stores paired normal-main and
+Details goldens for the normal companion, long streaming Markdown, tool
+approval/failure, CJK/Emoji narrow layout, history scroll/resize, stream fault,
+and monochrome semantics. A separate VT100 transcript golden covers ANSI reset,
+alternate screen, mouse capture, focus tracking, bracketed paste, cursor state,
+resize, and normal/Ctrl+C/error restoration ordering. Main-view goldens reject
+raw reasoning, Provider bodies, tool arguments, and tool output that belongs in
+Details.
+
+`scripts/conpty/v209` now separates explicit `.tmp` capture from a pure
+read-only verifier. `scripts/conpty/v210` binds the full non-TUI matrix,
+terminal and streaming recovery, loopback live Provider path, long-stream
+cancellation, 100x30 to 58x18 wide-character/mouse/copy-boundary smoke, and
+the Rust golden hashes. Formal evidence is written only at release close.
 
 ## Cross-Path Terminal Recovery And Streaming Resilience v2.0.9
 

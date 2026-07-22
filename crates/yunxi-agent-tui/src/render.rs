@@ -20,7 +20,11 @@ pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     render_tui_frame_with_styles(frame, app, TuiStyleSet::detect());
 }
 
-fn render_tui_frame_with_styles(frame: &mut Frame<'_>, app: &YunxiTuiApp, styles: TuiStyleSet) {
+pub(crate) fn render_tui_frame_with_styles(
+    frame: &mut Frame<'_>,
+    app: &YunxiTuiApp,
+    styles: TuiStyleSet,
+) {
     let area = frame.area();
     let layout = compute_layout(
         area,
@@ -856,7 +860,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.0.9"));
+        assert!(rendered.contains("YunXi v2.1.0"));
         assert!(!rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }

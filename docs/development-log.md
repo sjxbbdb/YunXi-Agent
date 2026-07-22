@@ -2229,3 +2229,82 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 提交、推送与 Git tag 状态：本条清理日志作为 docs-only 提交非强制更新 `master`；annotated `v2.0.9` 和全部历史 tag 保持不变。
 
 署名：开发报告撰写者
+
+## 2026-07-22 07:42:11 +08:00
+
+工作目标：依据 `v2.0.9` 终端恢复与流式故障韧性审核通过报告，检查报告提到的参考源码是否已在本机存在，并按固定流程撰写面向开发者的 `v2.1.0` TUI 与流式输出重构集成发布开发报告。
+
+执行流程：
+1. 读取审核报告 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-072005-YunXi-Agent-v2.0.9-终端恢复流式韧性审核报告.md`，确认 `v2.0.9` 审核通过，可进入 `v2.1.0` 集成发布开发。
+2. 提取审核结论、发布提交 `5e199dbac036fb0374f3fde69a389e009aa5a980`、annotated tag 对象 `1bfb8c42b3d736c43f38a3f54aba9dda35c979ee`、当前 `HEAD/origin/master` `0288184cdce9e6928d99e106e8dc87c505b80d44` 及下一版本开发建议。
+3. 检查 `D:\源码`，确认审核报告提到的 `codex`、`k9s`、`lazygit`、`aider` 均已存在；本次无需拉取新仓库。
+4. 使用 CodeGraph 复核 `app.rs`、`render.rs`、CLI/JSONL、companion snapshot、terminal lifecycle、streaming 和 ConPTY 集成发布相关代码面。
+5. 按固定流程在开发报告前部写入 14 条硬性约束，并明确 `v2.1.0` 的阶段目标、版本边界、必须保持的 v2.0.9 能力、源码接入点、参考源码建议、实施顺序、测试验收、清理、日志和 tag 纪律。
+6. 在项目内新增开发报告，并经授权复制到桌面开发报告目录。
+7. 对项目内开发报告和桌面开发报告执行 SHA256 校验，确认内容一致。
+
+修改文件：
+- 新增项目开发报告：`D:\YunXi Agent\docs\reports\2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md`
+- 追加项目日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+文件路径：
+- 项目开发目录：`D:\YunXi Agent`
+- 项目报告目录：`D:\YunXi Agent\docs\reports`
+- 项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告目录：`C:\Users\24763\Desktop\YunXi Agent开发报告`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 审核报告来源：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-072005-YunXi-Agent-v2.0.9-终端恢复流式韧性审核报告.md`
+- 项目内审核报告归档：`D:\YunXi Agent\docs\reports\2026-07-22-072005-yunxi-agent-v2-0-9-terminal-recovery-streaming-resilience-audit-report.md`
+- 已存在参考源码：`D:\源码\codex`、`D:\源码\k9s`、`D:\源码\lazygit`、`D:\源码\aider`
+
+验证结果：
+- 项目开发报告与桌面开发报告 SHA256 一致：`5EADFC8E2894C5364FE20A54090F47D42B5CEAF070D94328EFFC9B2D34B87502`。
+- 本次审核报告未点名新的外部源码项目；`D:\源码\codex`、`D:\源码\k9s`、`D:\源码\lazygit`、`D:\源码\aider` 均已存在，未执行 `git clone` 或网络拉取。
+- 本次未修改 YunXi Rust 源码。
+- 未运行 `cargo fmt`、`cargo check`、`cargo test`、`cargo build` 或 ConPTY capture/verify；本次工作性质为开发报告撰写。
+- 未生成编译中间产物，因此无需清理 `target` 或 ConPTY `.work` 目录。
+- 未执行递归删除、强制移动、清空目录、系统级安装/卸载、PATH/注册表/系统配置修改；涉及 C 盘用户目录的操作仅为经授权写入桌面开发报告副本并同步桌面开发日志。
+
+提交和推送状态：未提交、未推送、未创建新的 Git tag；`v2.0.9`、`v2.0.8` 和全部历史 tag 不移动、不删除、不覆盖。`v2.1.0` 后续实现、验证、清理和复审通过后，必须创建新的 annotated Git tag。
+
+署名：开发报告撰写者
+
+## 2026-07-22 08:46:38 +08:00
+
+工作目标：依据 `2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md`，完成 YunXi Agent v2.1.0 的 TUI/流式输出集成发布回归、证据职责治理、统一验证与发布前精确清理；不引入新 UI 概念或新陪伴模块，不恢复 Codex/vendor 默认依赖。
+
+执行流程：
+1. 读取开发报告、v2.0.9 审核归档、AGENTS 约束和现有 Git/tag 基线；使用 CodeGraph 核对 TUI app/render、terminal lifecycle、CLI mode matrix 与 v209 ConPTY 路径。
+2. 新增 fixture-driven Ratatui TestBackend 回归模块，建立 normal companion、长流 Markdown、tool approval/failure、CJK/Emoji 窄屏、history scroll/resize、stream fault、低色语义的 main/Details 成对 golden，并逐场景断言内部 payload 不进入主视图。
+3. 新增 VT100 terminal transcript golden；为 normal、Ctrl+C、tool failure、Provider error 固定 alternate screen、paste、focus、mouse、cursor、resize、ANSI reset 和反序恢复协议。
+4. 在真实终端恢复路径显式写出 `ESC[0m`，保留逐项进入、部分失败回滚和 Drop 反序恢复；Windows ConPTY 不保证原样回显 SGR，因此正式证据同时记录 ConPTY 观察值与经过 golden 哈希绑定的单元协议证明。
+5. 将 `scripts/conpty/v209/verify.js` 拆为可配置 `.tmp` 输出的 `capture.js` 与纯只读 `verify.js`；只读 verifier 校验 evidence SHA-256、场景字段和目录前后 fingerprint。
+6. 新增 `scripts/conpty/v210`，综合执行 7 路非 TUI matrix、normal/Ctrl+C 恢复、loopback live Provider 故障后下一轮、超长 SSE 取消后下一轮，以及 100x30→58x18 宽字符/鼠标/复制边界 smoke，并绑定 Rust golden 哈希。
+7. 统一 workspace、CLI/runtime 测试、README、TUI 设计、提取状态、脚本索引和既有 full-frame snapshot 到 v2.1.0。
+8. 执行全工作区 Rust 门禁、release 双 binary、Evaluation、offline E2E 和一次真实 DeepSeek Provider E2E。首次 v210 综合采集在证据写出后因 node-pty 句柄未退出而达到 shell 超时；精确识别并终止本次遗留的两个 Node PID，增加成功后主动退出、基线复用与宽字符等待条件后，最终采集/只读验证通过。
+9. 在 release close 将最终通过的两个 v210 JSON 文件归档到正式 evidence；v210、v209、v208、v207-hotfix、v207 verifier 全部通过。
+10. 列出 13 个精确绝对路径及大小，经用户确认后逐路径验证位于 `D:\YunXi Agent`、不是 reparse point，再删除构建/采集中间目录；任何 PowerShell 错误均设置为终止错误，未删除用户目录。
+
+修改文件与路径：
+- 版本与 CLI：`D:\YunXi Agent\Cargo.toml`、`Cargo.lock`、`crates\yunxi-agent-cli\src\main.rs`、`crates\yunxi-agent-cli\tests\cli_tests.rs`、`crates\yunxi-agent-runtime\tests\general_companion_tests.rs`。
+- TUI 实现与测试：`crates\yunxi-agent-tui\src\host.rs`、`lib.rs`、`render.rs`、`app.rs`、`integrated_regression.rs`。
+- Golden：`crates\yunxi-agent-tui\src\snapshots\integrated_release_v210.txt`、`vt100_lifecycle_v210.txt` 及 58x18/80x24/100x30/120x40/200x50 full-frame snapshots。
+- ConPTY：`scripts\conpty\v209\capture.js`、`verify.js`、`package.json`、`README.md`；新增 `scripts\conpty\v210\capture.js`、`verify.js`、`package.json`、`package-lock.json`、`README.md`；更新 `scripts\README.md`。
+- 正式证据：`docs\reports\evidence\frames\v209-conpty\manifest.json`、新增 `docs\reports\evidence\frames\v210-conpty\integrated.json` 与 `manifest.json`。
+- 文档：`README.md`、`docs\tui-presentation.md`、`docs\extraction-status.md`、本开发日志、v2.0.9 审核归档和 v2.1.0 开发报告。
+
+验证结果：
+- 最终 `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过。
+- CLI integration 45/45、JSONL 10/10、Provider 46/46、TUI 161/161。
+- release 双 binary 均为 `yunxi 2.1.0`；Companion Evaluation 31/31、失败 0、`golden_passed=true`、tool approval bypass 0。
+- offline release E2E 和真实 DeepSeek Provider E2E 均成功；读取的外部路径仅为用户已提供的 `C:\Users\24763\Desktop\api.txt`，密钥未输出、未写入配置、未持久化。
+- v210/v209/v208/v207-hotfix/v207 verifier 全部通过；v210 evidence SHA-256 为 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6`，v209 evidence SHA-256 保持 `714b9c2d9c01b1616ffc8789e940ea778559335e20998679a904b5c335fcfdc8`。
+- 集成 golden SHA-256 为 `58a1684feddf1f2d9b62c00a57575c61be4a33f08a2c72dfd162f1c856b04b66`；VT100 golden SHA-256 为 `d5bd46551010171a6814b23abb811680b1eea48eae686f669ce2929f1fd4906f`。
+- 经用户确认精确删除 13 个项目内中间目录，约释放 5.43 GB；正式 evidence、`.yunxi`、用户目录、安装目录、源码和历史 tag 均保留。
+- `git diff --check` 通过；发布前 `HEAD=origin/master=0288184cdce9e6928d99e106e8dc87c505b80d44`，历史 tag 数 49。
+
+提交和推送状态：v2.1.0 发布提交、annotated tag 与 GitHub 非强制推送待执行；创建 tag 前按开发报告要求等待用户最终确认。旧 tag 不移动、不删除、不覆盖。
+
+署名：开发报告撰写者

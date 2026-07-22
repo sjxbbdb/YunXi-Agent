@@ -1,8 +1,8 @@
 {
-  "name": "yunxi-v209-conpty-evidence",
-  "version": "2.0.9",
+  "name": "yunxi-v210-conpty-evidence",
+  "version": "2.1.0",
   "private": true,
-  "description": "Windows ConPTY evidence for YunXi Agent v2.0.9 terminal recovery and streaming resilience",
+  "description": "Integrated Windows ConPTY release evidence for YunXi Agent v2.1.0",
   "scripts": {
     "capture": "node capture.js",
     "verify": "node verify.js"

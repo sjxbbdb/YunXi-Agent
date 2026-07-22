@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "version": "2.1.0",
+  "terminal": "Windows ConPTY",
+  "collector": "scripts/conpty/v210/capture.js",
+  "evidence": "integrated.json",
+  "sha256": "a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6"
+}

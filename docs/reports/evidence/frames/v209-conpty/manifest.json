@@ -2,7 +2,7 @@
   "schema_version": 1,
   "version": "2.0.9",
   "terminal": "Windows ConPTY",
-  "collector": "scripts/conpty/v209/verify.js",
+  "collector": "scripts/conpty/v209/capture.js",
   "evidence": "resilience.json",
   "sha256": "714b9c2d9c01b1616ffc8789e940ea778559335e20998679a904b5c335fcfdc8"
 }

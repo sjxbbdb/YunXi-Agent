@@ -1,5 +1,18 @@
 # Scripts
 
+## `conpty\v210`
+
+Contains the integrated Windows ConPTY release gate for v2.1.0. Capture writes
+to an explicit `.tmp` directory; verification is read-only and binds the
+non-TUI matrix, terminal recovery, Provider/stream recovery, wide-character
+resize/mouse/copy smoke, and Rust golden hashes.
+
+```powershell
+npm.cmd ci --prefix scripts\conpty\v210
+npm.cmd run capture --prefix scripts\conpty\v210 -- --output-dir .tmp\conpty\v210-release
+npm.cmd run verify --prefix scripts\conpty\v210 -- --input-dir .tmp\conpty\v210-release
+```
+
 ## `conpty\v209`
 
 Contains the Windows ConPTY release gate for v2.0.9 cross-path mode isolation,
@@ -8,13 +21,15 @@ stream cancellation followed by a successful next turn.
 
 ```powershell
 npm.cmd ci --prefix scripts\conpty\v209
+npm.cmd run capture --prefix scripts\conpty\v209 -- --output-dir .tmp\conpty\v209-capture
 npm.cmd run verify --prefix scripts\conpty\v209
 ```
 
-Sanitized evidence and its SHA-256 manifest are stored under
-`docs/reports/evidence/frames/v209-conpty`. The loopback Provider fixtures are
-used only to reproduce deterministic HTTP/SSE failures. Node.js remains an
-evidence dependency and is not part of the YunXi runtime path.
+Capture writes sanitized evidence and its SHA-256 manifest only to the explicit
+`.tmp` directory. The formal `docs/reports/evidence/frames/v209-conpty` gate is
+read-only. The loopback Provider fixtures reproduce deterministic HTTP/SSE
+failures. Node.js remains an evidence dependency and is not part of the YunXi
+runtime path.
 
 ## `conpty\v208`
 

@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "version": "2.1.0",
+  "terminal": "Windows ConPTY",
+  "generated_at": "2026-07-22T00:43:24.597Z",
+  "baseline": {
+    "schema_version": 1,
+    "version": "2.1.0",
+    "terminal": "Windows ConPTY",
+    "generated_at": "2026-07-22T00:23:11.232Z",
+    "mode_matrix": [
+      {
+        "label": "plain-one-shot",
+        "status": 0,
+        "stdout_bytes": 67,
+        "stderr_bytes": 0
+      },
+      {
+        "label": "plain-pipe",
+        "status": 0,
+        "stdout_bytes": 353,
+        "stderr_bytes": 0
+      },
+      {
+        "label": "ci",
+        "status": 0,
+        "stdout_bytes": 353,
+        "stderr_bytes": 0
+      },
+      {
+        "label": "no-tui",
+        "status": 0,
+        "stdout_bytes": 353,
+        "stderr_bytes": 0
+      },
+      {
+        "label": "forced-tui-fallback",
+        "status": 0,
+        "stdout_bytes": 353,
+        "stderr_bytes": 82
+      },
+      {
+        "label": "json",
+        "status": 0,
+        "stdout_bytes": 6094,
+        "stderr_bytes": 0
+      },
+      {
+        "label": "jsonl",
+        "status": 0,
+        "stdout_bytes": 5690,
+        "stderr_bytes": 0
+      }
+    ],
+    "terminal_recovery": [
+      {
+        "label": "normal-exit",
+        "exit_code": 0,
+        "output_bytes": 4666,
+        "conpty_focus_disable_echoed": false,
+        "focus_disable_action_unit_tested": true
+      },
+      {
+        "label": "ctrl-c-exit",
+        "exit_code": 0,
+        "output_bytes": 4567,
+        "conpty_focus_disable_echoed": false,
+        "focus_disable_action_unit_tested": true
+      }
+    ],
+    "provider_recovery": {
+      "requests": 3,
+      "exit_code": 0,
+      "recovered": true
+    },
+    "stream_cancellation": {
+      "requests": 2,
+      "streamed_bytes": 354869,
+      "exit_code": 0,
+      "recovered": true
+    }
+  },
+  "integrated_smoke": {
+    "exit_code": 0,
+    "output_bytes": 7641,
+    "wide_characters_visible": true,
+    "copyable_text_sha256": "92b55e44ac2b1d33da723316526faaf186db61eb78523374051d5f2a2c8b10b0",
+    "copy_boundary_quiet": true,
+    "mouse_sequences_sent": 2,
+    "resized_cols": 58,
+    "resized_rows": 18,
+    "narrow_footer_visible": true,
+    "ansi_reset_conpty_echoed": false,
+    "ansi_reset_action_unit_tested": true,
+    "alternate_screen_restored": true,
+    "cursor_restored": true
+  },
+  "goldens": [
+    {
+      "path": "crates/yunxi-agent-tui/src/snapshots/integrated_release_v210.txt",
+      "bytes": 37134,
+      "sha256": "58a1684feddf1f2d9b62c00a57575c61be4a33f08a2c72dfd162f1c856b04b66"
+    },
+    {
+      "path": "crates/yunxi-agent-tui/src/snapshots/vt100_lifecycle_v210.txt",
+      "bytes": 1002,
+      "sha256": "d5bd46551010171a6814b23abb811680b1eea48eae686f669ce2929f1fd4906f"
+    }
+  ]
+}

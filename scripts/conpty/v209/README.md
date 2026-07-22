@@ -19,9 +19,13 @@ From `D:\YunXi Agent`:
 ```powershell
 cargo build -p yunxi-agent-cli --release --bins
 npm.cmd ci --prefix scripts\conpty\v209
+npm.cmd run capture --prefix scripts\conpty\v209 -- --output-dir .tmp\conpty\v209-capture
 npm.cmd run verify --prefix scripts\conpty\v209
 ```
 
-Evidence is written to `docs/reports/evidence/frames/v209-conpty`. The ignored
-`node_modules` and `.work` directories are removed only after explicit cleanup
-confirmation.
+`capture` writes only to the explicit output directory (the default is
+`.tmp/conpty/v209-capture`). It never overwrites formal evidence. `verify` is a
+pure read-only gate over `docs/reports/evidence/frames/v209-conpty` and checks
+the evidence directory fingerprint before and after verification. The ignored
+`node_modules`, capture output, and `.work` directories are removed only after
+explicit cleanup confirmation.

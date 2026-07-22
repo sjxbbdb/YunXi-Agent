@@ -131,7 +131,7 @@ async fn run_general_companion_scenario(workspace: &Path) -> AgentResult<()> {
     );
 
     let snapshot = general_companion_snapshot(&config)?;
-    assert_eq!(snapshot.version, "2.0.9");
+    assert_eq!(snapshot.version, "2.1.0");
     assert_eq!(snapshot.runtime_owner, "yunxi");
     assert!(!snapshot.upstream_codex_required);
     assert_eq!(snapshot.persona_profile_id, "yunxi_companion_strong");

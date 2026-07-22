@@ -2359,3 +2359,33 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 提交、推送与 Git tag 状态：本条安装日志作为 docs-only 提交仅更新 `master`；annotated `v2.1.0` 固定指向功能发布提交 `a8293905af55d659d647515786699ab313a51a07`，该 tag 及全部历史 tag 均不移动、不删除、不覆盖。
 
 署名：开发报告撰写者
+
+## 2026-07-22 11:09:06 +08:00
+
+工作目标：依据 `docs/reports/2026-07-22-105338-yunxi-agent-project-directory-organization-report.md` 整理项目目录，在不移动源码、不删除文件、不修改版本/tag、不写入用户目录的前提下完成阶段 0 基线、阶段 1 Git 忽略边界和阶段 2 文档索引。
+
+执行流程：
+1. 完整读取整理报告，使用 CodeGraph 和 `rg` 盘点 `vendor/codex-rs`、`extracted/codex-core-agent-sources`、`docs/superpowers`、`scripts/conpty` 的引用，记录根目录、Cargo workspace、HEAD、版本、tag 和 Git 状态。
+2. 新增阶段 0 基线报告，原样纳入 v2.1.0 审核报告、项目整理报告和 v2.1.1 至 v2.2.0 个人微信路线图；独立提交为 `a8d539810dd51829c21fdc2877609e8329de3bf7`。
+3. 更新 `.gitignore`：新增 `/.tmp/`、`/scripts/conpty/**/node_modules/`、`/scripts/conpty/**/.work/`，替代 v205/v206 特例；独立提交为 `6116369d8aa035a4a0bafa4957459806317572b5`。
+4. 新增 `docs/README.md`，更新 `docs/reports/README.md` 和根 `README.md`，建立架构、路线图、报告、证据、提取索引和脚本入口；独立提交为 `13ea19bdf0a57fe9500418bd82ef1ba57e2b5406`。
+5. 逐条验证 23 个本地 Markdown 链接、Git 忽略探针、磁盘目录保留状态、Rust workspace 和只读 ConPTY evidence。
+
+修改与新增路径：
+- `D:\YunXi Agent\.gitignore`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\docs\README.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\docs\reports\2026-07-22-100333-yunxi-agent-v2-1-0-integrated-release-audit-report.md`
+- `D:\YunXi Agent\docs\reports\2026-07-22-105338-yunxi-agent-project-directory-organization-report.md`
+- `D:\YunXi Agent\docs\reports\2026-07-22-110139-yunxi-agent-project-directory-baseline-report.md`
+- `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：`git diff --check`、`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过；CLI integration 45/45、JSONL 10/10、Provider 46/46、TUI 161/161 等测试无失败。v210/v209 verifier 均为只读，正式 evidence 哈希保持不变。23 个本地 Markdown 链接无断链；五个 ConPTY `node_modules` 仍存在于原路径，但已由通用规则忽略。
+
+安全与清理结果：本轮没有执行 `Remove-Item`、`git clean`、递归删除、移动、重命名、强制覆盖或清理；没有写入 `C:\Users` 或其他用户目录。`crates/`、`vendor/`、`extracted/`、`evals/`、`scripts/conpty/`、历史报告、正式 evidence、安装目录、本地状态和全部 release tag 均保持原位。
+
+提交、推送与 Git tag 状态：阶段 0、1、2 已形成三个独立回滚提交；本条日志和实施结果作为最终 docs-only 收尾提交。项目版本保持 `2.1.0`，不创建新 tag，不移动、删除或覆盖 `v2.1.0` 及任何历史 tag。
+
+署名：开发报告撰写者

@@ -229,3 +229,37 @@ git diff --check
 本报告不实施任何整理动作，不改变项目版本，不创建或修改 Git tag。
 
 署名：整理报告撰写者
+
+## 九、阶段 0 至阶段 2 实施结果
+
+实施时间：2026-07-22 11:09:06 +08:00
+
+按本报告建议，本轮仅实施阶段 0、阶段 1 和阶段 2，没有进入历史文档迁移、ConPTY 共享代码抽取或再生产物清理。
+
+1. 阶段 0 建立 `docs/reports/2026-07-22-110139-yunxi-agent-project-directory-baseline-report.md`，记录 HEAD、版本、50 个 tag、根目录边界、未跟踪正式资产、再生产物和四类受保护路径的完整引用文件清单；正式审核报告、本整理报告和个人微信路线图原样纳入 Git。
+2. 阶段 1 将 v205/v206 的 ConPTY 忽略特例收敛为 `/scripts/conpty/**/node_modules/` 与 `/scripts/conpty/**/.work/`，并增加显式 `/.tmp/`。`git ls-files` 证明这些模式不包含已跟踪文件；v205、v206、v207、v207-hotfix、v208、v209、v210 探针均由预期规则命中。
+3. 阶段 2 新增 `docs/README.md`，更新 `docs/reports/README.md` 的命名与归档规则，并在根 `README.md` 增加稳定入口。历史报告、spec、plan、evidence 和脚本均未移动或改名。
+4. 三阶段分别建立独立回滚提交：`a8d539810dd51829c21fdc2877609e8329de3bf7`、`6116369d8aa035a4a0bafa4957459806317572b5`、`13ea19bdf0a57fe9500418bd82ef1ba57e2b5406`。
+
+验证结果：23 个本地 Markdown 链接全部存在；`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过；v210 与 v209 verifier 均返回 `read_only=true`，evidence SHA-256 分别保持 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6` 与 `714b9c2d9c01b1616ffc8789e940ea778559335e20998679a904b5c335fcfdc8`。
+
+边界结果：未执行删除、递归清理、目录移动、强制覆盖、`git clean`、`git reset`、tag 修改或用户目录写入。五个现存 ConPTY `node_modules` 目录仍在磁盘上，只是不再污染 Git 状态；`target/`、`.tmp/`、`.codegraph/`、`.yunxi/`、`.worktrees/`、源码、安装目录和全部 release tag 均保持原位。
+
+署名：开发者
+
+## 九、阶段 0 至阶段 2 实施结果
+
+实施时间：2026-07-22 11:09:06 +08:00
+
+按本报告建议，本轮仅实施阶段 0、阶段 1 和阶段 2，没有进入历史文档迁移、ConPTY 共享代码抽取或再生产物清理。
+
+1. 阶段 0 建立 `docs/reports/2026-07-22-110139-yunxi-agent-project-directory-baseline-report.md`，记录 HEAD、版本、50 个 tag、根目录边界、未跟踪正式资产、再生产物和四类受保护路径的完整引用文件清单；正式审核报告、本整理报告和个人微信路线图原样纳入 Git。
+2. 阶段 1 将 v205/v206 的 ConPTY 忽略特例收敛为 `/scripts/conpty/**/node_modules/` 与 `/scripts/conpty/**/.work/`，并增加显式 `/.tmp/`。`git ls-files` 证明这些模式不包含已跟踪文件；v205、v206、v207、v207-hotfix、v208、v209、v210 探针均由预期规则命中。
+3. 阶段 2 新增 `docs/README.md`，更新 `docs/reports/README.md` 的命名与归档规则，并在根 `README.md` 增加稳定入口。历史报告、spec、plan、evidence 和脚本均未移动或改名。
+4. 三阶段分别建立独立回滚提交：`a8d539810dd51829c21fdc2877609e8329de3bf7`、`6116369d8aa035a4a0bafa4957459806317572b5`、`13ea19bdf0a57fe9500418bd82ef1ba57e2b5406`。
+
+验证结果：23 个本地 Markdown 链接全部存在；`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace` 全部通过；v210 与 v209 verifier 均返回 `read_only=true`，evidence SHA-256 分别保持 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6` 与 `714b9c2d9c01b1616ffc8789e940ea778559335e20998679a904b5c335fcfdc8`。
+
+边界结果：未执行删除、递归清理、目录移动、强制覆盖、`git clean`、`git reset`、tag 修改或用户目录写入。五个现存 ConPTY `node_modules` 目录仍在磁盘上，只是不再污染 Git 状态；`target/`、`.tmp/`、`.codegraph/`、`.yunxi/`、`.worktrees/`、源码、安装目录和全部 release tag 均保持原位。
+
+署名：开发者

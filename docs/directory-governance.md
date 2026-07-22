@@ -67,6 +67,13 @@ Reasonix 只提供分类逻辑参考：稳定产品资产、文档、维护脚�
 
 桌面文件只是分发件，不得与项目正本并行编辑。后续同步必须始终执行“项目正本 -> 桌面副本”的单向复制并校验 SHA-256。
 
+## 历史报告路径整改状态
+
+- `docs/reports/2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md` 是该历史开发报告的唯一正本，SHA-256 为 `B70BF0D3F3BBDEEB7DE1DB515D8FA60B09BB161F63C47160AF28997EB61D0413`。
+- `docs/reports/development/2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md` 不保留正文副本，避免形成两个可独立演进的正本。
+- 该回迁只修复 v2.1.1 审核指出的历史路径问题；新报告仍按 `audits/`、`development/`、`evidence/` 分类落位。
+- 当前状态仅为 `v2.1.1-hotfix.1` 整改候选，必须经独立复审后才能宣称 v2.1.1 审核通过或进入 v2.1.2。
+
 ## 版本与清理纪律
 
 - `v2.1.1` 只交付目录治理、Git 忽略边界和文档索引，不实现微信网络、登录、凭证、轮询、会话桥接或新 Runtime。

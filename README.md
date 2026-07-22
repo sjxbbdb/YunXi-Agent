@@ -25,6 +25,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 - `crates/yunxi-agent-cli`: v2.1.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
+- `docs/README.md`: stable documentation index, report archive policy, and current roadmap/audit entry points
 - `docs/extraction-status.md`: current extraction status and known gaps
 - `docs/tui-presentation.md`: v2.1.0 integrated TUI/streaming regression, terminal recovery, responsive density, focus routing, and quiet transcript boundary
 - `docs/superpowers/specs`: design specs

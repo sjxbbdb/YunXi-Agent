@@ -255,3 +255,24 @@
 提交与推送状态：发布提交、annotated `v2.1.0` tag 和 GitHub 非强制推送待执行；正式创建 tag 前必须取得用户最终确认，旧 tag 不删除、不移动、不覆盖。
 
 署名：开发报告撰写者
+
+## 十二、发布结果
+
+`2026-07-22 08:58:09 +08:00`，用户完成最终确认后，YunXi Agent v2.1.0 已发布到 `https://github.com/sjxbbdb/YunXi-Agent`。
+
+- 功能发布提交：`a8293905af55d659d647515786699ab313a51a07`
+- 发布 tree：`ee52c162a4f4bbf7c9c97378352ef3e1fe855c1f`
+- 发布基线：`0288184cdce9e6928d99e106e8dc87c505b80d44`
+- annotated tag：`v2.1.0`
+- tag object：`c42ca8b4e2837dcff1e8ae0cd3860936c947875d`
+- tag target：`a8293905af55d659d647515786699ab313a51a07`
+- author/tagger：`开发者 <developer@yunxi-agent.local>`
+- 推送方式：`git push --atomic`，同时更新 `master` 与新 tag，未使用 force
+- 远程核验：`master=a8293905af55d659d647515786699ab313a51a07`，标签总数 49→50，原 49 个历史 tag SHA 变化数 0
+- 认证：使用用户提供的 GitHub API key，仅存在于当前进程的临时环境变量中，未输出、未写入仓库或 Git 配置，执行后已清除
+
+发布前发现的不被任何引用使用的损坏 loose object `200b814eb133d73d98b9eb5f8e491ea375a77437` 已经用户允许精确移动至 `D:\YunXi Agent\.git\corrupt-object-quarantine\200b814eb133d73d98b9eb5f8e491ea375a77437.corrupt`，未删除；隔离文件 SHA-256 为 `ACE5BB8C395752AA93AFB6A885B1AB4A1CF7FC4DFD4AADCC11E9C04566279A79`。移动后 `git fsck --full` 退出码为 0；未执行 prune、gc 或历史清理。
+
+本节与最终开发日志进入 tag 后 docs-only 收尾提交，仅推进 `master`，不会移动、删除或覆盖 `v2.1.0` 及任何历史 tag。
+
+署名：开发报告撰写者

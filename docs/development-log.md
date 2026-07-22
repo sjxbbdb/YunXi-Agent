@@ -2308,3 +2308,27 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 提交和推送状态：v2.1.0 发布提交、annotated tag 与 GitHub 非强制推送待执行；创建 tag 前按开发报告要求等待用户最终确认。旧 tag 不移动、不删除、不覆盖。
 
 署名：开发报告撰写者
+
+## 2026-07-22 08:58:09 +08:00
+
+工作目标：完成 YunXi Agent v2.1.0 发布收口，将已通过全部门禁的功能发布提交与新 annotated tag 原子、非强制推送到 GitHub，并在不移动任何历史 tag 的前提下补齐开发报告和日志。
+
+执行流程：
+1. 创建发布提交 `a8293905af55d659d647515786699ab313a51a07`，tree 为 `ee52c162a4f4bbf7c9c97378352ef3e1fe855c1f`，parent/远程发布基线为 `0288184cdce9e6928d99e106e8dc87c505b80d44`；提交作者为 `开发者 <developer@yunxi-agent.local>`。
+2. 自动维护发现一个不被任何 ref、packed-refs 或 reflog 引用的历史损坏 loose object `200b814eb133d73d98b9eb5f8e491ea375a77437`。经用户允许，仅将该精确对象移动至 `D:\YunXi Agent\.git\corrupt-object-quarantine\200b814eb133d73d98b9eb5f8e491ea375a77437.corrupt`，未删除；隔离文件 SHA-256 为 `ACE5BB8C395752AA93AFB6A885B1AB4A1CF7FC4DFD4AADCC11E9C04566279A79`。随后 `git fsck --full` 退出码为 0，仅报告可达性之外但结构有效的历史 dangling objects；未执行 prune、gc 或历史清理。
+3. 第一次发布预检因 PowerShell 将远程标签输出按单个对象计数而在写入前主动终止；没有创建 tag、推送或删除内容。改用独立只读 Git 命令后确认远程 `master` 仍为预期基线、远程标签共 49 个且 `v2.1.0` 不存在。
+4. 按用户最终确认创建 annotated `v2.1.0`：tag object 为 `c42ca8b4e2837dcff1e8ae0cd3860936c947875d`，target 为发布提交 `a8293905af55d659d647515786699ab313a51a07`，tagger 为 `开发者 <developer@yunxi-agent.local>`。
+5. 从 `C:\Users\24763\Desktop\GitHub apikey.txt` 在单一 PowerShell 进程内提取 GitHub token，通过临时 `GH_TOKEN` 与 `GIT_CONFIG_*` 环境变量认证 `sjxbbdb`；令牌未输出、未写入仓库或 Git 配置，并在 finally 中清除全部临时环境变量。
+6. 使用 `git push --atomic` 同时推送 `refs/heads/master` 与 `refs/tags/v2.1.0`，未使用 force。发布后独立核验远程 `master`、tag object、tag target、标签总数和历史标签 SHA。
+
+修改与同步路径：
+- `D:\YunXi Agent\docs\development-log.md`
+- `D:\YunXi Agent\docs\reports\2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-22-074211-yunxi-agent-v2-1-0-integrated-release-regression-development-report.md`
+
+验证结果：远程 `master=a8293905af55d659d647515786699ab313a51a07`；远程 `v2.1.0` tag object=`c42ca8b4e2837dcff1e8ae0cd3860936c947875d`，其不可变对象内容指向 target `a8293905af55d659d647515786699ab313a51a07`；远程标签由 49 增至 50，原 49 个历史 tag SHA 变化数为 0。本地 `master`、`origin/master` 与远程发布提交一致，工作树在日志收尾前干净。
+
+提交、推送与 Git tag 状态：功能发布提交与 annotated `v2.1.0` 已原子、非强制推送到 `https://github.com/sjxbbdb/YunXi-Agent`。本条日志和报告状态作为 tag 后 docs-only 收尾提交仅更新 `master`；`v2.1.0` 及全部历史 tag 均不移动、不删除、不覆盖。
+
+署名：开发报告撰写者

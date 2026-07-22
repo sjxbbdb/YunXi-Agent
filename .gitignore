@@ -1,10 +1,8 @@
 /target/
 /.yunxi/
 /crates/yunxi-agent-cli/.yunxi/
-/scripts/conpty/v205/node_modules/
-/scripts/conpty/v205/.work/
-/scripts/conpty/v206/node_modules/
-/scripts/conpty/v206/.work/
+/scripts/conpty/**/node_modules/
+/scripts/conpty/**/.work/
 /external/
 /.worktrees/
 /.codegraph/
@@ -13,6 +11,7 @@
 /.vscode/
 *.log
 *.tmp
+/.tmp/
 *.bak
 *.swp
 *.swo

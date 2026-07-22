@@ -217,3 +217,25 @@
 当前结论仅为：**`v2.1.1-hotfix.1` 整改候选已完成，待独立复审。** 在复审报告明确通过前，不宣称 v2.1.1 审核通过，不进入 v2.1.2。发布将创建新的 annotated `v2.1.1-hotfix.1`，不移动、删除或覆盖 `v2.1.1` 及任何历史 tag。
 
 署名：开发报告撰写者
+
+## 十二、发布结果
+
+发布时间：2026-07-22 16:10:50 +08:00
+
+- 发布 commit：`d6312aebc8600697524e13a2ef96499ff60620f7`
+- tree：`a8af5ce215d5adade1c1f13029d6771817d9fb08`
+- parent：`3f9f1ca81906aecb5660c4cacf69215b6cc983e9`
+- commit author/committer：`开发者 <developer@yunxi-agent.local>`
+- annotated tag：`v2.1.1-hotfix.1`
+- tag object：`12262fa6a19cd444403414606810077d6dfc81f3`
+- tag target：`d6312aebc8600697524e13a2ef96499ff60620f7`
+- tagger：`开发者 <developer@yunxi-agent.local>`
+- GitHub master：`d6312aebc8600697524e13a2ef96499ff60620f7`
+- GitHub tag 总数：52
+- 发布前 51 个历史 tag SHA 变化数：0
+- `v2.1.1` tag object：仍为 `75c4169d09344a359239f820ca89f052408d1e76`
+- force：未使用；master 与新 tag 通过一次 atomic push 发布。
+
+本节和最终开发日志作为 tag 后 docs-only 收口仅推进 `master`，不会移动 `v2.1.1-hotfix.1`、`v2.1.1` 或任何历史 tag。发布成功不替代独立复审；当前状态仍是“整改候选已完成，待独立复审”，不得提前进入 v2.1.2。
+
+署名：开发报告撰写者

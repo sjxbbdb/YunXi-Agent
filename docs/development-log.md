@@ -2758,3 +2758,32 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 提交和推送状态：整改候选验证已完成，待创建发布 commit 和新的 annotated `v2.1.1-hotfix.1` tag 并非强制推送；`v2.1.1` 及全部历史 tag 不移动、不删除、不覆盖。当前仅可表述为“整改候选已完成，待独立复审”，不得宣称审核通过或进入 v2.1.2。
 
 署名：开发报告撰写者
+
+## 2026-07-22 16:10:50 +08:00
+
+工作目标：发布已经通过全部整改门禁的 `v2.1.1-hotfix.1` 候选，原子、非强制推送 master 与新 annotated tag，并记录真实远程核验结果；发布不替代后续独立复审。
+
+执行流程：
+1. 确认发布提交 `d6312aebc8600697524e13a2ef96499ff60620f7` 工作树干净，历史报告旧路径存在、新路径缺失，`v2.1.0..HEAD` 不包含该报告的 `R092`。
+2. 创建固定 tagger `开发者 <developer@yunxi-agent.local>` 的 annotated `v2.1.1-hotfix.1`，核验对象类型为 `tag` 且目标指向发布提交。
+3. 在单个受控 PowerShell 进程内临时读取 `C:\Users\24763\Desktop\GitHub apikey.txt`，二次核对远程 master、51 个历史 tag 和新 tag 缺失状态；token 未输出、未写入仓库、未写入 Git 配置，并在进程结束前清除变量。
+4. 使用 `git push --atomic` 一次性推送 master 与 `v2.1.1-hotfix.1`，不使用 force；发布后重新读取远程引用并逐项比较发布前历史 tag SHA。
+
+提交、tag 与远程结果：
+- 发布 commit：`d6312aebc8600697524e13a2ef96499ff60620f7`
+- tree：`a8af5ce215d5adade1c1f13029d6771817d9fb08`
+- parent：`3f9f1ca81906aecb5660c4cacf69215b6cc983e9`
+- annotated tag：`v2.1.1-hotfix.1`
+- tag object：`12262fa6a19cd444403414606810077d6dfc81f3`
+- tag target：`d6312aebc8600697524e13a2ef96499ff60620f7`
+- GitHub master：`d6312aebc8600697524e13a2ef96499ff60620f7`
+- GitHub tag 总数：52
+- 发布前 51 个历史 tag SHA 变化数：0
+- `v2.1.1` tag object：`75c4169d09344a359239f820ca89f052408d1e76`，保持不变
+- force：未使用
+
+清理与安全状态：发布阶段未执行删除、递归清理、目录移动、`git clean`、gc、prune、系统安装、PATH/注册表/系统配置修改或用户目录清理。项目构建、状态、索引和 ConPTY 本地依赖按报告要求继续保留。
+
+提交和推送状态：整改发布提交与新 annotated tag 已成功推送。本条发布结果与整改报告的发布结果段作为 docs-only 收口仅推进 master，不移动任何 tag。当前正式口径仍是“`v2.1.1-hotfix.1` 整改候选已完成，待独立复审”；在复审通过前不得宣称 v2.1.1 审核通过或进入 v2.1.2。
+
+署名：开发报告撰写者

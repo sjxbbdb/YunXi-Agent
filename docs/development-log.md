@@ -2332,3 +2332,30 @@ GitHub 远程 master、hotfix tag 和历史 tag 核验通过。
 提交、推送与 Git tag 状态：功能发布提交与 annotated `v2.1.0` 已原子、非强制推送到 `https://github.com/sjxbbdb/YunXi-Agent`。本条日志和报告状态作为 tag 后 docs-only 收尾提交仅更新 `master`；`v2.1.0` 及全部历史 tag 均不移动、不删除、不覆盖。
 
 署名：开发报告撰写者
+
+## 2026-07-22 10:14:27 +08:00
+
+工作目标：按用户要求将本机现有 YunXi Agent `2.0.9` 升级到已发布的 `2.1.0`，同步 C、D 两处既有安装，并确认从系统目录调用时 PATH 命中新版本。
+
+执行流程：
+1. 依据仓库 `AGENTS.md` 先使用 CodeGraph 检查安装相关代码，再读取 `D:\YunXi Agent\scripts\install\install-yunxi.ps1`，确认脚本使用精确安装目录、复制 release 双 binary，并可通过 `-SkipBuild` 避免重复构建。
+2. 核验 `HEAD=9db8f374f80ab8920b3909ea24417734179c8cc5`；C、D 两处既有 `yunxi.exe` 均为 `2.0.9`，当前 PATH 命中 `D:\Apps\YunXi Agent\bin\yunxi.exe`。
+3. 核验 `D:\YunXi Agent\target\release\yunxi.exe` 与 `yunxi-agent-cli.exe` 均存在并返回 `yunxi 2.1.0`，且没有 YunXi 进程占用目标文件。
+4. 使用项目安装脚本、`-Configuration release -SkipBuild` 依次覆盖用户级 C 盘安装目录和当前 PATH 命中的 D 盘安装目录；两次安装均返回 `yunxi_install_status=installed`、`path_updated=False`，未修改 PATH。
+5. 逐个验证四个已安装 binary 的版本和 SHA-256，并从 `C:\Windows\System32` 直接执行 `yunxi --version` 与 `Get-Command yunxi`。
+
+安装与日志路径：
+- `C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi.exe`
+- `C:\Users\24763\AppData\Local\YunXi Agent\bin\yunxi-agent-cli.exe`
+- `D:\Apps\YunXi Agent\bin\yunxi.exe`
+- `D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe`
+- `D:\YunXi Agent\docs\development-log.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：四个已安装 binary 均返回 `yunxi 2.1.0`。release、C 盘和 D 盘三份 `yunxi.exe` SHA-256 均为 `350766A63FE978E404B112CB0BB4623646514B4A9630F0D3849DEF552C514355`；三份 `yunxi-agent-cli.exe` SHA-256 均为 `7C5E22D422EBE0EB47D2E4C068FFE466DFA3DF24DA0293799A7C0FD718CC9C21`。从 `C:\Windows\System32` 执行返回 `yunxi 2.1.0`，命令解析到 `D:\Apps\YunXi Agent\bin\yunxi.exe`。
+
+清理与仓库状态：本次复用已存在且版本、哈希均通过核验的 release 产物，没有重新构建，没有生成新的安装中间目录，也未执行任何删除。安装前已存在的未跟踪 v2.1.0 审核报告和 v207/v207-hotfix/v208/v209/v210 ConPTY `node_modules` 均未修改、未暂存、未删除。
+
+提交、推送与 Git tag 状态：本条安装日志作为 docs-only 提交仅更新 `master`；annotated `v2.1.0` 固定指向功能发布提交 `a8293905af55d659d647515786699ab313a51a07`，该 tag 及全部历史 tag 均不移动、不删除、不覆盖。
+
+署名：开发报告撰写者

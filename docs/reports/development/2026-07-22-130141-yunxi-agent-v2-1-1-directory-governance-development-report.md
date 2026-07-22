@@ -254,3 +254,25 @@
 发布前本地基线为 `HEAD=origin/master=d6b6132ce9ad73b980f0208b618959671889fbf4`，本地 tag 共 50 个且 `v2.1.1` 不存在。上述实施资产待形成新的发布提交和 annotated `v2.1.1` tag；发布必须非强制执行，`v2.1.0` 及全部历史 tag 不移动、不删除、不覆盖。
 
 署名：开发报告撰写者
+
+## 十一、发布结果
+
+发布时间：2026-07-22 15:12:34 +08:00
+
+- 发布提交：`58fb10f2f9e192056dea2660f34fc5c1bd8232b5`
+- 发布 tree：`7c9060746fd0354f005eb3fa283497bef9e81a70`
+- 发布父提交：`d6b6132ce9ad73b980f0208b618959671889fbf4`
+- annotated tag：`v2.1.1`
+- tag object：`75c4169d09344a359239f820ca89f052408d1e76`
+- tag target：`58fb10f2f9e192056dea2660f34fc5c1bd8232b5`
+- tagger：`开发者 <developer@yunxi-agent.local>`
+- GitHub 远程 master：`58fb10f2f9e192056dea2660f34fc5c1bd8232b5`
+- GitHub tag 总数：51
+- 原 50 个历史 tag SHA 变化数：0
+- force push：未使用
+
+发布前远程 master 严格等于预期基线，远程不存在 `v2.1.1`；分支和新 tag 通过 `git push --atomic` 原子、非强制发布。GitHub API key 仅在单个进程的临时环境变量中使用，未输出、未写入仓库或 Git 配置，退出时已清除。发布后的报告与日志收口只更新 master，不移动、删除或覆盖 `v2.1.1` 及任何历史 tag。
+
+清理状态保持不变：本版本没有执行删除、递归清理、目录移动、`git clean` 或用户目录清理；测试产物和本地状态继续按治理基线列为需单独授权的候选。
+
+署名：开发报告撰写者

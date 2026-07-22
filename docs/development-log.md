@@ -2648,3 +2648,32 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 提交、推送与 Git tag 状态：发布前 `HEAD=origin/master=d6b6132ce9ad73b980f0208b618959671889fbf4`，本地 50 个 tag 保持不变且 `v2.1.1` 不存在。上述治理资产待创建新的发布提交与 annotated `v2.1.1` tag；发布只允许非强制推送，全部历史 tag 不移动、不删除、不覆盖。
 
 署名：开发报告撰写者
+
+## 2026-07-22 15:12:34 +08:00
+
+工作目标：完成 YunXi Agent v2.1.1 目录治理基线发布，将已通过全部门禁的发布提交和新 annotated tag 原子、非强制推送到 GitHub，并记录真实远程核验结果。
+
+执行流程：
+1. 确认发布前工作树干净，`HEAD=58fb10f2f9e192056dea2660f34fc5c1bd8232b5`，远程 master 仍为预期基线 `d6b6132ce9ad73b980f0208b618959671889fbf4`，远程 tag 共 50 个且不存在 `v2.1.1`。
+2. 以 `开发者 <developer@yunxi-agent.local>` 创建 annotated `v2.1.1`，核验对象类型为 `tag` 且不可变 target 指向发布提交。
+3. 从 `C:\Users\24763\Desktop\GitHub apikey.txt` 在单个 PowerShell 进程内提取 token，通过临时 `GH_TOKEN` 和 Git HTTP header 认证 `sjxbbdb`；token 未输出、未持久化，并在 finally 中清除。
+4. 使用 `git push --atomic` 同时推送 `refs/heads/master` 和 `refs/tags/v2.1.1`，不使用 force。
+5. 发布后重新读取远程 master、全部 tag 和新 tag 对象，逐项比较发布前 50 个历史 tag SHA。
+
+提交、tag 与远程结果：
+- 发布 commit：`58fb10f2f9e192056dea2660f34fc5c1bd8232b5`
+- tree：`7c9060746fd0354f005eb3fa283497bef9e81a70`
+- parent：`d6b6132ce9ad73b980f0208b618959671889fbf4`
+- annotated tag：`v2.1.1`
+- tag object：`75c4169d09344a359239f820ca89f052408d1e76`
+- tag target：`58fb10f2f9e192056dea2660f34fc5c1bd8232b5`
+- GitHub master：`58fb10f2f9e192056dea2660f34fc5c1bd8232b5`
+- GitHub tag 总数：51
+- 历史 tag SHA 变化数：0
+- force：未使用
+
+清理与安全状态：发布阶段没有执行删除、递归清理、移动、`git clean`、PATH/注册表/系统配置修改或用户目录清理。`target`、`.tmp`、`.yunxi`、`.codegraph`、`.worktrees` 和 v210 部分 `node_modules` 继续按治理基线保留；任何清理仍需对精确绝对路径另行授权。
+
+提交和推送状态：v2.1.1 发布提交与 annotated tag 已成功推送。当前发布后报告和日志作为 docs-only 收口仅更新 master；`v2.1.1` 及全部历史 tag 不移动、不删除、不覆盖。
+
+署名：开发报告撰写者

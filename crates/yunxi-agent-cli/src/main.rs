@@ -1697,26 +1697,26 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             command: SessionCommand::Resume { .. },
         } => Ok(()),
         CliCommand::Sessions { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for sessions metadata commands"
+            "--jsonl is only supported for agent execution commands in v2.1.3; use --json for sessions metadata commands"
         ),
         CliCommand::Parity { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for parity commands"
+            "--jsonl is only supported for agent execution commands in v2.1.3; use --json for parity commands"
         ),
         CliCommand::Persona { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for persona management commands"
+            "--jsonl is only supported for agent execution commands in v2.1.3; use --json for persona management commands"
         ),
         CliCommand::Memory { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for memory management commands"
+            "--jsonl is only supported for agent execution commands in v2.1.3; use --json for memory management commands"
         ),
         CliCommand::Companion { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for companion management commands"
+            "--jsonl is only supported for agent execution commands in v2.1.3; use --json for companion management commands"
         ),
         CliCommand::Controls { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for control commands"
+            "--jsonl is only supported for agent execution commands in v2.1.3; use --json for control commands"
         ),
         CliCommand::Eval { .. } => Ok(()),
         CliCommand::Weixin { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.2; use --json for weixin metadata commands"
+            "--jsonl is only supported for agent execution commands in v2.1.3; use --json for weixin metadata commands"
         ),
     }
 }

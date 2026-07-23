@@ -45,7 +45,7 @@ impl fmt::Display for RequestContext {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum WeixinApiError {
     #[error("{context}: request timed out")]
     Timeout { context: RequestContext },

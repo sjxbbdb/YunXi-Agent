@@ -1,53 +1,54 @@
 # YunXi Agent 微信接入边界
 
-## v2.1.2 能力
+## v2.1.3 能力
 
-`v2.1.2` 只建立可测试的工程和协议边界：
+v2.1.3 在 v2.1.2 iLink 骨架上增加受控二维码登录：
 
-- `crates/yunxi-agent-weixin` 提供窄化领域 facade、秘密值脱敏、结构化 iLink 错误、二维码/轮询/发送/typing/上传 URL serde 模型，以及固定生产端点的 HTTP 客户端。
-- `yunxi weixin login|status|doctor|serve|pair|logout` 提供帮助、参数校验和诚实的可用性输出。
-- `status --json`、`doctor --json` 和 `pair list --json` 只输出非秘密状态。
-- `IlinkHttpClient` 固定生产端点为 `https://ilinkai.weixin.qq.com/`；仅测试构造器接受 loopback Mock 地址，CLI 不提供任意 base URL。
-- 离线 `wiremock` 测试覆盖必要请求头、游标、请求 ID、API 错误、错误 JSON、超时、响应大小上限、数字/字符串 message ID 和脱敏边界。
+- yunxi weixin login --account <name> 获取二维码、显示安全终端文本、轮询等待/扫码/确认，并明确处理过期、取消、超时、redirect、验证码和验证码阻断。
+- 登录确认后，token 和数据加密密钥只写入 Windows Credential Manager；系统凭证不可用、权限失败或写入失败时登录失败，不降级到明文文件。
+- .yunxi/weixin/ 只保存脱敏账户哈希、官方 endpoint、连接状态、凭证引用、workspace 标识、schema version 和创建/更新时间。
+- yunxi weixin status --json 与 doctor --json 读取脱敏登录元数据和凭证可用性；不会输出 token、二维码 payload、加密密钥或原始用户标识。
+- yunxi weixin logout --confirm 只删除指定微信账户的系统凭证和微信元数据，不触碰 YunXi session、persona memory、工作区其他账户或 Git 状态。
+
+二维码文本只在交互终端显示，且会先移除 ANSI 控制序列；不会写入普通日志、JSON/JSONL、错误链、Markdown 证据或账户 JSON。
 
 ## 当前不能做什么
 
-本版本尚不能：
+本版本仍不能：
 
-- 真实扫码登录或保存微信凭证；
-- 真实接收、发送或流式回复微信消息；
+- 接收、发送或流式回复微信消息；
 - 启动长轮询常驻服务或后台主动推送；
-- 绑定 YunXi session、执行远程审批或让远程消息改变 cwd、Provider、模型、sandbox、approval mode；
-- 使用群聊。首期设计仅允许私聊，群聊保持关闭。
+- 绑定 YunXi session、接入 Agent Runtime、执行远程审批或改变 cwd、Provider、模型、sandbox、approval mode；
+- 实现配对准入、消息去重、会话绑定或群聊。首期设计仅允许私聊，群聊保持关闭。
 
-因此，`login`、`serve`、`pair approve|deny` 和经确认的 `logout` 会返回明确的“尚未实现”错误，而不是伪造成功。`status`、`doctor` 和 `pair list` 是安全的本地只读骨架命令。
+weixin serve 仍只做 workspace/Provider 配置校验，不启动长轮询。pair approve|deny 保持明确未实现。真实微信联调和真实消息闭环属于后续版本，不能把二维码登录成功宣称为聊天能力已完成。
 
 ## 命令
 
-```text
-yunxi weixin login [--account default]
+~~~text
+yunxi weixin login --account <name>
 yunxi weixin status [--account default] [--json]
 yunxi weixin doctor [--account default] [--json]
 yunxi weixin serve [--account default] [--workspace <path>]
 yunxi weixin pair list|approve|deny ...
 yunxi weixin logout [--account default] --confirm
-```
+~~~
 
-Provider、模型、sandbox、approval 和根 `--cwd` 继续由现有 YunXi CLI 配置路径解析。`serve --workspace` 只验证并规范化未来服务工作区，不调用 `Agent::run_with_backend_stream`，也不发起微信网络请求。
+Provider、模型、sandbox、approval 和根 --cwd 继续由现有 YunXi CLI 配置路径解析。登录只使用固定官方 endpoint https://ilinkai.weixin.qq.com/；CLI 不接受任意 base URL。
 
-## 协议与秘密边界
+## 安全凭证与元数据
 
-- 生产请求使用官方 iLink endpoint、`AuthorizationType: ilink_bot_token`、`X-WECHAT-UIN`、`iLink-App-Id`、`iLink-App-ClientVersion` 和每请求 `X-YunXi-Request-Id`。
-- 每个请求有显式超时；响应按流读取并受 1 MiB 默认上限约束。
-- HTTP status、腾讯错误码、错误 JSON、超时、网络失败和协议缺失字段归一为 `WeixinApiError`。
-- token、二维码 payload、验证码、`context_token`、轮询游标、原始用户 ID 和原始消息正文不进入 Debug、Display、错误链或诊断 JSON snapshot。
-- wire serde 必须携带协议秘密字段，但生产代码不记录原始请求/响应 body。
+- WeixinSecretStore 是窄化 trait；生产实现为 Windows Credential Manager，fake store 只用于测试。
+- token 与数据加密密钥不进入 .yunxi/weixin/*.json；JSON 中只有哈希账户、凭证引用和非机密状态。
+- Debug、Display、错误、诊断 snapshot、JSON/JSONL 和项目日志都经过脱敏边界。
+- 安全凭证不可用时，登录必须失败；不写明文 token，不把二维码 payload 放入日志。
+- 回滚通过选择旧 tag 完成，不重写、移动或覆盖 v2.1.2 或任何历史 tag。
 
 ## 参考快照
 
-- `D:\源码\openclaw-weixin`：remote `https://github.com/Tencent/openclaw-weixin.git`，HEAD `cef0bfc390393f716903e16d50408118047f87e0`。
-- `D:\源码\reasonix\internal\bot\weixin`：参考二维码状态、游标、数字/字符串 message ID 和 Mock 边界。
+- D:\源码\openclaw-weixin：remote https://github.com/Tencent/openclaw-weixin.git，HEAD cef0bfc390393f716903e16d50408118047f87e0。
+- D:\源码\reasonix\internal\bot\weixin：参考二维码状态、超时、字段容错和 Mock 边界。
 
-实现只复刻协议行为和测试思路，没有复制 TypeScript 或 Go 源码。凭证存储、账户状态、真实登录、长轮询、会话绑定、远程审批、流式回信和真实微信联调属于后续版本。
+实现只复刻协议行为和测试思路，没有复制 TypeScript 或 Go 源码。
 
 署名：开发者

@@ -30,6 +30,30 @@
 
 署名：审核者
 
+## 2026-07-23 11:00:41 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-22-215224-yunxi-agent-v2-1-3-weixin-qr-login-secret-store-development-report.md`，完成 `v2.1.3` 微信二维码登录状态机、Windows 系统安全凭证存储、脱敏账户元数据、CLI 接入、统一验证和发布前精准清理；保持“不提供微信消息闭环”的版本边界。
+
+执行流程：
+1. 复核 `D:\源码\openclaw-weixin`、`D:\源码\reasonix`、v2.1.2 审核准入和项目总纲，确认本版本只实现登录与安全凭证引用。
+2. 将 workspace 升至 `2.1.3`，在 `crates\yunxi-agent-weixin` 新增 `login.rs`、`secret_store.rs`、`account_store.rs`，接入 QR 状态机、取消与超时、Windows Credential Manager、随机 data key、非机密 metadata 和账户隔离 fake store。
+3. 更新 `crates\yunxi-agent-cli\src\weixin.rs`，实现交互式登录、脱敏 status/doctor、确认式定向 logout，并保持 serve、pair、消息收发、长轮询、Runtime、远程审批和群聊关闭；更新 CLI、Runtime、TUI 版本断言与五个当前快照，保留历史 v2.1.0 fixture 不变。
+4. 更新根 README、`docs\README.md`、`docs\weixin.md`、报告索引和本开发报告，明确 token/data key/QR payload 禁止落入明文、日志和 JSON 的边界。
+5. 运行格式、workspace check/test、release build、微信/CLI/Provider/TUI/评测/ConPTY/依赖树/Markdown/Git 完整性门禁，并执行一次真实 DeepSeek Provider 单轮 smoke；没有执行真实微信扫码确认或消息联调。
+6. 清理前只读盘点并列出精确绝对路径，经用户再次确认后仅递归删除 `D:\YunXi Agent\target`，不使用 `-Force`；删除后核验 `.git`、`.yunxi`、微信源码和正式 evidence 仍存在。
+
+修改文件与路径：`D:\YunXi Agent\Cargo.toml`、`Cargo.lock`、根 `README.md`；`crates\yunxi-agent-weixin\Cargo.toml`、`src\lib.rs`、`src\error.rs`、新建 `src\login.rs`、`src\secret_store.rs`、`src\account_store.rs`、更新/新增微信测试；`crates\yunxi-agent-cli\src\main.rs`、`src\weixin.rs`、`tests\cli_tests.rs`；Runtime 版本测试；TUI 版本测试与五个当前快照；`docs\README.md`、`docs\weixin.md`、`docs\reports\README.md`、本开发报告和本日志。v2.1.2 审核报告作为开发前合法准入材料一并保留。
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace`、`cargo test -p yunxi-agent-weixin`、`cargo build --workspace --release` 全部通过。CLI 48/48、JSONL 10/10、Provider 46/46、TUI 161/161、微信登录/存储定向测试 6/6；release 为 `yunxi 2.1.3`，10 组微信帮助正常，status/doctor JSON 无秘密。陪伴评测 31/31、`golden_passed=true`、审批绕过 0、主动边界违规 0。ConPTY v210 verifier 为 `ok=true`、`read_only=true`，旧 evidence 哈希未变。默认 CLI 依赖树 431 行、Codex 依赖 0；138 个 YunXi 自有 Markdown 文件、61 个本地链接、失效 0；受保护范围变更 0，`git diff --check` 与 `git fsck --full` 通过。真实 Provider 返回 `YUNXI_V213_REAL_PROVIDER_OK`，exit code 0，无秘密泄漏或工具调用事件。
+
+真实微信状态：状态机与 Mock 已完成，真实扫码确认未完成，未落入真实系统微信凭证或账户 metadata；不得把本候选表述为真实微信聊天闭环完成。
+
+清理与安全状态：仅删除 `D:\YunXi Agent\target`；`.tmp` 和 ConPTY `node_modules/.work` 不存在；`.yunxi` 用户状态、`.git`、源码、日志、正式 evidence、全部 Git 引用和用户目录均未触碰。
+
+提交和推送状态：当前开发、验证和清理完成，尚未创建发布 commit、annotated `v2.1.3` 或推送 GitHub。下一步使用 `开发者 <developer@yunxi-agent.local>` 创建全新发布 commit/tag 并非强制推送；53 个历史 tag 不移动、不删除、不覆盖，复审通过前不得进入 `v2.1.4`。
+
+署名：开发报告撰写者
+
 ## 2026-07-22 18:04:39 +08:00
 
 工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md` 完成 `v2.1.2` 微信 CLI、iLink 协议客户端和确定性 Mock 骨架开发；严格保持“本版本不提供真实微信能力”的边界，并在统一门禁通过后准备新 annotated tag 与非强制发布。
@@ -87,6 +111,31 @@
 安全与清理状态：未执行删除、递归清理、目录移动、`git clean`、gc、prune、系统安装、PATH/注册表/系统配置修改或用户目录清理。只记录清理候选 `D:\YunXi Agent\target`、`D:\YunXi Agent\.tmp`、`D:\YunXi Agent\.yunxi`、`D:\YunXi Agent\scripts\conpty\*\node_modules` 和 `D:\YunXi Agent\scripts\conpty\*\.work`；本轮不清理，任何后续清理必须再次列出精确绝对路径并取得确认。
 
 提交、tag 与推送状态：发布前本地和 GitHub master 均为 `74da1c4e32fe47942edbaca59a0bd85ed166cb90`，历史 tag 共 52 个，`v2.1.2` 不存在。当前开发候选已完成，待创建作者 `开发者 <developer@yunxi-agent.local>` 的发布 commit 和全新 annotated `v2.1.2` 并非强制推送；不会移动、删除、覆盖任何历史 tag，复审通过前不进入 v2.1.3。
+
+署名：开发报告撰写者
+
+## 2026-07-22 21:52:24 +08:00
+
+工作目标：依据 `v2.1.2` 微信骨架审核报告和项目总纲图，撰写面向开发者的 `v2.1.3` 微信二维码登录与系统安全凭证存储开发报告。
+
+执行流程：
+1. 读取桌面审核报告 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-211826-YunXi-Agent-v2.1.2-微信骨架审核报告.md`，确认项目内审核报告副本 SHA-256 与桌面原件一致，均为 `E81EAA6E4C8B0FCF5BF17A8855CA7B74F68C05A8DC3AC40287E8BBE953F54484`。
+2. 核对项目内总纲正本与桌面总纲副本，确认 SHA-256 均为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`，并以项目内正本作为开发依据。
+3. 使用 CodeGraph 复核当前 `yunxi-agent-weixin`、CLI `weixin` 模块、iLink client/models、`AgentRunControl` 和 storage 边界；由于 CodeGraph 提示部分新文件索引可能刚改过，随后直接只读确认 `crates\yunxi-agent-cli\src\weixin.rs`、`crates\yunxi-agent-weixin\src\domain.rs`、`ilink\client.rs`、`ilink\models.rs`、`lib.rs` 和 `Cargo.toml`。
+4. 核对外部参考源码：`D:\源码\openclaw-weixin` 存在且包含 `src\auth\login-qr.ts`、`src\auth\accounts.ts`、`src\api\api.ts`、`src\api\types.ts` 等关键文件；`D:\源码\reasonix\internal\bot\weixin\weixin_login.go`、`weixin.go`、`weixin_test.go` 均存在。
+5. 精确搜索 Cargo 清单中的 keyring/系统凭证相关依赖，未发现现成系统凭证依赖，因此在报告中要求开发者为 `WeixinSecretStore` 选择最小安全存储方案并以 trait + fake store 隔离平台差异。
+6. 新增 `v2.1.3` 开发报告，并更新 `docs\reports\README.md` 当前入口。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\reports\development\2026-07-22-215224-yunxi-agent-v2-1-3-weixin-qr-login-secret-store-development-report.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-22-215224-yunxi-agent-v2-1-3-weixin-qr-login-secret-store-development-report.md`
+- 桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：已完成审核报告哈希核对、总纲正本/桌面副本哈希核对、CodeGraph 接入点复核、关键源码只读确认、外部参考源码路径核对和 Cargo 凭证依赖搜索。开发报告已同步到桌面指定目录，项目内报告与桌面报告 SHA-256 均为 `7BA3D34F83DA1118AA6E3B162F7B23D2F2818FFE0134EBF257203A1F0F5D4865`；桌面日志由项目日志同步生成。本次是开发报告撰写任务，未修改 Rust 源码，未新增依赖，未运行 `cargo fmt`、`cargo check`、`cargo test`、ConPTY verifier、真实 Provider、真实微信或 TUI 视觉验证；这些属于开发者完成 `v2.1.3` 实现后的统一验证。未执行删除、移动、重命名、递归清理、`git clean`、系统安装、PATH/注册表/系统配置修改或用户目录清理。
+
+提交和推送状态：本次仅生成开发报告、更新报告索引并追加日志；未创建 commit、未推送、未创建或移动 tag。`v2.1.3` 必须在实现和验证通过后创建新的 annotated tag；`v2.1.2` 及全部历史 tag 不得移动、删除或覆盖。
 
 署名：开发报告撰写者
 
@@ -3044,5 +3093,35 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 提交、推送与 Git tag 状态：本次只生成、同步复审报告并追加日志；未创建 commit、未推送、未创建或移动 tag。`v2.1.1-hotfix.1`、`v2.1.1` 及全部历史 tag 保持不变。
 
 桌面同步结果：项目内报告与桌面报告已成功同步，SHA-256 均为 `21F052C2C2604D836BCD363CA5C2C706CDFEF659318468C519D07A31ADA24E20`。
+
+署名：审核者
+
+## 2026-07-22 21:18:26 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，独立审核 `v2.1.2` 微信模块、CLI 骨架、iLink 协议客户端和确定性 Mock 测试，判断是否允许进入 `v2.1.3`。
+
+执行流程：
+1. 通过 CodeGraph 和源码核对 `crates/yunxi-agent-weixin`、CLI `weixin` 模块、`build_agent_config`、ProviderMode、Runtime 边界、脱敏实现和测试调用路径。
+2. 对照总纲逐项检查领域类型、固定 iLink endpoint、请求头、请求 ID、超时、响应大小上限、serde 协议模型、数字/字符串 message ID、关键字段安全失败、Mock 测试和文档边界。
+3. 统一运行格式检查、workspace check/test、微信 crate 定向测试、release build、CLI 帮助/状态/未实现命令/JSONL 行为、31 场陪伴评测和 v210 ConPTY 只读 verifier。
+4. 使用短提示执行一次真实 DeepSeek Provider 单轮调用，确认既有 Provider 路径可用且没有工具调用；复核 TUI 差异仅为版本文本/历史快照同步。
+5. 核对 annotated `v2.1.2` tag、历史 tag、工作树、Markdown 本地链接、Git 对象完整性和报告副本 SHA-256；未执行任何清理或破坏性操作。
+
+审核报告与文件路径：
+- 项目内审核报告：`D:\YunXi Agent\docs\reports\audits\2026-07-22-211826-yunxi-agent-v2-1-2-weixin-skeleton-audit-report.md`
+- 桌面审核报告：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-22-211826-YunXi-Agent-v2.1.2-微信骨架审核报告.md`
+- 项目内开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 审核报告 SHA-256：`E81EAA6E4C8B0FCF5BF17A8855CA7B74F68C05A8DC3AC40287E8BBE953F54484`；项目内与桌面副本一致。
+
+修改文件：新增上述项目内审核报告；追加本条审核日志；将审核报告复制到用户指定的桌面审核目录；桌面开发日志追加同一条记录。未修改生产 Rust 源码、测试源码、Cargo 配置、vendor、extracted、ConPTY 脚本或历史证据。
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace`、`cargo test -p yunxi-agent-weixin`、`cargo build -p yunxi-agent-cli --release --bins`、`git diff --check` 全部通过；release CLI 输出 `yunxi 2.1.2`，微信 10 组帮助命令通过，状态/doctor/pair list JSON 为无秘密输出，未实现命令诚实失败；陪伴评测 31/31，`golden_passed=true`，审批绕过 0，主动边界违规 0；v210 ConPTY verifier `ok=true`、`read_only=true`，evidence SHA-256 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6`；真实 Provider 返回 `YUNXI_V212_REAL_PROVIDER_OK`，exit code 0，工具调用 0；Markdown 本地链接 123 个、失效 0；工作树干净（写入本次报告和日志前）。
+
+审核结论：`v2.1.2` 对照总纲通过，没有当前版本源码阻塞点，允许进入 `v2.1.3`。下一版本开发建议已写入审核报告，核心为 QR 登录状态机与系统安全凭证存储；参考 `D:\源码\reasonix\internal\bot\weixin\weixin_login.go`、`D:\源码\openclaw-weixin\src\auth` 和现有 `yunxi-agent-weixin`，不得提前实现长轮询或 Runtime 桥接。
+
+清理与安全状态：未执行删除、递归清理、移动、重命名、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。测试、release build 和真实 Provider 产生的项目内编译/运行产物均保留，后续如需清理必须先取得精确绝对路径授权。
+
+提交、推送和 Git tag 状态：本次审核未创建新的审核 commit、未推送；`v2.1.2` 发布提交为 `b09f442adeaebc854f0ec00fb4c497bc6ec90e41`，annotated tag object 为 `7aa184e4b58fddad050d9affb64a5ce27121489b`，历史 tag 未移动、删除或覆盖。本次审核报告和日志当前属于 docs-only 工作树变更，尚未提交或推送。
 
 署名：审核者

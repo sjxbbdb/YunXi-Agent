@@ -534,6 +534,18 @@ dependencies = [
 
 [[package]]
 name = "getrandom"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "r-efi 5.3.0",
+ "wasip2",
+]
+
+[[package]]
+name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
@@ -541,7 +553,7 @@ dependencies = [
  "cfg-if",
  "js-sys",
  "libc",
- "r-efi",
+ "r-efi 6.0.0",
  "rand_core",
  "wasm-bindgen",
 ]
@@ -1147,6 +1159,12 @@ checksum = "dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "r-efi"
+version = "5.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
 name = "r-efi"
@@ -1844,6 +1862,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
+name = "wasip2"
+version = "1.0.4+wasi-0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "wasm-bindgen"
 version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2074,6 +2101,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "wit-bindgen"
+version = "0.57.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
 name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2104,7 +2137,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-cli"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2130,7 +2163,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-companion"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "yunxi-agent-core",
@@ -2138,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-context"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "tempfile",
@@ -2147,7 +2180,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-core"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "serde",
@@ -2159,7 +2192,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-eval"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -2170,7 +2203,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-exec"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "tempfile",
@@ -2181,7 +2214,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-mcp"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -2194,7 +2227,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-multi-agent"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "yunxi-agent-core",
@@ -2202,7 +2235,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-patch"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -2212,7 +2245,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-persona"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -2220,7 +2253,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-protocol"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -2228,7 +2261,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-provider"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2245,7 +2278,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-runtime"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "serde",
@@ -2267,7 +2300,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-sandbox"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "tempfile",
@@ -2276,7 +2309,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-skills"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -2286,7 +2319,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-storage"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "serde",
@@ -2301,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-tools"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "async-trait",
  "serde",
@@ -2319,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-tui"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -2331,14 +2364,18 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-weixin"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
+ "async-trait",
  "futures-util",
+ "getrandom 0.3.4",
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
+ "windows-sys 0.61.2",
  "wiremock",
 ]
 

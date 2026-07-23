@@ -270,6 +270,18 @@ get_data_key(account_id)
 
 经用户再次确认后，仅删除了 `D:\YunXi Agent\target`，未使用 `-Force`。`.git`、`.yunxi`、微信源码和正式 evidence 均保留；`.tmp` 与 ConPTY `node_modules/.work` 当时不存在，没有其他清理目标。未触碰用户目录。
 
-当前尚未创建发布 commit、`v2.1.3` tag 或执行 GitHub 推送。下一步只允许创建固定作者和 tagger `开发者 <developer@yunxi-agent.local>` 的发布提交与全新 annotated `v2.1.3`，非强制推送；不得移动、删除或覆盖 53 个历史 tag。发布后仍需独立复审，复审通过前不得进入 `v2.1.4`。
+本地发布提交为 `f9f7dbbffb9f35e2a88769c0e7a1642f691522f3`，本地 annotated tag object 为 `7f97abefc14b1309c39d76ad9fb974c482d7a09d`，tagger 为 `开发者 <developer@yunxi-agent.local>`。GitHub smart-HTTP 因环境超时后，使用已验证的 GitHub CLI Git Database API 完成非强制发布：远程 master 为 `d74d87767f2d4797af4cff45b386c9997d9b6ba6`，远程 `v2.1.3` annotated tag object 为 `4f77d0ed5f1d64cdf0d74bdca12a424914b01598`，tag target 为该远程提交；远程 tree 与本地发布 tree 均为 `c34cd9bc4c0cdc6ad3946a9a2448c5fa22a5fdcd`，差异仅来自 GitHub API 将提交时间规范化为 UTC。远程 tag 总数为 54，历史 53 个 tag 的 SHA 变化数为 0；未使用 force，未移动、删除或覆盖任何历史 tag。
+
+发布完成后仍需独立复审；真实微信扫码确认尚未完成，复审通过前不得进入 `v2.1.4`。
+
+署名：开发报告撰写者
+
+## 十四、发布结果
+
+### 2026-07-23 11:55:00 +08:00
+
+GitHub CLI API 发布后核验通过：`master` 指向 `d74d87767f2d4797af4cff45b386c9997d9b6ba6`，annotated `v2.1.3` 指向远程 tag object `4f77d0ed5f1d64cdf0d74bdca12a424914b01598`，其目标为同一远程提交。远程 tag 总数 54；发布前存在的 53 个历史 tag object SHA 变化数为 0。发布使用 `GH_TOKEN` 当前进程环境和 GitHub CLI Git Database API，未写入 Git 配置，未输出或持久化 API key，未使用 force。
+
+本地 `v2.1.3` tag 仍保持原 annotated 对象 `7f97abefc14b1309c39d76ad9fb974c482d7a09d`，指向本地发布提交 `f9f7dbbffb9f35e2a88769c0e7a1642f691522f3`；本地与远程对象 SHA 不同仅因为 API 的 UTC 时间规范化，tree、父提交、作者、消息和版本内容一致。真实微信扫码和消息闭环仍未完成，当前发布不得宣称真实微信聊天能力。
 
 署名：开发报告撰写者

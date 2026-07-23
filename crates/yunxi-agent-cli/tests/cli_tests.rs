@@ -100,7 +100,7 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.2"));
+        .stdout(predicate::str::contains("yunxi 2.1.3"));
 }
 
 #[test]
@@ -110,11 +110,11 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.2"));
+        .stdout(predicate::str::contains("yunxi 2.1.3"));
 }
 
 #[test]
-fn cli_weixin_help_covers_the_v212_command_skeleton() {
+fn cli_weixin_help_covers_the_v213_login_command_surface() {
     for args in [
         vec!["weixin", "--help"],
         vec!["weixin", "login", "--help"],
@@ -187,14 +187,6 @@ fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
         vec![
             "--cwd",
             cwd,
-            "weixin",
-            "login",
-            "--account",
-            "private-account-name",
-        ],
-        vec![
-            "--cwd",
-            cwd,
             "--offline",
             "weixin",
             "serve",
@@ -223,24 +215,31 @@ fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
             "--account",
             "private-account-name",
         ],
-        vec![
-            "--cwd",
-            cwd,
-            "weixin",
-            "logout",
-            "--account",
-            "private-account-name",
-            "--confirm",
-        ],
     ];
     for args in cases {
         let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
         cmd.args(args)
             .assert()
             .failure()
-            .stderr(predicate::str::contains("not implemented in v2.1.2"))
+            .stderr(predicate::str::contains("not implemented in v2.1.3"))
             .stderr(predicate::str::contains("private-account-name").not());
     }
+
+    let mut json_login = Command::cargo_bin("yunxi").expect("binary should build");
+    json_login
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "login",
+            "--account",
+            "private-account-name",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires interactive output"))
+        .stderr(predicate::str::contains("private-account-name").not());
 
     let mut logout = Command::cargo_bin("yunxi").expect("binary should build");
     logout
@@ -248,6 +247,22 @@ fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("requires --confirm"));
+
+    let mut confirmed_logout = Command::cargo_bin("yunxi").expect("binary should build");
+    confirmed_logout
+        .args([
+            "--cwd",
+            cwd,
+            "weixin",
+            "logout",
+            "--account",
+            "private-account-name",
+            "--confirm",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("not configured"))
+        .stdout(predicate::str::contains("private-account-name").not());
 
     let mut jsonl = Command::cargo_bin("yunxi").expect("binary should build");
     jsonl
@@ -498,7 +513,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.2 interactive CLI",
+            "YunXi Agent v2.1.3 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -657,7 +672,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.2 interactive CLI",
+            "YunXi Agent v2.1.3 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -677,7 +692,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.2 interactive CLI",
+            "YunXi Agent v2.1.3 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

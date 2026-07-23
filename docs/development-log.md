@@ -54,6 +54,18 @@
 
 署名：开发报告撰写者
 
+## 2026-07-23 11:55:00 +08:00
+
+工作目标：记录 v2.1.3 本地发布提交、annotated tag、GitHub CLI API 发布和远程 tag 不变性结果，完成项目正本与桌面副本同步；不移动或覆盖任何历史 tag。
+
+发布结果：本地发布提交为 `f9f7dbbffb9f35e2a88769c0e7a1642f691522f3`，本地 `v2.1.3` annotated tag object 为 `7f97abefc14b1309c39d76ad9fb974c482d7a09d`，固定作者/tagger 为 `开发者 <developer@yunxi-agent.local>`。Git smart-HTTP 预检和 credential-helper push 因环境超时，未产生可见 ref 写入；随后使用 `GH_TOKEN` 当前进程环境和 GitHub CLI Git Database API 完成发布。远程 master 为 `d74d87767f2d4797af4cff45b386c9997d9b6ba6`，远程 annotated `v2.1.3` tag object 为 `4f77d0ed5f1d64cdf0d74bdca12a424914b01598`，远程 tag target 为 `d74d87767f2d4797af4cff45b386c9997d9b6ba6`，远程 tree 与本地发布 tree 均为 `c34cd9bc4c0cdc6ad3946a9a2448c5fa22a5fdcd`。远程 tag 总数由 53 增至 54，历史 53 个 tag object SHA 变化数为 0；未使用 force、未移动、删除或覆盖历史 tag。
+
+对象说明：本地与远程 commit/tag object SHA 不同，是 GitHub API 将 `+0800` 提交时间规范化为 UTC 的结果；tree、父提交、作者、提交消息和代码内容一致。本地 tag 未被移动。发布后仍待独立复审，真实微信扫码确认、消息收发和聊天闭环未完成，不能提前进入 v2.1.4。
+
+桌面同步：本次项目报告和项目日志更新后，将再次单向同步到 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-22-215224-yunxi-agent-v2-1-3-weixin-qr-login-secret-store-development-report.md` 与 `C:\Users\24763\Desktop\YunXi Agent开发日志.md` 并核对 SHA-256。
+
+署名：开发报告撰写者
+
 ## 2026-07-22 18:04:39 +08:00
 
 工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md` 完成 `v2.1.2` 微信 CLI、iLink 协议客户端和确定性 Mock 骨架开发；严格保持“本版本不提供真实微信能力”的边界，并在统一门禁通过后准备新 annotated tag 与非强制发布。

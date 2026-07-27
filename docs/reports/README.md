@@ -4,6 +4,8 @@
 
 ## 当前入口
 
+- [v2.1.4 微信状态持久化、诊断与安全账户生命周期开发报告](development/2026-07-27-183050-yunxi-agent-v2-1-4-weixin-state-store-diagnostics-lifecycle-development-report.md)：状态 store、原子写入、诊断、账户锁、pair 生命周期、安全 logout 和发布门禁记录。
+- [v2.1.3-hotfix.1 微信登录复审核报告](audits/2026-07-27-181754-yunxi-agent-v2-1-3-hotfix-1-weixin-login-audit-report.md)
 - [v2.1.3 微信二维码登录审核报告](audits/2026-07-23-125451-yunxi-agent-v2-1-3-weixin-qr-login-audit-report.md)
 - [v2.1.3-hotfix.1 微信登录闭环整改开发报告](development/2026-07-27-165954-yunxi-agent-v2-1-3-hotfix-1-weixin-login-verification-remediation-development-report.md)：CLI Mock 与 Windows 真实扫码整改证据。
 - [v2.1.2 微信骨架审核报告](audits/2026-07-22-211826-yunxi-agent-v2-1-2-weixin-skeleton-audit-report.md)

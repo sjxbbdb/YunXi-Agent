@@ -1,6 +1,6 @@
-# YunXi Agent v2.1.3-hotfix.1
+# YunXi Agent v2.1.4
 
-YunXi Agent v2.1.3-hotfix.1 is a terminal-first Rust general companion Agent CLI and reusable core library.
+YunXi Agent v2.1.4 is a terminal-first Rust general companion Agent CLI and reusable core library.
 The default runtime is YunXi-owned and does not depend on the upstream Codex
 runtime.
 
@@ -11,14 +11,12 @@ with `[offline]` and `/cost` reports that no model call was made.
 
 ## Development Track
 
-The `v2.1.3-hotfix.1` release keeps the v2.1.3 QR login and Windows system
-credential boundary, and adds CLI-level mock login acceptance coverage for
-success, expiry, cancellation, credential unavailability, metadata rollback, and
-secret-free output. On 2026-07-27, the real QR login gate completed on Windows:
-scan/confirm returned success, Credential Manager reported present credentials,
-non-secret `.yunxi/weixin/` metadata was written, and a fresh process read the
-same ready state through `status --json`. It does not receive or send messages, start long polling,
-bridge sessions, handle remote approval, stream replies, or support group chat.
+The `v2.1.4` release keeps the v2.1.3-hotfix.1 QR login and Windows system
+credential boundary, and adds a versioned Weixin state store, atomic local state
+writes, account-granular lock diagnostics, local pair-request lifecycle records,
+pending inbound/delivery counters, and safer logout checks. It does not receive
+or send messages, start long polling, bridge sessions, handle remote approval,
+stream replies, or support group chat.
 See the [documentation index](docs/README.md) for the canonical roadmap,
 governance baseline, reports, evidence, and engineering entry points.
 
@@ -31,12 +29,12 @@ governance baseline, reports, evidence, and engineering entry points.
 - `crates/yunxi-agent-persona`: YunXi-owned persona, transparent memory schema,
   recall, extraction, and write policy boundary
 - `crates/yunxi-agent-tools`: YunXi-owned tool execution boundary
-- `crates/yunxi-agent-storage`: YunXi-owned session, control-audit, and companion-history storage boundary
+- `crates/yunxi-agent-storage`: YunXi-owned session, control-audit, companion-history, and v2.1.4 Weixin state storage boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-weixin`: v2.1.3-hotfix.1 QR login state machine, system credential boundary, non-secret account metadata, iLink model, fixed-endpoint client, and deterministic mock boundary
-- `crates/yunxi-agent-cli`: v2.1.3-hotfix.1 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-weixin`: v2.1.4 QR login state machine, system credential boundary, non-secret account metadata, iLink model, fixed-endpoint client, and deterministic mock boundary
+- `crates/yunxi-agent-cli`: v2.1.4 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/README.md`: stable documentation index, report archive policy, and current roadmap/audit entry points

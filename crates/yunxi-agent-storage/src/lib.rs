@@ -21,6 +21,18 @@ use yunxi_agent_persona::{
 };
 use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
+mod weixin_state;
+
+pub use weixin_state::{
+    FileWeixinStateStore, WEIXIN_STATE_SCHEMA_VERSION, WeixinAccountLock, WeixinAccountLockInfo,
+    WeixinAccountLockState, WeixinConnectionStateRecord, WeixinCredentialReferenceRecord,
+    WeixinCursorRecord, WeixinDeliveryRecord, WeixinDeliveryState, WeixinInboundReceiptRecord,
+    WeixinPairRequest, WeixinPairRequestState, WeixinPendingDeliveryMetadata, WeixinPendingInbound,
+    WeixinPendingInboundState, WeixinReceiptState, WeixinReplyContextReference,
+    WeixinSessionBindingRecord, WeixinStateError, WeixinStateMigration, WeixinStateSnapshot,
+    WeixinStateStore, WeixinStateWriteOptions,
+};
+
 static NEXT_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

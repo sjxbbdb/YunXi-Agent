@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
+use yunxi_agent_storage::{FileWeixinStateStore, WeixinStateSnapshot, WeixinStateStore};
 
 fn spawn_sequence_http_server(responses: Vec<(u16, String)>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
@@ -100,7 +101,7 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.3-hotfix.1"));
+        .stdout(predicate::str::contains("yunxi 2.1.4"));
 }
 
 #[test]
@@ -110,11 +111,11 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.3-hotfix.1"));
+        .stdout(predicate::str::contains("yunxi 2.1.4"));
 }
 
 #[test]
-fn cli_weixin_help_covers_the_v213_login_command_surface() {
+fn cli_weixin_help_covers_the_v214_login_command_surface() {
     for args in [
         vec!["weixin", "--help"],
         vec!["weixin", "login", "--help"],
@@ -179,12 +180,168 @@ fn cli_weixin_status_doctor_and_pair_list_are_offline_and_secret_free() {
 }
 
 #[test]
+fn cli_weixin_pair_lifecycle_uses_state_store_without_secret_output() {
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    let mut status = Command::cargo_bin("yunxi").expect("binary should build");
+    let output = status
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "status",
+            "--account",
+            "private-account-name",
+        ])
+        .output()
+        .expect("status json");
+    assert!(output.status.success());
+    let status_json: Value = serde_json::from_slice(&output.stdout).expect("status json");
+    let account = status_json["account"]
+        .as_str()
+        .expect("redacted account")
+        .to_string();
+
+    let store = FileWeixinStateStore::for_workspace(workspace.path());
+    let snapshot = WeixinStateSnapshot::new(
+        &account,
+        "workspace#00000001",
+        "https://ilinkai.weixin.qq.com/",
+        1000,
+    );
+    store.save(&snapshot).expect("save state");
+    let approved_request = store
+        .add_pair_request(&account, "peer#00000001", u64::MAX, 1100)
+        .expect("pair request");
+
+    let mut list = Command::cargo_bin("yunxi").expect("binary should build");
+    let list_output = list
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "pair",
+            "list",
+            "--account",
+            "private-account-name",
+        ])
+        .output()
+        .expect("pair list json");
+    assert!(list_output.status.success());
+    let list_json: Value = serde_json::from_slice(&list_output.stdout).expect("list json");
+    assert_eq!(list_json["pairs"].as_array().expect("pairs").len(), 1);
+    let list_text = String::from_utf8_lossy(&list_output.stdout);
+    assert!(!list_text.contains("private-account-name"));
+    assert!(!list_text.contains("raw-peer"));
+    assert_eq!(list_json["secrets_included"].as_bool(), Some(false));
+
+    let mut approve = Command::cargo_bin("yunxi").expect("binary should build");
+    let approve_output = approve
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "pair",
+            "approve",
+            &approved_request.request_id,
+            "--account",
+            "private-account-name",
+        ])
+        .output()
+        .expect("pair approve json");
+    assert!(approve_output.status.success());
+    let approve_json: Value = serde_json::from_slice(&approve_output.stdout).expect("approve json");
+    assert_eq!(approve_json["state"].as_str(), Some("approved"));
+    assert_eq!(approve_json["secrets_included"].as_bool(), Some(false));
+
+    let denied_request = store
+        .add_pair_request(&account, "peer#00000002", u64::MAX, 1200)
+        .expect("second pair request");
+    let mut deny = Command::cargo_bin("yunxi").expect("binary should build");
+    let deny_output = deny
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "pair",
+            "deny",
+            &denied_request.request_id,
+            "--account",
+            "private-account-name",
+        ])
+        .output()
+        .expect("pair deny json");
+    assert!(deny_output.status.success());
+    let deny_json: Value = serde_json::from_slice(&deny_output.stdout).expect("deny json");
+    assert_eq!(deny_json["state"].as_str(), Some("denied"));
+    assert_eq!(deny_json["secrets_included"].as_bool(), Some(false));
+}
+
+#[test]
+fn cli_weixin_logout_refuses_active_account_lock() {
+    let workspace = TempDir::new().expect("workspace");
+    let lock_root = TempDir::new().expect("lock root");
+    let cwd = workspace.path().to_str().expect("workspace path");
+
+    let mut status = Command::cargo_bin("yunxi").expect("binary should build");
+    let output = status
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "status",
+            "--account",
+            "private-account-name",
+        ])
+        .output()
+        .expect("status json");
+    assert!(output.status.success());
+    let status_json: Value = serde_json::from_slice(&output.stdout).expect("status json");
+    let account = status_json["account"]
+        .as_str()
+        .expect("redacted account")
+        .to_string();
+
+    let store = FileWeixinStateStore::for_workspace_with_lock_root(
+        workspace.path(),
+        lock_root.path().to_path_buf(),
+    );
+    let _guard = store
+        .try_acquire_account_lock(&account, "workspace#00000001")
+        .expect("active account lock");
+
+    let mut logout = Command::cargo_bin("yunxi").expect("binary should build");
+    logout
+        .env("YUNXI_WEIXIN_LOCK_ROOT", lock_root.path())
+        .args([
+            "--cwd",
+            cwd,
+            "weixin",
+            "logout",
+            "--account",
+            "private-account-name",
+            "--confirm",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("account lock"))
+        .stderr(predicate::str::contains("private-account-name").not());
+}
+
+#[test]
 fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
     let workspace = TempDir::new().expect("workspace");
     let cwd = workspace.path().to_str().expect("workspace path");
 
-    let cases = [
-        vec![
+    let mut serve = Command::cargo_bin("yunxi").expect("binary should build");
+    serve
+        .args([
             "--cwd",
             cwd,
             "--offline",
@@ -194,8 +351,14 @@ fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
             "private-account-name",
             "--workspace",
             cwd,
-        ],
-        vec![
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not implemented in v2.1.4"))
+        .stderr(predicate::str::contains("private-account-name").not());
+
+    for args in [
+        [
             "--cwd",
             cwd,
             "weixin",
@@ -205,7 +368,7 @@ fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
             "--account",
             "private-account-name",
         ],
-        vec![
+        [
             "--cwd",
             cwd,
             "weixin",
@@ -215,15 +378,12 @@ fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
             "--account",
             "private-account-name",
         ],
-    ];
-    for args in cases {
+    ] {
         let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
         cmd.args(args)
             .assert()
             .failure()
-            .stderr(predicate::str::contains(
-                "not implemented in v2.1.3-hotfix.1",
-            ))
+            .stderr(predicate::str::contains("weixin state does not exist"))
             .stderr(predicate::str::contains("private-account-name").not());
     }
 
@@ -515,7 +675,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.3-hotfix.1 interactive CLI",
+            "YunXi Agent v2.1.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -674,7 +834,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.3-hotfix.1 interactive CLI",
+            "YunXi Agent v2.1.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -694,7 +854,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.3-hotfix.1 interactive CLI",
+            "YunXi Agent v2.1.4 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

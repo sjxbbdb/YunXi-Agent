@@ -74,10 +74,7 @@ async fn get_updates_sends_required_headers_and_preserves_cursor() {
     );
     let body: Value = serde_json::from_slice(&request.body).expect("request JSON");
     assert_eq!(body["get_updates_buf"].as_str(), Some("cursor-current"));
-    assert_eq!(
-        body["base_info"]["channel_version"].as_str(),
-        Some("2.1.3-hotfix.1")
-    );
+    assert_eq!(body["base_info"]["channel_version"].as_str(), Some("2.1.4"));
 }
 
 #[tokio::test]

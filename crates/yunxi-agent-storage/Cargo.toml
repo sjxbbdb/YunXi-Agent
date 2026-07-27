@@ -8,10 +8,14 @@ version.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
 yunxi-agent-multi-agent = { path = "../yunxi-agent-multi-agent" }
 yunxi-agent-persona = { path = "../yunxi-agent-persona" }
 yunxi-agent-protocol = { path = "../yunxi-agent-protocol" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

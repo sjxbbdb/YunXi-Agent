@@ -7,6 +7,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use yunxi_agent_core::{AgentConfig, BackendKind};
+use yunxi_agent_storage::{
+    FileWeixinStateStore, WeixinAccountLockState, WeixinCredentialReferenceRecord,
+    WeixinPairRequest, WeixinStateError, WeixinStateSnapshot, WeixinStateStore,
+};
 use yunxi_agent_weixin::{
     IlinkHttpClient, LoginPollState, PRODUCTION_ILINK_ENDPOINT, SystemWeixinSecretStore,
     WeixinAccountId, WeixinAccountMetadata, WeixinAccountRecord, WeixinAccountStore,
@@ -106,28 +110,35 @@ pub(crate) async fn run(
             }
             let selection = provider_mode.resolve(backend, &config)?;
             let prepared_config = selection.apply_to_config(config);
-            let account = safe_account(&account);
+            let account_hash = safe_account(&account);
+            let state_store = FileWeixinStateStore::for_workspace(&prepared_config.cwd);
+            let lock_state = state_store.lock_state(&account_hash)?;
+            if lock_state.state == WeixinAccountLockState::Active {
+                bail!(
+                    "weixin serve refused because another local service holds the account lock (account={account_hash}, lock_state=active)"
+                );
+            }
+            let account_id = WeixinAccountId::new(&account);
+            let store = SystemWeixinSecretStore::new();
+            let credential_state = credential_state(&store, &account_id);
+            let state = state_store.load(&account_hash)?;
+            let encrypted_pending_queue_available =
+                state.is_some() && credential_state == "present";
             bail!(
-                "weixin serve is not implemented in v2.1.3-hotfix.1; configuration was validated without starting long polling or the agent runtime (account={account}, workspace={}, provider_mode={})",
+                "weixin serve is not implemented in v2.1.4; state store, lock, and encrypted pending queue readiness were checked without starting long polling or the agent runtime (account={account_hash}, workspace={}, provider_mode={}, encrypted_pending_queue_available={encrypted_pending_queue_available})",
                 prepared_config.cwd.display(),
                 selection.source.as_str()
             );
         }
         WeixinCommand::Pair { command } => match command {
-            WeixinPairCommand::List { account } => print_pair_list(&account, json_output),
+            WeixinPairCommand::List { account } => {
+                print_pair_list(&account, &config.cwd, json_output)
+            }
             WeixinPairCommand::Approve { pair_id, account } => {
-                let _ = pair_id;
-                let account = safe_account(&account);
-                bail!(
-                    "weixin pair approve is not implemented in v2.1.3-hotfix.1; remote approval is planned for a later version (account={account})"
-                );
+                run_pair_transition(&account, &config.cwd, &pair_id, true, json_output)
             }
             WeixinPairCommand::Deny { pair_id, account } => {
-                let _ = pair_id;
-                let account = safe_account(&account);
-                bail!(
-                    "weixin pair deny is not implemented in v2.1.3-hotfix.1; remote approval is planned for a later version (account={account})"
-                );
+                run_pair_transition(&account, &config.cwd, &pair_id, false, json_output)
             }
         },
         WeixinCommand::Logout { account, confirm } => {
@@ -230,7 +241,7 @@ where
     .context("weixin login output failed")?;
     writeln!(
         output,
-        "messages and long polling remain disabled in v2.1.3-hotfix.1"
+        "messages and long polling remain disabled in v2.1.4"
     )
     .context("weixin login output failed")?;
     Ok(credential)
@@ -280,6 +291,19 @@ fn persist_login<S: WeixinSecretStore>(
             ));
         }
         return Err(anyhow::anyhow!("weixin account metadata failed: {error}"));
+    }
+    let state_store = FileWeixinStateStore::for_workspace(workspace);
+    if let Err(error) = state_store.upsert_account_state(
+        &record.account_id,
+        &record.workspace_id,
+        &record.endpoint,
+        Some(credential_record(&credential)),
+        now_millis,
+    ) {
+        let _ = account_store.delete(account_id);
+        let _ = store.delete_token(account_id);
+        let _ = store.delete_data_key(account_id);
+        return Err(anyhow::anyhow!("weixin state store failed: {error}"));
     }
     Ok(credential)
 }
@@ -331,6 +355,8 @@ fn login_state_label(state: LoginPollState) -> &'static str {
 fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()> {
     let account_id = WeixinAccountId::new(account);
     let account_store = WeixinAccountStore::new(workspace);
+    let state_store = FileWeixinStateStore::for_workspace(workspace);
+    let account_hash = safe_account(account);
     let Some(record) = account_store.load(&account_id)? else {
         let metadata = WeixinAccountMetadata {
             account_id,
@@ -338,23 +364,37 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
             private_chat_only: true,
             credentials_persisted: false,
         };
-        return print_unconfigured_status(metadata, json_output);
+        let state = state_store.load(&account_hash)?;
+        let lock_state = state_store.lock_state(&account_hash)?;
+        return print_unconfigured_status(metadata, state.as_ref(), &lock_state, json_output);
     };
     let store = SystemWeixinSecretStore::new();
     let credential_state = credential_state(&store, &account_id);
     let account = record.account_id.clone();
+    let state = state_store.load(&account)?;
+    let lock_state = state_store.lock_state(&account)?;
+    let state_connection = state
+        .as_ref()
+        .map(|state| format!("{:?}", state.connection_state).to_ascii_lowercase())
+        .unwrap_or_else(|| format!("{:?}", record.connection_state).to_ascii_lowercase());
     let report = json!({
         "channel": "weixin",
         "version": env!("CARGO_PKG_VERSION"),
         "account": account,
-        "state": record.connection_state,
+        "state": state_connection,
         "endpoint": record.endpoint,
-        "schema_version": record.schema_version,
+        "account_schema_version": record.schema_version,
+        "state_store_schema_version": state.as_ref().map(|state| state.schema_version),
+        "state_store_configured": state.is_some(),
         "credential_backend": record.credential.backend,
         "credential_reference_present": true,
         "credential_state": credential_state,
-        "metadata_path": account_store.path_for(&account_id),
         "workspace_id": record.workspace_id,
+        "account_lock_state": lock_state.state.as_str(),
+        "pending_inbound_count": state.as_ref().map(|state| state.pending_inbound_count()).unwrap_or(0),
+        "pending_delivery_count": state.as_ref().map(|state| state.pending_delivery_count()).unwrap_or(0),
+        "pair_request_count": state.as_ref().map(|state| state.pair_request_count()).unwrap_or(0),
+        "last_redacted_error": state.as_ref().and_then(|state| state.last_redacted_error.clone()),
         "created_at_millis": record.created_at_millis,
         "updated_at_millis": record.updated_at_millis,
         "capabilities": {
@@ -370,18 +410,21 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!("weixin account: {account}");
-        println!("state: ready");
+        println!("state: {state_connection}");
         println!("credential state: {credential_state}");
-        println!(
-            "metadata: {}",
-            account_store.path_for(&account_id).display()
-        );
+        println!("state store configured: {}", state.is_some());
+        println!("account lock state: {}", lock_state.state.as_str());
         println!("QR login is available; messages and long polling remain disabled");
     }
     Ok(())
 }
 
-fn print_unconfigured_status(metadata: WeixinAccountMetadata, json_output: bool) -> Result<()> {
+fn print_unconfigured_status(
+    metadata: WeixinAccountMetadata,
+    state: Option<&WeixinStateSnapshot>,
+    lock_state: &yunxi_agent_storage::WeixinAccountLockInfo,
+    json_output: bool,
+) -> Result<()> {
     let safe_account = metadata.account_id.to_string();
     if json_output {
         println!(
@@ -393,6 +436,13 @@ fn print_unconfigured_status(metadata: WeixinAccountMetadata, json_output: bool)
                 "state": metadata.connection_state,
                 "endpoint": PRODUCTION_ILINK_ENDPOINT,
                 "credential_state": "not_configured",
+                "state_store_schema_version": state.map(|state| state.schema_version),
+                "state_store_configured": state.is_some(),
+                "account_lock_state": lock_state.state.as_str(),
+                "pending_inbound_count": state.map(|state| state.pending_inbound_count()).unwrap_or(0),
+                "pending_delivery_count": state.map(|state| state.pending_delivery_count()).unwrap_or(0),
+                "pair_request_count": state.map(|state| state.pair_request_count()).unwrap_or(0),
+                "last_redacted_error": state.and_then(|state| state.last_redacted_error.clone()),
                 "capabilities": {
                     "real_login": true,
                     "receive_messages": false,
@@ -406,6 +456,8 @@ fn print_unconfigured_status(metadata: WeixinAccountMetadata, json_output: bool)
     } else {
         println!("weixin account: {safe_account}");
         println!("state: not_configured");
+        println!("state store configured: {}", state.is_some());
+        println!("account lock state: {}", lock_state.state.as_str());
         println!("QR login is available; messages and long polling remain disabled");
     }
     Ok(())
@@ -426,8 +478,23 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
     let account_id = WeixinAccountId::new(account);
     let account_store = WeixinAccountStore::new(workspace);
     let record = account_store.load(&account_id)?;
+    let account_hash = safe_account(account);
+    let state_store = FileWeixinStateStore::for_workspace(workspace);
+    let state_result = state_store.load(&account_hash);
+    let state = match &state_result {
+        Ok(state) => state.as_ref(),
+        Err(_) => None,
+    };
+    let lock_state = state_store.lock_state(&account_hash)?;
     let store = SystemWeixinSecretStore::new();
     let credential_state = credential_state(&store, &account_id);
+    let state_store_schema = match &state_result {
+        Ok(Some(_)) => "current",
+        Ok(None) => "missing",
+        Err(WeixinStateError::FutureSchema { .. }) => "future_schema",
+        Err(WeixinStateError::InvalidJson { .. }) => "invalid_json",
+        Err(_) => "unavailable",
+    };
     let report = json!({
         "channel": "weixin",
         "version": env!("CARGO_PKG_VERSION"),
@@ -437,14 +504,23 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
             "fixed_production_endpoint": true,
             "qr_login_state_machine": true,
             "account_metadata": record.is_some(),
+            "state_store": state_store_schema,
+            "state_store_schema_current": matches!(state_result, Ok(Some(_))),
             "credential_store": credential_state,
             "credentials_configured": record.is_some() && credential_state == "present",
             "real_login_available": true,
+            "account_lock_state": lock_state.state.as_str(),
+            "private_chat_enabled": true,
+            "encrypted_pending_queue": record.is_some() && credential_state == "present",
             "message_receive_enabled": false,
             "message_send_enabled": false,
             "group_chat_enabled": false,
         },
-        "metadata_path": record.as_ref().map(|_| account_store.path_for(&account_id)),
+        "state_store_schema_version": state.map(|state| state.schema_version),
+        "pending_inbound_count": state.map(|state| state.pending_inbound_count()).unwrap_or(0),
+        "pending_delivery_count": state.map(|state| state.pending_delivery_count()).unwrap_or(0),
+        "pair_request_count": state.map(|state| state.pair_request_count()).unwrap_or(0),
+        "last_redacted_error": state.and_then(|state| state.last_redacted_error.clone()),
         "network_request_performed": false,
         "secrets_included": false,
     });
@@ -454,10 +530,10 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
         println!("weixin doctor: QR login and secure credential checks ready");
         println!("account: {}", safe_account(account));
         println!("credential state: {credential_state}");
+        println!("state store: {state_store_schema}");
+        println!("account lock state: {}", lock_state.state.as_str());
         println!("network request performed: false");
-        println!(
-            "message receive, send, long polling, and group chat: unavailable in v2.1.3-hotfix.1"
-        );
+        println!("message receive, send, long polling, and group chat: unavailable in v2.1.4");
     }
     Ok(())
 }
@@ -465,9 +541,21 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
 fn run_logout(account: &str, workspace: &Path, json_output: bool) -> Result<()> {
     let account_id = WeixinAccountId::new(account);
     let account_store = WeixinAccountStore::new(workspace);
-    if account_store.load(&account_id)?.is_none() {
+    let account_hash = safe_account(account);
+    let state_store = FileWeixinStateStore::for_workspace(workspace);
+    if state_store.lock_state(&account_hash)?.state == WeixinAccountLockState::Active {
+        bail!(
+            "weixin logout refused because a local service holds the account lock (account={account_hash})"
+        );
+    }
+    let metadata_exists = account_store.load(&account_id)?.is_some();
+    let state_exists = state_store.load(&account_hash)?.is_some();
+    if !metadata_exists && !state_exists {
         return print_logout_result(&account_id, false, json_output);
     }
+    state_store
+        .delete(&account_hash)
+        .context("weixin state deletion failed")?;
     let store = SystemWeixinSecretStore::new();
     delete_secret_if_present(&store, &account_id, true)
         .context("weixin secure credential deletion failed")?;
@@ -517,29 +605,103 @@ fn print_logout_result(
     Ok(())
 }
 
-fn print_pair_list(account: &str, json_output: bool) -> Result<()> {
+fn print_pair_list(account: &str, workspace: &Path, json_output: bool) -> Result<()> {
     let account = safe_account(account);
+    let state_store = FileWeixinStateStore::for_workspace(workspace);
+    let state = state_store.load(&account)?;
+    let pairs = state
+        .as_ref()
+        .map(|state| state.pair_requests.clone())
+        .unwrap_or_default();
     if json_output {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "channel": "weixin",
                 "account": account,
-                "pairs": [],
-                "pairing_available": false,
+                "pairs": pairs,
+                "pairing_available": true,
                 "secrets_included": false,
             }))?
         );
     } else {
-        println!("weixin pairs: none");
+        println!("weixin pairs: {}", pairs.len());
         println!("account: {account}");
-        println!("pairing is unavailable in v2.1.3-hotfix.1");
+        println!("pairing lifecycle is local-state only in v2.1.4");
+    }
+    Ok(())
+}
+
+fn run_pair_transition(
+    account: &str,
+    workspace: &Path,
+    pair_id: &str,
+    approve: bool,
+    json_output: bool,
+) -> Result<()> {
+    let account = safe_account(account);
+    let state_store = FileWeixinStateStore::for_workspace(workspace);
+    let now = now_millis_u64();
+    let request = if approve {
+        state_store.approve_pair_request(&account, pair_id, now)
+    } else {
+        state_store.deny_pair_request(&account, pair_id, now)
+    }
+    .with_context(|| {
+        format!(
+            "weixin pair {} failed for account={account}",
+            if approve { "approve" } else { "deny" }
+        )
+    })?;
+    print_pair_transition_result(&account, &request, approve, json_output)
+}
+
+fn print_pair_transition_result(
+    account: &str,
+    request: &WeixinPairRequest,
+    approve: bool,
+    json_output: bool,
+) -> Result<()> {
+    let action = if approve { "approve" } else { "deny" };
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "channel": "weixin",
+                "version": env!("CARGO_PKG_VERSION"),
+                "account": account,
+                "action": action,
+                "request_id": request.request_id,
+                "state": request.state,
+                "expires_at_millis": request.expires_at_millis,
+                "secrets_included": false,
+            }))?
+        );
+    } else {
+        println!("weixin pair {action} recorded for {}", request.request_id);
+        println!("account: {account}");
+        println!("state: {:?}", request.state);
     }
     Ok(())
 }
 
 fn safe_account(account: &str) -> String {
     WeixinAccountId::new(account).to_string()
+}
+
+fn credential_record(credential: &WeixinCredentialReference) -> WeixinCredentialReferenceRecord {
+    WeixinCredentialReferenceRecord {
+        backend: credential.backend.clone(),
+        token_target: credential.token_target.clone(),
+        data_key_target: credential.data_key_target.clone(),
+    }
+}
+
+fn now_millis_u64() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 #[cfg(test)]
@@ -549,6 +711,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::time::Duration;
     use tempfile::TempDir;
+    use yunxi_agent_storage::{WEIXIN_STATE_SCHEMA_VERSION, WeixinConnectionStateRecord};
     use yunxi_agent_weixin::ilink::{GetBotQrCodeResponse, GetQrCodeStatusResponse, QrCodeStatus};
     use yunxi_agent_weixin::{
         FakeWeixinSecretStore, SecretString, WeixinLoginFailure, WeixinSecretStore,
@@ -646,18 +809,32 @@ mod tests {
         store: &S,
         account_store: &WeixinAccountStore,
         account_id: &WeixinAccountId,
+        workspace: &Path,
     ) -> Result<serde_json::Value> {
+        let state_store = FileWeixinStateStore::for_workspace(workspace);
         let Some(record) = account_store.load(account_id)? else {
+            let account = account_id.to_string();
+            let state = state_store.load(&account)?;
+            let lock_state = state_store.lock_state(&account)?;
             return Ok(json!({
                 "channel": "weixin",
                 "version": env!("CARGO_PKG_VERSION"),
-                "account": account_id.to_string(),
+                "account": account,
                 "state": WeixinConnectionState::NotConfigured,
                 "endpoint": PRODUCTION_ILINK_ENDPOINT,
                 "credential_state": "not_configured",
+                "state_store_schema_version": state.as_ref().map(|state| state.schema_version),
+                "state_store_configured": state.is_some(),
+                "account_lock_state": lock_state.state.as_str(),
+                "pending_inbound_count": state.as_ref().map(|state| state.pending_inbound_count()).unwrap_or(0),
+                "pending_delivery_count": state.as_ref().map(|state| state.pending_delivery_count()).unwrap_or(0),
+                "pair_request_count": state.as_ref().map(|state| state.pair_request_count()).unwrap_or(0),
+                "last_redacted_error": state.as_ref().and_then(|state| state.last_redacted_error.clone()),
                 "secrets_included": false,
             }));
         };
+        let state = state_store.load(&record.account_id)?;
+        let lock_state = state_store.lock_state(&record.account_id)?;
         Ok(json!({
             "channel": "weixin",
             "version": env!("CARGO_PKG_VERSION"),
@@ -667,7 +844,13 @@ mod tests {
             "credential_backend": record.credential.backend,
             "credential_reference_present": true,
             "credential_state": credential_state(store, account_id),
-            "metadata_path": account_store.path_for(account_id),
+            "state_store_schema_version": state.as_ref().map(|state| state.schema_version),
+            "state_store_configured": state.is_some(),
+            "account_lock_state": lock_state.state.as_str(),
+            "pending_inbound_count": state.as_ref().map(|state| state.pending_inbound_count()).unwrap_or(0),
+            "pending_delivery_count": state.as_ref().map(|state| state.pending_delivery_count()).unwrap_or(0),
+            "pair_request_count": state.as_ref().map(|state| state.pair_request_count()).unwrap_or(0),
+            "last_redacted_error": state.as_ref().and_then(|state| state.last_redacted_error.clone()),
             "secrets_included": false,
         }))
     }
@@ -717,15 +900,39 @@ mod tests {
             .expect("metadata read")
             .expect("metadata written");
         assert_eq!(record.credential, credential);
+        let state_store = FileWeixinStateStore::for_workspace(workspace.path());
+        let state = state_store
+            .load(&account.to_string())
+            .expect("state read")
+            .expect("state written");
+        assert_eq!(state.schema_version, WEIXIN_STATE_SCHEMA_VERSION);
+        assert_eq!(state.account_id, account.to_string());
+        assert_eq!(state.connection_state, WeixinConnectionStateRecord::Ready);
+        assert_eq!(
+            state.credential.as_ref().map(|c| &c.backend),
+            Some(&credential.backend)
+        );
+        assert_eq!(state.pending_inbound_count(), 0);
+        assert_eq!(state.pending_delivery_count(), 0);
+        assert_eq!(state.pair_request_count(), 0);
         let text = String::from_utf8(output).expect("utf8 output");
         assert!(text.contains("weixin login succeeded"));
         assert!(text.contains("waiting for scan"));
         assert!(text.contains("scanned; waiting for confirmation"));
         assert_secret_free(&text);
 
-        let status = status_report_with_store(&store, &account_store, &account)
+        let status = status_report_with_store(&store, &account_store, &account, workspace.path())
             .expect("status report with fake store");
         assert_eq!(status["credential_state"].as_str(), Some("present"));
+        assert_eq!(status["state_store_configured"].as_bool(), Some(true));
+        assert_eq!(
+            status["state_store_schema_version"].as_u64(),
+            Some(WEIXIN_STATE_SCHEMA_VERSION as u64)
+        );
+        assert_eq!(status["pending_inbound_count"].as_u64(), Some(0));
+        assert_eq!(status["pending_delivery_count"].as_u64(), Some(0));
+        assert_eq!(status["pair_request_count"].as_u64(), Some(0));
+        assert!(status.get("metadata_path").is_none());
         assert_eq!(status["secrets_included"].as_bool(), Some(false));
         assert_secret_free(&status.to_string());
     }
@@ -766,6 +973,12 @@ mod tests {
             account_store
                 .load(&account)
                 .expect("metadata read")
+                .is_none()
+        );
+        assert!(
+            FileWeixinStateStore::for_workspace(workspace.path())
+                .load(&account.to_string())
+                .expect("state read")
                 .is_none()
         );
         assert_secret_free(&String::from_utf8(output).expect("utf8 output"));
@@ -811,6 +1024,12 @@ mod tests {
                 .expect("metadata read")
                 .is_none()
         );
+        assert!(
+            FileWeixinStateStore::for_workspace(workspace.path())
+                .load(&account.to_string())
+                .expect("state read")
+                .is_none()
+        );
         let text = String::from_utf8(output).expect("utf8 output");
         assert!(text.contains("cancelled"));
         assert_secret_free(&text);
@@ -844,6 +1063,12 @@ mod tests {
             account_store
                 .load(&account)
                 .expect("metadata read")
+                .is_none()
+        );
+        assert!(
+            FileWeixinStateStore::for_workspace(workspace.path())
+                .load(&account.to_string())
+                .expect("state read")
                 .is_none()
         );
         assert!(
@@ -887,6 +1112,12 @@ mod tests {
         assert_eq!(
             store.get_data_key(&account),
             Err(WeixinSecretStoreError::NotFound)
+        );
+        assert!(
+            FileWeixinStateStore::for_workspace(&blocker)
+                .load(&account.to_string())
+                .expect("state read")
+                .is_none()
         );
         assert!(
             !String::from_utf8(output)
@@ -946,6 +1177,27 @@ mod tests {
         assert!(!json.contains(USER_ID));
         assert!(store.get_token(&account).is_ok());
         assert!(store.get_data_key(&account).is_ok());
+        let state = FileWeixinStateStore::for_workspace(workspace.path())
+            .load(&account.to_string())
+            .expect("state read")
+            .expect("state record");
+        assert_eq!(state.schema_version, WEIXIN_STATE_SCHEMA_VERSION);
+        assert_eq!(state.account_id, account.to_string());
+        assert_eq!(state.connection_state, WeixinConnectionStateRecord::Ready);
+        assert_eq!(
+            state.credential.as_ref().map(|c| &c.backend),
+            Some(&credential.backend)
+        );
+        assert!(
+            !serde_json::to_string(&state)
+                .expect("state JSON")
+                .contains(BOT_TOKEN)
+        );
+        assert!(
+            !serde_json::to_string(&state)
+                .expect("state JSON")
+                .contains(USER_ID)
+        );
     }
 
     #[test]
@@ -969,6 +1221,12 @@ mod tests {
             account_store
                 .load(&account)
                 .expect("metadata read")
+                .is_none()
+        );
+        assert!(
+            FileWeixinStateStore::for_workspace(workspace.path())
+                .load(&account.to_string())
+                .expect("state read")
                 .is_none()
         );
     }

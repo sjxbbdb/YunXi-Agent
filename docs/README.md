@@ -1,6 +1,6 @@
 # YunXi Agent 文档索引
 
-本页是 `docs/` 的稳定导航入口。`v2.1.3` 在已通过复审的 v2.1.2 微信骨架上增加二维码登录、安全凭证引用和非机密账户元数据；消息服务仍未开放。
+本页是 `docs/` 的稳定导航入口。`v2.1.3-hotfix.1` 在 v2.1.3 二维码登录、安全凭证引用和非机密账户元数据基础上补齐 CLI Mock 登录验收，并于 2026-07-27 完成 Windows 真实扫码、Credential Manager 写入、非机密 metadata 落盘和新进程读取验证；消息服务仍未开放，复审通过前不得进入 `v2.1.4`。
 
 ## 架构与运行边界
 
@@ -10,7 +10,7 @@
 - [人格与记忆](persona-memory.md)：人格、Memory Schema、召回、隐私和审核边界。
 - [TUI 表现与终端生命周期](tui-presentation.md)：布局、流式输出、焦点和恢复约束。
 - [Sandbox 协议事件](protocol/sandbox-events.md)：执行策略与协议事件说明。
-- [微信接入边界](weixin.md)：v2.1.3 QR 登录、安全凭证引用、脱敏边界、可用命令和明确未实现能力。
+- [微信接入边界](weixin.md)：v2.1.3-hotfix.1 QR 登录、安全凭证引用、CLI Mock 验收、脱敏边界、真实验证结果和明确未实现能力。
 
 ## 规格与路线图
 
@@ -21,6 +21,8 @@
 ## 报告与证据
 
 - [报告索引与归档规则](reports/README.md)：报告命名、分类和历史兼容规则。
+- [v2.1.3-hotfix.1 微信登录闭环整改开发报告](reports/development/2026-07-27-165954-yunxi-agent-v2-1-3-hotfix-1-weixin-login-verification-remediation-development-report.md)：本阶段整改依据、CLI Mock 验收、真实扫码验证结果和发布门禁。
+- [v2.1.3 微信二维码登录审核报告](reports/audits/2026-07-23-125451-yunxi-agent-v2-1-3-weixin-qr-login-audit-report.md)：确认 v2.1.3 审核不通过，要求先完成 hotfix。
 - [v2.1.2 微信模块、CLI 骨架与 iLink Mock 开发报告](reports/development/2026-07-22-164655-yunxi-agent-v2-1-2-weixin-cli-ilink-mock-development-report.md)：本版本实现范围、参考快照与发布门禁。
 - [v2.1.3 微信二维码登录与系统安全凭证存储开发报告](reports/development/2026-07-22-215224-yunxi-agent-v2-1-3-weixin-qr-login-secret-store-development-report.md)：本阶段 QR 状态机、安全凭证引用、账户元数据和 CLI 登录边界。
 - [v2.1.2 微信骨架审核报告](reports/audits/2026-07-22-211826-yunxi-agent-v2-1-2-weixin-skeleton-audit-report.md)：允许进入 v2.1.3 的独立审核结论。

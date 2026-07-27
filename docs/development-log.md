@@ -30,6 +30,130 @@
 
 署名：审核者
 
+## 2026-07-27 17:28:52 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-27-165954-yunxi-agent-v2-1-3-hotfix-1-weixin-login-verification-remediation-development-report.md`，执行 `v2.1.3-hotfix.1` 微信登录闭环整改候选开发，补齐 CLI Mock 登录验收并保持不进入 `v2.1.4`。
+
+执行流程：
+1. 读取桌面开发报告和项目 AGENTS 规则，确认固定开发目录为 `D:\YunXi Agent`，历史 tag 不得移动、删除或覆盖；日志署名按用户最新固定流程使用 `开发者`。
+2. 使用 CodeGraph 定位 `crates\yunxi-agent-cli\src\weixin.rs`、`WeixinLoginStateMachine`、`WeixinSecretStore` 和 `WeixinAccountStore`；随后按索引提示直接读取最近编辑文件的磁盘内容。
+3. 将 workspace 版本升至 `2.1.3-hotfix.1`，同步 CLI、Runtime、TUI、iLink 测试和当前快照版本口径，保留历史报告、旧 ConPTY evidence、vendor、extracted 和 v2.1.0 golden 不变。
+4. 在 `crates\yunxi-agent-cli\src\weixin.rs` 抽取私有 `run_login_with_dependencies`，生产入口继续固定绑定官方 iLink endpoint、`IlinkHttpClient`、`SystemWeixinSecretStore` 和真实 `WeixinAccountStore`；测试只注入 scripted transport、fake store、临时 account store、可控 cancellation 和输出缓冲。
+5. 补齐 CLI 层 Mock 登录验收：成功写 fake store 与 metadata、过期不写凭证/metadata、取消前不发网络、凭证不可用不落明文、metadata 失败回滚已写凭证、`login --json` 在取 QR 前拒绝、stdout/status JSON 不含二维码 payload、token、原始账户、原始用户 ID 或数据 key。
+6. 更新 `README.md`、`docs\README.md`、`docs\weixin.md`、`docs\reports\README.md` 和本开发报告，明确 hotfix 只关闭代码与 Mock 验收缺口，真实扫码仍是发布/复审门禁；不启动长轮询、消息入站、会话绑定、远程审批或群聊。
+7. 运行统一自动化验证、真实 DeepSeek Provider smoke、v210 ConPTY 只读 verifier、Markdown 本地链接、默认 CLI 依赖树、受保护范围、Git 完整性和 release 命令检查。
+
+修改文件与路径：
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\Cargo.toml`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\weixin.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\general_companion_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_100x30.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_200x50.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\tests\ilink_client_tests.rs`
+- `D:\YunXi Agent\docs\README.md`
+- `D:\YunXi Agent\docs\weixin.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\docs\reports\development\2026-07-27-165954-yunxi-agent-v2-1-3-hotfix-1-weixin-login-verification-remediation-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace`、`cargo test -p yunxi-agent-weixin`、`cargo test -p yunxi-agent-cli weixin::tests`、`cargo build --workspace --release` 全部通过。CLI 主集成 48/48、JSONL 10/10、Provider 46/46、TUI 161/161、微信 login/store 6/6、新增 CLI 微信 helper/persistence 8/8；release 输出 `yunxi 2.1.3-hotfix.1`，10 组微信 help 通过，未配置 `status --json` 与 `doctor --json` 脱敏通过。陪伴评测 31/31、`golden_passed=true`、审批绕过 0、主动边界违规 0。真实 DeepSeek Provider smoke 使用 `credential_index=1` 通过，exit code 0、JSONL 53 行、`secret_leak_detected=False`，该结果只证明 Provider 路径未回归，不冒充真实微信联调。ConPTY v210 verifier 返回 `ok=true`、`read_only=true`，evidence SHA-256 为 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6`。YunXi 自有 Markdown 156 个文件、65 个本地链接、失效 0；默认 CLI 依赖树 425 行，`yunxi-agent-codex`、`codex-*`、`vendor/codex-rs` 匹配 0；受保护目录 `vendor`、`extracted`、`docs\reports\evidence`、`scripts\conpty` 变更 0；`git diff --check` 通过；`git fsck --full` 返回 0，但仓库存在历史 dangling 对象输出。
+
+真实微信状态：尚未完成真实账号扫码确认、Windows Credential Manager 写入、`.yunxi\weixin` 非机密 metadata 落盘、`status --json`/`doctor --json` 和受控重启读取闭环。因此当前只能标记为 `v2.1.3-hotfix.1` 整改候选，不能宣称真实微信登录闭环完成，不能进入 `v2.1.4`，也不能创建完成态 release tag。
+
+清理与安全状态：未执行删除、递归清理、移动、重命名、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户目录清理。本轮产生的清理候选为 `D:\YunXi Agent\target` 和 `D:\YunXi Agent\.tmp\v213-hotfix1-status-doctor`；未取得本次明确确认前不得删除。
+
+提交和推送状态：尚未创建 release commit，尚未创建 annotated `v2.1.3-hotfix.1` tag，尚未推送 GitHub；历史 tag 未移动、删除或覆盖。下一步需要用户配合真实扫码，验证通过后再按固定流程创建新 commit、新 annotated tag，并用 GitHub CLI 加 API key 非强制推送。
+
+署名：开发者
+
+## 2026-07-27 17:49:29 +08:00
+
+工作目标：执行 `v2.1.3-hotfix.1` 微信真实扫码验证门禁，确认二维码登录是否能完成扫码、确认、Windows Credential Manager 写入、`.yunxi/weixin/` 非机密 metadata 落盘、`status --json`/`doctor --json` 和受控重启读取链路。
+
+执行流程：
+1. 在可见 PowerShell 窗口中运行 `D:\YunXi Agent\target\release\yunxi.exe weixin login --account default`，二维码仅显示在该终端窗口内，没有写入聊天、日志或文件。
+2. 使用项目内状态标记文件 `D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-174525.status.json` 记录登录命令退出码和完成时间；该文件不包含二维码、token、原始账号或数据 key。
+3. 登录命令结束后，只读运行 `D:\YunXi Agent\target\release\yunxi.exe --json weixin status --account default` 和 `D:\YunXi Agent\target\release\yunxi.exe --json weixin doctor --account default`，核查是否有遗留凭证或 metadata。
+4. 通过 CodeGraph 复核 CLI 错误码映射，确认退出码 70 对应未分类的 `InternalError` 分支，具体根因需要终端窗口中的安全错误文本辅助判断。
+
+验证结果：扫码命令标记文件显示 `exit_code=70`，完成时间 `2026-07-27T17:45:41.3020625+08:00`。后续 `status --json` 返回 `state=not_configured`、`credential_state=not_configured`、`secrets_included=false`、exit code 0；`doctor --json` 返回 `account_metadata=false`、`credential_store=missing`、`credentials_configured=false`、`network_request_performed=false`、`secrets_included=false`、exit code 0。未发现 `default` 账户凭证或 `.yunxi/weixin` metadata 遗留。
+
+结论：本次真实扫码验证未完成，不能证明真实微信登录闭环成功；`v2.1.3-hotfix.1` 仍处于整改候选状态。当前不得创建 release commit、不得创建 annotated `v2.1.3-hotfix.1` tag、不得推送 GitHub、不得进入 `v2.1.4`。下一步需要用户提供可见 PowerShell 窗口中的安全错误文本；禁止粘贴二维码 payload、token、原始账号或任何凭证内容。
+
+清理与安全状态：未执行删除、递归清理、移动、重命名、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户目录清理。新增清理候选为 `D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-174525.status.json`，此前清理候选 `D:\YunXi Agent\target` 和 `D:\YunXi Agent\.tmp\v213-hotfix1-status-doctor` 仍未删除；清理前必须重新列出精确绝对路径并取得确认。
+
+提交、推送和 Git tag 状态：本次仅追加日志和更新开发报告；未提交、未推送、未创建或移动 tag。全部历史 tag 保持不变。
+
+署名：开发者
+
+## 2026-07-27 17:54:00 +08:00
+
+工作目标：重新执行 `v2.1.3-hotfix.1` 微信真实扫码验证，保留可见 PowerShell 窗口中的人类可读错误文本，继续确认失败后是否遗留凭证或 metadata。
+
+执行流程：
+1. 重新打开可见 PowerShell 窗口运行 `D:\YunXi Agent\target\release\yunxi.exe weixin login --account default`；二维码只显示在该窗口，没有写入聊天、报告、日志或文件。
+2. 新状态标记文件为 `D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-175309.status.json`，仅记录退出码和完成时间，不含二维码、token、原始账号或数据 key。
+3. 登录命令结束后只读运行 `status --json` 和 `doctor --json`，复核凭证状态、metadata 状态和秘密字段脱敏。
+
+验证结果：第二次扫码标记文件显示 `exit_code=70`，完成时间 `2026-07-27T17:53:24.8354063+08:00`；扫码 PowerShell 窗口仍在运行，PID 为 `15960`，窗口中应保留具体错误文本。`status --json` 返回 `state=not_configured`、`credential_state=not_configured`、`secrets_included=false`、exit code 0；`doctor --json` 返回 `account_metadata=false`、`credential_store=missing`、`credentials_configured=false`、`network_request_performed=false`、`secrets_included=false`、exit code 0。
+
+结论：第二次真实扫码验证仍未完成，且没有留下 `default` 账户凭证或 `.yunxi/weixin` metadata。当前需要读取窗口中的安全错误文本来定位根因；禁止复制二维码 payload、token、原始账号或任何凭证内容。`v2.1.3-hotfix.1` 仍不得打 tag、不得推送、不得进入 `v2.1.4`。
+
+清理与安全状态：未执行删除、递归清理、移动、重命名、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户目录清理。新增清理候选为 `D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-175309.status.json`，未确认前不得删除。
+
+提交、推送和 Git tag 状态：本次仅追加日志和更新开发报告；未提交、未推送、未创建或移动 tag。全部历史 tag 保持不变。
+
+署名：开发者
+
+## 2026-07-27 17:59:51 +08:00
+
+工作目标：完成 `v2.1.3-hotfix.1` 微信真实扫码登录验证门禁，补齐二维码获取、扫码确认、Windows Credential Manager 写入、`.yunxi/weixin/` 非机密 metadata 落盘、`status --json`/`doctor --json` 和受控新进程读取证据。
+
+执行流程：
+1. 第三次打开可见 PowerShell 窗口运行 `D:\YunXi Agent\target\release\yunxi.exe weixin login --account default`；二维码只显示在本机终端，没有写入聊天、报告、日志或文件。
+2. 状态标记文件 `D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-175729.status.json` 只记录退出码和完成时间。
+3. 登录成功后只读运行 `D:\YunXi Agent\target\release\yunxi.exe --json weixin status --account default`、`doctor --json` 和一个新的 PowerShell 进程中的 `status --json`，验证凭证引用和 metadata 可跨进程读取。
+4. 只读解析 `D:\YunXi Agent\.yunxi\weixin\account-933b5bde.json` 的 JSON 字段和值，确认保存的是脱敏账户、官方 endpoint、workspace hash、Credential Manager 引用和时间戳，没有保存二维码、token、原始账号、原始用户 ID 或数据 key 本体。
+
+验证结果：扫码命令返回 `exit_code=0`，完成时间 `2026-07-27T17:57:44.1993830+08:00`。`status --json` 返回 `state=ready`、`credential_state=present`、`credential_backend=windows-credential-manager`、`credential_reference_present=true`、`secrets_included=false`、metadata 路径 `D:\YunXi Agent\.yunxi/weixin\account-933b5bde.json`、exit code 0。`doctor --json` 返回 `account_metadata=true`、`credential_store=present`、`credentials_configured=true`、`fixed_production_endpoint=true`、消息接收/发送/群聊均为 false、`network_request_performed=false`、`secrets_included=false`、exit code 0。新 PowerShell 进程重读 `status --json` 仍为 ready 且凭证 present。metadata 值检查显示 `account#933b5bde` 和 `workspace#73521066` 均为脱敏 ID，凭证目标为 `YunXiAgent/Weixin/installation-6545d34a/account-933b5bde/token` 与 `YunXiAgent/Weixin/installation-6545d34a/account-933b5bde/data-key`，未命中 QR、token、原始 user id 或 secret payload 值。
+
+结论：`v2.1.3-hotfix.1` 的真实扫码登录验证门禁已完成；这只证明登录与安全凭证引用链路，不代表微信消息接收、发送、长轮询、Runtime 绑定、远程审批或群聊能力完成。复审通过前仍不得进入 `v2.1.4`。
+
+清理与安全状态：未执行删除、递归清理、移动、重命名、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户目录清理。新增运行状态包括 `D:\YunXi Agent\.yunxi\weixin\account-933b5bde.json` 和 Windows Credential Manager 中的 `default` 账户凭证引用，这是本次真实登录验收结果，未取得明确授权前不得删除。新增清理候选为 `D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-175729.status.json`；清理前必须重新列出精确绝对路径并取得确认。
+
+提交、推送和 Git tag 状态：真实登录门禁已通过，下一步将运行发布前校验，随后创建 release commit、新 annotated `v2.1.3-hotfix.1` tag，并用 GitHub CLI 加 API key 非强制推送；不会移动、删除或覆盖任何历史 tag。
+
+署名：开发者
+
+## 2026-07-27 18:03:24 +08:00
+
+工作目标：完成 `v2.1.3-hotfix.1` 真实扫码通过后的发布前最终验证，确认代码、文档、真实登录状态和 release 二进制均满足打 tag 条件。
+
+执行流程：
+1. 在真实扫码成功后更新 `README.md`、`docs\README.md`、`docs\weixin.md`、`docs\reports\README.md`、本开发报告和开发日志，将当前口径从“待扫码”更新为“真实扫码已通过，但仅代表登录与安全凭证引用链路”。
+2. 运行 Rust 格式、定向微信测试、CLI 微信 helper 测试、Markdown 本地链接、Git 空白门禁、workspace check/test 和 release build。
+3. 使用 release 二进制重新读取版本、`status --json` 和 `doctor --json`，确认真实凭证引用仍 present，metadata 仍 ready，输出仍无秘密。
+
+验证结果：`cargo fmt --all -- --check` 通过；`cargo test -p yunxi-agent-weixin` 通过，iLink client 3/3、models 2/2、login/store 6/6、redaction 2/2；`cargo test -p yunxi-agent-cli weixin::tests` 通过，8/8；YunXi 自有 Markdown 156 个文件、65 个本地链接、失效 0；`git diff --check` exit code 0；`cargo check --workspace` 通过；`cargo test --workspace` 通过，CLI 单元 23/23、CLI 集成 48/48、JSONL 10/10、TUI 161/161、微信相关测试全通过；`cargo build --workspace --release` 通过；`D:\YunXi Agent\target\release\yunxi.exe --version` 输出 `yunxi 2.1.3-hotfix.1`。release `status --json` 返回 `state=ready`、`credential_state=present`、`credential_backend=windows-credential-manager`、`secrets_included=false`；release `doctor --json` 返回 `account_metadata=true`、`credential_store=present`、`credentials_configured=true`、消息接收/发送/群聊均 false、`network_request_performed=false`、`secrets_included=false`。
+
+结论：`v2.1.3-hotfix.1` 发布前验证通过，可以创建发布提交和新的 annotated `v2.1.3-hotfix.1` tag。该结论不代表复审已通过，不代表进入 `v2.1.4`，也不代表微信消息闭环完成。
+
+清理与安全状态：未执行删除、递归清理、移动、重命名、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户目录清理。`.yunxi\weixin\account-933b5bde.json` 与 Windows Credential Manager 凭证保留为真实登录验收状态。
+
+提交、推送和 Git tag 状态：即将创建 release commit、annotated `v2.1.3-hotfix.1` tag，并使用 GitHub CLI 与桌面 API key 非强制推送；不会移动、删除或覆盖任何历史 tag。
+
+署名：开发者
+
 ## 2026-07-23 11:00:41 +08:00
 
 工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-22-215224-yunxi-agent-v2-1-3-weixin-qr-login-secret-store-development-report.md`，完成 `v2.1.3` 微信二维码登录状态机、Windows 系统安全凭证存储、脱敏账户元数据、CLI 接入、统一验证和发布前精准清理；保持“不提供微信消息闭环”的版本边界。
@@ -131,6 +255,31 @@
 安全与清理状态：未执行删除、递归清理、目录移动、`git clean`、gc、prune、系统安装、PATH/注册表/系统配置修改或用户目录清理。只记录清理候选 `D:\YunXi Agent\target`、`D:\YunXi Agent\.tmp`、`D:\YunXi Agent\.yunxi`、`D:\YunXi Agent\scripts\conpty\*\node_modules` 和 `D:\YunXi Agent\scripts\conpty\*\.work`；本轮不清理，任何后续清理必须再次列出精确绝对路径并取得确认。
 
 提交、tag 与推送状态：发布前本地和 GitHub master 均为 `74da1c4e32fe47942edbaca59a0bd85ed166cb90`，历史 tag 共 52 个，`v2.1.2` 不存在。当前开发候选已完成，待创建作者 `开发者 <developer@yunxi-agent.local>` 的发布 commit 和全新 annotated `v2.1.2` 并非强制推送；不会移动、删除、覆盖任何历史 tag，复审通过前不进入 v2.1.3。
+
+署名：开发报告撰写者
+
+## 2026-07-27 16:59:54 +08:00
+
+工作目标：依据 `v2.1.3` 微信二维码登录审核报告和项目总纲图，撰写面向开发者的 `v2.1.3-hotfix.1` 微信登录闭环整改开发报告。
+
+执行流程：
+1. 读取桌面审核报告 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-23-125451-YunXi-Agent-v2.1.3-微信二维码登录审核报告.md`，确认项目内审核报告副本 SHA-256 与桌面原件一致，均为 `14462BD5D7E92E854D11F025CA61A3105644DD4BD6E247C9DC1132964CE71043`。
+2. 读取项目内总纲正本和桌面总纲副本，确认 SHA-256 均为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`，并以项目内正本作为开发依据。
+3. 使用 CodeGraph 复核当前微信登录、secret store、CLI、iLink client/models、storage 和 Runtime 边界；CodeGraph 提示部分新文件可能刚索引，随后直接只读确认 `crates\yunxi-agent-cli\src\weixin.rs`、`crates\yunxi-agent-weixin\src\domain.rs`、`ilink\client.rs`、`ilink\models.rs`、`lib.rs` 与 `Cargo.toml`。
+4. 核对外部参考源码：`D:\源码\openclaw-weixin` 存在，remote 为 `https://github.com/Tencent/openclaw-weixin.git`，HEAD 为 `cef0bfc390393f716903e16d50408118047f87e0`；`D:\源码\reasonix\internal\bot\weixin\weixin_login.go` 存在。
+5. 将审核报告中两个 P1 阻塞转换为开发要求：真实微信扫码确认闭环缺失、CLI 登录 Mock 集成验收缺失。
+6. 新增 `v2.1.3-hotfix.1` 整改开发报告，并更新 `docs\reports\README.md` 当前入口。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\reports\development\2026-07-27-165954-yunxi-agent-v2-1-3-hotfix-1-weixin-login-verification-remediation-development-report.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\docs\development-log.md`
+- 桌面开发报告：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-27-165954-yunxi-agent-v2-1-3-hotfix-1-weixin-login-verification-remediation-development-report.md`
+- 桌面日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：已完成审核报告哈希核对、总纲正本/桌面副本哈希核对、CodeGraph 接入点复核、关键源码只读确认和外部参考源码路径核对。开发报告已同步到桌面指定目录，项目内报告与桌面报告 SHA-256 均为 `14D279F0EA787B0B194BA654B2AD02E5FE4964D21B264E699D2F314D5E9C34F8`；桌面日志由项目日志同步生成。本次是开发报告撰写任务，未修改 Rust 源码，未新增依赖，未运行 `cargo fmt`、`cargo check`、`cargo test`、ConPTY verifier、真实 Provider、真实微信或 TUI 视觉验证；这些属于开发者完成 `v2.1.3-hotfix.1` 整改后的统一验证。未执行删除、移动、重命名、递归清理、`git clean`、系统安装、PATH/注册表/系统配置修改或用户目录清理。
+
+提交和推送状态：本次仅生成开发报告、更新报告索引并追加日志；未创建 commit、未推送、未创建或移动 tag。`v2.1.3-hotfix.1` 必须在整改和验证通过后创建新的 annotated tag；`v2.1.3`、`v2.1.2` 及全部历史 tag 不得移动、删除或覆盖。
 
 署名：开发报告撰写者
 
@@ -3143,5 +3292,35 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 清理与安全状态：未执行删除、递归清理、移动、重命名、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。测试、release build 和真实 Provider 产生的项目内编译/运行产物均保留，后续如需清理必须先取得精确绝对路径授权。
 
 提交、推送和 Git tag 状态：本次审核未创建新的审核 commit、未推送；`v2.1.2` 发布提交为 `b09f442adeaebc854f0ec00fb4c497bc6ec90e41`，annotated tag object 为 `7aa184e4b58fddad050d9affb64a5ce27121489b`，历史 tag 未移动、删除或覆盖。本次审核报告和日志当前属于 docs-only 工作树变更，尚未提交或推送。
+
+署名：审核者
+
+## 2026-07-23 12:54:51 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，审核当前 `v2.1.3` 二维码登录、Windows 系统凭证存储、非机密账户 metadata、CLI 状态和安全边界，判断是否允许进入 `v2.1.4`。
+
+执行流程：
+1. 使用 CodeGraph 定位 `WeixinLoginStateMachine`、`WeixinSecretStore`、Windows Credential Manager backend、`WeixinAccountStore`、CLI login/status/doctor/logout 及其调用路径。
+2. 对照 v2.1.3 总纲逐项检查 QR 状态、终端安全显示、取消/过期/redirect/验证码失败、凭证存储、数据 key、`.yunxi/weixin/` metadata、logout 和禁止消息闭环边界。
+3. 统一运行 Rust fmt/check/workspace test、微信定向测试、workspace release build、release CLI、陪伴评测、真实 Provider smoke、v210 ConPTY 只读 verifier、TUI 差异、文档链接和 Git tag 检查。
+4. 重点审查验收证据是否经过 CLI 命令层；确认当前仅有状态机/持久化单元测试，没有 CLI login Mock 成功/过期/取消/凭证不可用集成测试；开发报告同时明确真实微信扫码确认尚未完成。
+5. 写入项目审核报告并复制到桌面审核目录，核对项目报告与桌面副本 SHA-256；没有删除、移动或修改生产源码。
+
+审核报告与文件路径：
+- 项目内审核报告：`D:\YunXi Agent\docs\reports\audits\2026-07-23-125451-yunxi-agent-v2-1-3-weixin-qr-login-audit-report.md`
+- 桌面审核报告：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-23-125451-YunXi-Agent-v2.1.3-微信二维码登录审核报告.md`
+- 项目内开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 审核报告 SHA-256：`14462BD5D7E92E854D11F025CA61A3105644DD4BD6E247C9DC1132964CE71043`；项目内与桌面副本一致。
+
+修改文件：新增项目内 v2.1.3 审核报告；追加本条项目日志；将审核报告复制到用户指定桌面审核目录；桌面日志追加同一条记录。未修改 Rust 生产源码、测试源码、Cargo 配置、vendor、extracted、ConPTY 脚本或历史证据。
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace`、`cargo test -p yunxi-agent-weixin`、`cargo build --workspace --release`、`git diff --check` 全部通过；微信定向测试 13/13，CLI 主集成 48/48，JSONL 10/10；release CLI 输出 `yunxi 2.1.3`，帮助、未配置 status/doctor、pair list、确认 logout 和 JSON 脱敏通过；陪伴评测 31/31，`golden_passed=true`，审批绕过 0，主动边界违规 0；真实 Provider 返回 `YUNXI_V213_REAL_PROVIDER_OK`，Provider 为 `deepseek`，工具调用状态为 0；v210 ConPTY verifier `ok=true`、`read_only=true`，evidence SHA-256 `a291a66cf91ee788bba9944edbafbf4c8dfce43bcd2d6c7b2cc78bc6c2990fc6`；Markdown 本地链接 125 个、失效 0；v2.1.3 annotated tag object 为 `7f97abefc14b1309c39d76ad9fb974c482d7a09d`，目标提交为 `f9f7dbbffb9f35e2a88769c0e7a1642f691522f3`。
+
+审核结论：v2.1.3 审核不通过，禁止进入 v2.1.4。阻塞点为：真实扫码确认及真实 Windows 凭证写入/重启读取链路尚无证据；CLI login Mock 成功、过期、取消和凭证不可用验收测试缺失。整改清单已写入审核报告，必须在当前版本完善后重新审核。
+
+清理与安全状态：未执行删除、递归清理、移动、重命名、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。构建产生的 `D:\YunXi Agent\target` 等项目内产物保留，后续清理必须取得精确绝对路径授权。
+
+提交、推送和 Git tag 状态：本次审核未创建审核 commit、未推送、未创建或移动 tag；v2.1.3 发布提交和 annotated tag 已存在且历史 tag 未变。本次审核报告和日志是待收口的 docs-only 工作树变更，尚未提交或推送。
 
 署名：审核者

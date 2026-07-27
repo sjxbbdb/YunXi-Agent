@@ -1,4 +1,4 @@
-00|YunXi v2.1.3 | deepseek live
+00|YunXi v2.1.3-hotfix.1 | deepseek live
 01|new output below | cells=38 | provider=deepseek
 02|──────────────────────────────────────────────────────────
 03|┌Transcript 74-82 / 93 | new output below────────────────┐

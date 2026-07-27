@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use serde_json::json;
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -10,8 +11,8 @@ use yunxi_agent_weixin::{
     IlinkHttpClient, LoginPollState, PRODUCTION_ILINK_ENDPOINT, SystemWeixinSecretStore,
     WeixinAccountId, WeixinAccountMetadata, WeixinAccountRecord, WeixinAccountStore,
     WeixinConnectionState, WeixinCredentialReference, WeixinLoginCancellation, WeixinLoginEvent,
-    WeixinLoginOptions, WeixinLoginOutcome, WeixinLoginStateMachine, WeixinSecretStore,
-    WeixinSecretStoreError, generate_data_key,
+    WeixinLoginOptions, WeixinLoginOutcome, WeixinLoginStateMachine, WeixinLoginTransport,
+    WeixinSecretStore, WeixinSecretStoreError, generate_data_key,
 };
 
 use crate::provider_mode::ProviderMode;
@@ -107,7 +108,7 @@ pub(crate) async fn run(
             let prepared_config = selection.apply_to_config(config);
             let account = safe_account(&account);
             bail!(
-                "weixin serve is not implemented in v2.1.3; configuration was validated without starting long polling or the agent runtime (account={account}, workspace={}, provider_mode={})",
+                "weixin serve is not implemented in v2.1.3-hotfix.1; configuration was validated without starting long polling or the agent runtime (account={account}, workspace={}, provider_mode={})",
                 prepared_config.cwd.display(),
                 selection.source.as_str()
             );
@@ -118,14 +119,14 @@ pub(crate) async fn run(
                 let _ = pair_id;
                 let account = safe_account(&account);
                 bail!(
-                    "weixin pair approve is not implemented in v2.1.3; remote approval is planned for a later version (account={account})"
+                    "weixin pair approve is not implemented in v2.1.3-hotfix.1; remote approval is planned for a later version (account={account})"
                 );
             }
             WeixinPairCommand::Deny { pair_id, account } => {
                 let _ = pair_id;
                 let account = safe_account(&account);
                 bail!(
-                    "weixin pair deny is not implemented in v2.1.3; remote approval is planned for a later version (account={account})"
+                    "weixin pair deny is not implemented in v2.1.3-hotfix.1; remote approval is planned for a later version (account={account})"
                 );
             }
         },
@@ -145,7 +146,6 @@ async fn run_login(account: &str, config: &AgentConfig, json_output: bool) -> Re
             "weixin login requires interactive output; omit --json so the QR is only displayed in the terminal"
         );
     }
-    let account_id = WeixinAccountId::new(account);
     let mut client = IlinkHttpClient::new(account, None)
         .context("weixin login could not initialize the fixed iLink client")?;
     let cancellation = WeixinLoginCancellation::default();
@@ -155,32 +155,92 @@ async fn run_login(account: &str, config: &AgentConfig, json_output: bool) -> Re
             signal_cancellation.cancel();
         }
     });
-    let machine = WeixinLoginStateMachine::new(WeixinLoginOptions::default());
+    let store = SystemWeixinSecretStore::new();
+    let account_store = WeixinAccountStore::new(&config.cwd);
+    let mut stdout = std::io::stdout();
+    let result = run_login_with_dependencies(
+        account,
+        &config.cwd,
+        json_output,
+        &mut client,
+        &store,
+        &account_store,
+        &cancellation,
+        WeixinLoginStateMachine::new(WeixinLoginOptions::default()),
+        &mut stdout,
+    )
+    .await;
+    signal_task.abort();
+    result.map(|_| ())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_login_with_dependencies<T, S, W>(
+    account: &str,
+    workspace: &Path,
+    json_output: bool,
+    transport: &mut T,
+    store: &S,
+    account_store: &WeixinAccountStore,
+    cancellation: &WeixinLoginCancellation,
+    machine: WeixinLoginStateMachine,
+    output: &mut W,
+) -> Result<WeixinCredentialReference>
+where
+    T: WeixinLoginTransport,
+    S: WeixinSecretStore,
+    W: Write,
+{
+    if json_output {
+        bail!(
+            "weixin login requires interactive output; omit --json so the QR is only displayed in the terminal"
+        );
+    }
+
+    let account_id = WeixinAccountId::new(account);
+    let mut output_error = None;
     let result = machine
-        .run(&mut client, &cancellation, |event| {
-            print_login_event(&account_id, event);
+        .run(transport, cancellation, |event| {
+            if output_error.is_none()
+                && let Err(error) = write_login_event(output, &account_id, event)
+            {
+                output_error = Some(error);
+            }
         })
         .await;
-    signal_task.abort();
+    if let Some(error) = output_error {
+        return Err(error).context("weixin login output failed");
+    }
+
     let outcome = result.context("weixin QR login failed")?;
-    let store = SystemWeixinSecretStore::new();
-    let credential = persist_login(&store, &account_id, outcome, &config.cwd)?;
-    println!("weixin login succeeded for {}", safe_account(account));
-    println!("credential backend: {}", credential.backend);
-    println!(
+    let credential = persist_login(store, &account_id, outcome, account_store, workspace)?;
+    writeln!(
+        output,
+        "weixin login succeeded for {}",
+        safe_account(account)
+    )
+    .context("weixin login output failed")?;
+    writeln!(output, "credential backend: {}", credential.backend)
+        .context("weixin login output failed")?;
+    writeln!(
+        output,
         "metadata: {}",
-        WeixinAccountStore::new(&config.cwd)
-            .path_for(&account_id)
-            .display()
-    );
-    println!("messages and long polling remain disabled in v2.1.3");
-    Ok(())
+        account_store.path_for(&account_id).display()
+    )
+    .context("weixin login output failed")?;
+    writeln!(
+        output,
+        "messages and long polling remain disabled in v2.1.3-hotfix.1"
+    )
+    .context("weixin login output failed")?;
+    Ok(credential)
 }
 
 fn persist_login<S: WeixinSecretStore>(
     store: &S,
     account_id: &WeixinAccountId,
     outcome: WeixinLoginOutcome,
+    account_store: &WeixinAccountStore,
     workspace: &Path,
 ) -> Result<WeixinCredentialReference> {
     let data_key = generate_data_key().context("weixin data key generation failed")?;
@@ -198,7 +258,6 @@ fn persist_login<S: WeixinSecretStore>(
                 ));
             }
         };
-    let account_store = WeixinAccountStore::new(workspace);
     let now_millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -225,21 +284,35 @@ fn persist_login<S: WeixinSecretStore>(
     Ok(credential)
 }
 
-fn print_login_event(account_id: &WeixinAccountId, event: WeixinLoginEvent) {
+fn write_login_event<W: Write>(
+    output: &mut W,
+    account_id: &WeixinAccountId,
+    event: WeixinLoginEvent,
+) -> std::io::Result<()> {
     match event {
         WeixinLoginEvent::QrReady { display } => {
-            println!("weixin login account: {account_id}");
-            println!("endpoint: {PRODUCTION_ILINK_ENDPOINT}");
-            println!("scan this QR text in WeChat (displayed only in the terminal):");
-            println!("{}", display.terminal_text());
+            writeln!(output, "weixin login account: {account_id}")?;
+            writeln!(output, "endpoint: {PRODUCTION_ILINK_ENDPOINT}")?;
+            writeln!(
+                output,
+                "scan this QR text in WeChat (displayed only in the terminal):"
+            )?;
+            writeln!(output, "{}", display.terminal_text())?;
         }
         WeixinLoginEvent::PollState { state } => {
-            println!("weixin login state: {}", login_state_label(state));
+            writeln!(output, "weixin login state: {}", login_state_label(state))?;
         }
-        WeixinLoginEvent::Cancelled => println!("weixin login cancelled; no credential was saved"),
-        WeixinLoginEvent::TimedOut => println!("weixin login timed out; run login again"),
-        WeixinLoginEvent::Failed { failure } => println!("weixin login failed: {failure}"),
+        WeixinLoginEvent::Cancelled => {
+            writeln!(output, "weixin login cancelled; no credential was saved")?;
+        }
+        WeixinLoginEvent::TimedOut => {
+            writeln!(output, "weixin login timed out; run login again")?;
+        }
+        WeixinLoginEvent::Failed { failure } => {
+            writeln!(output, "weixin login failed: {failure}")?;
+        }
     }
+    Ok(())
 }
 
 fn login_state_label(state: LoginPollState) -> &'static str {
@@ -382,7 +455,9 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
         println!("account: {}", safe_account(account));
         println!("credential state: {credential_state}");
         println!("network request performed: false");
-        println!("message receive, send, long polling, and group chat: unavailable in v2.1.3");
+        println!(
+            "message receive, send, long polling, and group chat: unavailable in v2.1.3-hotfix.1"
+        );
     }
     Ok(())
 }
@@ -458,7 +533,7 @@ fn print_pair_list(account: &str, json_output: bool) -> Result<()> {
     } else {
         println!("weixin pairs: none");
         println!("account: {account}");
-        println!("pairing is unavailable in v2.1.3");
+        println!("pairing is unavailable in v2.1.3-hotfix.1");
     }
     Ok(())
 }
@@ -470,33 +545,405 @@ fn safe_account(account: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use std::collections::VecDeque;
+    use std::time::Duration;
     use tempfile::TempDir;
-    use yunxi_agent_weixin::{FakeWeixinSecretStore, SecretString, WeixinSecretStore};
+    use yunxi_agent_weixin::ilink::{GetBotQrCodeResponse, GetQrCodeStatusResponse, QrCodeStatus};
+    use yunxi_agent_weixin::{
+        FakeWeixinSecretStore, SecretString, WeixinLoginFailure, WeixinSecretStore,
+    };
+
+    const RAW_ACCOUNT: &str = "private-account-name";
+    const QR_PAYLOAD: &str = "https://qr.example/secret-payload";
+    const BOT_TOKEN: &str = "bot-token-secret";
+    const BOT_ID: &str = "bot-id-secret";
+    const USER_ID: &str = "user-id-secret";
+
+    struct ScriptedTransport {
+        statuses: VecDeque<GetQrCodeStatusResponse>,
+        fetches: usize,
+        polls: usize,
+    }
+
+    impl ScriptedTransport {
+        fn new(statuses: impl IntoIterator<Item = QrCodeStatus>) -> Self {
+            Self {
+                statuses: statuses
+                    .into_iter()
+                    .map(|status| GetQrCodeStatusResponse {
+                        status,
+                        bot_token: (status == QrCodeStatus::Confirmed)
+                            .then(|| SecretString::new(BOT_TOKEN)),
+                        ilink_bot_id: Some(SecretString::new(BOT_ID)),
+                        baseurl: Some(PRODUCTION_ILINK_ENDPOINT.to_string()),
+                        ilink_user_id: Some(SecretString::new(USER_ID)),
+                        redirect_host: None,
+                    })
+                    .collect(),
+                fetches: 0,
+                polls: 0,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl WeixinLoginTransport for ScriptedTransport {
+        async fn fetch_qr_code(
+            &mut self,
+        ) -> Result<GetBotQrCodeResponse, yunxi_agent_weixin::WeixinApiError> {
+            self.fetches += 1;
+            Ok(GetBotQrCodeResponse {
+                qrcode: SecretString::new(QR_PAYLOAD),
+                qrcode_img_content: SecretString::new("\u{1b}[31mQR\u{1b}[0m"),
+            })
+        }
+
+        async fn poll_qr_status(
+            &mut self,
+            _qrcode: &SecretString,
+            _verify_code: Option<&SecretString>,
+        ) -> Result<GetQrCodeStatusResponse, yunxi_agent_weixin::WeixinApiError> {
+            self.polls += 1;
+            Ok(self
+                .statuses
+                .pop_front()
+                .unwrap_or(GetQrCodeStatusResponse {
+                    status: QrCodeStatus::Wait,
+                    bot_token: None,
+                    ilink_bot_id: None,
+                    baseurl: None,
+                    ilink_user_id: None,
+                    redirect_host: None,
+                }))
+        }
+    }
+
+    fn fast_machine() -> WeixinLoginStateMachine {
+        WeixinLoginStateMachine::new(
+            WeixinLoginOptions::bounded(Duration::from_millis(1), Duration::from_millis(100))
+                .expect("valid test options"),
+        )
+    }
+
+    fn assert_secret_free(text: &str) {
+        for forbidden in [
+            RAW_ACCOUNT,
+            QR_PAYLOAD,
+            BOT_TOKEN,
+            BOT_ID,
+            USER_ID,
+            "data-key",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "login output leaked {forbidden:?}: {text}"
+            );
+        }
+    }
+
+    fn status_report_with_store<S: WeixinSecretStore>(
+        store: &S,
+        account_store: &WeixinAccountStore,
+        account_id: &WeixinAccountId,
+    ) -> Result<serde_json::Value> {
+        let Some(record) = account_store.load(account_id)? else {
+            return Ok(json!({
+                "channel": "weixin",
+                "version": env!("CARGO_PKG_VERSION"),
+                "account": account_id.to_string(),
+                "state": WeixinConnectionState::NotConfigured,
+                "endpoint": PRODUCTION_ILINK_ENDPOINT,
+                "credential_state": "not_configured",
+                "secrets_included": false,
+            }));
+        };
+        Ok(json!({
+            "channel": "weixin",
+            "version": env!("CARGO_PKG_VERSION"),
+            "account": record.account_id,
+            "state": record.connection_state,
+            "endpoint": record.endpoint,
+            "credential_backend": record.credential.backend,
+            "credential_reference_present": true,
+            "credential_state": credential_state(store, account_id),
+            "metadata_path": account_store.path_for(account_id),
+            "secrets_included": false,
+        }))
+    }
 
     fn outcome() -> WeixinLoginOutcome {
         WeixinLoginOutcome {
-            bot_token: SecretString::new("bot-token-secret"),
-            ilink_bot_id: Some(SecretString::new("bot-id-secret")),
-            ilink_user_id: Some(SecretString::new("user-id-secret")),
+            bot_token: SecretString::new(BOT_TOKEN),
+            ilink_bot_id: Some(SecretString::new(BOT_ID)),
+            ilink_user_id: Some(SecretString::new(USER_ID)),
             base_url: Some(PRODUCTION_ILINK_ENDPOINT.to_string()),
         }
+    }
+
+    #[tokio::test]
+    async fn cli_login_helper_mock_confirmed_persists_and_stays_secret_free() {
+        let workspace = TempDir::new().expect("workspace");
+        let account = WeixinAccountId::new(RAW_ACCOUNT);
+        let account_store = WeixinAccountStore::new(workspace.path());
+        let store = FakeWeixinSecretStore::new();
+        let mut transport = ScriptedTransport::new([
+            QrCodeStatus::Wait,
+            QrCodeStatus::Scanned,
+            QrCodeStatus::Confirmed,
+        ]);
+        let mut output = Vec::new();
+
+        let credential = run_login_with_dependencies(
+            RAW_ACCOUNT,
+            workspace.path(),
+            false,
+            &mut transport,
+            &store,
+            &account_store,
+            &WeixinLoginCancellation::default(),
+            fast_machine(),
+            &mut output,
+        )
+        .await
+        .expect("mock login should succeed");
+
+        assert_eq!(transport.fetches, 1);
+        assert_eq!(transport.polls, 3);
+        assert!(store.get_token(&account).is_ok());
+        assert!(store.get_data_key(&account).is_ok());
+        let record = account_store
+            .load(&account)
+            .expect("metadata read")
+            .expect("metadata written");
+        assert_eq!(record.credential, credential);
+        let text = String::from_utf8(output).expect("utf8 output");
+        assert!(text.contains("weixin login succeeded"));
+        assert!(text.contains("waiting for scan"));
+        assert!(text.contains("scanned; waiting for confirmation"));
+        assert_secret_free(&text);
+
+        let status = status_report_with_store(&store, &account_store, &account)
+            .expect("status report with fake store");
+        assert_eq!(status["credential_state"].as_str(), Some("present"));
+        assert_eq!(status["secrets_included"].as_bool(), Some(false));
+        assert_secret_free(&status.to_string());
+    }
+
+    #[tokio::test]
+    async fn cli_login_helper_mock_expired_writes_no_credentials_or_metadata() {
+        let workspace = TempDir::new().expect("workspace");
+        let account = WeixinAccountId::new(RAW_ACCOUNT);
+        let account_store = WeixinAccountStore::new(workspace.path());
+        let store = FakeWeixinSecretStore::new();
+        let mut transport = ScriptedTransport::new([QrCodeStatus::Expired]);
+        let mut output = Vec::new();
+
+        let error = run_login_with_dependencies(
+            RAW_ACCOUNT,
+            workspace.path(),
+            false,
+            &mut transport,
+            &store,
+            &account_store,
+            &WeixinLoginCancellation::default(),
+            fast_machine(),
+            &mut output,
+        )
+        .await
+        .expect_err("expired login must fail");
+
+        assert!(error.to_string().contains("weixin QR login failed"));
+        assert_eq!(
+            store.get_token(&account),
+            Err(WeixinSecretStoreError::NotFound)
+        );
+        assert_eq!(
+            store.get_data_key(&account),
+            Err(WeixinSecretStoreError::NotFound)
+        );
+        assert!(
+            account_store
+                .load(&account)
+                .expect("metadata read")
+                .is_none()
+        );
+        assert_secret_free(&String::from_utf8(output).expect("utf8 output"));
+    }
+
+    #[tokio::test]
+    async fn cli_login_helper_mock_cancelled_writes_no_credentials_or_metadata() {
+        let workspace = TempDir::new().expect("workspace");
+        let account = WeixinAccountId::new(RAW_ACCOUNT);
+        let account_store = WeixinAccountStore::new(workspace.path());
+        let store = FakeWeixinSecretStore::new();
+        let mut transport = ScriptedTransport::new([QrCodeStatus::Confirmed]);
+        let cancellation = WeixinLoginCancellation::default();
+        cancellation.cancel();
+        let mut output = Vec::new();
+
+        let error = run_login_with_dependencies(
+            RAW_ACCOUNT,
+            workspace.path(),
+            false,
+            &mut transport,
+            &store,
+            &account_store,
+            &cancellation,
+            fast_machine(),
+            &mut output,
+        )
+        .await
+        .expect_err("cancelled login must fail");
+
+        assert!(matches!(
+            error.downcast_ref::<WeixinLoginFailure>(),
+            Some(WeixinLoginFailure::Cancelled)
+        ));
+        assert_eq!(transport.fetches, 0);
+        assert_eq!(
+            store.get_token(&account),
+            Err(WeixinSecretStoreError::NotFound)
+        );
+        assert!(
+            account_store
+                .load(&account)
+                .expect("metadata read")
+                .is_none()
+        );
+        let text = String::from_utf8(output).expect("utf8 output");
+        assert!(text.contains("cancelled"));
+        assert_secret_free(&text);
+    }
+
+    #[tokio::test]
+    async fn cli_login_helper_mock_credential_unavailable_writes_no_metadata() {
+        let workspace = TempDir::new().expect("workspace");
+        let account = WeixinAccountId::new(RAW_ACCOUNT);
+        let account_store = WeixinAccountStore::new(workspace.path());
+        let store = FakeWeixinSecretStore::unavailable();
+        let mut transport = ScriptedTransport::new([QrCodeStatus::Confirmed]);
+        let mut output = Vec::new();
+
+        let error = run_login_with_dependencies(
+            RAW_ACCOUNT,
+            workspace.path(),
+            false,
+            &mut transport,
+            &store,
+            &account_store,
+            &WeixinLoginCancellation::default(),
+            fast_machine(),
+            &mut output,
+        )
+        .await
+        .expect_err("unavailable credential store must fail");
+
+        assert!(error.to_string().contains("secure data-key storage"));
+        assert!(
+            account_store
+                .load(&account)
+                .expect("metadata read")
+                .is_none()
+        );
+        assert!(
+            !String::from_utf8(output)
+                .expect("utf8 output")
+                .contains("login succeeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_login_helper_mock_metadata_failure_rolls_back_credentials() {
+        let workspace = TempDir::new().expect("workspace");
+        let blocker = workspace.path().join("not-a-directory");
+        std::fs::write(&blocker, "metadata writes should fail below this file")
+            .expect("blocker file");
+        let account = WeixinAccountId::new(RAW_ACCOUNT);
+        let account_store = WeixinAccountStore::new(&blocker);
+        let store = FakeWeixinSecretStore::new();
+        let mut transport = ScriptedTransport::new([QrCodeStatus::Confirmed]);
+        let mut output = Vec::new();
+
+        let error = run_login_with_dependencies(
+            RAW_ACCOUNT,
+            &blocker,
+            false,
+            &mut transport,
+            &store,
+            &account_store,
+            &WeixinLoginCancellation::default(),
+            fast_machine(),
+            &mut output,
+        )
+        .await
+        .expect_err("metadata write failure must fail login");
+
+        assert!(error.to_string().contains("account metadata failed"));
+        assert_eq!(
+            store.get_token(&account),
+            Err(WeixinSecretStoreError::NotFound)
+        );
+        assert_eq!(
+            store.get_data_key(&account),
+            Err(WeixinSecretStoreError::NotFound)
+        );
+        assert!(
+            !String::from_utf8(output)
+                .expect("utf8 output")
+                .contains("login succeeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn cli_login_helper_rejects_json_without_network_or_output() {
+        let workspace = TempDir::new().expect("workspace");
+        let account_store = WeixinAccountStore::new(workspace.path());
+        let store = FakeWeixinSecretStore::new();
+        let mut transport = ScriptedTransport::new([QrCodeStatus::Confirmed]);
+        let mut output = Vec::new();
+
+        let error = run_login_with_dependencies(
+            RAW_ACCOUNT,
+            workspace.path(),
+            true,
+            &mut transport,
+            &store,
+            &account_store,
+            &WeixinLoginCancellation::default(),
+            fast_machine(),
+            &mut output,
+        )
+        .await
+        .expect_err("json login must be rejected before QR fetch");
+
+        assert!(error.to_string().contains("requires interactive output"));
+        assert_eq!(transport.fetches, 0);
+        assert!(output.is_empty());
     }
 
     #[test]
     fn login_persistence_writes_only_safe_metadata_after_secure_secret_store() {
         let workspace = TempDir::new().expect("workspace");
-        let account = WeixinAccountId::new("private-account-name");
+        let account = WeixinAccountId::new(RAW_ACCOUNT);
         let store = FakeWeixinSecretStore::new();
-        let credential = persist_login(&store, &account, outcome(), workspace.path())
-            .expect("fake secure login persistence");
-        let record = WeixinAccountStore::new(workspace.path())
+        let account_store = WeixinAccountStore::new(workspace.path());
+        let credential = persist_login(
+            &store,
+            &account,
+            outcome(),
+            &account_store,
+            workspace.path(),
+        )
+        .expect("fake secure login persistence");
+        let record = account_store
             .load(&account)
             .expect("metadata read")
             .expect("metadata record");
         let json = serde_json::to_string(&record).expect("metadata JSON");
         assert_eq!(record.credential, credential);
-        assert!(!json.contains("bot-token-secret"));
-        assert!(!json.contains("user-id-secret"));
+        assert!(!json.contains(BOT_TOKEN));
+        assert!(!json.contains(USER_ID));
         assert!(store.get_token(&account).is_ok());
         assert!(store.get_data_key(&account).is_ok());
     }
@@ -504,15 +951,22 @@ mod tests {
     #[test]
     fn login_persistence_rejects_unavailable_secure_store_without_metadata() {
         let workspace = TempDir::new().expect("workspace");
-        let account = WeixinAccountId::new("private-account-name");
+        let account = WeixinAccountId::new(RAW_ACCOUNT);
         let store = FakeWeixinSecretStore::unavailable();
-        let error = persist_login(&store, &account, outcome(), workspace.path())
-            .expect_err("secure store failure must stop login");
+        let account_store = WeixinAccountStore::new(workspace.path());
+        let error = persist_login(
+            &store,
+            &account,
+            outcome(),
+            &account_store,
+            workspace.path(),
+        )
+        .expect_err("secure store failure must stop login");
         let text = error.to_string();
         assert!(text.contains("secure data-key storage"));
-        assert!(!text.contains("bot-token-secret"));
+        assert!(!text.contains(BOT_TOKEN));
         assert!(
-            WeixinAccountStore::new(workspace.path())
+            account_store
                 .load(&account)
                 .expect("metadata read")
                 .is_none()

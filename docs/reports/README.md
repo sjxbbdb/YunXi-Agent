@@ -4,6 +4,8 @@
 
 ## 当前入口
 
+- [v2.1.3 微信二维码登录审核报告](audits/2026-07-23-125451-yunxi-agent-v2-1-3-weixin-qr-login-audit-report.md)
+- [v2.1.3-hotfix.1 微信登录闭环整改开发报告](development/2026-07-27-165954-yunxi-agent-v2-1-3-hotfix-1-weixin-login-verification-remediation-development-report.md)：CLI Mock 与 Windows 真实扫码整改证据。
 - [v2.1.2 微信骨架审核报告](audits/2026-07-22-211826-yunxi-agent-v2-1-2-weixin-skeleton-audit-report.md)
 - [v2.1.3 微信二维码登录与系统安全凭证存储开发报告](development/2026-07-22-215224-yunxi-agent-v2-1-3-weixin-qr-login-secret-store-development-report.md)
 - [v2.1.1-hotfix.1 独立复审审核报告](audits/2026-07-22-164039-yunxi-agent-v2-1-1-hotfix-1-independent-reaudit-report.md)

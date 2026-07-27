@@ -38,6 +38,7 @@ yunxi-agent-tui = { path = "../yunxi-agent-tui" }
 yunxi-agent-weixin = { path = "../yunxi-agent-weixin" }
 
 [dev-dependencies]
+async-trait.workspace = true
 assert_cmd.workspace = true
 predicates.workspace = true
 serde_json.workspace = true

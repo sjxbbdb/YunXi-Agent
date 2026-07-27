@@ -1,8 +1,8 @@
 # YunXi Agent 微信接入边界
 
-## v2.1.4 能力
+## v2.1.4-hotfix.1 能力
 
-v2.1.4 在 v2.1.3-hotfix.1 QR 登录和系统凭证边界上新增状态持久化、诊断和安全账户生命周期：
+v2.1.4-hotfix.1 在 v2.1.4 状态持久化、诊断和安全账户生命周期基础上，补齐旧登录账户 metadata 到 `WeixinStateStore` 的安全初始化：
 
 - yunxi weixin login --account <name> 获取二维码、显示安全终端文本、轮询等待/扫码/确认，并明确处理过期、取消、超时、redirect、验证码和验证码阻断。
 - 登录确认后，token 和数据加密密钥只写入 Windows Credential Manager；系统凭证不可用、权限失败或写入失败时登录失败，不降级到明文文件。
@@ -14,6 +14,10 @@ v2.1.4 在 v2.1.3-hotfix.1 QR 登录和系统凭证边界上新增状态持久�
 - `crates/yunxi-agent-storage` 提供独立版本化 `WeixinStateStore`，状态文件使用同目录临时文件、文件级 sync 和同卷替换更新；启动诊断会识别未完成临时文件候选，但不会把半成品当作有效状态。
 - 状态 store 记录脱敏账户、workspace hash、官方 endpoint、Credential Manager 引用、游标占位、回执、会话绑定占位、reply context 引用、待投递元数据、pair request 和加密 pending inbound 引用。
 - `status --json` 与 `doctor --json` 增加 state schema、account lock state、pending inbound/delivery count、pair request count 和最后一次脱敏错误；不输出完整本地路径。
+- 已有旧账户 metadata 且 state 文件缺失时，`status --json` 和 `doctor --json` 会用旧 metadata 中的非机密字段与凭证引用一次性创建当前 schema 的最小状态；首次 JSON 输出 `state_store_migration="initialized_from_legacy_metadata"`，后续新进程重读输出 `state_store_migration="already_current"`。
+- 初始化不会读取、复制或输出 token、二维码 payload、原始 user ID、原始 peer ID、data key、context token 或系统凭证明文。
+- 已存在当前 state 时不会覆盖 pair、pending inbound、delivery、cursor、last error 等运行状态；遇到未来 schema 或损坏 state 时拒绝覆盖并返回脱敏诊断；遇到损坏 metadata 时 `doctor --json` 返回结构化安全错误且不创建错误 state。
+- 凭证引用存在但系统凭证不可用时，state 仍可由非机密 metadata 初始化；`doctor --json` 会标记凭证不可用或缺失，不写明文回退。
 - `pair list|approve|deny` 只处理本地状态 store 中的不透明 request ID、脱敏账户、peer hash、过期时间和状态，不执行远程审批。
 - `logout --confirm` 遇到活动账户锁会拒绝；服务停止后只删除指定账户微信凭证引用、微信状态和微信 metadata，不删除 YunXi session、persona memory、工作区文件、其他账户或历史报告。
 
@@ -41,7 +45,7 @@ weixin serve 仍只做 workspace/Provider、state store、账户锁和加密 pen
 5. 运行 `target\release\yunxi.exe weixin doctor --account <test-name> --json`，确认系统凭证引用可读且 `secrets_included=false`。
 6. 重新打开 shell 或重新执行 release 二进制，再次读取 status/doctor，确认凭证引用仍可诊断。
 
-`v2.1.4` 保留上述真实扫码登录前置能力，并新增状态 store 诊断。后续复审材料仍只能记录脱敏状态，不得保存二维码、token、原始账号、联系人、消息正文、context token、data key 或系统凭证明文。
+`v2.1.4-hotfix.1` 保留上述真实扫码登录前置能力、v2.1.4 状态 store 诊断，并新增旧账户 metadata 懒初始化。后续复审材料仍只能记录脱敏状态，不得保存二维码、token、原始账号、联系人、消息正文、context token、data key 或系统凭证明文。
 
 ## 命令
 

@@ -9,6 +9,28 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use yunxi_agent_storage::{FileWeixinStateStore, WeixinStateSnapshot, WeixinStateStore};
+use yunxi_agent_weixin::{
+    PRODUCTION_ILINK_ENDPOINT, WeixinAccountId, WeixinAccountRecord, WeixinAccountStore,
+    WeixinCredentialReference,
+};
+
+const PRIVATE_WEIXIN_ACCOUNT: &str = "private-account-name";
+
+fn write_legacy_weixin_metadata(workspace: &TempDir) -> (WeixinAccountId, String) {
+    let account_id = WeixinAccountId::new(PRIVATE_WEIXIN_ACCOUNT);
+    let credential = WeixinCredentialReference {
+        backend: "fake-secure-store".to_string(),
+        token_target: "target-token-ref".to_string(),
+        data_key_target: "target-key-ref".to_string(),
+    };
+    let record = WeixinAccountRecord::new(&account_id, credential, workspace.path(), 1000)
+        .expect("legacy metadata record");
+    let account_hash = record.account_id.clone();
+    WeixinAccountStore::new(workspace.path())
+        .save(&account_id, &record)
+        .expect("legacy metadata save");
+    (account_id, account_hash)
+}
 
 fn spawn_sequence_http_server(responses: Vec<(u16, String)>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
@@ -101,7 +123,7 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.4"));
+        .stdout(predicate::str::contains("yunxi 2.1.4-hotfix.1"));
 }
 
 #[test]
@@ -111,11 +133,11 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.4"));
+        .stdout(predicate::str::contains("yunxi 2.1.4-hotfix.1"));
 }
 
 #[test]
-fn cli_weixin_help_covers_the_v214_login_command_surface() {
+fn cli_weixin_help_covers_the_v214_hotfix1_login_command_surface() {
     for args in [
         vec!["weixin", "--help"],
         vec!["weixin", "login", "--help"],
@@ -177,6 +199,221 @@ fn cli_weixin_status_doctor_and_pair_list_are_offline_and_secret_free() {
         assert!(!text.contains("bot_token"));
         assert!(!text.contains("context_token"));
     }
+}
+
+#[test]
+fn cli_weixin_status_initializes_legacy_metadata_state_store_idempotently() {
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+    let (_account_id, account_hash) = write_legacy_weixin_metadata(&workspace);
+    let store = FileWeixinStateStore::for_workspace(workspace.path());
+    assert!(
+        store
+            .load(&account_hash)
+            .expect("state read before migration")
+            .is_none()
+    );
+
+    let mut status = Command::cargo_bin("yunxi").expect("binary should build");
+    let output = status
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "status",
+            "--account",
+            PRIVATE_WEIXIN_ACCOUNT,
+        ])
+        .output()
+        .expect("status json");
+    assert!(output.status.success());
+    let status_json: Value = serde_json::from_slice(&output.stdout).expect("status json");
+    assert_eq!(status_json["account"].as_str(), Some(account_hash.as_str()));
+    assert_eq!(status_json["state_store_configured"].as_bool(), Some(true));
+    assert_eq!(status_json["state_store_schema_version"].as_u64(), Some(1));
+    assert_eq!(
+        status_json["state_store_migration"].as_str(),
+        Some("initialized_from_legacy_metadata")
+    );
+    assert_eq!(status_json["secrets_included"].as_bool(), Some(false));
+    let status_text = String::from_utf8_lossy(&output.stdout);
+    assert!(!status_text.contains(PRIVATE_WEIXIN_ACCOUNT));
+    assert!(!status_text.contains("target-token-ref"));
+    assert!(!status_text.contains("target-key-ref"));
+
+    let state = store
+        .load(&account_hash)
+        .expect("state read after migration")
+        .expect("state initialized");
+    assert_eq!(state.account_id, account_hash);
+    assert_eq!(state.endpoint, PRODUCTION_ILINK_ENDPOINT);
+    assert_eq!(
+        state.credential.as_ref().map(|c| c.backend.as_str()),
+        Some("fake-secure-store")
+    );
+
+    let pair = store
+        .add_pair_request(&account_hash, "peer#00000001", u64::MAX, 2000)
+        .expect("pair request survives idempotent status");
+    let mut status_again = Command::cargo_bin("yunxi").expect("binary should build");
+    let second_output = status_again
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "status",
+            "--account",
+            PRIVATE_WEIXIN_ACCOUNT,
+        ])
+        .output()
+        .expect("second status json");
+    assert!(second_output.status.success());
+    let second_json: Value = serde_json::from_slice(&second_output.stdout).expect("second status");
+    assert_eq!(
+        second_json["state_store_migration"].as_str(),
+        Some("already_current")
+    );
+    assert_eq!(second_json["pair_request_count"].as_u64(), Some(1));
+    let preserved = store
+        .load(&account_hash)
+        .expect("state read after second status")
+        .expect("state remains");
+    assert_eq!(preserved.pair_requests.len(), 1);
+    assert_eq!(preserved.pair_requests[0].request_id, pair.request_id);
+}
+
+#[test]
+fn cli_weixin_doctor_initializes_legacy_metadata_state_store() {
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+    let (_account_id, account_hash) = write_legacy_weixin_metadata(&workspace);
+
+    let mut doctor = Command::cargo_bin("yunxi").expect("binary should build");
+    let output = doctor
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "doctor",
+            "--account",
+            PRIVATE_WEIXIN_ACCOUNT,
+        ])
+        .output()
+        .expect("doctor json");
+    assert!(output.status.success());
+    let doctor_json: Value = serde_json::from_slice(&output.stdout).expect("doctor json");
+    assert_eq!(
+        doctor_json["checks"]["state_store"].as_str(),
+        Some("current")
+    );
+    assert_eq!(
+        doctor_json["checks"]["state_store_migration"].as_str(),
+        Some("initialized_from_legacy_metadata")
+    );
+    assert_eq!(
+        doctor_json["checks"]["state_store_schema_current"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(doctor_json["state_store_schema_version"].as_u64(), Some(1));
+    assert_eq!(doctor_json["secrets_included"].as_bool(), Some(false));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(!text.contains(PRIVATE_WEIXIN_ACCOUNT));
+    assert!(!text.contains("target-token-ref"));
+    assert!(!text.contains("target-key-ref"));
+
+    assert!(
+        FileWeixinStateStore::for_workspace(workspace.path())
+            .load(&account_hash)
+            .expect("state read")
+            .is_some()
+    );
+}
+
+#[test]
+fn cli_weixin_status_refuses_future_state_schema_without_overwrite() {
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+    let (_account_id, account_hash) = write_legacy_weixin_metadata(&workspace);
+    let store = FileWeixinStateStore::for_workspace(workspace.path());
+    let state_path = store.state_path_for(&account_hash);
+    fs::create_dir_all(state_path.parent().expect("state parent")).expect("state dir");
+    fs::write(
+        &state_path,
+        r#"{"schema_version":999,"account_id":"account#future"}"#,
+    )
+    .expect("future state");
+
+    let mut status = Command::cargo_bin("yunxi").expect("binary should build");
+    status
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "status",
+            "--account",
+            PRIVATE_WEIXIN_ACCOUNT,
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("newer than supported"))
+        .stderr(predicate::str::contains(PRIVATE_WEIXIN_ACCOUNT).not());
+    let unchanged = fs::read_to_string(&state_path).expect("state unchanged");
+    assert!(unchanged.contains("\"schema_version\":999"));
+}
+
+#[test]
+fn cli_weixin_doctor_reports_damaged_metadata_without_state_creation() {
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+    let account_id = WeixinAccountId::new(PRIVATE_WEIXIN_ACCOUNT);
+    let account_store = WeixinAccountStore::new(workspace.path());
+    fs::create_dir_all(account_store.metadata_directory()).expect("metadata dir");
+    fs::write(account_store.path_for(&account_id), "{not-json").expect("damaged metadata");
+
+    let mut doctor = Command::cargo_bin("yunxi").expect("binary should build");
+    let output = doctor
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "doctor",
+            "--account",
+            PRIVATE_WEIXIN_ACCOUNT,
+        ])
+        .output()
+        .expect("doctor json");
+    assert!(output.status.success());
+    let doctor_json: Value = serde_json::from_slice(&output.stdout).expect("doctor json");
+    assert_eq!(
+        doctor_json["checks"]["account_metadata"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        doctor_json["checks"]["account_metadata_error"].as_str(),
+        Some("metadata_invalid_json")
+    );
+    assert_eq!(
+        doctor_json["checks"]["state_store_migration"].as_str(),
+        Some("not_attempted_metadata_error")
+    );
+    assert_eq!(
+        doctor_json["checks"]["state_store"].as_str(),
+        Some("not_checked")
+    );
+    assert_eq!(doctor_json["secrets_included"].as_bool(), Some(false));
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(!text.contains(PRIVATE_WEIXIN_ACCOUNT));
+    assert!(
+        FileWeixinStateStore::for_workspace(workspace.path())
+            .load(&account_id.to_string())
+            .expect("state read")
+            .is_none()
+    );
 }
 
 #[test]
@@ -354,7 +591,9 @@ fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not implemented in v2.1.4"))
+        .stderr(predicate::str::contains(
+            "not implemented in v2.1.4-hotfix.1",
+        ))
         .stderr(predicate::str::contains("private-account-name").not());
 
     for args in [
@@ -675,7 +914,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.4 interactive CLI",
+            "YunXi Agent v2.1.4-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -834,7 +1073,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.4 interactive CLI",
+            "YunXi Agent v2.1.4-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -854,7 +1093,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.4 interactive CLI",
+            "YunXi Agent v2.1.4-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

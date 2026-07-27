@@ -6,7 +6,9 @@ mod login;
 mod redaction;
 mod secret_store;
 
-pub use account_store::{WEIXIN_ACCOUNT_SCHEMA_VERSION, WeixinAccountRecord, WeixinAccountStore};
+pub use account_store::{
+    WEIXIN_ACCOUNT_SCHEMA_VERSION, WeixinAccountRecord, WeixinAccountStore, WeixinAccountStoreError,
+};
 pub use domain::{
     WeixinAccountId, WeixinAccountMetadata, WeixinConnectionState, WeixinConversationKey,
     WeixinMessageId, WeixinPeerId,

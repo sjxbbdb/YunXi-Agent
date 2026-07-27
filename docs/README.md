@@ -1,6 +1,6 @@
 # YunXi Agent 文档索引
 
-本页是 `docs/` 的稳定导航入口。`v2.1.4` 在 v2.1.3-hotfix.1 二维码登录和系统凭证边界基础上，新增独立版本化微信状态 store、原子写入、账户锁诊断、配对请求本地生命周期、pending 计数和安全 logout；消息服务仍未开放，不接收/发送微信消息，不启动长轮询，不绑定 Runtime。
+本页是 `docs/` 的稳定导航入口。`v2.1.4-hotfix.1` 保留 v2.1.4 独立版本化微信状态 store、原子写入、账户锁诊断、配对请求本地生命周期、pending 计数和安全 logout，并补齐旧登录 metadata 到 `WeixinStateStore` 的安全幂等初始化；消息服务仍未开放，不接收/发送微信消息，不启动长轮询，不绑定 Runtime。
 
 ## 架构与运行边界
 
@@ -10,7 +10,7 @@
 - [人格与记忆](persona-memory.md)：人格、Memory Schema、召回、隐私和审核边界。
 - [TUI 表现与终端生命周期](tui-presentation.md)：布局、流式输出、焦点和恢复约束。
 - [Sandbox 协议事件](protocol/sandbox-events.md)：执行策略与协议事件说明。
-- [微信接入边界](weixin.md)：v2.1.4 QR 登录、安全凭证引用、状态持久化、账户锁、pair 生命周期、logout 安全边界和明确未实现能力。
+- [微信接入边界](weixin.md)：v2.1.4-hotfix.1 QR 登录、安全凭证引用、状态持久化、旧 metadata 初始化、账户锁、pair 生命周期、logout 安全边界和明确未实现能力。
 
 ## 规格与路线图
 
@@ -21,6 +21,8 @@
 ## 报告与证据
 
 - [报告索引与归档规则](reports/README.md)：报告命名、分类和历史兼容规则。
+- [v2.1.4-hotfix.1 微信旧账户状态迁移整改开发报告](reports/development/2026-07-27-203440-yunxi-agent-v2-1-4-hotfix-1-weixin-legacy-state-migration-development-report.md)：旧登录 metadata 到 `WeixinStateStore` 的幂等初始化整改、验证和发布门禁。
+- [v2.1.4 微信状态生命周期审核报告](reports/audits/2026-07-27-201143-yunxi-agent-v2-1-4-weixin-state-lifecycle-audit-report.md)：确认 v2.1.4 审核不通过，要求先完成 hotfix。
 - [v2.1.4 微信状态持久化、诊断与账户生命周期开发报告](reports/development/2026-07-27-183050-yunxi-agent-v2-1-4-weixin-state-store-diagnostics-lifecycle-development-report.md)：状态 store、锁、pair、logout、安全清理和发布门禁记录。
 - [v2.1.3-hotfix.1 微信登录复审核报告](reports/audits/2026-07-27-181754-yunxi-agent-v2-1-3-hotfix-1-weixin-login-audit-report.md)：确认登录整改通过，允许进入 v2.1.4。
 - [v2.1.3-hotfix.1 微信登录闭环整改开发报告](reports/development/2026-07-27-165954-yunxi-agent-v2-1-3-hotfix-1-weixin-login-verification-remediation-development-report.md)：本阶段整改依据、CLI Mock 验收、真实扫码验证结果和发布门禁。

@@ -154,6 +154,28 @@
 
 署名：开发者
 
+## 2026-07-27 18:08:59 +08:00
+
+工作目标：记录 `v2.1.3-hotfix.1` 发布提交、annotated tag、GitHub CLI/API key 非强制推送和历史 tag 不变性结果，并完成项目正本到桌面分发文件的最终同步准备。
+
+执行流程：
+1. 发布前本地 `v2.1.3-hotfix.1` tag 不存在，本地 tag 总数为 54；远程 master 为 `e17e2027586a4695b0464636f7f05a653839cb6a`，远程 tag 总数为 54，远程 `v2.1.3-hotfix.1` 不存在。
+2. 因本地 v2.1.3 发布历史与远程 master 存在同内容不同 SHA 的分叉，使用 staged tree 创建双父发布提交，父提交为本地 `f36387069c1d63078812b2ae85c9a5c8f39ef2d3` 和远程 `e17e2027586a4695b0464636f7f05a653839cb6a`，确保远程 master 可快进推进且不需要 force。
+3. 以 `开发者 <developer@yunxi-agent.local>` 创建 release commit `7518dfb8d8d8e069906c3bcbafcf36765b3e8808`，tree 为 `4ee2fa85cdd8cb2c6505d2ae7028106620703433`。
+4. 以 `开发者 <developer@yunxi-agent.local>` 创建新的 annotated tag `v2.1.3-hotfix.1`，本地 tag object 为 `fe1cce2f95099c1c2cddbfe4a3d993b4bd75b310`，target 为 `7518dfb8d8d8e069906c3bcbafcf36765b3e8808`。
+5. 使用桌面 API key 仅作为当前 PowerShell 进程环境变量调用 GitHub CLI 查询远程 refs；第一次 git smart-HTTP 使用 bearer header 认证失败，未写入远程 refs。随后改用 Basic header 形式并执行非强制 atomic push，token 未输出、未写入 Git 配置、未持久化。
+6. 推送后重新通过 GitHub CLI 读取远程 master 和全部 tag，并比较推送前后的历史 tag object SHA。
+
+发布结果：atomic push exit code 0；远程 master 已从 `e17e2027586a4695b0464636f7f05a653839cb6a` 更新为 `7518dfb8d8d8e069906c3bcbafcf36765b3e8808`；远程 `v2.1.3-hotfix.1` tag object 为 `fe1cce2f95099c1c2cddbfe4a3d993b4bd75b310`，指向发布提交 `7518dfb8d8d8e069906c3bcbafcf36765b3e8808`。远程 tag 总数从 54 增至 55；历史 54 个 tag object SHA 变化数为 0。未使用 force，未移动、删除或覆盖 `v2.1.3`、`v2.1.2` 或任何历史 tag。
+
+最终版本状态：`v2.1.3-hotfix.1` 已完成代码整改、CLI Mock 验收、Windows 真实扫码验证、release commit、new annotated tag 和 GitHub 推送。该版本仍只代表登录与安全凭证引用链路完成，不代表复审已通过，不代表进入 `v2.1.4`，不代表微信消息接收、发送、长轮询、Runtime 绑定、远程审批或群聊完成。
+
+清理与安全状态：发布阶段未执行删除、递归清理、移动、重命名、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户目录清理。`.yunxi\weixin\account-933b5bde.json` 和 Windows Credential Manager 中的 `default` 账户凭证作为真实登录验收状态保留；`D:\YunXi Agent\target`、`D:\YunXi Agent\.tmp\v213-hotfix1-status-doctor`、`D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-174525.status.json`、`D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-175309.status.json`、`D:\YunXi Agent\.tmp\v213-hotfix1-real-login-20260727-175729.status.json` 是清理候选，未取得明确确认前不得删除。
+
+提交、推送和 Git tag 状态：发布提交和 annotated tag 已推送。本条发布结果作为 docs-only 收口将只推进 master，不创建、不移动、不删除、不覆盖任何 tag。
+
+署名：开发者
+
 ## 2026-07-23 11:00:41 +08:00
 
 工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-22-215224-yunxi-agent-v2-1-3-weixin-qr-login-secret-store-development-report.md`，完成 `v2.1.3` 微信二维码登录状态机、Windows 系统安全凭证存储、脱敏账户元数据、CLI 接入、统一验证和发布前精准清理；保持“不提供微信消息闭环”的版本边界。

@@ -79,6 +79,31 @@
 
 署名：开发者
 
+## 2026-07-27 21:47:04 +08:00
+
+工作目标：完成 `v2.1.4-hotfix.1` 发布后收口记录，确认 release commit、annotated tag、GitHub 推送和历史 tag 状态，并保持 `v2.1.4-hotfix.1` tag 不移动。
+
+执行流程：
+1. 在完成验证和清理后创建 release commit `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5`，提交信息为 `release: v2.1.4-hotfix.1 weixin legacy state migration`，作者/提交者为 `开发者 <developer@yunxi-agent.local>`。
+2. 创建新的 annotated tag `v2.1.4-hotfix.1`，tag object 为 `9285eb9c455b82c0dcdce3b4ba95e8af0ed1aed1`，target 为 `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5`，tagger 为 `开发者 <developer@yunxi-agent.local>`。
+3. 使用 GitHub CLI 读取远端 refs，确认推送前远端 master 为 `2ff35a5872a52f1bb15bff6ca929c0a5dc58eee4`、远端 `v2.1.4` tag object 为 `cc6e8ba3fd21311330e55bdcae120c907c3e3cdc`、远端 `v2.1.4-hotfix.1` 不存在、远端 tag 数为 56。
+4. 使用 API key 作为进程内凭证执行原子 push：`master` 从 `2ff35a5` 推进到 `ef06b87`，新增 tag `v2.1.4-hotfix.1`；未使用 force，未移动或覆盖历史 tag。
+5. 使用 GitHub CLI 复核远端 refs：远端 master 为 `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5`，远端 `v2.1.4-hotfix.1` tag object 为 `9285eb9c455b82c0dcdce3b4ba95e8af0ed1aed1`，target 为 `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5`，远端 tag 数为 57；远端 `v2.1.4` tag object 仍为 `cc6e8ba3fd21311330e55bdcae120c907c3e3cdc`。
+
+修改文件与路径：
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 更新项目开发报告发布状态：`D:\YunXi Agent\docs\reports\development\2026-07-27-203440-yunxi-agent-v2-1-4-hotfix-1-weixin-legacy-state-migration-development-report.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 同步桌面开发报告：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-27-203440-yunxi-agent-v2-1-4-hotfix-1-weixin-legacy-state-migration-development-report.md`
+
+验证结果：发布前验证保持有效；发布后 GitHub CLI 远端核验通过，`v2.1.4-hotfix.1` 已在 GitHub 上可见，历史 `v2.1.4` tag 未移动，远端 tag 总数为 57。GitHub API key 只放入进程环境或临时内存变量，未输出、未提交、未写入 Git 配置。
+
+清理与安全状态：已清理 `D:\YunXi Agent\target`，未清理用户目录，未清理 `.yunxi` 运行状态，未执行 `git clean`、gc、prune、force push、tag 覆盖、tag 删除或历史 tag 移动。
+
+提交、推送和 Git tag 状态：release commit `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5` 和 annotated tag `v2.1.4-hotfix.1` 已推送到 GitHub；本条发布后日志属于 docs-only 收口，需单独提交并仅推进 master，不移动 `v2.1.4-hotfix.1` tag。
+
+署名：开发者
+
 ## 2026-07-27 19:54:55 +08:00
 
 工作目标：记录 `v2.1.4` release commit、annotated tag、GitHub CLI/API key 非强制推送、历史 tag 不变性和桌面日志/报告同步收口状态。

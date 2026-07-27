@@ -251,6 +251,11 @@ ensure_weixin_state_initialized_from_metadata(
 - 已在用户确认后递归删除唯一编译中间产物目录 `D:\YunXi Agent\target`，删除前解析并校验目标路径等于项目内 `target`，删除后 `ExistsAfter=false`。
 - 未删除、移动或清空 `D:\YunXi Agent\.yunxi`、用户目录、Git 历史、tag、源码、文档、报告或 evidence；未执行 `git clean`、gc、prune、系统安装/卸载、PATH/注册表/系统配置修改或用户目录清理。
 - 真实账户验证在项目内创建/确认了 `D:\YunXi Agent\.yunxi\weixin\state\account#933b5bde.json` 非机密状态文件；该文件属于运行状态，不纳入编译产物清理目标。
-- 本记录写入时尚未创建 release commit、尚未创建 annotated `v2.1.4-hotfix.1` tag、尚未推送；历史 `v2.1.4` tag object `cc6e8ba3fd21311330e55bdcae120c907c3e3cdc` 和 target `72bbc8084313f2b2e417126c691838edf203417e` 未移动、删除或覆盖。
+- 已创建 release commit `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5`，提交信息为 `release: v2.1.4-hotfix.1 weixin legacy state migration`，作者/提交者为 `开发者 <developer@yunxi-agent.local>`。
+- 已创建新的 annotated tag `v2.1.4-hotfix.1`，tag object 为 `9285eb9c455b82c0dcdce3b4ba95e8af0ed1aed1`，target 为 `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5`，tagger 为 `开发者 <developer@yunxi-agent.local>`。
+- 已使用 GitHub CLI 和 API key 做远端预检查与发布后核验；API key 只放入进程环境或临时内存变量，未输出、未提交、未写入 Git 配置。
+- 已原子推送 `master` 和 `refs/tags/v2.1.4-hotfix.1` 到 `https://github.com/sjxbbdb/YunXi-Agent`，未使用 force。
+- 发布后远端 master 为 `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5`，远端 `v2.1.4-hotfix.1` tag object 为 `9285eb9c455b82c0dcdce3b4ba95e8af0ed1aed1`，target 为 `ef06b87a2e4cc1328d0ed1516d98e5e046d986b5`，远端 tag 数由 56 增至 57。
+- 历史 `v2.1.4` tag object `cc6e8ba3fd21311330e55bdcae120c907c3e3cdc` 和 target `72bbc8084313f2b2e417126c691838edf203417e` 未移动、删除或覆盖。
 
 署名：开发者

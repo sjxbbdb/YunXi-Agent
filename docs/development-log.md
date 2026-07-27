@@ -79,6 +79,32 @@
 
 署名：开发者
 
+## 2026-07-27 19:54:55 +08:00
+
+工作目标：记录 `v2.1.4` release commit、annotated tag、GitHub CLI/API key 非强制推送、历史 tag 不变性和桌面日志/报告同步收口状态。
+
+执行流程：
+1. 以 `开发者 <developer@yunxi-agent.local>` 创建 release commit `72bbc8084313f2b2e417126c691838edf203417e`。
+2. 创建新的 annotated `v2.1.4` tag，本地 tag object 为 `cc6e8ba3fd21311330e55bdcae120c907c3e3cdc`，目标提交为 `72bbc8084313f2b2e417126c691838edf203417e`。
+3. 使用 GitHub CLI 与桌面 API key 读取远程 master 和 tag refs，确认远程 `v2.1.4` 不存在且远程 master 是本地 release commit 的父提交。
+4. 使用同一 API key 通过 Git smart HTTP 原子推送 `master` 与 `refs/tags/v2.1.4`；API key 只进入当前进程环境，未输出、未写入 Git 配置、未持久化。
+5. 推送后再次使用 GitHub CLI/API 核验远程 master、远程 `v2.1.4` tag object、tag target、远程 tag 总数和历史 tag SHA 不变性。
+6. 将本条发布结果写回 `D:\YunXi Agent\docs\development-log.md` 和 `D:\YunXi Agent\docs\reports\development\2026-07-27-183050-yunxi-agent-v2-1-4-weixin-state-store-diagnostics-lifecycle-development-report.md`；随后同步桌面开发日志和桌面开发报告副本。
+
+修改文件与路径：
+- `D:\YunXi Agent\docs\development-log.md`
+- `D:\YunXi Agent\docs\reports\development\2026-07-27-183050-yunxi-agent-v2-1-4-weixin-state-store-diagnostics-lifecycle-development-report.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-27-183050-yunxi-agent-v2-1-4-weixin-state-store-diagnostics-lifecycle-development-report.md`
+
+发布结果：远程 master 已从 `94cd83f642bcb1e1551a22ebe96f609f05afb67f` 非强制快进到 `72bbc8084313f2b2e417126c691838edf203417e`；远程 `v2.1.4` annotated tag object 为 `cc6e8ba3fd21311330e55bdcae120c907c3e3cdc`，目标提交为 `72bbc8084313f2b2e417126c691838edf203417e`。远程 tag 总数从 55 增至 56；历史 55 个 tag object SHA 变化数为 0。未使用 force，未移动、删除或覆盖任何历史 tag。
+
+清理与安全状态：发布后未新增删除、递归清理、移动、重命名、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户目录清理。此前用户确认范围内清理的 5 个项目内路径仍为不存在；`.git`、`.yunxi`、源码、正式 evidence、Windows Credential Manager 凭证和用户目录均未触碰。
+
+提交、推送和 Git tag 状态：`v2.1.4` 已发布到 GitHub。当前追加的发布后记录属于 docs-only 收口，下一步只推进 `master`，不移动 `v2.1.4` 或任何历史 tag。
+
+署名：开发者
+
 ## 2026-07-27 18:30:50 +08:00
 
 工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-27-181754-YunXi-Agent-v2.1.3-hotfix.1-微信登录复审核报告.md` 和总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，撰写面向开发者的 `v2.1.4` 微信状态持久化、诊断与安全账户生命周期开发报告，并按固定流程保存项目内正本和桌面副本。

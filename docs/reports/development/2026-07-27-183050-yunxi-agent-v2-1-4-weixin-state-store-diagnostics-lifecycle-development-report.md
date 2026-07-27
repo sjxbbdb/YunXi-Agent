@@ -364,4 +364,21 @@ accepted -> ready -> running -> terminal
 
 发布前本地 `v2.1.4` tag 不存在，历史 tag 未移动、删除或覆盖。下一步将创建 release commit、新 annotated `v2.1.4` tag，并使用 GitHub CLI 与 API key 非强制推送。推送完成后将追加发布后 docs-only 收口记录；该收口只推进 `master`，不会移动 `v2.1.4` 或任何历史 tag。
 
+## 十一、发布后收口记录
+
+- 收口时间：2026-07-27 19:54:55 +08:00
+- 执行者署名：开发者
+
+发布结果：
+
+1. release commit 已创建：`72bbc8084313f2b2e417126c691838edf203417e`。
+2. 新 annotated `v2.1.4` tag 已创建，本地和远程 tag object 均为 `cc6e8ba3fd21311330e55bdcae120c907c3e3cdc`。
+3. `v2.1.4` tag target 为 release commit `72bbc8084313f2b2e417126c691838edf203417e`。
+4. 使用 GitHub CLI/API key 完成远程 refs 预检与推送后核验；API key 只进入当前进程环境，未输出、未写入 Git 配置、未持久化。
+5. 远程 master 从 `94cd83f642bcb1e1551a22ebe96f609f05afb67f` 非强制快进到 `72bbc8084313f2b2e417126c691838edf203417e`。
+6. 远程 tag 总数从 55 增至 56；历史 55 个 tag object SHA 变化数为 0。
+7. 未使用 force，未删除、移动或覆盖 `v2.1.3-hotfix.1`、`v2.1.3`、`v2.1.2` 或任何历史 tag。
+
+本条发布后记录属于 docs-only 收口内容。收口提交只允许继续推进 `master`，不得移动、覆盖或删除已经发布的 `v2.1.4` tag。
+
 署名：开发者

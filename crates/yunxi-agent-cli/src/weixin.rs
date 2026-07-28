@@ -4,9 +4,10 @@ use serde_json::json;
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
-use yunxi_agent_core::{AgentConfig, BackendKind};
+use yunxi_agent_core::{AgentConfig, BackendKind, DryRunBackend};
 use yunxi_agent_storage::{
     FileWeixinStateStore, WeixinAccountLockState, WeixinCredentialReferenceRecord,
     WeixinPairRequest, WeixinStateError, WeixinStateSnapshot, WeixinStateStore,
@@ -16,8 +17,9 @@ use yunxi_agent_weixin::{
     WeixinAccountId, WeixinAccountMetadata, WeixinAccountRecord, WeixinAccountStore,
     WeixinAccountStoreError, WeixinConnectionState, WeixinCredentialReference,
     WeixinLoginCancellation, WeixinLoginEvent, WeixinLoginOptions, WeixinLoginOutcome,
-    WeixinLoginStateMachine, WeixinLoginTransport, WeixinSecretStore, WeixinSecretStoreError,
-    WeixinServeCancellation, WeixinServeOptions, WeixinServeReport, WeixinServeStoppedReason,
+    WeixinLoginStateMachine, WeixinLoginTransport, WeixinRuntimeDispatcherAdapter,
+    WeixinSecretStore, WeixinSecretStoreError, WeixinServeCancellation, WeixinServeOptions,
+    WeixinServeReport, WeixinServeStoppedReason, WeixinTurnSupervisor, WeixinTurnSupervisorOptions,
     generate_data_key, run_weixin_serve_loop,
 };
 
@@ -174,8 +176,9 @@ async fn run_serve(
     provider_mode: ProviderMode,
     json_output: bool,
 ) -> Result<()> {
-    let selection = provider_mode.resolve(backend, &config)?;
-    let prepared_config = selection.apply_to_config(config);
+    let invocation = crate::prepare_runtime_invocation(config, backend, provider_mode)?;
+    let selection = invocation.selection;
+    let prepared_config = invocation.config;
     let account_id = WeixinAccountId::new(account);
     let account_hash = account_id.to_string();
     let account_store = WeixinAccountStore::new(&prepared_config.cwd);
@@ -205,6 +208,28 @@ async fn run_serve(
         .context("weixin serve could not initialize the fixed iLink client")?;
     let mut options = WeixinServeOptions::new(record.account_id.clone());
     options.max_polls = serve_max_polls_from_env()?;
+    let supervisor_options =
+        WeixinTurnSupervisorOptions::new(prepared_config.clone(), record.workspace_id.clone());
+    let supervisor = WeixinTurnSupervisor::new(
+        state_store.clone(),
+        data_key.clone(),
+        supervisor_options,
+        Arc::new(yunxi_agent_weixin::NoopWeixinRuntimeSink),
+    );
+    let runtime_dispatcher: Arc<dyn yunxi_agent_weixin::WeixinRuntimeDispatcher> = match backend {
+        BackendKind::Yunxi => Arc::new(WeixinRuntimeDispatcherAdapter::new(
+            supervisor,
+            crate::build_yunxi_runtime_backend(&prepared_config, selection.live),
+        )),
+        BackendKind::DryRun => Arc::new(WeixinRuntimeDispatcherAdapter::new(
+            supervisor,
+            DryRunBackend,
+        )),
+        BackendKind::Codex => {
+            bail!("weixin serve runtime dispatch does not support the codex backend")
+        }
+    };
+    options.runtime_dispatcher = Some(runtime_dispatcher);
     let cancellation = WeixinServeCancellation::default();
     if !json_output {
         println!("weixin serve started");
@@ -213,7 +238,7 @@ async fn run_serve(
         println!("provider mode: {}", selection.source.as_str());
         println!("state store schema: {}", state.schema_version);
         println!(
-            "private chat long polling enabled; runtime dispatch, sendmessage, remote approval, and group chat remain disabled"
+            "private chat long polling and runtime dispatch enabled; sendmessage, remote approval, and group chat remain disabled"
         );
     }
     let serve_result = tokio::select! {
@@ -296,7 +321,7 @@ where
     .context("weixin login output failed")?;
     writeln!(
         output,
-        "messages and long polling remain disabled in v2.1.5"
+        "foreground private-chat polling and runtime dispatch are available after starting weixin serve; sendmessage remains disabled in v2.1.6"
     )
     .context("weixin login output failed")?;
     Ok(credential)
@@ -457,6 +482,7 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
             "receive_messages": true,
             "send_messages": false,
             "foreground_long_polling": true,
+            "runtime_dispatch": true,
             "persistent_service": false,
             "group_chat": false,
         },
@@ -474,7 +500,7 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
         }
         println!("account lock state: {}", lock_state.state.as_str());
         println!(
-            "QR login and foreground private-chat polling are available; runtime dispatch and sendmessage remain disabled"
+            "QR login, foreground private-chat polling, and runtime dispatch are available; sendmessage remains disabled"
         );
     }
     Ok(())
@@ -510,6 +536,7 @@ fn print_unconfigured_status(
                     "receive_messages": false,
                     "send_messages": false,
                     "foreground_long_polling": true,
+                    "runtime_dispatch": false,
                     "persistent_service": false,
                     "group_chat": false,
                 },
@@ -634,6 +661,7 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
             "private_chat_enabled": true,
             "encrypted_pending_queue": record.is_some() && credential_state == "present",
             "message_receive_enabled": record.is_some() && credential_state == "present",
+            "runtime_dispatch_enabled": record.is_some() && credential_state == "present",
             "message_send_enabled": false,
             "group_chat_enabled": false,
         },
@@ -660,7 +688,7 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
         println!("account lock state: {}", lock_state.state.as_str());
         println!("network request performed: false");
         println!(
-            "private-chat foreground receive: {}; sendmessage, runtime dispatch, remote approval, and group chat: unavailable in v2.1.5",
+            "private-chat foreground receive/runtime dispatch: {}; sendmessage, remote approval, and group chat: unavailable in v2.1.6",
             if record.is_some() && credential_state == "present" {
                 "available"
             } else {
@@ -697,6 +725,7 @@ fn print_doctor_metadata_error(
             "private_chat_enabled": true,
             "encrypted_pending_queue": false,
             "message_receive_enabled": false,
+            "runtime_dispatch_enabled": false,
             "message_send_enabled": false,
             "group_chat_enabled": false,
         },
@@ -817,7 +846,9 @@ fn print_pair_list(account: &str, workspace: &Path, json_output: bool) -> Result
     } else {
         println!("weixin pairs: {}", pairs.len());
         println!("account: {account}");
-        println!("pairing lifecycle is local-state only in v2.1.5");
+        println!(
+            "pairing lifecycle is local-state only in v2.1.6; remote approval remains disabled"
+        );
     }
     Ok(())
 }
@@ -899,7 +930,9 @@ fn print_serve_report(account: &str, report: &WeixinServeReport, json_output: bo
                 "skipped_unsupported_count": report.skipped_unsupported_count,
                 "skipped_unknown_count": report.skipped_unknown_count,
                 "network_error_count": report.network_error_count,
-                "runtime_dispatch_enabled": false,
+                "runtime_dispatch_enabled": true,
+                "runtime_dispatch_count": report.runtime_dispatch_count,
+                "runtime_error_count": report.runtime_error_count,
                 "send_message_enabled": false,
                 "remote_approval_enabled": false,
                 "group_chat_enabled": false,
@@ -911,9 +944,11 @@ fn print_serve_report(account: &str, report: &WeixinServeReport, json_output: bo
         println!("account: {account}");
         println!("polls: {}", report.polls);
         println!("accepted pending inbound: {}", report.accepted_count);
+        println!("runtime dispatches: {}", report.runtime_dispatch_count);
+        println!("runtime dispatch errors: {}", report.runtime_error_count);
         println!("pair requests: {}", report.pair_request_count);
         println!("duplicates skipped: {}", report.duplicate_count);
-        println!("group chat, runtime dispatch, sendmessage, and remote approval remain disabled");
+        println!("sendmessage, remote approval, and group chat remain disabled");
     }
     Ok(())
 }

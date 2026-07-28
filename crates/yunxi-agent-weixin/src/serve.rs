@@ -17,13 +17,14 @@ use crate::backoff::WeixinBackoff;
 use crate::ilink::{GetUpdatesRequest, GetUpdatesResponse, IlinkHttpClient};
 use crate::inbound::{WeixinInboundEnvelope, WeixinInboundKind};
 use crate::payload_cipher::{WeixinPayloadAad, WeixinPayloadCipher, WeixinPayloadCipherError};
+use crate::turn_supervisor::WeixinRuntimeDispatcher;
 use crate::{SecretString, WeixinApiError};
 
 const DEFAULT_PAIR_REQUEST_TTL: Duration = Duration::from_secs(10 * 60);
 const DEFAULT_EMPTY_POLL_DELAY: Duration = Duration::from_millis(250);
 const MAX_EMPTY_POLL_DELAY: Duration = Duration::from_secs(30);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct WeixinServeOptions {
     pub account_id: String,
     pub cursor_source: String,
@@ -32,6 +33,7 @@ pub struct WeixinServeOptions {
     pub empty_poll_delay: Duration,
     pub max_polls: Option<usize>,
     pub self_user_id: Option<SecretString>,
+    pub runtime_dispatcher: Option<Arc<dyn WeixinRuntimeDispatcher>>,
 }
 
 impl WeixinServeOptions {
@@ -44,6 +46,7 @@ impl WeixinServeOptions {
             empty_poll_delay: DEFAULT_EMPTY_POLL_DELAY,
             max_polls: None,
             self_user_id: None,
+            runtime_dispatcher: None,
         }
     }
 }
@@ -66,6 +69,8 @@ pub struct WeixinServeReport {
     pub skipped_unsupported_count: usize,
     pub skipped_unknown_count: usize,
     pub network_error_count: usize,
+    pub runtime_dispatch_count: usize,
+    pub runtime_error_count: usize,
     pub stopped_reason: Option<WeixinServeStoppedReason>,
 }
 
@@ -246,9 +251,22 @@ where
         }
 
         let result = state_store.commit_inbound_batch(commit)?;
+        let accepted_item_ids = result.accepted_item_ids;
         report.accepted_count += result.accepted_count;
         report.duplicate_count += result.duplicate_count;
         report.pair_request_count += result.pair_request_count;
+
+        if let Some(dispatcher) = options.runtime_dispatcher.as_ref() {
+            for item_id in accepted_item_ids {
+                match dispatcher
+                    .dispatch_pending_turn(&options.account_id, &item_id)
+                    .await
+                {
+                    Ok(_) => report.runtime_dispatch_count += 1,
+                    Err(_) => report.runtime_error_count += 1,
+                }
+            }
+        }
 
         if options
             .max_polls
@@ -335,8 +353,11 @@ mod tests {
     use super::*;
     use crate::WeixinMessageId;
     use crate::ilink::{MessageItem, TextItem, WeixinMessage};
+    use crate::turn_supervisor::{WeixinTurnReport, WeixinTurnSupervisorError};
     use std::collections::VecDeque;
+    use std::sync::Mutex;
     use tempfile::TempDir;
+    use yunxi_agent_core::AgentRunStatus;
     use yunxi_agent_storage::{
         WEIXIN_STATE_SCHEMA_VERSION, WeixinConnectionStateRecord, WeixinCredentialReferenceRecord,
     };
@@ -354,6 +375,40 @@ mod tests {
             self.responses
                 .pop_front()
                 .unwrap_or_else(|| Ok(GetUpdatesResponse::default()))
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingDispatcher {
+        item_ids: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl RecordingDispatcher {
+        fn item_ids(&self) -> Vec<String> {
+            self.item_ids.lock().expect("item ids").clone()
+        }
+    }
+
+    #[async_trait]
+    impl WeixinRuntimeDispatcher for RecordingDispatcher {
+        async fn dispatch_pending_turn(
+            &self,
+            account_id: &str,
+            item_id: &str,
+        ) -> Result<WeixinTurnReport, WeixinTurnSupervisorError> {
+            self.item_ids
+                .lock()
+                .expect("item ids")
+                .push(item_id.to_string());
+            Ok(WeixinTurnReport {
+                account_id: account_id.to_string(),
+                peer_id_hash: "peer#00000000".to_string(),
+                direct_message_key: "dm#00000000".to_string(),
+                item_id: item_id.to_string(),
+                session_id: "yunxi-weixin-test".to_string(),
+                status: AgentRunStatus::Completed,
+                final_response_present: true,
+            })
         }
     }
 
@@ -522,6 +577,8 @@ mod tests {
         let mut options = WeixinServeOptions::new(account.clone());
         options.max_polls = Some(1);
         options.self_user_id = Some(SecretString::new("bot-user-id"));
+        let dispatcher = RecordingDispatcher::default();
+        options.runtime_dispatcher = Some(Arc::new(dispatcher.clone()));
         let data_key = test_data_key();
         let report = run_weixin_serve_loop(
             &mut transport,
@@ -538,6 +595,9 @@ mod tests {
         assert_eq!(report.skipped_self_count, 1);
         assert_eq!(report.skipped_unsupported_count, 1);
         assert_eq!(report.skipped_unknown_count, 1);
+        assert_eq!(report.runtime_dispatch_count, 1);
+        assert_eq!(report.runtime_error_count, 0);
+        assert_eq!(dispatcher.item_ids().len(), 1);
         let state = store.load(&account).expect("load").expect("state");
         assert_eq!(state.pending_inbound_count(), 1);
         assert_eq!(state.pair_request_count(), 1);
@@ -625,6 +685,8 @@ mod tests {
         };
         let mut options = WeixinServeOptions::new(account.clone());
         options.max_polls = Some(2);
+        let dispatcher = RecordingDispatcher::default();
+        options.runtime_dispatcher = Some(Arc::new(dispatcher.clone()));
         let data_key = test_data_key();
         let report = run_weixin_serve_loop(
             &mut transport,
@@ -637,6 +699,8 @@ mod tests {
         .expect("serve loop");
         assert_eq!(report.accepted_count, 1);
         assert_eq!(report.duplicate_count, 1);
+        assert_eq!(report.runtime_dispatch_count, 1);
+        assert_eq!(dispatcher.item_ids().len(), 1);
         let state = store.load(&account).expect("load").expect("state");
         assert_eq!(state.pending_inbound.len(), 1);
         assert_eq!(
@@ -684,7 +748,7 @@ mod tests {
         assert_eq!(options.cursor_source, "getupdates");
         assert!(options.pairing_required);
         assert_eq!(options.pair_request_ttl, DEFAULT_PAIR_REQUEST_TTL);
-        assert_eq!(WEIXIN_STATE_SCHEMA_VERSION, 2);
+        assert_eq!(WEIXIN_STATE_SCHEMA_VERSION, 3);
     }
 
     #[tokio::test]

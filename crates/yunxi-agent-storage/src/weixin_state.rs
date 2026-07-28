@@ -13,7 +13,7 @@ use std::{
 };
 use thiserror::Error;
 
-pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 2;
+pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 3;
 pub const WEIXIN_PAYLOAD_ALGORITHM: &str = "chacha20-poly1305";
 pub const WEIXIN_PAYLOAD_ALGORITHM_VERSION: u32 = 1;
 pub const WEIXIN_PAYLOAD_AAD_VERSION: u32 = 1;
@@ -298,6 +298,7 @@ impl FileWeixinStateStore {
         let mut snapshot = self.load_required(&commit.account_id)?;
         prune_terminal_receipts(&mut snapshot, commit.now_millis);
         let mut accepted_count = 0;
+        let mut accepted_item_ids = Vec::new();
         let mut duplicate_count = 0;
         let mut pair_request_count = 0;
         let active_pending = snapshot.pending_inbound_count();
@@ -324,9 +325,10 @@ impl FileWeixinStateStore {
                 updated_at_millis: commit.now_millis,
                 transitioned_at_millis: commit.now_millis,
             });
+            let item_id = item.item_id;
             snapshot.pending_inbound.push(WeixinPendingInbound {
                 schema_version: WEIXIN_STATE_SCHEMA_VERSION,
-                item_id: item.item_id,
+                item_id: item_id.clone(),
                 account_id: commit.account_id.clone(),
                 message_id_hash: item.message_id_hash,
                 peer_id_hash: item.peer_id_hash,
@@ -339,6 +341,7 @@ impl FileWeixinStateStore {
                 updated_at_millis: commit.now_millis,
                 transitioned_at_millis: commit.now_millis,
             });
+            accepted_item_ids.push(item_id);
             accepted_count += 1;
         }
 
@@ -384,6 +387,7 @@ impl FileWeixinStateStore {
         self.save_with_options(&snapshot, options)?;
         Ok(WeixinInboundBatchCommitResult {
             accepted_count,
+            accepted_item_ids,
             duplicate_count,
             pair_request_count,
             receipt_count,
@@ -489,6 +493,121 @@ impl FileWeixinStateStore {
             .pending_inbound
             .into_iter()
             .find(|item| item.item_id == item_id && !item.state.is_terminal()))
+    }
+
+    pub fn begin_pending_runtime_turn(
+        &self,
+        request: WeixinRuntimeTurnBeginRequest,
+    ) -> Result<WeixinConversationBinding, WeixinStateError> {
+        if request.source_label.trim().is_empty()
+            || contains_sensitive_marker(&request.source_label)
+            || request.candidate_session_id.trim().is_empty()
+            || contains_sensitive_marker(&request.candidate_session_id)
+            || !looks_redacted("account", &request.account_id)
+            || !request.peer_id_hash.starts_with("peer#")
+            || !request.message_id_hash.starts_with("message#")
+            || !request.direct_message_key.starts_with("dm#")
+            || !looks_redacted("workspace", &request.workspace_id)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "conversation binding request failed validation",
+            });
+        }
+        let mut snapshot = self.load_required(&request.account_id)?;
+        let pending = snapshot
+            .pending_inbound
+            .iter_mut()
+            .find(|item| item.item_id == request.item_id && !item.state.is_terminal())
+            .ok_or_else(|| WeixinStateError::PendingInboundNotFound {
+                item_id: request.item_id.clone(),
+            })?;
+        if pending.account_id != request.account_id
+            || pending.peer_id_hash != request.peer_id_hash
+            || pending.message_id_hash != request.message_id_hash
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending inbound binding mismatch",
+            });
+        }
+        pending.transition(WeixinPendingInboundState::Running, request.now_millis)?;
+        if let Some(receipt) = snapshot.inbound_receipts.iter_mut().find(|receipt| {
+            receipt.message_id_hash == request.message_id_hash
+                && receipt.peer_id_hash == request.peer_id_hash
+        }) {
+            receipt.state = WeixinReceiptState::Running;
+            receipt.updated_at_millis = request.now_millis;
+            receipt.transitioned_at_millis = request.now_millis;
+        }
+
+        let binding = upsert_conversation_binding(
+            &mut snapshot,
+            &request.account_id,
+            &request.peer_id_hash,
+            &request.direct_message_key,
+            &request.workspace_id,
+            &request.candidate_session_id,
+            &request.source_label,
+            request.now_millis,
+        )?;
+        snapshot.updated_at_millis = request.now_millis;
+        snapshot.transitioned_at_millis = request.now_millis;
+        self.save(&snapshot)?;
+        Ok(binding)
+    }
+
+    pub fn complete_pending_runtime_turn(
+        &self,
+        account_id: &str,
+        item_id: &str,
+        target: WeixinPendingInboundState,
+        terminal_reason: Option<String>,
+        now_millis: u64,
+    ) -> Result<WeixinPendingInbound, WeixinStateError> {
+        if !target.is_terminal() {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending inbound terminal state is required",
+            });
+        }
+        if terminal_reason
+            .as_deref()
+            .is_some_and(contains_sensitive_marker)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending inbound terminal reason is unsafe",
+            });
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        let pending = snapshot
+            .pending_inbound
+            .iter_mut()
+            .find(|item| item.item_id == item_id && !item.state.is_terminal())
+            .ok_or_else(|| WeixinStateError::PendingInboundNotFound {
+                item_id: item_id.to_string(),
+            })?;
+        pending.transition(target, now_millis)?;
+        pending.terminal_reason = terminal_reason;
+        let updated = pending.clone();
+        if let Some(receipt) = snapshot.inbound_receipts.iter_mut().find(|receipt| {
+            receipt.message_id_hash == updated.message_id_hash
+                && receipt.peer_id_hash == updated.peer_id_hash
+        }) {
+            receipt.state = match target {
+                WeixinPendingInboundState::Succeeded => WeixinReceiptState::Succeeded,
+                WeixinPendingInboundState::Failed => WeixinReceiptState::Failed,
+                WeixinPendingInboundState::Cancelled => WeixinReceiptState::Cancelled,
+                WeixinPendingInboundState::Expired => WeixinReceiptState::Expired,
+                WeixinPendingInboundState::Unknown => WeixinReceiptState::Unknown,
+                WeixinPendingInboundState::Accepted
+                | WeixinPendingInboundState::Ready
+                | WeixinPendingInboundState::Running => receipt.state,
+            };
+            receipt.updated_at_millis = now_millis;
+            receipt.transitioned_at_millis = now_millis;
+        }
+        snapshot.updated_at_millis = now_millis;
+        snapshot.transitioned_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(updated)
     }
 
     fn load_required(&self, account_id: &str) -> Result<WeixinStateSnapshot, WeixinStateError> {
@@ -624,6 +743,7 @@ pub struct WeixinPairRequestCommitItem {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WeixinInboundBatchCommitResult {
     pub accepted_count: usize,
+    pub accepted_item_ids: Vec<String>,
     pub duplicate_count: usize,
     pub pair_request_count: usize,
     pub receipt_count: usize,
@@ -641,7 +761,7 @@ pub struct WeixinStateSnapshot {
     pub cursors: Vec<WeixinCursorRecord>,
     pub inbound_receipts: Vec<WeixinInboundReceiptRecord>,
     pub deliveries: Vec<WeixinDeliveryRecord>,
-    pub session_bindings: Vec<WeixinSessionBindingRecord>,
+    pub conversation_bindings: Vec<WeixinConversationBinding>,
     pub reply_contexts: Vec<WeixinReplyContextReference>,
     pub pending_deliveries: Vec<WeixinPendingDeliveryMetadata>,
     pub pair_requests: Vec<WeixinPairRequest>,
@@ -664,7 +784,7 @@ impl WeixinStateSnapshot {
             cursors: Vec::new(),
             inbound_receipts: Vec::new(),
             deliveries: Vec::new(),
-            session_bindings: Vec::new(),
+            conversation_bindings: Vec::new(),
             reply_contexts: Vec::new(),
             pending_deliveries: Vec::new(),
             pair_requests: Vec::new(),
@@ -740,15 +860,31 @@ pub struct WeixinDeliveryRecord {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct WeixinSessionBindingRecord {
+pub struct WeixinConversationBinding {
     pub schema_version: u32,
     pub account_id: String,
     pub peer_id_hash: String,
+    pub direct_message_key: String,
     pub workspace_id: String,
-    pub session_id: Option<String>,
+    pub session_id: String,
+    pub source_label: String,
     pub created_at_millis: u64,
+    pub last_activity_millis: u64,
     pub updated_at_millis: u64,
     pub transitioned_at_millis: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinRuntimeTurnBeginRequest {
+    pub account_id: String,
+    pub peer_id_hash: String,
+    pub message_id_hash: String,
+    pub item_id: String,
+    pub direct_message_key: String,
+    pub workspace_id: String,
+    pub candidate_session_id: String,
+    pub source_label: String,
+    pub now_millis: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -856,7 +992,7 @@ pub enum WeixinReceiptState {
 }
 
 impl WeixinReceiptState {
-    fn is_terminal(self) -> bool {
+    pub fn is_terminal(self) -> bool {
         matches!(
             self,
             Self::Succeeded | Self::Failed | Self::Cancelled | Self::Expired | Self::Unknown
@@ -1049,6 +1185,8 @@ pub enum WeixinStateError {
     },
     #[error("weixin pending inbound queue is full limit={limit}")]
     PendingInboundQueueFull { limit: usize },
+    #[error("weixin pending inbound was not found item={item_id}")]
+    PendingInboundNotFound { item_id: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1105,7 +1243,7 @@ impl WeixinStateMigration {
                     "cursors",
                     "inbound_receipts",
                     "deliveries",
-                    "session_bindings",
+                    "conversation_bindings",
                     "reply_contexts",
                     "pending_deliveries",
                     "pair_requests",
@@ -1113,11 +1251,12 @@ impl WeixinStateMigration {
                 ] {
                     object.entry(key.to_string()).or_insert_with(|| json!([]));
                 }
+                object.remove("session_bindings");
                 for key in [
                     "cursors",
                     "inbound_receipts",
                     "deliveries",
-                    "session_bindings",
+                    "conversation_bindings",
                     "reply_contexts",
                     "pending_deliveries",
                     "pair_requests",
@@ -1200,6 +1339,22 @@ fn validate_snapshot(snapshot: &WeixinStateSnapshot) -> Result<(), WeixinStateEr
         {
             return Err(WeixinStateError::InvalidRecord {
                 reason: "inbound receipt failed validation",
+            });
+        }
+    }
+    for binding in &snapshot.conversation_bindings {
+        if binding.schema_version != WEIXIN_STATE_SCHEMA_VERSION
+            || binding.account_id != snapshot.account_id
+            || !binding.peer_id_hash.starts_with("peer#")
+            || !binding.direct_message_key.starts_with("dm#")
+            || binding.workspace_id != snapshot.workspace_id
+            || binding.session_id.trim().is_empty()
+            || contains_sensitive_marker(&binding.session_id)
+            || binding.source_label.trim().is_empty()
+            || contains_sensitive_marker(&binding.source_label)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "conversation binding failed validation",
             });
         }
     }
@@ -1379,6 +1534,62 @@ fn upsert_cursor(
         updated_at_millis: now_millis,
         transitioned_at_millis: now_millis,
     });
+}
+
+fn upsert_conversation_binding(
+    snapshot: &mut WeixinStateSnapshot,
+    account_id: &str,
+    peer_id_hash: &str,
+    direct_message_key: &str,
+    workspace_id: &str,
+    candidate_session_id: &str,
+    source_label: &str,
+    now_millis: u64,
+) -> Result<WeixinConversationBinding, WeixinStateError> {
+    if !looks_redacted("account", account_id)
+        || snapshot.account_id != account_id
+        || !peer_id_hash.starts_with("peer#")
+        || !direct_message_key.starts_with("dm#")
+        || snapshot.workspace_id != workspace_id
+        || !looks_redacted("workspace", workspace_id)
+        || candidate_session_id.trim().is_empty()
+        || contains_sensitive_marker(candidate_session_id)
+        || source_label.trim().is_empty()
+        || contains_sensitive_marker(source_label)
+    {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "conversation binding failed validation",
+        });
+    }
+
+    if let Some(binding) = snapshot.conversation_bindings.iter_mut().find(|binding| {
+        binding.account_id == account_id
+            && binding.peer_id_hash == peer_id_hash
+            && binding.direct_message_key == direct_message_key
+    }) {
+        binding.workspace_id = workspace_id.to_string();
+        binding.source_label = source_label.to_string();
+        binding.last_activity_millis = now_millis;
+        binding.updated_at_millis = now_millis;
+        binding.transitioned_at_millis = now_millis;
+        return Ok(binding.clone());
+    }
+
+    let binding = WeixinConversationBinding {
+        schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+        account_id: account_id.to_string(),
+        peer_id_hash: peer_id_hash.to_string(),
+        direct_message_key: direct_message_key.to_string(),
+        workspace_id: workspace_id.to_string(),
+        session_id: candidate_session_id.to_string(),
+        source_label: source_label.to_string(),
+        created_at_millis: now_millis,
+        last_activity_millis: now_millis,
+        updated_at_millis: now_millis,
+        transitioned_at_millis: now_millis,
+    };
+    snapshot.conversation_bindings.push(binding.clone());
+    Ok(binding)
 }
 
 fn prune_terminal_receipts(snapshot: &mut WeixinStateSnapshot, now_millis: u64) {

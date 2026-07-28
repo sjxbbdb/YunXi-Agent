@@ -1,8 +1,8 @@
 # YunXi Agent 微信接入边界
 
-## v2.1.5-hotfix.2 能力
+## v2.1.6 能力
 
-v2.1.5-hotfix.2 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命周期和旧登录账户 metadata 到 `WeixinStateStore` 安全初始化基础上，保留前台私聊长轮询接纳层，并补齐已准入私聊 pending inbound 的认证加密持久化和重启恢复入口：
+v2.1.6 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命周期和旧登录账户 metadata 到 `WeixinStateStore` 安全初始化基础上，保留前台私聊长轮询接纳层、认证加密 pending inbound 和 stale lock 恢复，并把已准入私聊文本绑定到既有 YunXi Runtime session：
 
 - yunxi weixin login --account <name> 获取二维码、显示安全终端文本、轮询等待/扫码/确认，并明确处理过期、取消、超时、redirect、验证码和验证码阻断。
 - 登录确认后，token 和数据加密密钥只写入 Windows Credential Manager；系统凭证不可用、权限失败或写入失败时登录失败，不降级到明文文件。
@@ -12,7 +12,7 @@ v2.1.5-hotfix.2 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命�
 - CLI 私有登录执行 helper 已覆盖 Mock 成功、过期、取消、凭证不可用、metadata 写失败回滚和输出脱敏；生产 CLI 不暴露 mock endpoint 或 fake store 参数。
 - 2026-07-27 真实验证使用 `default` 账户完成扫码确认，`status --json` 返回 `state=ready`、`credential_state=present`、`credential_backend=windows-credential-manager`，`doctor --json` 返回 `credential_store=present`、`credentials_configured=true`，新进程重读仍为 ready。
 - `crates/yunxi-agent-storage` 提供独立版本化 `WeixinStateStore`，状态文件使用同目录临时文件、文件级 sync 和同卷替换更新；启动诊断会识别未完成临时文件候选，但不会把半成品当作有效状态。
-- 状态 store 记录脱敏账户、workspace hash、官方 endpoint、Credential Manager 引用、游标占位、回执、会话绑定占位、reply context 引用、待投递元数据、pair request 和认证加密 pending inbound；pending inbound 保存 `encrypted_payload_ref`、`payload_kind`、算法名、算法版本、AAD 版本、随机 nonce 和 ciphertext，不保存原文。
+- 状态 store 记录脱敏账户、workspace hash、官方 endpoint、Credential Manager 引用、游标占位、回执、`WeixinConversationBinding`、reply context 引用、待投递元数据、pair request 和认证加密 pending inbound；pending inbound 保存 `encrypted_payload_ref`、`payload_kind`、算法名、算法版本、AAD 版本、随机 nonce 和 ciphertext，不保存原文。
 - `status --json` 与 `doctor --json` 增加 state schema、account lock state、pending inbound/delivery count、pair request count 和最后一次脱敏错误；不输出完整本地路径。
 - Windows 默认 process probe 在 `OpenProcess` 失败时区分 `ERROR_INVALID_PARAMETER` 与权限不足/未知错误；已退出 PID 的锁会标记为 stale 并由 `try_acquire_account_lock` 回收，`ERROR_ACCESS_DENIED` 或未知错误仍保守视为 active。
 - 已有旧账户 metadata 且 state 文件缺失时，`status --json` 和 `doctor --json` 会用旧 metadata 中的非机密字段与凭证引用一次性创建当前 schema 的最小状态；首次 JSON 输出 `state_store_migration="initialized_from_legacy_metadata"`，后续新进程重读输出 `state_store_migration="already_current"`。
@@ -25,7 +25,12 @@ v2.1.5-hotfix.2 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命�
 - 已准入 peer 的私聊文本在进入 state store 前用 `chacha20-poly1305` 认证加密；AAD 绑定 account hash、peer hash、message hash、item id 和 AAD 版本；陌生私聊文本只生成短时、不透明 pair request；群消息、自消息、附件和未知消息只进入脱敏跳过计数。
 - 每个 getupdates 批次把新游标、receipt、encrypted pending inbound、pair request、连接状态和最后一次脱敏错误写入同一次 state-store 原子提交；data key 缺失、key 格式错误、加密失败、密文元数据校验失败或保存失败时游标不推进。
 - 同一 account、peer hash、message id hash 已存在 receipt 或 pending inbound 时幂等跳过，不创建第二个 pending inbound。
-- `FileWeixinStateStore::load_pending_inbound` 和 `WeixinPayloadCipher::decrypt_pending_inbound` 为后续 Runtime 版本提供最小重启恢复入口；新进程可重新从 Windows Credential Manager 读取同一 data key，再用 state 中的 ciphertext、nonce、算法版本和 AAD 版本恢复最小入站 envelope/body。错误 key、篡改/截断 ciphertext、未知算法版本、未知 AAD 版本或 AAD 绑定不一致会安全失败。
+- `FileWeixinStateStore::load_pending_inbound` 和 `WeixinPayloadCipher::decrypt_pending_inbound` 提供最小重启恢复入口；新进程可重新从 Windows Credential Manager 读取同一 data key，再用 state 中的 ciphertext、nonce、算法版本和 AAD 版本恢复最小入站 envelope/body。错误 key、篡改/截断 ciphertext、未知算法版本、未知 AAD 版本或 AAD 绑定不一致会安全失败。
+- `WeixinConversationBinding` 用 `account_id + peer_id_hash + direct_message_key` 映射到既有 YunXi `SessionId`；绑定独立保存在微信 state 中，不向 `SessionRecord` 塞微信字段。
+- `WeixinTurnSupervisor` 只处理已配对、已解密、非终态私聊文本 pending inbound，把文本转换为 `AgentInput::text`，并通过唯一 Runtime 入口 `Agent::run_with_backend_stream` 执行。
+- `yunxi run` 与 `yunxi weixin serve` 复用同一 Provider、model、cwd、sandbox、approval、context window 和 companion 配置构造路径；微信自然语言不会隐式提高权限。
+- 同一 `account + peer + dm` 会话使用有界队列串行执行，避免交叉 turn 或交叉 session/memory 写入；不同已准入私聊可以独立调度。
+- 本版本只把 Runtime 最小最终文本写入测试 sink，用于验证会话绑定和配置一致性；生产路径仍不调用 Weixin sendmessage。
 - token 过期或凭证失效时，serve 写入 `suspended`/`credential_expired` 等脱敏健康状态并停止轮询，不自动删除账户或凭证。
 - `pair list|approve|deny` 只处理本地状态 store 中的不透明 request ID、脱敏账户、peer hash、过期时间和状态，不执行远程审批。
 - `logout --confirm` 遇到活动账户锁会拒绝；服务停止后只删除指定账户微信凭证引用、微信状态和微信 metadata，不删除 YunXi session、persona memory、工作区文件、其他账户或历史报告。
@@ -36,13 +41,13 @@ v2.1.5-hotfix.2 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命�
 
 本版本仍不能：
 
-- 绑定 YunXi session、创建 YunXi session、接入 Agent Runtime 或触发 Agent dispatch；
-- 调用 Provider、执行工具、改变 cwd、Provider、模型、sandbox 或 approval mode；
+- 把测试 sink 中的最终文本发送回微信；
+- 通过微信文字隐式提高权限、修改 cwd、Provider、模型、sandbox 或 approval mode；
 - 发送微信消息、调用 sendmessage、生成或流式合并微信回复；
 - 执行远程审批、微信文字命令控制、追问或取消命令桥接；
 - 支持群聊、主动推送、附件解析、媒体上传、联系人抓取、Hook、逆向协议或第二套 Agent。
 
-weixin serve 只完成私聊长轮询、准入、排队、pair request 和幂等接纳；真实聊天闭环属于后续版本，不能把登录成功、状态 store 完成或 pending inbound 接纳宣称为 Runtime 对话能力已完成。
+weixin serve 已完成私聊长轮询、准入、认证加密 pending、Runtime session binding、同会话串行和测试 sink；真实微信回信闭环属于后续版本，不能把测试 sink 最终文本宣称为微信已回复。
 
 ## 真实登录验证门禁
 
@@ -55,7 +60,7 @@ weixin serve 只完成私聊长轮询、准入、排队、pair request 和幂等
 5. 运行 `target\release\yunxi.exe weixin doctor --account <test-name> --json`，确认系统凭证引用可读且 `secrets_included=false`。
 6. 重新打开 shell 或重新执行 release 二进制，再次读取 status/doctor，确认凭证引用仍可诊断。
 
-`v2.1.5-hotfix.2` 保留上述真实扫码登录前置能力、v2.1.4 状态 store 诊断、旧账户 metadata 懒初始化和前台私聊长轮询接纳层，补齐认证加密 pending inbound 与重启恢复入口，并修复 Windows 异常退出后 stale account lock 回收。后续复审材料仍只能记录脱敏账户 hash、状态、计数、退出码和是否触发网络；不得保存二维码、token、原始账号、联系人、消息正文、context token、data key 或系统凭证明文。
+`v2.1.6` 保留上述真实扫码登录前置能力、v2.1.4 状态 store 诊断、旧账户 metadata 懒初始化、前台私聊长轮询接纳层、认证加密 pending inbound、重启恢复入口和 Windows stale account lock 回收，并新增既有 Runtime session binding 与测试 sink 验收。后续复审材料仍只能记录脱敏账户 hash、状态、计数、退出码和是否触发网络；不得保存二维码、token、原始账号、联系人、消息正文、context token、data key 或系统凭证明文。
 
 ## 命令
 
@@ -68,7 +73,7 @@ yunxi weixin pair list|approve|deny ...
 yunxi weixin logout [--account default] --confirm
 ~~~
 
-Provider、模型、sandbox、approval 和根 --cwd 继续由现有 YunXi CLI 配置路径解析。登录只使用固定官方 endpoint https://ilinkai.weixin.qq.com/；CLI 不接受任意 base URL。
+Provider、模型、sandbox、approval、context window、companion 和根 --cwd 继续由现有 YunXi CLI 配置路径解析，并被 `yunxi run` 与 `yunxi weixin serve` 共享。登录只使用固定官方 endpoint https://ilinkai.weixin.qq.com/；CLI 不接受任意 base URL。
 
 ## 安全凭证与元数据
 
@@ -76,7 +81,7 @@ Provider、模型、sandbox、approval 和根 --cwd 继续由现有 YunXi CLI �
 - token 与数据加密密钥不进入 .yunxi/weixin/*.json；JSON 中只有哈希账户、凭证引用和非机密状态。
 - Debug、Display、错误、诊断 snapshot、JSON/JSONL 和项目日志都经过脱敏边界。
 - 安全凭证不可用时，登录必须失败；不写明文 token，不把二维码 payload 放入日志。
-- 回滚通过选择旧 tag 完成，不重写、移动或覆盖 v2.1.5、v2.1.4-hotfix.1、v2.1.3-hotfix.1、v2.1.3、v2.1.2 或任何历史 tag。
+- 回滚通过选择旧 tag 完成，不重写、移动或覆盖 v2.1.6、v2.1.5-hotfix.2、v2.1.5、v2.1.4-hotfix.1、v2.1.3-hotfix.1、v2.1.3、v2.1.2 或任何历史 tag。
 
 ## 参考快照
 

@@ -14,8 +14,9 @@ use yunxi_agent_storage::{
     WEIXIN_PAYLOAD_ALGORITHM_VERSION, WEIXIN_STATE_SCHEMA_VERSION, WeixinAccountLockState,
     WeixinConnectionStateRecord, WeixinCredentialReferenceRecord, WeixinEncryptedPayload,
     WeixinInboundBatchCommit, WeixinInboundCommitItem, WeixinPairRequestCommitItem,
-    WeixinPairRequestState, WeixinPendingInbound, WeixinPendingInboundState, WeixinStateError,
-    WeixinStateSnapshot, WeixinStateStore, WeixinStateWriteOptions,
+    WeixinPairRequestState, WeixinPendingInbound, WeixinPendingInboundState,
+    WeixinRuntimeTurnBeginRequest, WeixinStateError, WeixinStateSnapshot, WeixinStateStore,
+    WeixinStateWriteOptions,
 };
 
 const ACCOUNT: &str = "account#933b5bde";
@@ -164,7 +165,31 @@ fn legacy_schema_is_migrated_in_memory_to_current_snapshot() {
     let loaded = store.load(ACCOUNT).expect("load").expect("state");
     assert_eq!(loaded.schema_version, WEIXIN_STATE_SCHEMA_VERSION);
     assert_eq!(loaded.pair_requests.len(), 0);
+    assert_eq!(loaded.conversation_bindings.len(), 0);
     assert_eq!(loaded.pending_inbound_count(), 0);
+
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": 2,
+            "account_id": ACCOUNT,
+            "workspace_id": WORKSPACE,
+            "endpoint": ENDPOINT,
+            "session_bindings": [{
+                "schema_version": 2,
+                "account_id": ACCOUNT,
+                "peer_id_hash": "peer#00000001",
+                "session_id": "yunxi-legacy-session",
+                "created_at_millis": 1000,
+                "updated_at_millis": 1000
+            }]
+        }))
+        .expect("json"),
+    )
+    .expect("write v2 state");
+    let migrated = store.load(ACCOUNT).expect("load").expect("state");
+    assert_eq!(migrated.schema_version, WEIXIN_STATE_SCHEMA_VERSION);
+    assert!(migrated.conversation_bindings.is_empty());
 
     fs::write(
         &path,
@@ -500,6 +525,104 @@ fn inbound_batch_commit_creates_only_one_pending_pair_request_per_peer() {
     assert_eq!(
         state.pair_requests[0].state,
         WeixinPairRequestState::Pending
+    );
+}
+
+#[test]
+fn runtime_turn_binding_reuses_session_and_isolates_conversations() {
+    let (_temp, store) = store_fixture();
+    store.save(&snapshot(1000)).expect("save state");
+
+    let mut first = WeixinInboundBatchCommit::new(ACCOUNT, 1100);
+    first.accepted.push(commit_item(
+        "item#00000001",
+        "message#00000001",
+        "peer#00000001",
+    ));
+    let first_result = store.commit_inbound_batch(first).expect("first commit");
+    assert_eq!(first_result.accepted_item_ids, vec!["item#00000001"]);
+
+    let first_binding = store
+        .begin_pending_runtime_turn(WeixinRuntimeTurnBeginRequest {
+            account_id: ACCOUNT.to_string(),
+            peer_id_hash: "peer#00000001".to_string(),
+            message_id_hash: "message#00000001".to_string(),
+            item_id: "item#00000001".to_string(),
+            direct_message_key: "dm#00000001".to_string(),
+            workspace_id: WORKSPACE.to_string(),
+            candidate_session_id: "yunxi-weixin-first".to_string(),
+            source_label: "weixin-private-chat".to_string(),
+            now_millis: 1200,
+        })
+        .expect("begin first runtime turn");
+    assert_eq!(first_binding.session_id, "yunxi-weixin-first");
+    store
+        .complete_pending_runtime_turn(
+            ACCOUNT,
+            "item#00000001",
+            WeixinPendingInboundState::Succeeded,
+            None,
+            1300,
+        )
+        .expect("complete first");
+
+    let mut second = WeixinInboundBatchCommit::new(ACCOUNT, 1400);
+    second.accepted.push(commit_item(
+        "item#00000002",
+        "message#00000002",
+        "peer#00000001",
+    ));
+    store.commit_inbound_batch(second).expect("second commit");
+    let reused = store
+        .begin_pending_runtime_turn(WeixinRuntimeTurnBeginRequest {
+            account_id: ACCOUNT.to_string(),
+            peer_id_hash: "peer#00000001".to_string(),
+            message_id_hash: "message#00000002".to_string(),
+            item_id: "item#00000002".to_string(),
+            direct_message_key: "dm#00000001".to_string(),
+            workspace_id: WORKSPACE.to_string(),
+            candidate_session_id: "yunxi-weixin-second".to_string(),
+            source_label: "weixin-private-chat".to_string(),
+            now_millis: 1500,
+        })
+        .expect("begin reused runtime turn");
+    assert_eq!(reused.session_id, first_binding.session_id);
+
+    let mut third = WeixinInboundBatchCommit::new(ACCOUNT, 1600);
+    third.accepted.push(commit_item(
+        "item#00000003",
+        "message#00000003",
+        "peer#00000002",
+    ));
+    store.commit_inbound_batch(third).expect("third commit");
+    let isolated = store
+        .begin_pending_runtime_turn(WeixinRuntimeTurnBeginRequest {
+            account_id: ACCOUNT.to_string(),
+            peer_id_hash: "peer#00000002".to_string(),
+            message_id_hash: "message#00000003".to_string(),
+            item_id: "item#00000003".to_string(),
+            direct_message_key: "dm#00000002".to_string(),
+            workspace_id: WORKSPACE.to_string(),
+            candidate_session_id: "yunxi-weixin-third".to_string(),
+            source_label: "weixin-private-chat".to_string(),
+            now_millis: 1700,
+        })
+        .expect("begin isolated runtime turn");
+    assert_ne!(isolated.session_id, first_binding.session_id);
+
+    let state = store.load(ACCOUNT).expect("load").expect("state");
+    assert_eq!(state.conversation_bindings.len(), 2);
+    assert_eq!(
+        state.pending_inbound[0].state,
+        WeixinPendingInboundState::Succeeded
+    );
+    assert_eq!(
+        state.pending_inbound[1].state,
+        WeixinPendingInboundState::Running
+    );
+    assert_eq!(
+        state.pending_inbound[2].state,
+        WeixinPendingInboundState::Running
     );
 }
 

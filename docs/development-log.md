@@ -185,6 +185,81 @@
 
 署名：开发报告撰写者
 
+## 2026-07-28 21:51:49 +08:00
+
+工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md`，完成 `v2.1.6` 微信会话绑定既有 Runtime 开发，严格限制范围为已准入私聊到既有 YunXi Runtime 的 session binding、共享配置、同会话串行队列和测试 sink，不进入远程审批、sendmessage、逐 token 微信回信、群聊或完整微信聊天闭环。
+
+执行流程：
+1. 读取并核对开发报告硬性要求，确认开发目录固定为 `D:\YunXi Agent`，基线为 `HEAD=e4f00e1a1f4581b390957934e63d1ca877090fa4`、`git describe=v2.1.5-hotfix.2-dirty`；开发过程中不删除、不移动、不覆盖历史 tag。
+2. 按 AGENTS.md 使用 CodeGraph 优先梳理 `WeixinStateSnapshot`、`run_weixin_serve_loop`、`Agent::run_with_backend_stream`、`AgentConfig`、CLI provider 解析和 inbound payload 数据流，确认唯一 Runtime 调用入口为 `Agent::run_with_backend_stream`。
+3. 将 workspace 版本更新为 `2.1.6`，并让 `yunxi-agent-weixin` 依赖 `yunxi-agent-core`，以便在微信 supervisor 中直接复用既有 Agent facade。
+4. 在 `FileWeixinStateStore` 中升级微信 state schema 到 v3，新增 `WeixinConversationBinding` 和 `WeixinRuntimeTurnBeginRequest`，实现 `begin_pending_runtime_turn`、`complete_pending_runtime_turn`、绑定 upsert、旧 `session_bindings` 到 `conversation_bindings=[]` 的安全迁移、绑定校验和 pending ready/running/terminal 状态转换。
+5. 新增 `WeixinTurnSupervisor`，从已配对、已解密、非终态 pending inbound 恢复文本，按 `account + peer + dm` 绑定或复用既有 `SessionId`，构造 `AgentInput::text` 并调用 `Agent::run_with_backend_stream`；Runtime 成功时只写测试 sink 最终文本，失败/取消时写脱敏 terminal reason。
+6. 在 supervisor 内实现 per-conversation 有界串行队列和全局等待上限；队列满时不推进 pending 到 running，避免同一私聊交叉 turn 或交叉 session/memory 写入。
+7. 扩展 `run_weixin_serve_loop` 的可选 runtime dispatcher，仅对本次真实新增且已准入的私聊 text pending 调度 Runtime；未准入、群聊、自消息、附件、未知消息仍只做 pair/skip 处理，不触发 Runtime。
+8. 从 CLI `run` 路径抽取 `prepare_runtime_invocation` 和 `build_yunxi_runtime_backend`，让 `yunxi run` 与 `yunxi weixin serve` 复用同一 Provider、model、cwd、sandbox、approval、context window 和 companion 配置构造路径；`weixin serve` 拒绝 Codex 后端，不引入 `yunxi-agent-codex` 或 `vendor/codex-rs` 默认依赖。
+9. 补充 storage、weixin supervisor、serve dispatcher、CLI 和 TUI snapshot 测试/断言，更新 `README.md`、`docs/README.md`、`docs/weixin.md` 和报告索引，使文档明确 v2.1.6 已完成 Runtime session binding 与测试 sink，但仍不宣称 sendmessage、远程审批、流式微信回信、群聊或完整微信聊天闭环。
+
+修改文件与路径：
+- 版本与依赖：`D:\YunXi Agent\Cargo.toml`、`D:\YunXi Agent\Cargo.lock`、`D:\YunXi Agent\crates\yunxi-agent-weixin\Cargo.toml`
+- storage 状态层：`D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs`、`D:\YunXi Agent\crates\yunxi-agent-storage\src\lib.rs`
+- storage 测试：`D:\YunXi Agent\crates\yunxi-agent-storage\tests\weixin_state_tests.rs`
+- 微信 Runtime supervisor：`D:\YunXi Agent\crates\yunxi-agent-weixin\src\turn_supervisor.rs`、`D:\YunXi Agent\crates\yunxi-agent-weixin\src\lib.rs`
+- 微信 serve dispatcher：`D:\YunXi Agent\crates\yunxi-agent-weixin\src\serve.rs`
+- 微信 supervisor 集成测试：`D:\YunXi Agent\crates\yunxi-agent-weixin\tests\turn_supervisor_tests.rs`
+- CLI 共享配置与微信 serve 接入：`D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`、`D:\YunXi Agent\crates\yunxi-agent-cli\src\weixin.rs`
+- CLI 测试：`D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- TUI snapshots：`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_100x30.txt`、`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt`、`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_200x50.txt`、`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt`、`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`
+- 文档与索引：`D:\YunXi Agent\README.md`、`D:\YunXi Agent\docs\README.md`、`D:\YunXi Agent\docs\weixin.md`、`D:\YunXi Agent\docs\reports\README.md`、`D:\YunXi Agent\docs\development-log.md`
+- 本轮纳入提交的既有报告归档：`D:\YunXi Agent\docs\reports\audits\2026-07-28-184005-yunxi-agent-v2-1-5-hotfix-2-weixin-stale-lock-recovery-reaudit-report.md`、`D:\YunXi Agent\docs\reports\audits\2026-07-28-195752-yunxi-agent-v2-1-6-runtime-session-binding-audit-report.md`、`D:\YunXi Agent\docs\reports\development\2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md`
+
+验证结果：
+- `cargo test -p yunxi-agent-storage --test weixin_state_tests -- --test-threads=1`：通过，14 passed、1 ignored。
+- `cargo test -p yunxi-agent-weixin -- --test-threads=1`：通过，新增 supervisor 测试 2/2 通过，weixin 其他测试组均通过。
+- `cargo test -p yunxi-agent-cli --test cli_tests -- --test-threads=1`：通过，54 passed。
+- `cargo fmt --all`：已执行。
+- `cargo fmt --all -- --check`：通过。
+- `cargo check --workspace`：通过。
+- `cargo test --workspace -- --test-threads=1`：通过，workspace 全量测试无失败。
+- `cargo build --workspace --release`：通过。
+- `D:\YunXi Agent\target\release\yunxi.exe --version`：输出 `yunxi 2.1.6`。
+- `cargo tree -p yunxi-agent-cli --edges normal` 依赖边界扫描：`dependency-boundary-ok`，未发现 `codex-rs`、`yunxi-agent-codex`、`vendor\codex-rs` 或 `codex-*` 默认依赖。
+- `git diff --check`：通过。
+- `git fsck --full --no-dangling`：通过。
+
+清理与安全状态：本轮源码、测试、文档修改均限制在 `D:\YunXi Agent` 工作树内；未执行删除、递归清理、强制移动、清空目录、`git clean`、系统安装/卸载、PATH/注册表/系统配置修改、凭证读取或用户微信 state 清理。编译和测试生成了精确构建目录 `D:\YunXi Agent\target`；根据开发报告要求阶段结束需清理构建中间产物，但递归删除该目录必须先获得用户对精确绝对路径的确认。
+
+提交、推送和 Git tag 状态：截至本条记录写入时，v2.1.6 实现和统一验证已完成，release commit、annotated `v2.1.6` tag、GitHub CLI/API key 推送和远端 refs 核验尚未执行；下一步将创建新的 release commit 和新的 annotated tag，不移动、不覆盖、不删除 `v2.1.5-hotfix.2` 或任何历史 tag。
+
+署名：开发报告撰写者
+
+## 2026-07-28 20:37:49 +08:00
+
+工作目标：按用户要求重新拉取此前未拉取成功的参考源码 `D:\源码\CowAgent`，并修正 `v2.1.6` 微信会话绑定既有 Runtime 开发报告中的参考源码状态，确保项目内开发报告、桌面开发报告副本和开发日志与实际本机源码状态一致。
+
+执行流程：
+1. 核对 `D:\源码\CowAgent` 初始状态，确认此前记录中的缺失源码需要补拉。
+2. 从 `https://github.com/zhayujie/CowAgent.git` 将 CowAgent 以浅克隆方式拉取到 `D:\源码\CowAgent`。
+3. 核验 CowAgent remote、HEAD、shallow 状态以及审核报告点名的 `channel\channel_factory.py`、`channel\weixin` 参考路径。
+4. 修正项目内 `v2.1.6` 开发报告，把 CowAgent 状态从“本机缺失/拉取失败”更新为“已存在，浅克隆”，并写明 remote 与 HEAD。
+5. 将更新后的项目内开发报告重新同步到 `C:\Users\24763\Desktop\YunXi Agent开发报告\` 的同名副本。
+6. 追加本条项目开发日志，并继续同步桌面开发日志。
+
+修改文件与路径：
+- 新增项目外参考源码目录：`D:\源码\CowAgent`
+- 更新项目内开发报告：`D:\YunXi Agent\docs\reports\development\2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md`
+- 更新桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：`D:\源码\CowAgent` 已存在；remote 为 `https://github.com/zhayujie/CowAgent.git`；HEAD 为 `6185c73f8d2764f78a135f8fd6df35d4e246a6b7`；`git rev-parse --is-shallow-repository` 返回 `true`；`D:\源码\CowAgent\channel\channel_factory.py` 和 `D:\源码\CowAgent\channel\weixin` 均存在。更新后的项目内开发报告 SHA-256 为 `BB20DEAB8AC6E30CEDFB3794A1535991F00789A6AA1EBBE496BA9752E5AAE5C1`，桌面同名开发报告副本 SHA-256 一致。本轮只补拉参考源码并同步文档，未修改 Rust 源码、测试源码或 Cargo 配置，因此未运行 `cargo fmt`、`cargo check` 或 `cargo test`。
+
+清理与安全状态：本轮未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改、凭证修改或用户数据清理；未触发编译构建，未产生新的编译中间产物，因此无 `target` 清理事项。涉及项目外 D 盘操作仅为新增 `D:\源码\CowAgent` 参考源码目录；涉及 C 盘用户目录的操作仅为覆盖同名桌面开发报告副本并同步桌面开发日志。
+
+提交、推送和 Git tag 状态：本轮未创建 commit、未推送、未创建、移动或删除 tag；历史 tag 保持不变。此次属于参考源码补拉与文档状态修正，不构成 YunXi Agent 版本更迭。
+
+署名：开发报告撰写者
+
 ## 2026-07-28 18:01:18 +08:00
 
 工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-28-162630-yunxi-agent-v2-1-5-hotfix-2-weixin-windows-stale-lock-recovery-development-report.md`，完成 `v2.1.5-hotfix.2` Windows stale lock 恢复整改、独立新进程 pending 解密证据补齐、统一验证、构建产物清理，并准备发布 commit、annotated tag 和 GitHub 推送。
@@ -3998,5 +4073,104 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 清理与安全状态：未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。涉及 C 盘用户目录的操作仅为写入桌面开发报告副本和桌面开发日志副本。
 
 提交、推送和 Git tag 状态：本次未创建 commit、未推送、未创建或移动 tag；`v2.1.5-hotfix.2` 仍需由后续开发者在 Windows stale lock 恢复、独立新进程 pending 解密、统一验证和复审通过后创建新的 annotated tag，历史 `v2.1.5-hotfix.1` 和 `v2.1.5` tag 不得删除、移动或覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-28 18:40:05 +08:00
+
+工作目标：依据总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，复审 `v2.1.5-hotfix.2` 对 Windows stale lock 和独立进程 pending 解密 P1 的整改结果，判断是否允许进入总纲图中的 `v2.1.6`。
+
+执行流程：
+1. 确认当前版本为 `v2.1.5-hotfix.2`，读取总纲、上一轮审核报告、hotfix.2 开发报告、报告索引、当前 HEAD、annotated tag 和远端 refs；本轮只对照总纲 v2.1.5 要求，不横向比较多个版本。
+2. 使用 CodeGraph 定位 `try_acquire_account_lock`、Windows `default_process_is_running`、pending state、payload cipher 和独立进程恢复调用链，再核对当前磁盘源码和 hotfix.1..hotfix.2 差异。
+3. 核对 Windows 进程探测已读取 `GetLastError()`，`ERROR_INVALID_PARAMETER` 返回 stale，`ERROR_ACCESS_DENIED` 和未知错误保守返回 active；核对真实子进程锁测试和独立 pending 解密测试确实存在并未被父测试跳过。
+4. 统一执行 `cargo fmt`、`cargo check`、workspace 全量测试、storage/weixin/CLI 定向测试和 workspace release build；新增 Windows 锁测试为 13 passed、1 ignored helper，独立 pending 测试为 1 passed、1 ignored helper。
+5. 执行 release `--version`、status、doctor 和正确 `YUNXI_WEIXIN_SERVE_MAX_POLLS=1` 的真实 serve；确认 stale 锁被正常回收，服务完成一轮轮询并在退出后将账户锁恢复为 free。
+6. 执行 companion 评测、真实 Provider smoke、ConPTY 只读 verifier、依赖树、`git diff --check`、`git fsck`、tag object、peeled target 和远端 refs 核验。
+7. 新增项目内审核报告，更新报告索引，追加本条项目审核日志；桌面副本由项目正本单向复制并做 SHA-256 校验。
+
+审核结论：`v2.1.5-hotfix.2` 对照总纲 v2.1.5 审核通过，允许进入 `v2.1.6` 开发。v2.1.6 只能实现已准入微信私聊到既有 YunXi Runtime 的会话绑定、共享 Provider/sandbox/approval 配置、会话串行和有界队列；不得提前实现 v2.1.7 远程审批、v2.1.8 流式回信、v2.1.9 companion/persona/memory 扩展或群聊。
+
+修改文件与路径：
+- 新增项目审核报告：`D:\YunXi Agent\docs\reports\audits\2026-07-28-184005-yunxi-agent-v2-1-5-hotfix-2-weixin-stale-lock-recovery-reaudit-report.md`
+- 更新项目报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目审核日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面审核报告分发目标：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-28-184005-YunXi-Agent-v2.1.5-hotfix.2-微信stale-lock恢复整改复审审核报告.md`
+- 桌面开发日志同步目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 本轮未修改生产 Rust 源码、测试源码、Cargo 配置、Git 历史或版本 tag。
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace -- --test-threads=1`、`cargo build --workspace --release` 全部通过；storage Windows 测试 13/13 实际验收通过、独立 pending 解密 1/1 实际验收通过，weixin 14/3/2/6/1/2 组、CLI 23/23、兼容二进制 23/23、集成 54/54、JSONL 10/10、TUI 161/161 均通过。release `yunxi 2.1.5-hotfix.2`、status 最终 `account_lock_state=free`、serve `polls=1` 且 `stopped_reason=max_polls`。companion 31/31；Provider smoke `exit_code=0`、61 条 JSONL、`secret_leak_detected=false`；ConPTY `ok=true`、`read_only=true`。`git diff --check`、`git fsck --full --no-dangling`、依赖边界、tag object、peeled target 和远端 master 核验通过。
+
+参考源码与后续 v2.1.6 路径：
+- `D:\源码\reasonix\internal\bot\weixin\weixin.go`、`weixin_test.go`：轮询、重启和通道状态恢复思路。
+- `D:\源码\reasonix\internal\bot\types.go`、`gateway.go`、`internal\botruntime\runtime.go`：消息归一化、会话串行、Session 映射和通道到 Runtime 路由；必须 Rust 化。
+- `D:\源码\CowAgent\channel\channel_factory.py`、`channel\weixin\`：个人陪伴通道到核心交接思路，不引入 Python Runtime 或第二套 channel factory。
+- `D:\源码\openclaw-weixin\src\storage\sync-buf.ts`、`state-dir.ts`：游标、状态和 pending 恢复边界。
+- `D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs`：新增 `WeixinConversationBinding` 的存储边界，继续独立于旧 `SessionRecord`。
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`：复用既有 backend 流和 `Agent::run_with_backend_stream` 路径，不复制 Runtime。
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`：抽取 `run` 与 `weixin serve` 共用的 Provider、sandbox、approval 和 cwd 构造辅助。
+
+清理与安全状态：本轮未删除、移动或清空任何文件，未触碰正式微信凭证、用户数据、系统配置或历史 tag。测试和 release build 生成了精确路径 `D:\YunXi Agent\target`；递归清理该路径需要用户对精确绝对路径明确确认，本条日志记录为待授权清理。真实 stale lock 已由程序正常回收，退出后正式锁文件不存在，未手工删除锁文件。
+
+提交、推送和 Git tag 状态：本轮未创建审核 commit，未推送，未创建、移动或删除 tag；开发者 `v2.1.5-hotfix.2` 发布 commit、annotated tag、远端 master 和历史 tag 保持不变。审核报告、索引和日志属于 docs-only 工作树变更。
+
+署名：审核者
+
+## 2026-07-28 19:57:52 +08:00
+
+工作目标：依据总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，审核当前通知对应的 v2.1.6 微信会话绑定既有 Runtime 目标，判断是否达到总纲要求并允许进入 v2.1.7。
+
+执行流程：
+1. 读取当前 Git 状态、HEAD、版本 Tag、Cargo workspace 版本、报告索引和开发日志；确认实际仓库仍为 `v2.1.5-hotfix.2`，HEAD 为 `e4f00e1`，没有 v2.1.6 开发报告或 Tag。
+2. 按 AGENTS.md 要求先使用项目 CodeGraph 定位目标符号，再以当前磁盘源码搜索 `WeixinConversationBinding`、`WeixinTurnSupervisor`、`WeixinConversationKey`、`run_with_backend_stream`、微信队列和 fake backend 集成点。
+3. 对照总纲 v2.1.6 逐项核验 storage 会话绑定、微信 turn supervisor、CLI/微信共享 Provider 与运行配置、per-conversation 串行、有界队列、测试 sink 和 fake backend 验收。
+4. 读取上一版 v2.1.5-hotfix.2 审核报告，避免将已通过的轮询、配对、加密 pending 和 stale lock 能力误记为 v2.1.6 Runtime 接入。
+5. 统一执行格式检查、workspace 编译检查和 workspace 全量测试；本轮只做源码、文档和测试验证，不执行删除、清空目录、系统配置修改或锁文件手工清理。
+6. 新增项目内审核报告，更新报告索引，复制审核正本到桌面审核报告文件夹，并同步项目日志和桌面开发日志。
+
+审核结论：审核不通过，禁止进入 v2.1.7。实际源码仍为 v2.1.5-hotfix.2，v2.1.6 尚未形成可审核版本。未发现 WeixinConversationBinding、WeixinTurnSupervisor、微信到既有 Runtime 的调用链、共享 CLI 运行配置、per-conversation 串行有界队列或 fake backend SessionId 复用测试。开发者必须完成总纲 v2.1.6 的实现和统一验证后，再创建新的 annotated v2.1.6 Tag并重新申请审核。
+
+修改文件与路径：
+- 新增项目审核报告：`D:\YunXi Agent\docs\reports\audits\2026-07-28-195752-yunxi-agent-v2-1-6-runtime-session-binding-audit-report.md`
+- 更新项目报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目审核日志：`D:\YunXi Agent\docs\development-log.md`
+- 新增桌面审核报告副本：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-28-195752-YunXi-Agent-v2.1.6-微信会话绑定Runtime审核报告.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 本轮未修改生产 Rust 源码、测试源码、Cargo 配置、Git 历史或版本 Tag。
+
+验证结果：`cargo fmt --all -- --check` 通过；`cargo check --workspace` 通过；`cargo test --workspace -- --test-threads=1` 通过且无失败测试。全库搜索未发现 v2.1.6 目标符号和集成测试。项目审核报告 SHA-256 为 `305F3F9B0E67E57FE0E8BABDF2C0359DF8733FACEBBDFBEC615F1618660CE4F3`；桌面审核报告副本已核验为同一 SHA-256。由于 v2.1.6 源码尚不存在，本轮未执行 v2.1.6 release build、真实微信 Runtime 联调或 Session 复用验收。
+
+清理与安全状态：本轮未删除、递归清理、强制移动、清空目录、git clean、系统安装/卸载、PATH/注册表/系统配置、凭证或用户微信 state。编译和测试继续使用精确路径 `D:\YunXi Agent\target`；删除该目录需要用户对该绝对路径明确确认，本轮未执行。涉及 C 盘用户目录的操作仅为将审核报告复制到指定桌面审核报告文件夹，并在项目日志写入后单向同步桌面开发日志。
+
+提交、推送和 Git tag 状态：本轮未创建 commit、未推送、未创建、移动或删除 Tag。当前 `v2.1.5-hotfix.2` commit、annotated Tag、历史 Tag 和远端 refs 未修改；本轮项目变更属于审核报告、索引和日志的 docs-only 变更。
+
+署名：审核者
+
+## 2026-07-28 20:07:13 +08:00
+
+工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-28-195752-YunXi-Agent-v2.1.6-微信会话绑定Runtime审核报告.md` 和总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，撰写面向开发者的 `v2.1.6` 微信会话绑定既有 Runtime 开发报告，并按固定流程保存项目内正本和桌面副本。
+
+执行流程：
+1. 读取审核报告，确认 `v2.1.6` 审核不通过，原因是仓库实际仍为 `v2.1.5-hotfix.2`，尚未形成可审核的 `v2.1.6` 实现、开发报告或 annotated tag。
+2. 核对桌面审核报告和项目内审核报告 SHA-256，确认均为 `305F3F9B0E67E57FE0E8BABDF2C0359DF8733FACEBBDFBEC615F1618660CE4F3`；核对总纲 SHA-256 为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`。
+3. 使用 CodeGraph 复核 `Agent::run_with_backend_stream`、`AgentInput::text`、`SessionStore`、`SessionId`、微信 state store 和 CLI 配置接入点，确认开发报告应围绕 `WeixinConversationBinding`、`WeixinTurnSupervisor`、共享 Runtime 配置、会话串行和 fake backend 集成展开。
+4. 核对审核报告和总纲提到的参考源码状态；YunXi、Reasonix 和 OpenClaw 相关路径存在，`D:\源码\CowAgent\channel\channel_factory.py` 和 `D:\源码\CowAgent\channel\weixin` 缺失。
+5. 按固定流程尝试从 `https://github.com/zhayujie/CowAgent.git` 将缺失参考源码浅克隆到 `D:\源码\CowAgent`；第一次因连接重置失败，第二次因 GitHub 443 连接失败，目标目录未生成。本次未继续反复拉取，已在开发报告中如实记录缺失和失败原因。
+6. 新增项目内开发报告，更新项目报告索引，并将开发报告从项目正本复制到 `C:\Users\24763\Desktop\YunXi Agent开发报告\`。
+7. 追加本条项目日志，并同步到 `C:\Users\24763\Desktop\YunXi Agent开发日志.md`。
+
+修改文件与路径：
+- 新增项目内开发报告：`D:\YunXi Agent\docs\reports\development\2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md`
+- 更新项目报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 参考源码拉取目标未生成：`D:\源码\CowAgent`
+
+验证结果：开发报告项目正本与桌面副本 SHA-256 均为 `77F489DAD72731C7E180A92397D683BE93C259BE75B9D6E5465297F3062544E4`；审核报告项目副本与桌面源文件 SHA-256 一致；总纲哈希核对通过；除 CowAgent 外的参考源码存在性核对通过。本次只撰写和同步开发报告、索引与日志，未修改 Rust 源码、测试源码或 Cargo 配置，因此未运行 `cargo fmt`、`cargo check` 或 `cargo test`。
+
+清理与安全状态：未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。涉及 C 盘用户目录的操作仅为读取桌面审核报告、写入桌面开发报告副本和同步桌面开发日志；涉及项目外 D 盘操作为尝试向 `D:\源码\CowAgent` 拉取参考源码但未成功生成目录。
+
+提交、推送和 Git tag 状态：本次未创建 commit、未推送、未创建或移动 tag；`v2.1.6` 仍需由后续开发者在实现、统一验证和审核通过后创建新的 annotated tag，历史 `v2.1.5-hotfix.2` 及更早 tag 不得删除、移动或覆盖。
 
 署名：开发报告撰写者

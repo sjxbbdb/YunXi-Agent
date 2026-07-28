@@ -632,13 +632,33 @@ async fn run_prompt(
     json: bool,
     jsonl: bool,
 ) -> Result<()> {
-    let selection = provider_mode.resolve(backend, &config)?;
-    let config = selection.apply_to_config(config);
-    let offline_label = selection.is_offline_runtime();
-    print_provider_selection_warning(&selection, json, jsonl)?;
-    let result = run_agent_backend(backend, config, prompt, selection.live).await?;
+    let invocation = prepare_runtime_invocation(config, backend, provider_mode)?;
+    let offline_label = invocation.selection.is_offline_runtime();
+    print_provider_selection_warning(&invocation.selection, json, jsonl)?;
+    let result = run_agent_backend(
+        backend,
+        invocation.config,
+        prompt,
+        invocation.selection.live,
+    )
+    .await?;
     print_run_result(result, json, jsonl, offline_label)?;
     Ok(())
+}
+
+pub(crate) struct RuntimeInvocation {
+    pub config: AgentConfig,
+    pub selection: provider_mode::ProviderSelection,
+}
+
+pub(crate) fn prepare_runtime_invocation(
+    config: AgentConfig,
+    backend: BackendKind,
+    provider_mode: provider_mode::ProviderMode,
+) -> Result<RuntimeInvocation> {
+    let selection = provider_mode.resolve(backend, &config)?;
+    let config = selection.apply_to_config(config);
+    Ok(RuntimeInvocation { config, selection })
 }
 
 fn print_provider_selection_warning(
@@ -764,16 +784,8 @@ pub(crate) async fn run_agent_backend(
 ) -> Result<AgentRunResult> {
     let result = match backend {
         BackendKind::Yunxi => {
-            let cwd = config.cwd.clone();
             let agent = Agent::new(config);
-            let backend = if provider_live {
-                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace_with_live_provider(
-                    cwd,
-                    agent.config(),
-                )
-            } else {
-                build_offline_yunxi_runtime(cwd)
-            };
+            let backend = build_yunxi_runtime_backend(agent.config(), provider_live);
             agent
                 .run_with_backend(&backend, AgentInput::text(prompt))
                 .await
@@ -803,16 +815,8 @@ pub(crate) async fn run_agent_backend_stream(
 ) -> Result<AgentRunResult> {
     let result = match backend {
         BackendKind::Yunxi => {
-            let cwd = config.cwd.clone();
             let agent = Agent::new(config);
-            let backend = if provider_live {
-                yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace_with_live_provider(
-                    cwd,
-                    agent.config(),
-                )
-            } else {
-                build_offline_yunxi_runtime(cwd)
-            };
+            let backend = build_yunxi_runtime_backend(agent.config(), provider_live);
             agent
                 .run_with_backend_stream(&backend, AgentInput::text(prompt), control)
                 .await
@@ -835,6 +839,18 @@ pub(crate) async fn run_agent_backend_stream(
     };
 
     Ok(result)
+}
+
+pub(crate) fn build_yunxi_runtime_backend(
+    config: &AgentConfig,
+    provider_live: bool,
+) -> yunxi_agent_runtime::YunXiRuntimeBackend {
+    let cwd = config.cwd.clone();
+    if provider_live {
+        yunxi_agent_runtime::YunXiRuntimeBackend::for_workspace_with_live_provider(cwd, config)
+    } else {
+        build_offline_yunxi_runtime(cwd)
+    }
 }
 
 fn print_run_result(

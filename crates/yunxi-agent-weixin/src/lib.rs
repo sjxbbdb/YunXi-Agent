@@ -9,6 +9,7 @@ mod payload_cipher;
 mod redaction;
 mod secret_store;
 mod serve;
+mod turn_supervisor;
 
 pub use account_store::{
     WEIXIN_ACCOUNT_SCHEMA_VERSION, WeixinAccountRecord, WeixinAccountStore, WeixinAccountStoreError,
@@ -35,4 +36,9 @@ pub use secret_store::{
 pub use serve::{
     WeixinServeCancellation, WeixinServeError, WeixinServeOptions, WeixinServeReport,
     WeixinServeStoppedReason, WeixinUpdatesTransport, run_weixin_serve_loop,
+};
+pub use turn_supervisor::{
+    NoopWeixinRuntimeSink, WeixinRuntimeDispatcher, WeixinRuntimeDispatcherAdapter,
+    WeixinRuntimeSink, WeixinRuntimeSinkRecord, WeixinRuntimeTestSink, WeixinTurnReport,
+    WeixinTurnSupervisor, WeixinTurnSupervisorError, WeixinTurnSupervisorOptions,
 };

@@ -4,6 +4,9 @@
 
 ## 当前入口
 
+- [v2.1.6 微信会话绑定既有 Runtime 开发报告](development/2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md)：实现 `WeixinConversationBinding`、`WeixinTurnSupervisor`、共享 Runtime 配置、会话串行队列和 fake backend 集成的开发依据。
+- [v2.1.6 微信会话绑定既有 Runtime 审核报告](audits/2026-07-28-195752-yunxi-agent-v2-1-6-runtime-session-binding-audit-report.md)：开发前审核不通过；确认当时源码仍为 v2.1.5-hotfix.2，并转化为本轮 v2.1.6 开发任务。
+- [v2.1.5-hotfix.2 微信 stale lock 恢复整改复审审核报告](audits/2026-07-28-184005-yunxi-agent-v2-1-5-hotfix-2-weixin-stale-lock-recovery-reaudit-report.md)：审核通过，允许进入 v2.1.6；Windows stale lock、独立进程 pending 解密、原子提交和既有 CLI/TUI/Provider 回归均已通过。
 - [v2.1.5-hotfix.2 微信 Windows stale lock 恢复整改开发报告](development/2026-07-28-162630-yunxi-agent-v2-1-5-hotfix-2-weixin-windows-stale-lock-recovery-development-report.md)：修复 Windows 默认 process probe 将不存在 PID 判为 active、异常退出后账户锁无法回收的问题，并补独立新进程 pending 解密证据。
 - [v2.1.5-hotfix.1 微信加密 pending inbound 整改复审审核报告](audits/2026-07-28-161052-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-reaudit-report.md)：审核不通过；Windows 默认 process probe 将不存在的 stale-lock PID 判为 active，禁止进入 v2.1.6，必须留在当前 hotfix 整改。
 - [v2.1.5-hotfix.1 微信加密 pending inbound 整改开发报告](development/2026-07-28-114710-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-development-report.md)：修复已准入私聊缺少真实密文、nonce、AAD 和重启恢复的问题。

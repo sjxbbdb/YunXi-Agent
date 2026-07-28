@@ -1,6 +1,6 @@
 # YunXi Agent 文档索引
 
-本页是 `docs/` 的稳定导航入口。`v2.1.5-hotfix.2` 保留 v2.1.4/hotfix 独立版本化微信状态 store、原子写入、账户锁诊断、配对请求本地生命周期、pending 计数、安全 logout 和旧登录 metadata 到 `WeixinStateStore` 的安全幂等初始化；本版本继续使用前台 `yunxi weixin serve` 私聊长轮询接纳层，接入 iLink `getupdates`，把已准入私聊文本写入带算法元数据、AAD 版本、随机 nonce 和 ciphertext 的认证加密 pending inbound，把陌生私聊转为本地 pair request，并在同一次 state-store 提交中推进游标、receipt、pending inbound 和健康状态；同时修复 Windows 默认进程探测把已退出 PID 的账户锁误判为 active 的问题，并补齐独立新进程 pending 解密证据。本版本仍不绑定 Runtime、不创建 YunXi session、不调用 Provider/工具、不发送或流式回复微信消息，群聊和附件仍关闭。
+本页是 `docs/` 的稳定导航入口。`v2.1.6` 保留 v2.1.4/hotfix 独立版本化微信状态 store、原子写入、账户锁诊断、配对请求本地生命周期、pending 计数、安全 logout、旧登录 metadata 到 `WeixinStateStore` 的安全幂等初始化、前台 `yunxi weixin serve` 私聊长轮询接纳层、认证加密 pending inbound、重启恢复入口和 Windows stale lock 恢复；本版本新增 `WeixinConversationBinding`，把已准入私聊的 `account + peer + dm` 绑定到既有 YunXi `SessionId`，并通过 `WeixinTurnSupervisor` 复用 `Agent::run_with_backend_stream`、共享 Provider/model/cwd/sandbox/approval/context-window/companion 配置、同会话有界串行队列和测试 sink 最终文本。本版本仍不发送或流式回复微信消息，不实现远程审批、群聊、附件解析或完整微信聊天闭环。
 
 ## 架构与运行边界
 
@@ -10,7 +10,7 @@
 - [人格与记忆](persona-memory.md)：人格、Memory Schema、召回、隐私和审核边界。
 - [TUI 表现与终端生命周期](tui-presentation.md)：布局、流式输出、焦点和恢复约束。
 - [Sandbox 协议事件](protocol/sandbox-events.md)：执行策略与协议事件说明。
-- [微信接入边界](weixin.md)：v2.1.5-hotfix.2 QR 登录、安全凭证引用、状态持久化、旧 metadata 初始化、账户锁、pair 生命周期、前台私聊长轮询接纳、认证加密 pending inbound、重启恢复入口、logout 安全边界和明确未实现能力。
+- [微信接入边界](weixin.md)：v2.1.6 QR 登录、安全凭证引用、状态持久化、旧 metadata 初始化、账户锁、pair 生命周期、前台私聊长轮询接纳、认证加密 pending inbound、Runtime session binding、同会话串行、测试 sink、logout 安全边界和明确未实现能力。
 
 ## 规格与路线图
 
@@ -21,6 +21,9 @@
 ## 报告与证据
 
 - [报告索引与归档规则](reports/README.md)：报告命名、分类和历史兼容规则。
+- [v2.1.6 微信会话绑定既有 Runtime 开发报告](reports/development/2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md)：实现 `WeixinConversationBinding`、`WeixinTurnSupervisor`、共享 Runtime 配置、会话串行队列和 fake backend 集成的开发依据。
+- [v2.1.6 微信会话绑定既有 Runtime 审核报告](reports/audits/2026-07-28-195752-yunxi-agent-v2-1-6-runtime-session-binding-audit-report.md)：开发前审核不通过，确认当时源码仍停留在 v2.1.5-hotfix.2，并转化为本轮 v2.1.6 开发任务。
+- [v2.1.5-hotfix.2 微信 stale lock 恢复整改复审审核报告](reports/audits/2026-07-28-184005-yunxi-agent-v2-1-5-hotfix-2-weixin-stale-lock-recovery-reaudit-report.md)：审核通过，允许进入 v2.1.6。
 - [v2.1.5-hotfix.2 微信 Windows stale lock 恢复整改开发报告](reports/development/2026-07-28-162630-yunxi-agent-v2-1-5-hotfix-2-weixin-windows-stale-lock-recovery-development-report.md)：修复 Windows 默认 process probe 将不存在 PID 判为 active、异常退出后账户锁无法回收的问题，并补独立新进程 pending 解密证据。
 - [v2.1.5-hotfix.1 微信加密 pending inbound 整改开发报告](reports/development/2026-07-28-114710-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-development-report.md)：修复已准入私聊缺少真实 ciphertext、nonce、AAD 和重启恢复入口的 P1。
 - [v2.1.5 微信私聊长轮询、配对准入与幂等接纳开发报告](reports/development/2026-07-27-233307-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-development-report.md)：前台 `serve`、iLink `getupdates`、配对准入、游标原子提交和重复消息幂等开发记录。

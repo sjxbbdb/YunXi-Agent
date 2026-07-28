@@ -27,13 +27,14 @@ pub use weixin_state::{
     FileWeixinStateStore, WEIXIN_PAYLOAD_AAD_VERSION, WEIXIN_PAYLOAD_ALGORITHM,
     WEIXIN_PAYLOAD_ALGORITHM_VERSION, WEIXIN_PAYLOAD_NONCE_LENGTH, WEIXIN_STATE_SCHEMA_VERSION,
     WeixinAccountLock, WeixinAccountLockInfo, WeixinAccountLockState, WeixinConnectionStateRecord,
-    WeixinCredentialReferenceRecord, WeixinCursorRecord, WeixinDeliveryRecord, WeixinDeliveryState,
-    WeixinEncryptedPayload, WeixinInboundBatchCommit, WeixinInboundBatchCommitResult,
-    WeixinInboundCommitItem, WeixinInboundReceiptRecord, WeixinPairRequest,
-    WeixinPairRequestCommitItem, WeixinPairRequestState, WeixinPendingDeliveryMetadata,
-    WeixinPendingInbound, WeixinPendingInboundState, WeixinReceiptState,
-    WeixinReplyContextReference, WeixinSessionBindingRecord, WeixinStateError,
-    WeixinStateMigration, WeixinStateSnapshot, WeixinStateStore, WeixinStateWriteOptions,
+    WeixinConversationBinding, WeixinCredentialReferenceRecord, WeixinCursorRecord,
+    WeixinDeliveryRecord, WeixinDeliveryState, WeixinEncryptedPayload, WeixinInboundBatchCommit,
+    WeixinInboundBatchCommitResult, WeixinInboundCommitItem, WeixinInboundReceiptRecord,
+    WeixinPairRequest, WeixinPairRequestCommitItem, WeixinPairRequestState,
+    WeixinPendingDeliveryMetadata, WeixinPendingInbound, WeixinPendingInboundState,
+    WeixinReceiptState, WeixinReplyContextReference, WeixinRuntimeTurnBeginRequest,
+    WeixinStateError, WeixinStateMigration, WeixinStateSnapshot, WeixinStateStore,
+    WeixinStateWriteOptions,
 };
 
 static NEXT_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);

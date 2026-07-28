@@ -3771,3 +3771,59 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 提交、推送和 Git tag 状态：本次未创建 commit、未推送、未创建或移动 tag；`v2.1.5` 仍需由后续开发者在实现、统一验证和审核通过后创建新的 annotated tag，历史 tag 不得删除、移动或覆盖。
 
 署名：开发报告撰写者
+
+## 2026-07-28 10:48:07 +08:00
+
+工作目标：依据总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，完成 `v2.1.5` 微信私聊长轮询、配对与幂等接纳的源码审核，并按固定流程保存审核报告、同步报告索引和日志。
+
+执行流程：
+1. 核对当前版本 tag、HEAD、总纲正本、开发报告和审核范围，确认本轮只对照总纲中的 `v2.1.5` 要求，不横向比较多个版本。
+2. 复核 `yunxi-agent-cli`、`yunxi-agent-weixin` 和 `yunxi-agent-storage` 的消息归一化、data key、pending inbound、原子批次提交、游标、receipt、pair 和状态恢复实现。
+3. 复核已记录的统一验证结果：fmt、workspace check/test、storage/weixin/CLI/provider/TUI 测试、release build、status、doctor、单轮 serve、companion、Provider smoke、ConPTY、`git diff --check`、`git fsck` 和 target 清理状态。
+4. 对照总纲逐项判断功能是否完成，确认轮询、游标、账户锁、配对、幂等和边界过滤通过，但发现 data key 仅用于启动检查，pending inbound 只保存哈希引用，没有真正的密文、nonce、AAD、算法版本和可恢复正文。
+5. 删除审核报告中的两处格式残留 `NaN`，更新报告索引，将当前入口改为 `v2.1.5` 审核不通过并明确禁止进入 `v2.1.6`。
+6. 准备将项目正本审核报告和项目日志同步到用户指定的桌面目录；桌面副本必须与项目正本通过 SHA-256 校验。
+
+审核结论：`v2.1.5` 审核不通过，禁止进入 `v2.1.6`。必须先在当前版本完成真正的 pending payload authenticated encryption、原子提交和新进程重启恢复测试，再重新审核。整改期间不得实现 `v2.1.6` 的 Runtime 会话绑定、Session 复用或 Provider dispatch。
+
+修改文件与路径：
+- 修正审核报告：`D:\YunXi Agent\docs\reports\audits\2026-07-28-100654-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-audit-report.md`
+- 更新报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 待同步桌面审核报告：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-28-100654-YunXi-Agent-v2.1.5-微信长轮询配对幂等审核报告.md`
+- 待同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：审核报告中的格式残留已清除；报告索引已明确当前版本审核不通过和 v2.1.6 禁入条件；本轮未修改生产 Rust 源码、测试源码、Cargo 配置、正式 evidence、Git 历史或任何版本 tag。审核报告项目正本与桌面副本 SHA-256 均为 `948C9F265ED26E7C91936F3F044CC686768987A034F3F7253C7AD03C56AD22CD`；项目日志与桌面副本内容一致，复制后的 SHA-256 比较通过。由于本轮是文档审核，未重复执行 cargo 编译测试；报告中记录的既有统一验证结果保持不变。
+
+提交和推送状态：本轮未创建 commit，未推送，未创建、移动或删除 tag；`v2.1.5` 原有 annotated tag 保持不变。审核报告、索引和日志属于 docs-only 工作树变更。
+
+清理与安全状态：未执行递归删除、强制移动、清空目录、`git clean`、gc、prune、系统安装/卸载、PATH/注册表/系统配置修改或用户数据清理；未触碰 `D:\YunXi Agent\target`、`.yunxi`、`.tmp`、凭证存储或源码参考目录。涉及 C 盘用户目录仅限向用户指定的桌面审核报告文件夹写入审核报告副本，以及同步桌面开发日志。
+
+署名：审核者
+
+## 2026-07-28 11:47:10 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\reports\audits\2026-07-28-100654-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-audit-report.md` 和总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，撰写面向开发者的 `v2.1.5-hotfix.1` 加密 pending inbound 整改开发报告，并按固定流程保存项目内正本和桌面副本。
+
+执行流程：
+1. 读取审核报告，确认 `v2.1.5` 审核不通过，禁止进入 `v2.1.6`；唯一 P1 阻塞点是已准入私聊只保存哈希引用，没有真正的认证密文、nonce、AAD 和重启恢复能力。
+2. 核对审核报告 SHA-256 为 `948C9F265ED26E7C91936F3F044CC686768987A034F3F7253C7AD03C56AD22CD`；核对总纲 SHA-256 为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`。
+3. 使用 CodeGraph 和只读源码复核 `run_serve`、`WeixinInboundEnvelope`、`WeixinInboundCommitItem`、`WeixinPendingInbound`、data key 读取和 state batch commit 边界，确认整改必须将 data key 真正接入认证加密流程。
+4. 核对审核报告提到的参考源码是否在本机存在；Reasonix、OpenClaw Weixin 及项目内 secret/state/inbound 关键文件均已存在，本次未新增拉取源码。
+5. 新增项目内开发报告，更新项目报告索引，并将开发报告从项目正本复制到 `C:\Users\24763\Desktop\YunXi Agent开发报告\`。
+6. 追加本条项目日志，并同步到 `C:\Users\24763\Desktop\YunXi Agent开发日志.md`。
+
+修改文件与路径：
+- 新增项目内开发报告：`D:\YunXi Agent\docs\reports\development\2026-07-28-114710-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-development-report.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-28-114710-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-development-report.md`
+- 更新项目报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：开发报告项目正本与桌面副本 SHA-256 均为 `8726743C2C49AE6F30094D526F41A1FC5D634254917B059E92343FD93F51D1DD`；审核报告和总纲哈希核对通过；参考源码存在性核对通过。本次只撰写和同步开发报告、索引与日志，未修改 Rust 源码、测试源码或 Cargo 配置，因此未运行 `cargo fmt`、`cargo check` 或 `cargo test`。
+
+清理与安全状态：未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。涉及 C 盘用户目录的操作仅为写入桌面开发报告副本和桌面开发日志副本。
+
+提交、推送和 Git tag 状态：本次未创建 commit、未推送、未创建或移动 tag；`v2.1.5-hotfix.1` 仍需由后续开发者在真正加密、重启恢复、统一验证和复审通过后创建新的 annotated tag，历史 `v2.1.5` tag 不得删除、移动或覆盖。
+
+署名：开发报告撰写者

@@ -193,7 +193,7 @@ async fn run_serve(
     let token = store.get_token(&account_id).with_context(|| {
         format!("weixin serve token credential is unavailable (account={account_hash})")
     })?;
-    let _data_key = store.get_data_key(&account_id).with_context(|| {
+    let data_key = store.get_data_key(&account_id).with_context(|| {
         format!("weixin serve encrypted pending queue key is unavailable (account={account_hash})")
     })?;
     let mut lock = state_store
@@ -217,7 +217,7 @@ async fn run_serve(
         );
     }
     let serve_result = tokio::select! {
-        result = run_weixin_serve_loop(&mut client, &state_store, options, &cancellation) => result,
+        result = run_weixin_serve_loop(&mut client, &state_store, options, &data_key, &cancellation) => result,
         signal = tokio::signal::ctrl_c() => {
             let _ = signal;
             cancellation.cancel();

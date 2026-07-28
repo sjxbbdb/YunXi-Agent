@@ -2,11 +2,12 @@ use std::fs;
 
 use tempfile::TempDir;
 use yunxi_agent_storage::{
-    FileWeixinStateStore, WEIXIN_STATE_SCHEMA_VERSION, WeixinAccountLockState,
-    WeixinConnectionStateRecord, WeixinCredentialReferenceRecord, WeixinInboundBatchCommit,
-    WeixinInboundCommitItem, WeixinPairRequestCommitItem, WeixinPairRequestState,
-    WeixinPendingInbound, WeixinPendingInboundState, WeixinStateError, WeixinStateSnapshot,
-    WeixinStateStore, WeixinStateWriteOptions,
+    FileWeixinStateStore, WEIXIN_PAYLOAD_AAD_VERSION, WEIXIN_PAYLOAD_ALGORITHM,
+    WEIXIN_PAYLOAD_ALGORITHM_VERSION, WEIXIN_STATE_SCHEMA_VERSION, WeixinAccountLockState,
+    WeixinConnectionStateRecord, WeixinCredentialReferenceRecord, WeixinEncryptedPayload,
+    WeixinInboundBatchCommit, WeixinInboundCommitItem, WeixinPairRequestCommitItem,
+    WeixinPairRequestState, WeixinPendingInbound, WeixinPendingInboundState, WeixinStateError,
+    WeixinStateSnapshot, WeixinStateStore, WeixinStateWriteOptions,
 };
 
 const ACCOUNT: &str = "account#933b5bde";
@@ -30,6 +31,49 @@ fn snapshot(now: u64) -> WeixinStateSnapshot {
             .to_string(),
     });
     snapshot
+}
+
+fn encrypted_payload() -> WeixinEncryptedPayload {
+    WeixinEncryptedPayload {
+        algorithm: WEIXIN_PAYLOAD_ALGORITHM.to_string(),
+        algorithm_version: WEIXIN_PAYLOAD_ALGORITHM_VERSION,
+        aad_version: WEIXIN_PAYLOAD_AAD_VERSION,
+        nonce: "AAECAwQFBgcICQoL".to_string(),
+        ciphertext: "Y2lwaGVydGV4dA==".to_string(),
+    }
+}
+
+fn commit_item(
+    item_id: &str,
+    message_id_hash: &str,
+    peer_id_hash: &str,
+) -> WeixinInboundCommitItem {
+    WeixinInboundCommitItem {
+        item_id: item_id.to_string(),
+        message_id_hash: message_id_hash.to_string(),
+        peer_id_hash: peer_id_hash.to_string(),
+        encrypted_payload_ref: item_id.replace("item#", "pending#"),
+        encrypted_payload: encrypted_payload(),
+        payload_kind: Some("text".to_string()),
+    }
+}
+
+fn pending_item(encrypted_payload: Option<WeixinEncryptedPayload>) -> WeixinPendingInbound {
+    WeixinPendingInbound {
+        schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+        item_id: "item#00000001".to_string(),
+        account_id: ACCOUNT.to_string(),
+        message_id_hash: "message#00000001".to_string(),
+        peer_id_hash: "peer#00000001".to_string(),
+        encrypted_payload_ref: "pending#00000001".to_string(),
+        payload_kind: Some("text".to_string()),
+        encrypted_payload,
+        state: WeixinPendingInboundState::Ready,
+        terminal_reason: None,
+        created_at_millis: 1000,
+        updated_at_millis: 1000,
+        transitioned_at_millis: 1000,
+    }
 }
 
 #[test]
@@ -113,6 +157,35 @@ fn legacy_schema_is_migrated_in_memory_to_current_snapshot() {
     assert_eq!(loaded.schema_version, WEIXIN_STATE_SCHEMA_VERSION);
     assert_eq!(loaded.pair_requests.len(), 0);
     assert_eq!(loaded.pending_inbound_count(), 0);
+
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "account_id": ACCOUNT,
+            "workspace_id": WORKSPACE,
+            "endpoint": ENDPOINT,
+            "pending_inbound": [{
+                "schema_version": 1,
+                "item_id": "item#00000001",
+                "account_id": ACCOUNT,
+                "message_id_hash": "message#00000001",
+                "peer_id_hash": "peer#00000001",
+                "encrypted_payload_ref": "pending#00000001",
+                "state": "ready",
+                "terminal_reason": null,
+                "created_at_millis": 1000,
+                "updated_at_millis": 1000,
+                "transitioned_at_millis": 1000
+            }]
+        }))
+        .expect("json"),
+    )
+    .expect("write legacy state with pending inbound");
+    assert!(matches!(
+        store.load(ACCOUNT),
+        Err(WeixinStateError::InvalidRecord { .. })
+    ));
 }
 
 #[test]
@@ -155,7 +228,9 @@ fn pending_inbound_state_machine_is_strict_and_terminal_states_are_not_recovered
         account_id: ACCOUNT.to_string(),
         message_id_hash: "message#00000001".to_string(),
         peer_id_hash: "peer#00000001".to_string(),
-        encrypted_payload_ref: "YunXiAgent/Weixin/pending/item-1".to_string(),
+        encrypted_payload_ref: "pending#00000001".to_string(),
+        payload_kind: Some("text".to_string()),
+        encrypted_payload: Some(encrypted_payload()),
         state: WeixinPendingInboundState::Accepted,
         terminal_reason: None,
         created_at_millis: 1000,
@@ -225,12 +300,11 @@ fn inbound_batch_commit_writes_cursor_receipt_and_pending_in_one_snapshot() {
     store.save(&snapshot(1000)).expect("save state");
     let mut commit = WeixinInboundBatchCommit::new(ACCOUNT, 1100);
     commit.next_get_updates_buf = Some("cursor-next".to_string());
-    commit.accepted.push(WeixinInboundCommitItem {
-        item_id: "item#00000001".to_string(),
-        message_id_hash: "message#00000001".to_string(),
-        peer_id_hash: "peer#00000001".to_string(),
-        encrypted_payload_ref: "pending#00000001".to_string(),
-    });
+    commit.accepted.push(commit_item(
+        "item#00000001",
+        "message#00000001",
+        "peer#00000001",
+    ));
 
     let result = store
         .commit_inbound_batch(commit)
@@ -248,6 +322,14 @@ fn inbound_batch_commit_writes_cursor_receipt_and_pending_in_one_snapshot() {
     assert_eq!(state.inbound_receipts.len(), 1);
     assert_eq!(state.pending_inbound.len(), 1);
     assert_eq!(
+        state.pending_inbound[0].payload_kind.as_deref(),
+        Some("text")
+    );
+    assert_eq!(
+        state.pending_inbound[0].encrypted_payload.as_ref(),
+        Some(&encrypted_payload())
+    );
+    assert_eq!(
         state.pending_inbound[0].state,
         WeixinPendingInboundState::Ready
     );
@@ -259,12 +341,11 @@ fn inbound_batch_commit_is_idempotent_for_duplicate_message_receipts() {
     store.save(&snapshot(1000)).expect("save state");
     let mut commit = WeixinInboundBatchCommit::new(ACCOUNT, 1100);
     commit.next_get_updates_buf = Some("cursor-1".to_string());
-    commit.accepted.push(WeixinInboundCommitItem {
-        item_id: "item#00000001".to_string(),
-        message_id_hash: "message#00000001".to_string(),
-        peer_id_hash: "peer#00000001".to_string(),
-        encrypted_payload_ref: "pending#00000001".to_string(),
-    });
+    commit.accepted.push(commit_item(
+        "item#00000001",
+        "message#00000001",
+        "peer#00000001",
+    ));
     store
         .commit_inbound_batch(commit.clone())
         .expect("first commit");
@@ -316,12 +397,11 @@ fn inbound_batch_atomic_failure_preserves_cursor_and_pending_state() {
     store.save(&snapshot(1000)).expect("save state");
     let mut commit = WeixinInboundBatchCommit::new(ACCOUNT, 1100);
     commit.next_get_updates_buf = Some("cursor-next".to_string());
-    commit.accepted.push(WeixinInboundCommitItem {
-        item_id: "item#00000001".to_string(),
-        message_id_hash: "message#00000001".to_string(),
-        peer_id_hash: "peer#00000001".to_string(),
-        encrypted_payload_ref: "pending#00000001".to_string(),
-    });
+    commit.accepted.push(commit_item(
+        "item#00000001",
+        "message#00000001",
+        "peer#00000001",
+    ));
     let error = store
         .commit_inbound_batch_with_options(
             commit,
@@ -347,38 +427,89 @@ fn inbound_batch_validation_rejects_raw_message_peer_and_pending_refs() {
     let (_temp, store) = store_fixture();
     store.save(&snapshot(1000)).expect("save state");
     let mut commit = WeixinInboundBatchCommit::new(ACCOUNT, 1100);
-    commit.accepted.push(WeixinInboundCommitItem {
-        item_id: "item#00000001".to_string(),
-        message_id_hash: "raw-message-id".to_string(),
-        peer_id_hash: "peer#00000001".to_string(),
-        encrypted_payload_ref: "pending#00000001".to_string(),
-    });
+    commit.accepted.push(commit_item(
+        "item#00000001",
+        "raw-message-id",
+        "peer#00000001",
+    ));
     assert!(matches!(
         store.commit_inbound_batch(commit),
         Err(WeixinStateError::InvalidRecord { .. })
     ));
 
     let mut commit = WeixinInboundBatchCommit::new(ACCOUNT, 1200);
-    commit.accepted.push(WeixinInboundCommitItem {
-        item_id: "item#00000002".to_string(),
-        message_id_hash: "message#00000002".to_string(),
-        peer_id_hash: "raw-peer-id".to_string(),
-        encrypted_payload_ref: "pending#00000002".to_string(),
-    });
+    commit.accepted.push(commit_item(
+        "item#00000002",
+        "message#00000002",
+        "raw-peer-id",
+    ));
     assert!(matches!(
         store.commit_inbound_batch(commit),
         Err(WeixinStateError::InvalidRecord { .. })
     ));
 
     let mut commit = WeixinInboundBatchCommit::new(ACCOUNT, 1300);
-    commit.accepted.push(WeixinInboundCommitItem {
-        item_id: "item#00000003".to_string(),
-        message_id_hash: "message#00000003".to_string(),
-        peer_id_hash: "peer#00000003".to_string(),
-        encrypted_payload_ref: "context-token-secret".to_string(),
-    });
+    let mut item = commit_item("item#00000003", "message#00000003", "peer#00000003");
+    item.encrypted_payload_ref = "context-token-secret".to_string();
+    commit.accepted.push(item);
     assert!(matches!(
         store.commit_inbound_batch(commit),
         Err(WeixinStateError::InvalidRecord { .. })
     ));
+}
+
+#[test]
+fn inbound_batch_validation_rejects_missing_or_invalid_encrypted_payload() {
+    let (_temp, store) = store_fixture();
+    let mut state = snapshot(1000);
+    state.pending_inbound.push(pending_item(None));
+    assert!(matches!(
+        store.save(&state),
+        Err(WeixinStateError::InvalidRecord { .. })
+    ));
+
+    let invalid_payloads = [
+        WeixinEncryptedPayload {
+            algorithm: "aes-256-gcm".to_string(),
+            ..encrypted_payload()
+        },
+        WeixinEncryptedPayload {
+            algorithm_version: WEIXIN_PAYLOAD_ALGORITHM_VERSION + 1,
+            ..encrypted_payload()
+        },
+        WeixinEncryptedPayload {
+            aad_version: WEIXIN_PAYLOAD_AAD_VERSION + 1,
+            ..encrypted_payload()
+        },
+        WeixinEncryptedPayload {
+            nonce: "AAAA".to_string(),
+            ..encrypted_payload()
+        },
+        WeixinEncryptedPayload {
+            nonce: "not-base64@@".to_string(),
+            ..encrypted_payload()
+        },
+        WeixinEncryptedPayload {
+            ciphertext: "".to_string(),
+            ..encrypted_payload()
+        },
+        WeixinEncryptedPayload {
+            ciphertext: "not-base64@@".to_string(),
+            ..encrypted_payload()
+        },
+        WeixinEncryptedPayload {
+            ciphertext: "raw-message-body".to_string(),
+            ..encrypted_payload()
+        },
+    ];
+    for invalid_payload in invalid_payloads {
+        let mut state = snapshot(1000);
+        state
+            .pending_inbound
+            .push(pending_item(Some(invalid_payload)));
+        assert!(matches!(
+            store.save(&state),
+            Err(WeixinStateError::InvalidRecord { .. })
+        ));
+    }
 }

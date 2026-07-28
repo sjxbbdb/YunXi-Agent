@@ -4,6 +4,8 @@
 
 ## 当前入口
 
+- [v2.1.5-hotfix.1 微信加密 pending inbound 整改开发报告](development/2026-07-28-114710-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-development-report.md)：修复已准入私聊缺少真实密文、nonce、AAD 和重启恢复的问题。
+- [v2.1.5 微信私聊长轮询、配对准入与幂等审核报告](audits/2026-07-28-100654-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-audit-report.md)：审核不通过；已准入 pending 私聊消息尚未真正加密持久化，禁止进入 v2.1.6，必须留在 v2.1.5 整改。
 - [v2.1.5 微信私聊长轮询、配对准入与幂等接纳开发报告](development/2026-07-27-233307-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-development-report.md)：前台 `serve`、iLink `getupdates`、配对、游标原子提交和幂等接纳开发记录与发布门禁。
 - [v2.1.4-hotfix.1 微信旧账户状态迁移复审审核报告](audits/2026-07-27-230718-yunxi-agent-v2-1-4-hotfix-1-weixin-state-migration-reaudit-report.md)：整改复审通过，允许进入 v2.1.5。
 - [v2.1.4-hotfix.1 微信旧账户状态迁移整改开发报告](development/2026-07-27-203440-yunxi-agent-v2-1-4-hotfix-1-weixin-legacy-state-migration-development-report.md)：旧登录 metadata 到 `WeixinStateStore` 的幂等初始化整改记录。

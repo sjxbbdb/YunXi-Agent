@@ -16,6 +16,7 @@ use yunxi_agent_storage::{
 use crate::backoff::WeixinBackoff;
 use crate::ilink::{GetUpdatesRequest, GetUpdatesResponse, IlinkHttpClient};
 use crate::inbound::{WeixinInboundEnvelope, WeixinInboundKind};
+use crate::payload_cipher::{WeixinPayloadAad, WeixinPayloadCipher, WeixinPayloadCipherError};
 use crate::{SecretString, WeixinApiError};
 
 const DEFAULT_PAIR_REQUEST_TTL: Duration = Duration::from_secs(10 * 60);
@@ -87,6 +88,8 @@ pub enum WeixinServeError {
     State(#[from] WeixinStateError),
     #[error("weixin serve poll failed: {0}")]
     Api(#[from] WeixinApiError),
+    #[error("weixin serve pending payload encryption failed: {0}")]
+    PayloadCipher(#[from] WeixinPayloadCipherError),
     #[error("weixin serve paused because the credential is expired or invalid")]
     CredentialExpired,
 }
@@ -113,6 +116,7 @@ pub async fn run_weixin_serve_loop<T>(
     transport: &mut T,
     state_store: &FileWeixinStateStore,
     options: WeixinServeOptions,
+    data_key: &SecretString,
     cancellation: &WeixinServeCancellation,
 ) -> Result<WeixinServeReport, WeixinServeError>
 where
@@ -120,6 +124,8 @@ where
 {
     let mut report = WeixinServeReport::default();
     let mut backoff = WeixinBackoff::default();
+    let payload_cipher = WeixinPayloadCipher::new();
+    payload_cipher.validate_data_key(data_key)?;
 
     loop {
         if cancellation.is_cancelled() {
@@ -211,11 +217,24 @@ where
                     } else {
                         let item_id = envelope.pending_item_id();
                         let encrypted_payload_ref = envelope.encrypted_payload_ref();
+                        let plaintext = envelope
+                            .recoverable_text_payload(message, &item_id)
+                            .ok_or(WeixinPayloadCipherError::InvalidPlaintext)?;
+                        let aad = WeixinPayloadAad::new(
+                            &envelope.account_id,
+                            &envelope.peer_id_hash,
+                            &envelope.message_id_hash,
+                            &item_id,
+                        );
+                        let encrypted_payload =
+                            payload_cipher.encrypt_pending_inbound(data_key, &plaintext, &aad)?;
                         commit.accepted.push(WeixinInboundCommitItem {
                             item_id,
-                            message_id_hash: envelope.message_id_hash,
-                            peer_id_hash: envelope.peer_id_hash,
+                            message_id_hash: envelope.message_id_hash.clone(),
+                            peer_id_hash: envelope.peer_id_hash.clone(),
                             encrypted_payload_ref,
+                            encrypted_payload,
+                            payload_kind: Some(envelope.kind.as_str().to_string()),
                         });
                     }
                 }
@@ -381,6 +400,10 @@ mod tests {
         }
     }
 
+    fn test_data_key() -> SecretString {
+        SecretString::new("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+    }
+
     #[tokio::test]
     async fn serve_loop_accepts_approved_private_text_and_advances_cursor_atomically() {
         let (_temp, store, account) = store_fixture();
@@ -407,10 +430,12 @@ mod tests {
         };
         let mut options = WeixinServeOptions::new(account.clone());
         options.max_polls = Some(1);
+        let data_key = test_data_key();
         let report = run_weixin_serve_loop(
             &mut transport,
             &store,
             options,
+            &data_key,
             &WeixinServeCancellation::default(),
         )
         .await
@@ -419,6 +444,24 @@ mod tests {
         assert_eq!(report.pair_request_count, 0);
         let state = store.load(&account).expect("load").expect("state");
         assert_eq!(state.pending_inbound_count(), 1);
+        let pending = state.pending_inbound[0].clone();
+        let encrypted_payload = pending
+            .encrypted_payload
+            .as_ref()
+            .expect("encrypted payload");
+        assert_eq!(encrypted_payload.algorithm, "chacha20-poly1305");
+        assert_eq!(encrypted_payload.algorithm_version, 1);
+        assert_eq!(encrypted_payload.aad_version, 1);
+        assert!(!encrypted_payload.nonce.is_empty());
+        assert!(!encrypted_payload.ciphertext.is_empty());
+        assert_eq!(pending.payload_kind.as_deref(), Some("text"));
+        let recovered = WeixinPayloadCipher::new()
+            .decrypt_pending_inbound(&data_key, &pending)
+            .expect("restart decrypt pending inbound");
+        assert_eq!(
+            recovered.text.as_ref().expect("text").expose(),
+            "raw message body"
+        );
         assert_eq!(
             state.cursors[0].get_updates_buf.as_deref(),
             Some("cursor-next")
@@ -430,9 +473,89 @@ mod tests {
             "raw-peer-1",
             "raw message body",
             "context-token-secret",
+            data_key.expose(),
         ] {
             assert!(!state_json.contains(forbidden));
         }
+    }
+
+    #[tokio::test]
+    async fn serve_loop_mixed_batch_counts_pair_skip_and_encrypted_pending() {
+        let (_temp, store, account) = store_fixture();
+        let approved_envelope = WeixinInboundEnvelope::from_message(
+            &account,
+            None,
+            &text_message("raw-message-approved", "raw-peer-approved"),
+            1000,
+        );
+        let pair = store
+            .add_pair_request(&account, &approved_envelope.peer_id_hash, u64::MAX, 1000)
+            .expect("pair request");
+        store
+            .approve_pair_request(&account, &pair.request_id, 1001)
+            .expect("approve peer");
+
+        let mut group = text_message("raw-message-group", "raw-peer-group");
+        group.group_id = Some(SecretString::new("raw-group-id"));
+        let mut self_message = text_message("raw-message-self", "bot-user-id");
+        self_message.message_state = Some(2);
+        let mut attachment = text_message("raw-message-attachment", "raw-peer-attachment");
+        attachment.item_list[0].item_type = 3;
+        let mut unknown = text_message("raw-message-unknown", "raw-peer-unknown");
+        unknown.item_list.clear();
+
+        let mut transport = ScriptedTransport {
+            responses: VecDeque::from([Ok(GetUpdatesResponse {
+                ret: 0,
+                msgs: vec![
+                    text_message("raw-message-approved", "raw-peer-approved"),
+                    text_message("raw-message-stranger", "raw-peer-stranger"),
+                    group,
+                    self_message,
+                    attachment,
+                    unknown,
+                ],
+                get_updates_buf: Some(SecretString::new("cursor-next")),
+                ..GetUpdatesResponse::default()
+            })]),
+        };
+        let mut options = WeixinServeOptions::new(account.clone());
+        options.max_polls = Some(1);
+        options.self_user_id = Some(SecretString::new("bot-user-id"));
+        let data_key = test_data_key();
+        let report = run_weixin_serve_loop(
+            &mut transport,
+            &store,
+            options,
+            &data_key,
+            &WeixinServeCancellation::default(),
+        )
+        .await
+        .expect("serve loop");
+        assert_eq!(report.accepted_count, 1);
+        assert_eq!(report.pair_request_count, 1);
+        assert_eq!(report.skipped_group_count, 1);
+        assert_eq!(report.skipped_self_count, 1);
+        assert_eq!(report.skipped_unsupported_count, 1);
+        assert_eq!(report.skipped_unknown_count, 1);
+        let state = store.load(&account).expect("load").expect("state");
+        assert_eq!(state.pending_inbound_count(), 1);
+        assert_eq!(state.pair_request_count(), 1);
+        assert_eq!(
+            state.cursors[0].get_updates_buf.as_deref(),
+            Some("cursor-next")
+        );
+        let pending = store
+            .load_pending_inbound(&account, &state.pending_inbound[0].item_id)
+            .expect("load pending")
+            .expect("pending");
+        let recovered = WeixinPayloadCipher::new()
+            .decrypt_pending_inbound(&data_key, &pending)
+            .expect("decrypt pending");
+        assert_eq!(
+            recovered.text.as_ref().expect("text").expose(),
+            "raw message body"
+        );
     }
 
     #[tokio::test]
@@ -448,10 +571,12 @@ mod tests {
         };
         let mut options = WeixinServeOptions::new(account.clone());
         options.max_polls = Some(1);
+        let data_key = test_data_key();
         let report = run_weixin_serve_loop(
             &mut transport,
             &store,
             options,
+            &data_key,
             &WeixinServeCancellation::default(),
         )
         .await
@@ -500,10 +625,12 @@ mod tests {
         };
         let mut options = WeixinServeOptions::new(account.clone());
         options.max_polls = Some(2);
+        let data_key = test_data_key();
         let report = run_weixin_serve_loop(
             &mut transport,
             &store,
             options,
+            &data_key,
             &WeixinServeCancellation::default(),
         )
         .await
@@ -529,10 +656,12 @@ mod tests {
         };
         let mut options = WeixinServeOptions::new(account.clone());
         options.max_polls = Some(1);
+        let data_key = test_data_key();
         let error = run_weixin_serve_loop(
             &mut transport,
             &store,
             options,
+            &data_key,
             &WeixinServeCancellation::default(),
         )
         .await
@@ -555,6 +684,39 @@ mod tests {
         assert_eq!(options.cursor_source, "getupdates");
         assert!(options.pairing_required);
         assert_eq!(options.pair_request_ttl, DEFAULT_PAIR_REQUEST_TTL);
-        assert_eq!(WEIXIN_STATE_SCHEMA_VERSION, 1);
+        assert_eq!(WEIXIN_STATE_SCHEMA_VERSION, 2);
+    }
+
+    #[tokio::test]
+    async fn serve_loop_rejects_invalid_data_key_before_polling_network() {
+        let (_temp, store, account) = store_fixture();
+        let mut transport = ScriptedTransport {
+            responses: VecDeque::from([Ok(GetUpdatesResponse {
+                ret: 0,
+                msgs: vec![text_message("raw-message-1", "raw-peer-1")],
+                get_updates_buf: Some(SecretString::new("cursor-next")),
+                ..GetUpdatesResponse::default()
+            })]),
+        };
+        let mut options = WeixinServeOptions::new(account.clone());
+        options.max_polls = Some(1);
+        let error = run_weixin_serve_loop(
+            &mut transport,
+            &store,
+            options,
+            &SecretString::new("not-a-valid-data-key"),
+            &WeixinServeCancellation::default(),
+        )
+        .await
+        .expect_err("invalid key");
+        assert!(matches!(
+            error,
+            WeixinServeError::PayloadCipher(WeixinPayloadCipherError::InvalidDataKey)
+        ));
+        assert_eq!(transport.responses.len(), 1);
+        let state = store.load(&account).expect("load").expect("state");
+        assert!(state.cursors.is_empty());
+        assert!(state.inbound_receipts.is_empty());
+        assert!(state.pending_inbound.is_empty());
     }
 }

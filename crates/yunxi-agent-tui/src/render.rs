@@ -860,7 +860,7 @@ mod tests {
 
         let rendered = render_app(&app, 58, 20);
 
-        assert!(rendered.contains("YunXi v2.1.5"));
+        assert!(rendered.contains(&format!("YunXi v{}", env!("CARGO_PKG_VERSION"))));
         assert!(!rendered.contains("debug off"));
         assert!(!rendered.contains("|,"));
     }

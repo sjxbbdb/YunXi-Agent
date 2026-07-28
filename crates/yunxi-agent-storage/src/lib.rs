@@ -24,13 +24,15 @@ use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 mod weixin_state;
 
 pub use weixin_state::{
-    FileWeixinStateStore, WEIXIN_STATE_SCHEMA_VERSION, WeixinAccountLock, WeixinAccountLockInfo,
-    WeixinAccountLockState, WeixinConnectionStateRecord, WeixinCredentialReferenceRecord,
-    WeixinCursorRecord, WeixinDeliveryRecord, WeixinDeliveryState, WeixinInboundBatchCommit,
-    WeixinInboundBatchCommitResult, WeixinInboundCommitItem, WeixinInboundReceiptRecord,
-    WeixinPairRequest, WeixinPairRequestCommitItem, WeixinPairRequestState,
-    WeixinPendingDeliveryMetadata, WeixinPendingInbound, WeixinPendingInboundState,
-    WeixinReceiptState, WeixinReplyContextReference, WeixinSessionBindingRecord, WeixinStateError,
+    FileWeixinStateStore, WEIXIN_PAYLOAD_AAD_VERSION, WEIXIN_PAYLOAD_ALGORITHM,
+    WEIXIN_PAYLOAD_ALGORITHM_VERSION, WEIXIN_PAYLOAD_NONCE_LENGTH, WEIXIN_STATE_SCHEMA_VERSION,
+    WeixinAccountLock, WeixinAccountLockInfo, WeixinAccountLockState, WeixinConnectionStateRecord,
+    WeixinCredentialReferenceRecord, WeixinCursorRecord, WeixinDeliveryRecord, WeixinDeliveryState,
+    WeixinEncryptedPayload, WeixinInboundBatchCommit, WeixinInboundBatchCommitResult,
+    WeixinInboundCommitItem, WeixinInboundReceiptRecord, WeixinPairRequest,
+    WeixinPairRequestCommitItem, WeixinPairRequestState, WeixinPendingDeliveryMetadata,
+    WeixinPendingInbound, WeixinPendingInboundState, WeixinReceiptState,
+    WeixinReplyContextReference, WeixinSessionBindingRecord, WeixinStateError,
     WeixinStateMigration, WeixinStateSnapshot, WeixinStateStore, WeixinStateWriteOptions,
 };
 

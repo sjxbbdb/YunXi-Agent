@@ -5,6 +5,7 @@ mod error;
 pub mod ilink;
 mod inbound;
 mod login;
+mod payload_cipher;
 mod redaction;
 mod secret_store;
 mod serve;
@@ -19,12 +20,13 @@ pub use domain::{
 };
 pub use error::{RequestContext, WeixinApiError};
 pub use ilink::{IlinkHttpClient, PRODUCTION_ILINK_ENDPOINT};
-pub use inbound::{WeixinInboundEnvelope, WeixinInboundKind};
+pub use inbound::{WeixinInboundEnvelope, WeixinInboundKind, WeixinPendingInboundPayload};
 pub use login::{
     LoginPollState, WeixinLoginCancellation, WeixinLoginEvent, WeixinLoginFailure,
     WeixinLoginOptions, WeixinLoginOutcome, WeixinLoginStateMachine, WeixinLoginTransport,
     WeixinQrDisplay,
 };
+pub use payload_cipher::{WeixinPayloadAad, WeixinPayloadCipher, WeixinPayloadCipherError};
 pub use redaction::{SecretString, redacted_json_snapshot};
 pub use secret_store::{
     FakeWeixinSecretStore, SystemWeixinSecretStore, WeixinCredentialReference, WeixinSecretStore,

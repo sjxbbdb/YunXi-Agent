@@ -1,3 +1,4 @@
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -12,7 +13,11 @@ use std::{
 };
 use thiserror::Error;
 
-pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 1;
+pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 2;
+pub const WEIXIN_PAYLOAD_ALGORITHM: &str = "chacha20-poly1305";
+pub const WEIXIN_PAYLOAD_ALGORITHM_VERSION: u32 = 1;
+pub const WEIXIN_PAYLOAD_AAD_VERSION: u32 = 1;
+pub const WEIXIN_PAYLOAD_NONCE_LENGTH: usize = 12;
 const WEIXIN_STATE_DIRECTORY: &str = ".yunxi/weixin/state";
 const WEIXIN_LOCK_ENV: &str = "YUNXI_WEIXIN_LOCK_ROOT";
 const WEIXIN_PENDING_INBOUND_LIMIT: usize = 1024;
@@ -326,6 +331,8 @@ impl FileWeixinStateStore {
                 message_id_hash: item.message_id_hash,
                 peer_id_hash: item.peer_id_hash,
                 encrypted_payload_ref: item.encrypted_payload_ref,
+                payload_kind: item.payload_kind,
+                encrypted_payload: Some(item.encrypted_payload),
                 state: WeixinPendingInboundState::Ready,
                 terminal_reason: None,
                 created_at_millis: commit.now_millis,
@@ -472,6 +479,18 @@ impl FileWeixinStateStore {
         Ok(updated)
     }
 
+    pub fn load_pending_inbound(
+        &self,
+        account_id: &str,
+        item_id: &str,
+    ) -> Result<Option<WeixinPendingInbound>, WeixinStateError> {
+        let snapshot = self.load_required(account_id)?;
+        Ok(snapshot
+            .pending_inbound
+            .into_iter()
+            .find(|item| item.item_id == item_id && !item.state.is_terminal()))
+    }
+
     fn load_required(&self, account_id: &str) -> Result<WeixinStateSnapshot, WeixinStateError> {
         self.load(account_id)?
             .ok_or_else(|| WeixinStateError::StateNotFound {
@@ -592,6 +611,8 @@ pub struct WeixinInboundCommitItem {
     pub message_id_hash: String,
     pub peer_id_hash: String,
     pub encrypted_payload_ref: String,
+    pub encrypted_payload: WeixinEncryptedPayload,
+    pub payload_kind: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -766,6 +787,15 @@ pub struct WeixinPairRequest {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WeixinEncryptedPayload {
+    pub algorithm: String,
+    pub algorithm_version: u32,
+    pub aad_version: u32,
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WeixinPendingInbound {
     pub schema_version: u32,
     pub item_id: String,
@@ -773,6 +803,10 @@ pub struct WeixinPendingInbound {
     pub message_id_hash: String,
     pub peer_id_hash: String,
     pub encrypted_payload_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_payload: Option<WeixinEncryptedPayload>,
     pub state: WeixinPendingInboundState,
     pub terminal_reason: Option<String>,
     pub created_at_millis: u64,
@@ -1043,6 +1077,11 @@ impl WeixinStateMigration {
                     .ok_or(WeixinStateError::InvalidRecord {
                         reason: "state root must be an object",
                     })?;
+                if legacy_pending_inbound_lacks_encrypted_payload(object) {
+                    return Err(WeixinStateError::InvalidRecord {
+                        reason: "legacy pending inbound lacks encrypted payload",
+                    });
+                }
                 object.insert(
                     "schema_version".to_string(),
                     json!(WEIXIN_STATE_SCHEMA_VERSION),
@@ -1073,6 +1112,18 @@ impl WeixinStateMigration {
                     "pending_inbound",
                 ] {
                     object.entry(key.to_string()).or_insert_with(|| json!([]));
+                }
+                for key in [
+                    "cursors",
+                    "inbound_receipts",
+                    "deliveries",
+                    "session_bindings",
+                    "reply_contexts",
+                    "pending_deliveries",
+                    "pair_requests",
+                    "pending_inbound",
+                ] {
+                    rewrite_child_schema_versions(object, key);
                 }
                 object
                     .entry("last_redacted_error".to_string())
@@ -1155,18 +1206,106 @@ fn validate_snapshot(snapshot: &WeixinStateSnapshot) -> Result<(), WeixinStateEr
     for item in &snapshot.pending_inbound {
         if item.schema_version != WEIXIN_STATE_SCHEMA_VERSION
             || item.account_id != snapshot.account_id
+            || !item.item_id.starts_with("item#")
             || !item.message_id_hash.starts_with("message#")
             || !item.peer_id_hash.starts_with("peer#")
             || item.encrypted_payload_ref.trim().is_empty()
-            || item.encrypted_payload_ref.contains("token")
-            || item.encrypted_payload_ref.contains("context")
+            || contains_sensitive_marker(&item.encrypted_payload_ref)
+            || item
+                .payload_kind
+                .as_deref()
+                .is_some_and(contains_sensitive_marker)
         {
             return Err(WeixinStateError::InvalidRecord {
                 reason: "pending inbound failed validation",
             });
         }
+        let Some(payload) = &item.encrypted_payload else {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending inbound encrypted payload is missing",
+            });
+        };
+        validate_encrypted_payload(payload)?;
     }
     Ok(())
+}
+
+fn validate_encrypted_payload(payload: &WeixinEncryptedPayload) -> Result<(), WeixinStateError> {
+    if payload.algorithm != WEIXIN_PAYLOAD_ALGORITHM {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "pending inbound encrypted payload algorithm is unsupported",
+        });
+    }
+    if payload.algorithm_version != WEIXIN_PAYLOAD_ALGORITHM_VERSION {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "pending inbound encrypted payload algorithm version is unsupported",
+        });
+    }
+    if payload.aad_version != WEIXIN_PAYLOAD_AAD_VERSION {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "pending inbound encrypted payload aad version is unsupported",
+        });
+    }
+    if contains_sensitive_marker(&payload.nonce) || contains_sensitive_marker(&payload.ciphertext) {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "pending inbound encrypted payload contains sensitive markers",
+        });
+    }
+    let nonce =
+        STANDARD
+            .decode(payload.nonce.as_bytes())
+            .map_err(|_| WeixinStateError::InvalidRecord {
+                reason: "pending inbound encrypted payload nonce is invalid base64",
+            })?;
+    if nonce.len() != WEIXIN_PAYLOAD_NONCE_LENGTH {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "pending inbound encrypted payload nonce length is invalid",
+        });
+    }
+    let ciphertext = STANDARD
+        .decode(payload.ciphertext.as_bytes())
+        .map_err(|_| WeixinStateError::InvalidRecord {
+            reason: "pending inbound encrypted payload ciphertext is invalid base64",
+        })?;
+    if ciphertext.is_empty() {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "pending inbound encrypted payload ciphertext is empty",
+        });
+    }
+    Ok(())
+}
+
+fn legacy_pending_inbound_lacks_encrypted_payload(object: &serde_json::Map<String, Value>) -> bool {
+    object
+        .get("pending_inbound")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.as_object()
+                    .is_none_or(|item| !matches!(item.get("encrypted_payload"), Some(value) if !value.is_null()))
+            })
+        })
+}
+
+fn rewrite_child_schema_versions(object: &mut serde_json::Map<String, Value>, key: &str) {
+    let Some(items) = object.get_mut(key).and_then(Value::as_array_mut) else {
+        return;
+    };
+    for item in items {
+        if let Some(item) = item.as_object_mut() {
+            item.insert(
+                "schema_version".to_string(),
+                json!(WEIXIN_STATE_SCHEMA_VERSION),
+            );
+        }
+    }
+}
+
+fn contains_sensitive_marker(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    ["token", "context", "raw", "data_key", "data-key", "secret"]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 fn looks_redacted(prefix: &str, value: &str) -> bool {

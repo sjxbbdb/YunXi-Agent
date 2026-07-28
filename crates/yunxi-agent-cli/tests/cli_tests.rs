@@ -8,7 +8,9 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
-use yunxi_agent_storage::{FileWeixinStateStore, WeixinStateSnapshot, WeixinStateStore};
+use yunxi_agent_storage::{
+    FileWeixinStateStore, WEIXIN_STATE_SCHEMA_VERSION, WeixinStateSnapshot, WeixinStateStore,
+};
 use yunxi_agent_weixin::{
     PRODUCTION_ILINK_ENDPOINT, WeixinAccountId, WeixinAccountRecord, WeixinAccountStore,
     WeixinCredentialReference,
@@ -231,7 +233,10 @@ fn cli_weixin_status_initializes_legacy_metadata_state_store_idempotently() {
     let status_json: Value = serde_json::from_slice(&output.stdout).expect("status json");
     assert_eq!(status_json["account"].as_str(), Some(account_hash.as_str()));
     assert_eq!(status_json["state_store_configured"].as_bool(), Some(true));
-    assert_eq!(status_json["state_store_schema_version"].as_u64(), Some(1));
+    assert_eq!(
+        status_json["state_store_schema_version"].as_u64(),
+        Some(WEIXIN_STATE_SCHEMA_VERSION as u64)
+    );
     assert_eq!(
         status_json["state_store_migration"].as_str(),
         Some("initialized_from_legacy_metadata")
@@ -317,7 +322,10 @@ fn cli_weixin_doctor_initializes_legacy_metadata_state_store() {
         doctor_json["checks"]["state_store_schema_current"].as_bool(),
         Some(true)
     );
-    assert_eq!(doctor_json["state_store_schema_version"].as_u64(), Some(1));
+    assert_eq!(
+        doctor_json["state_store_schema_version"].as_u64(),
+        Some(WEIXIN_STATE_SCHEMA_VERSION as u64)
+    );
     assert_eq!(doctor_json["secrets_included"].as_bool(), Some(false));
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(!text.contains(PRIVATE_WEIXIN_ACCOUNT));
@@ -918,7 +926,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.5 interactive CLI",
+            "YunXi Agent v2.1.5-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -1077,7 +1085,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.5 interactive CLI",
+            "YunXi Agent v2.1.5-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -1097,7 +1105,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.5 interactive CLI",
+            "YunXi Agent v2.1.5-hotfix.1 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

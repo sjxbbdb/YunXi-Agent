@@ -185,6 +185,42 @@
 
 署名：开发报告撰写者
 
+## 2026-07-28 22:07:39 +08:00
+
+工作目标：完成 `v2.1.6` 微信会话绑定既有 Runtime 发布收口，创建新的 release commit 和 annotated tag，使用 GitHub CLI 与 API key 推送到 `https://github.com/sjxbbdb/YunXi-Agent`，核验远端 refs，并按报告要求清理构建中间产物；历史 tag 不删除、不移动、不覆盖。
+
+执行流程：
+1. 在提交前确认本地和远端 `v2.1.6` tag 均不存在，避免覆盖或移动历史 tag。
+2. 精确暂存 `v2.1.6` 实现、测试、文档、审核报告、开发报告和开发日志文件，未使用 `git add .`。
+3. 创建 release commit `6b16d4cab6257424cf9b3d8d5b6d297c3e9beaad`，提交信息为 `release: v2.1.6 weixin runtime session binding`。
+4. 创建新的 annotated `v2.1.6` tag，tag message 为 `YunXi Agent v2.1.6`。
+5. 将 GitHub API key 从 `C:\Users\24763\Desktop\GitHub apikey.txt` 读入当前进程 `GH_TOKEN`，通过 GitHub CLI credential helper 执行非强制推送，未打印 token，未持久化 token。
+6. 使用 GitHub CLI/API key 核验远端 `master`、`refs/tags/v2.1.6` annotated tag object 和 peeled target。
+7. 经用户对精确路径确认后，仅递归删除 `D:\YunXi Agent\target` 这一 Cargo 可重建构建中间产物目录，不触碰用户目录，不使用 `git clean`。
+8. 本条发布收口记录作为 docs-only 变更追加到项目日志并同步桌面开发日志；该收口提交将只推送 `master`，不移动 `v2.1.6` tag。
+
+提交、tag 与推送状态：
+- release commit：`6b16d4cab6257424cf9b3d8d5b6d297c3e9beaad`
+- 本地/远端 `master`：`6b16d4cab6257424cf9b3d8d5b6d297c3e9beaad`
+- annotated tag：`v2.1.6`
+- 本地/远端 tag object：`5fb58d4fc91ba5636f871d3474df7ed14679567b`
+- 本地/远端 tag target：`6b16d4cab6257424cf9b3d8d5b6d297c3e9beaad`
+- tag type：`tag`
+- 推送结果：`master -> master`，`[new tag] v2.1.6 -> v2.1.6`
+- 远端核验：`master_matches=true`、`tag_object_matches=true`、`tag_target_matches=true`
+- 历史 tag 状态：未删除、未移动、未覆盖任何历史 tag；未使用 force。
+
+修改文件与路径：
+- 本次发布收口日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面开发日志同步目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 已发布的 release commit 覆盖 `v2.1.6` 源码、测试、文档、报告索引、审核报告和开发报告；具体文件清单见 `2026-07-28 21:51:49 +08:00` 实现阶段日志。
+
+验证结果：发布前 `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace -- --test-threads=1`、`cargo build --workspace --release`、release `yunxi 2.1.6`、依赖边界、`git diff --check` 和 `git fsck --full --no-dangling` 已通过；发布后 GitHub 远端 master、tag object 和 tag target 均与本地一致。本次发布命令没有输出 API key、token、微信凭证、二维码 payload、联系人或消息正文。
+
+清理与安全状态：`D:\YunXi Agent\target` 已按精确路径确认删除，删除后不存在。本次发布收口未执行 `git clean`、gc、prune、force push、系统安装/卸载、PATH/注册表修改、用户目录清理、微信 state 清理或历史 tag 修改。涉及 C 盘用户目录的操作仅为读取 GitHub API key 到当前进程环境和同步桌面开发日志；token 未持久化。
+
+署名：开发报告撰写者
+
 ## 2026-07-28 21:51:49 +08:00
 
 工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md`，完成 `v2.1.6` 微信会话绑定既有 Runtime 开发，严格限制范围为已准入私聊到既有 YunXi Runtime 的 session binding、共享配置、同会话串行队列和测试 sink，不进入远程审批、sendmessage、逐 token 微信回信、群聊或完整微信聊天闭环。

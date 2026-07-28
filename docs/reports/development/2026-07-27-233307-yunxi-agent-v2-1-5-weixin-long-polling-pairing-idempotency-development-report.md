@@ -298,3 +298,29 @@ CLI `serve` 应复用既有 `AgentConfig`、workspace、provider/sandbox/approva
 截至本记录写入时，release commit、annotated `v2.1.5` tag 和 GitHub 推送尚未执行；下一步执行提交、创建新 tag 和远端核验。历史 tag 不删除、不移动、不覆盖。
 
 署名：开发者
+
+## 十、发布收口记录
+
+- 记录时间：2026-07-28 09:05:08 +08:00
+- 执行者署名：开发者
+
+### GitHub 发布结果
+
+- release commit：`44d89488d421748527547f52faa73caad84ef6b2`
+- annotated tag：`v2.1.5`
+- tag object：`03d9bd6d7985dddb7719da6ae0cd3d25a717dcb9`
+- tag target commit：`44d89488d421748527547f52faa73caad84ef6b2`
+- 远端仓库：`https://github.com/sjxbbdb/YunXi-Agent`
+- 推送方式：GitHub API key 仅进入当前进程 `GH_TOKEN`，通过 GitHub CLI credential helper `gh auth git-credential` 供 git HTTPS 推送使用；未打印、未落盘、未写 git config。
+- 推送结果：`master -> master`，`[new tag] v2.1.5 -> v2.1.5`。
+- 远端核验：`master_matches=true`、`tag_object_matches=true`、`tag_target_matches=true`。
+
+### 历史 tag 安全状态
+
+本次仅新增 annotated `v2.1.5` tag；未删除、未移动、未覆盖 `v2.1.4-hotfix.1`、`v2.1.4` 或任何历史 tag，未使用 force。
+
+### 发布后文档状态
+
+本条发布收口记录作为 docs-only 追加记录写入项目开发日志和本报告；后续只推送 `master` 上的文档收口提交，不移动已经发布的 `v2.1.5` tag。
+
+署名：开发者

@@ -79,6 +79,34 @@
 
 署名：开发者
 
+## 2026-07-28 09:05:08 +08:00
+
+工作目标：完成 `v2.1.5` 发布收口，创建新的 release commit 和 annotated tag，使用 GitHub CLI credential helper 与 API key 推送到 `https://github.com/sjxbbdb/YunXi-Agent`，并核验远端 refs；历史 tag 不删除、不移动、不覆盖。
+
+执行流程：
+1. 在提交前确认本地 `v2.1.5` tag 不存在，并使用 GitHub CLI/API key 只读确认远端 `refs/tags/v2.1.5` 不存在。
+2. 暂存 v2.1.5 实现、测试、文档、报告和开发日志变更，创建 release commit。
+3. 创建新的 annotated `v2.1.5` tag，tag message 为 `YunXi Agent v2.1.5`。
+4. 将 GitHub API key 从 `C:\Users\24763\Desktop\GitHub apikey.txt` 读入当前进程 `GH_TOKEN`，通过 `gh auth git-credential` 作为 git credential helper 推送 `master` 和 `v2.1.5`，未持久化 token，未写 git config，未打印 token。
+5. 使用 GitHub CLI/API key 核验远端 `master`、`refs/tags/v2.1.5` annotated tag object 和 tag target commit 均与本地一致。
+6. 本条最终发布记录作为 docs-only 收口变更追加到项目日志和 v2.1.5 开发报告；该收口提交将只推送 `master`，不移动 `v2.1.5` tag。
+
+提交、tag 与推送状态：
+- release commit：`44d89488d421748527547f52faa73caad84ef6b2`
+- 本地/远端 `master`：`44d89488d421748527547f52faa73caad84ef6b2`
+- annotated tag：`v2.1.5`
+- 本地/远端 tag object：`03d9bd6d7985dddb7719da6ae0cd3d25a717dcb9`
+- 本地/远端 tag target：`44d89488d421748527547f52faa73caad84ef6b2`
+- tag type：`tag`
+- 推送结果：`master -> master`，`[new tag] v2.1.5 -> v2.1.5`
+- 历史 tag 状态：未删除、未移动、未覆盖任何历史 tag；未使用 force。
+
+验证结果：发布前验证已在上一条记录完成并通过；发布后远端核验 `master_matches=true`、`tag_object_matches=true`、`tag_target_matches=true`。本次发布命令没有输出 API key、token、系统凭证明文、二维码 payload、context token、联系人或消息正文。
+
+清理与安全状态：发布前已按用户确认清理 `D:\YunXi Agent\target`，删除后不存在。本次发布收口未执行删除、递归清理、移动目录、`git clean`、gc、prune、force push、系统安装/卸载、PATH/注册表修改或用户目录清理。涉及 C 盘用户目录的操作仅为读取 GitHub API key 文件内容到当前进程环境；token 未持久化。
+
+署名：开发者
+
 ## 2026-07-27 21:47:04 +08:00
 
 工作目标：完成 `v2.1.4-hotfix.1` 发布后收口记录，确认 release commit、annotated tag、GitHub 推送和历史 tag 状态，并保持 `v2.1.4-hotfix.1` tag 不移动。

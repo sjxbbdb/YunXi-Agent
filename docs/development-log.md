@@ -185,6 +185,49 @@
 
 署名：开发报告撰写者
 
+## 2026-07-28 18:01:18 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\reports\development\2026-07-28-162630-yunxi-agent-v2-1-5-hotfix-2-weixin-windows-stale-lock-recovery-development-report.md`，完成 `v2.1.5-hotfix.2` Windows stale lock 恢复整改、独立新进程 pending 解密证据补齐、统一验证、构建产物清理，并准备发布 commit、annotated tag 和 GitHub 推送。
+
+执行流程：
+1. 保持版本范围在 `v2.1.5-hotfix.2`，未进入 `v2.1.6`，未实现 Runtime 会话绑定、Provider dispatch、sendmessage、远程审批、流式回信或群聊。
+2. 修复 Windows 默认 `process_probe`：`OpenProcess` 失败后读取 `GetLastError()`，对 `ERROR_INVALID_PARAMETER` 判定 stale，对 `ERROR_ACCESS_DENIED` 和未知错误保持 active 保守策略。
+3. 增加真实 Windows 子进程锁测试，覆盖 active lock 拒绝、持锁进程退出后的 stale lock 回收，以及不同账户独立持锁。
+4. 增加独立新进程 pending inbound 解密测试，父进程写入加密 pending state，子进程从系统 secret store 读取 data key 并脱敏校验恢复结果。
+5. 更新 `v2.1.5-hotfix.2` 版本口径、CLI 集成测试断言、TUI snapshot、Weixin 文档、报告索引和开发日志。
+6. 统一执行格式、编译、测试、release 构建、release CLI smoke、依赖边界和 Git 完整性校验。
+7. 按用户已确认的清理范围，精确删除 `D:\YunXi Agent\target`，仅清理可重建的 cargo 构建中间产物。
+
+修改文件与路径：
+- 更新版本和锁文件：`D:\YunXi Agent\Cargo.toml`、`D:\YunXi Agent\Cargo.lock`
+- 修复 Windows stale lock 探测：`D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs`
+- 增加 storage 锁恢复测试：`D:\YunXi Agent\crates\yunxi-agent-storage\tests\weixin_state_tests.rs`
+- 增加独立新进程 pending 解密测试：`D:\YunXi Agent\crates\yunxi-agent-weixin\tests\pending_inbound_recovery_tests.rs`
+- 更新 CLI 版本/微信断言测试：`D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- 更新 TUI snapshot：`D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt`、`full_frame_80x24.txt`、`full_frame_100x30.txt`、`full_frame_120x40.txt`、`full_frame_200x50.txt`
+- 更新项目文档：`D:\YunXi Agent\README.md`、`D:\YunXi Agent\docs\README.md`、`D:\YunXi Agent\docs\weixin.md`
+- 新增/索引报告：`D:\YunXi Agent\docs\reports\audits\2026-07-28-161052-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-reaudit-report.md`、`D:\YunXi Agent\docs\reports\development\2026-07-28-162630-yunxi-agent-v2-1-5-hotfix-2-weixin-windows-stale-lock-recovery-development-report.md`、`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+
+验证结果：
+- `cargo fmt --all -- --check`：通过。
+- `cargo check --workspace`：通过。
+- `cargo test -p yunxi-agent-storage -- --test-threads=1`：通过，包含真实 Windows 子进程锁恢复测试。
+- `cargo test -p yunxi-agent-weixin -- --test-threads=1`：通过，包含独立新进程 pending 解密测试。
+- `cargo test --workspace -- --test-threads=1`：通过。
+- `cargo build --workspace --release`：通过。
+- release 二进制版本核验：`D:\YunXi Agent\target\release\yunxi.exe --version` 输出 `yunxi 2.1.5-hotfix.2`。
+- release `weixin status` / `weixin doctor` 临时 workspace smoke：通过，账号脱敏为 `account#9e19691a`，`secrets_included=false`。
+- 依赖边界：`yunxi-agent-cli` 依赖树未发现 `codex-rs`、`yunxi-agent-codex` 或 `vendor/codex-rs` 标记。
+- `git diff --check`：通过；仅有 Windows 工作区常见 LF/CRLF 提示，无 whitespace error。
+- `git fsck --full --no-dangling`：通过。
+
+清理与安全状态：已删除精确路径 `D:\YunXi Agent\target`，该目录仅为 cargo 构建中间产物，可通过重新执行 cargo 构建恢复；未执行 `git clean`、强制移动、清空用户目录、gc、prune、系统安装/卸载、PATH/注册表/系统配置修改；未删除 stale lock，未触碰用户正式微信锁目录、凭证、用户数据或历史 tag。
+
+提交、推送和 Git tag 状态：本条日志写入时，待创建 `v2.1.5-hotfix.2` 发布 commit 和新的 annotated tag；后续仅推送新增 commit 与新增 tag，不移动、不覆盖、不删除 `v2.1.5`、`v2.1.5-hotfix.1` 或任何历史 tag；推送将按用户要求使用 GitHub CLI 与本机提供的 API key。
+
+署名：开发报告撰写者
+
 ## 2026-07-28 14:43:16 +08:00
 
 工作目标：完成 `v2.1.5-hotfix.1` 微信加密 pending inbound 整改的发布收口，确认 release commit、annotated tag、GitHub 推送和远端 refs，并补写项目日志。
@@ -3891,5 +3934,69 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 清理与安全状态：未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。涉及 C 盘用户目录的操作仅为写入桌面开发报告副本和桌面开发日志副本。
 
 提交、推送和 Git tag 状态：本次未创建 commit、未推送、未创建或移动 tag；`v2.1.5-hotfix.1` 仍需由后续开发者在真正加密、重启恢复、统一验证和复审通过后创建新的 annotated tag，历史 `v2.1.5` tag 不得删除、移动或覆盖。
+
+署名：开发报告撰写者
+
+## 2026-07-28 16:10:52 +08:00
+
+工作目标：依据总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，复审 `v2.1.5-hotfix.1` 对上一轮“pending inbound 未真正加密持久化”P1 的整改结果，判断是否允许进入总纲图中的 `v2.1.6`。
+
+执行流程：
+1. 确认当前源码版本为 `v2.1.5-hotfix.1`，读取总纲、整改开发报告、项目索引、当前 HEAD、annotated tag 和远端 refs；本轮只对照总纲 v2.1.5 要求，不进行多个版本横向比较。
+2. 使用项目 `.codegraph` 定位 payload cipher、pending inbound、原子批次提交、解密恢复和账户锁调用链，再以当前磁盘源码核对 `payload_cipher.rs`、`inbound.rs`、`serve.rs`、`weixin_state.rs`、CLI 启动边界及相关测试。
+3. 确认上一轮 P1 已实际整改：`chacha20poly1305` 认证加密、随机 nonce、AAD/算法版本、ciphertext、密文校验、旧 pending schema 拒绝和同一 state 快照原子提交均已存在。
+4. 统一执行 `cargo fmt`、workspace check、workspace tests、weixin/storage/CLI 定向测试和 workspace release build；执行 release status/doctor、companion、真实 Provider smoke、ConPTY 只读 verifier、依赖树、Git 完整性和 tag/远端 refs 核验。
+5. 使用 release `weixin serve` 做真实异常退出恢复检查：结束本轮服务进程 PID 35848 后，确认 PID 不存在；再次启动服务时仍被同一账户 stale lock 判定为 active。
+6. 定位 `D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs` 的 Windows `default_process_is_running`，确认 `OpenProcess` 空句柄直接返回 true，导致 stale lock 无法回收；没有删除锁文件绕过保护。
+7. 新增项目内审核报告，更新报告索引，并追加本条审核日志；桌面审核报告和桌面开发日志由项目正本单向复制并做 SHA-256 校验。
+
+审核结论：`v2.1.5-hotfix.1` 审核不通过，禁止进入 `v2.1.6`。当前必须整改 Windows stale lock 进程探测、异常退出后账户锁回收，并补充真实新进程 pending 解密测试；整改完成后重新审核。上一轮加密 P1 不再是当前阻塞点。
+
+修改文件与路径：
+- 新增项目审核报告：`D:\YunXi Agent\docs\reports\audits\2026-07-28-161052-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-reaudit-report.md`
+- 更新项目报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目审核日志：`D:\YunXi Agent\docs\development-log.md`
+- 桌面审核报告分发目标：`C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-28-161052-YunXi-Agent-v2.1.5-hotfix.1-微信加密pending入站整改复审审核报告.md`
+- 桌面开发日志同步目标：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 本轮未修改生产 Rust 源码、测试源码、Cargo 配置、Git 历史或版本 tag。
+
+验证结果：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace -- --test-threads=1`、release build 全部通过；weixin 定向测试 14/3/2/6/2 组全部通过，storage 微信 state 12/12、CLI 23/23、兼容二进制 23/23、集成 54/54、JSONL 10/10 全部通过。companion 31/31；Provider smoke `exit_code=0`、69 条 JSONL、`secret_leak_detected=false`；ConPTY `ok=true`、`read_only=true`。真实 release `weixin serve` 在异常退出后的 stale lock 回收失败，形成 P1；`status`/`doctor` 仍无秘密输出。`git diff --check`、`git fsck --full --no-dangling`、依赖边界、远端 master、tag object 和 peeled target 核验通过。
+
+参考源码与路径：
+- `D:\源码\reasonix\internal\bot\weixin\weixin.go`、`weixin_test.go`：轮询、重启和状态恢复测试思路。
+- `D:\源码\openclaw-weixin\src\storage\sync-buf.ts`、`state-dir.ts`：游标/状态恢复边界。
+- `D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs`：当前锁、原子 state、schema 和 pending 状态机，P1 定位在 Windows process probe。
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\payload_cipher.rs`、`inbound.rs`、`serve.rs`：认证加密、脱敏 payload 和批次接入实现。
+
+清理与安全状态：本轮未删除、移动或清空任何文件，未删除 stale lock，未触碰凭证、用户数据、Git 历史、系统配置或历史 tag。测试和 release build 生成了精确路径 `D:\YunXi Agent\target`；递归清理该目录以及是否移除本轮产生的 stale lock，均需用户对明确绝对路径单独确认，因此本条日志记录为未清理。
+
+提交、推送和 Git tag 状态：本轮未创建 commit，未推送，未创建、移动或删除 tag；现有 `v2.1.5-hotfix.1` annotated tag、历史 tag 和远端 refs 保持不变。审核报告、索引和日志属于 docs-only 工作树变更。
+
+署名：审核者
+
+## 2026-07-28 16:26:30 +08:00
+
+工作目标：依据 `D:\YunXi Agent\docs\reports\audits\2026-07-28-161052-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-reaudit-report.md` 和总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，撰写面向开发者的 `v2.1.5-hotfix.2` Windows stale lock 恢复整改开发报告，并按固定流程保存项目内正本和桌面副本。
+
+执行流程：
+1. 读取审核报告，确认 `v2.1.5-hotfix.1` 审核不通过，禁止进入 `v2.1.6`；上一轮加密 P1 已关闭，当前 P1 是 Windows 默认 process probe 将已退出 PID 的 stale lock 判为 active。
+2. 核对审核报告 SHA-256 为 `3563ECC466E655AF80EC96583150077C92FCD18A3DB56D4FA36F72AF799E501A`；核对总纲 SHA-256 为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`。
+3. 使用 CodeGraph 复核 `FileWeixinStateStore::try_acquire_account_lock`、Windows `default_process_is_running`、`WeixinPayloadCipher`、`load_pending_inbound` 和 `decrypt_pending_inbound`，确认整改重点是 `OpenProcess` 失败码区分和独立新进程 pending 解密证据。
+4. 核对审核报告提到的参考源码是否在本机存在；Reasonix、OpenClaw Weixin 及项目内 state/cipher/inbound/serve 关键文件均已存在，本次未新增拉取源码。
+5. 新增项目内开发报告，更新项目报告索引，并将开发报告从项目正本复制到 `C:\Users\24763\Desktop\YunXi Agent开发报告\`。
+6. 追加本条项目日志，并同步到 `C:\Users\24763\Desktop\YunXi Agent开发日志.md`。
+
+修改文件与路径：
+- 新增项目内开发报告：`D:\YunXi Agent\docs\reports\development\2026-07-28-162630-yunxi-agent-v2-1-5-hotfix-2-weixin-windows-stale-lock-recovery-development-report.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-28-162630-yunxi-agent-v2-1-5-hotfix-2-weixin-windows-stale-lock-recovery-development-report.md`
+- 更新项目报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+
+验证结果：开发报告项目正本与桌面副本 SHA-256 均为 `52AD97CC9D35C3F6094F76B83AF50ED93A09872DB628E05D84DC2E8DDF0FA62A`；审核报告和总纲哈希核对通过；参考源码存在性核对通过。本次只撰写和同步开发报告、索引与日志，未修改 Rust 源码、测试源码或 Cargo 配置，因此未运行 `cargo fmt`、`cargo check` 或 `cargo test`。
+
+清理与安全状态：未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。涉及 C 盘用户目录的操作仅为写入桌面开发报告副本和桌面开发日志副本。
+
+提交、推送和 Git tag 状态：本次未创建 commit、未推送、未创建或移动 tag；`v2.1.5-hotfix.2` 仍需由后续开发者在 Windows stale lock 恢复、独立新进程 pending 解密、统一验证和复审通过后创建新的 annotated tag，历史 `v2.1.5-hotfix.1` 和 `v2.1.5` tag 不得删除、移动或覆盖。
 
 署名：开发报告撰写者

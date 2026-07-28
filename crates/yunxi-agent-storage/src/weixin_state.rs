@@ -1509,7 +1509,9 @@ fn default_lock_root() -> Option<PathBuf> {
 
 #[cfg(windows)]
 fn default_process_is_running(pid: u32) -> bool {
-    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, GetLastError, STILL_ACTIVE,
+    };
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
     };
@@ -1518,14 +1520,22 @@ fn default_process_is_running(pid: u32) -> bool {
     }
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
     if handle.is_null() {
-        return true;
+        let error = unsafe { GetLastError() };
+        return match error {
+            ERROR_INVALID_PARAMETER => false,
+            ERROR_ACCESS_DENIED => true,
+            _ => true,
+        };
     }
     let mut exit_code = 0;
     let ok = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
     unsafe {
         CloseHandle(handle);
     }
-    ok != 0 && exit_code == STILL_ACTIVE as u32
+    if ok == 0 {
+        return true;
+    }
+    exit_code == STILL_ACTIVE as u32
 }
 
 #[cfg(not(windows))]

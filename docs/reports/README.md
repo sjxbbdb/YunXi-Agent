@@ -4,6 +4,8 @@
 
 ## 当前入口
 
+- [v2.1.5-hotfix.2 微信 Windows stale lock 恢复整改开发报告](development/2026-07-28-162630-yunxi-agent-v2-1-5-hotfix-2-weixin-windows-stale-lock-recovery-development-report.md)：修复 Windows 默认 process probe 将不存在 PID 判为 active、异常退出后账户锁无法回收的问题，并补独立新进程 pending 解密证据。
+- [v2.1.5-hotfix.1 微信加密 pending inbound 整改复审审核报告](audits/2026-07-28-161052-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-reaudit-report.md)：审核不通过；Windows 默认 process probe 将不存在的 stale-lock PID 判为 active，禁止进入 v2.1.6，必须留在当前 hotfix 整改。
 - [v2.1.5-hotfix.1 微信加密 pending inbound 整改开发报告](development/2026-07-28-114710-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-development-report.md)：修复已准入私聊缺少真实密文、nonce、AAD 和重启恢复的问题。
 - [v2.1.5 微信私聊长轮询、配对准入与幂等审核报告](audits/2026-07-28-100654-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-audit-report.md)：审核不通过；已准入 pending 私聊消息尚未真正加密持久化，禁止进入 v2.1.6，必须留在 v2.1.5 整改。
 - [v2.1.5 微信私聊长轮询、配对准入与幂等接纳开发报告](development/2026-07-27-233307-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-development-report.md)：前台 `serve`、iLink `getupdates`、配对、游标原子提交和幂等接纳开发记录与发布门禁。

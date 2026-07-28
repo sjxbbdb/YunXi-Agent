@@ -1,4 +1,12 @@
 use std::fs;
+#[cfg(windows)]
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
 
 use tempfile::TempDir;
 use yunxi_agent_storage::{
@@ -292,6 +300,110 @@ fn account_lock_is_global_per_account_and_recovers_only_when_probe_reports_stale
         .try_acquire_account_lock(ACCOUNT, "workspace#11111111")
         .expect("stale lock recovered");
     recovered.release().expect("release recovered");
+}
+
+#[cfg(windows)]
+fn wait_for_path(path: &Path, description: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !path.exists() {
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for {description}: {}", path.display());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_stale_lock(store: &FileWeixinStateStore, account_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let state = store.lock_state(account_id).expect("lock state");
+        if state.state == WeixinAccountLockState::Stale {
+            return;
+        }
+        if Instant::now() >= deadline {
+            panic!("timed out waiting for stale lock, last state={state:?}");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(windows)]
+fn spawn_windows_lock_child(workspace: &Path, lock_root: &Path, ready_file: &Path) -> Child {
+    Command::new(env::current_exe().expect("current test executable"))
+        .arg("--exact")
+        .arg("windows_account_lock_child_holds_lock")
+        .arg("--ignored")
+        .arg("--test-threads=1")
+        .arg("--nocapture")
+        .env("YUNXI_TEST_LOCK_CHILD_WORKSPACE", workspace)
+        .env("YUNXI_TEST_LOCK_CHILD_LOCK_ROOT", lock_root)
+        .env("YUNXI_TEST_LOCK_CHILD_READY", ready_file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn lock child")
+}
+
+#[cfg(windows)]
+#[test]
+fn account_lock_real_windows_process_probe_rejects_active_and_recovers_exited_pid() {
+    let temp = TempDir::new().expect("temp");
+    let workspace = temp.path().join("workspace");
+    let lock_root = temp.path().join("locks");
+    let ready_file = temp.path().join("lock-child.ready");
+    let mut child = spawn_windows_lock_child(&workspace, &lock_root, &ready_file);
+    wait_for_path(&ready_file, "lock child readiness");
+    let child_pid: u32 = fs::read_to_string(&ready_file)
+        .expect("read child pid")
+        .trim()
+        .parse()
+        .expect("child pid");
+    let store = FileWeixinStateStore::for_workspace_with_lock_root(&workspace, &lock_root);
+    let active = store.lock_state(ACCOUNT).expect("active lock state");
+    assert_eq!(active.state, WeixinAccountLockState::Active);
+    assert_eq!(active.pid, Some(child_pid));
+    assert!(matches!(
+        store.try_acquire_account_lock(ACCOUNT, "workspace#11111111"),
+        Err(WeixinStateError::LockActive { .. })
+    ));
+
+    child.kill().expect("kill lock child");
+    let _ = child.wait().expect("wait lock child");
+    wait_for_stale_lock(&store, ACCOUNT);
+
+    let mut recovered = store
+        .try_acquire_account_lock(ACCOUNT, WORKSPACE)
+        .expect("recover stale lock from exited pid");
+    let recovered_state = store.lock_state(ACCOUNT).expect("recovered lock state");
+    assert_eq!(recovered_state.state, WeixinAccountLockState::Active);
+    assert_eq!(recovered_state.pid, Some(std::process::id()));
+    recovered.release().expect("release recovered");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore]
+fn windows_account_lock_child_holds_lock() {
+    let workspace = env::var_os("YUNXI_TEST_LOCK_CHILD_WORKSPACE")
+        .map(PathBuf::from)
+        .expect("child workspace");
+    let lock_root = env::var_os("YUNXI_TEST_LOCK_CHILD_LOCK_ROOT")
+        .map(PathBuf::from)
+        .expect("child lock root");
+    let ready_file = env::var_os("YUNXI_TEST_LOCK_CHILD_READY")
+        .map(PathBuf::from)
+        .expect("child ready file");
+    let store = FileWeixinStateStore::for_workspace_with_lock_root(&workspace, &lock_root);
+    let lock = store
+        .try_acquire_account_lock(ACCOUNT, WORKSPACE)
+        .expect("child lock");
+    fs::write(&ready_file, std::process::id().to_string()).expect("write child ready");
+    std::mem::forget(lock);
+    loop {
+        thread::park_timeout(Duration::from_secs(1));
+    }
 }
 
 #[test]

@@ -1,8 +1,8 @@
 # YunXi Agent 微信接入边界
 
-## v2.1.5-hotfix.1 能力
+## v2.1.5-hotfix.2 能力
 
-v2.1.5-hotfix.1 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命周期和旧登录账户 metadata 到 `WeixinStateStore` 安全初始化基础上，保留前台私聊长轮询接纳层，并补齐已准入私聊 pending inbound 的认证加密持久化和重启恢复入口：
+v2.1.5-hotfix.2 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命周期和旧登录账户 metadata 到 `WeixinStateStore` 安全初始化基础上，保留前台私聊长轮询接纳层，并补齐已准入私聊 pending inbound 的认证加密持久化和重启恢复入口：
 
 - yunxi weixin login --account <name> 获取二维码、显示安全终端文本、轮询等待/扫码/确认，并明确处理过期、取消、超时、redirect、验证码和验证码阻断。
 - 登录确认后，token 和数据加密密钥只写入 Windows Credential Manager；系统凭证不可用、权限失败或写入失败时登录失败，不降级到明文文件。
@@ -14,6 +14,7 @@ v2.1.5-hotfix.1 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命�
 - `crates/yunxi-agent-storage` 提供独立版本化 `WeixinStateStore`，状态文件使用同目录临时文件、文件级 sync 和同卷替换更新；启动诊断会识别未完成临时文件候选，但不会把半成品当作有效状态。
 - 状态 store 记录脱敏账户、workspace hash、官方 endpoint、Credential Manager 引用、游标占位、回执、会话绑定占位、reply context 引用、待投递元数据、pair request 和认证加密 pending inbound；pending inbound 保存 `encrypted_payload_ref`、`payload_kind`、算法名、算法版本、AAD 版本、随机 nonce 和 ciphertext，不保存原文。
 - `status --json` 与 `doctor --json` 增加 state schema、account lock state、pending inbound/delivery count、pair request count 和最后一次脱敏错误；不输出完整本地路径。
+- Windows 默认 process probe 在 `OpenProcess` 失败时区分 `ERROR_INVALID_PARAMETER` 与权限不足/未知错误；已退出 PID 的锁会标记为 stale 并由 `try_acquire_account_lock` 回收，`ERROR_ACCESS_DENIED` 或未知错误仍保守视为 active。
 - 已有旧账户 metadata 且 state 文件缺失时，`status --json` 和 `doctor --json` 会用旧 metadata 中的非机密字段与凭证引用一次性创建当前 schema 的最小状态；首次 JSON 输出 `state_store_migration="initialized_from_legacy_metadata"`，后续新进程重读输出 `state_store_migration="already_current"`。
 - 初始化不会读取、复制或输出 token、二维码 payload、原始 user ID、原始 peer ID、data key、context token 或系统凭证明文。
 - 已存在当前 state 时不会覆盖 pair、pending inbound、delivery、cursor、last error 等运行状态；遇到未来 schema 或损坏 state 时拒绝覆盖并返回脱敏诊断；遇到损坏 metadata 时 `doctor --json` 返回结构化安全错误且不创建错误 state。
@@ -54,7 +55,7 @@ weixin serve 只完成私聊长轮询、准入、排队、pair request 和幂等
 5. 运行 `target\release\yunxi.exe weixin doctor --account <test-name> --json`，确认系统凭证引用可读且 `secrets_included=false`。
 6. 重新打开 shell 或重新执行 release 二进制，再次读取 status/doctor，确认凭证引用仍可诊断。
 
-`v2.1.5-hotfix.1` 保留上述真实扫码登录前置能力、v2.1.4 状态 store 诊断、旧账户 metadata 懒初始化和前台私聊长轮询接纳层，并补齐认证加密 pending inbound 与重启恢复入口。后续复审材料仍只能记录脱敏账户 hash、状态、计数、退出码和是否触发网络；不得保存二维码、token、原始账号、联系人、消息正文、context token、data key 或系统凭证明文。
+`v2.1.5-hotfix.2` 保留上述真实扫码登录前置能力、v2.1.4 状态 store 诊断、旧账户 metadata 懒初始化和前台私聊长轮询接纳层，补齐认证加密 pending inbound 与重启恢复入口，并修复 Windows 异常退出后 stale account lock 回收。后续复审材料仍只能记录脱敏账户 hash、状态、计数、退出码和是否触发网络；不得保存二维码、token、原始账号、联系人、消息正文、context token、data key 或系统凭证明文。
 
 ## 命令
 

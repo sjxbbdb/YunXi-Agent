@@ -185,6 +185,72 @@
 
 署名：开发报告撰写者
 
+## 2026-07-28 14:43:16 +08:00
+
+工作目标：完成 `v2.1.5-hotfix.1` 微信加密 pending inbound 整改的发布收口，确认 release commit、annotated tag、GitHub 推送和远端 refs，并补写项目日志。
+
+执行流程：
+1. 复核已通过的门禁：`cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace -- --test-threads=1`、`cargo build --workspace --release`、release `yunxi --version`、`weixin status --json`、`weixin doctor --json`、`eval companion --json`、ConPTY verifier、Provider smoke 和单轮 `weixin serve`。
+2. 清理构建中间产物，仅删除 `D:\YunXi Agent\target`，删除前后都做了绝对路径校验，未触碰用户目录。
+3. 创建 release commit `f990ba1f539d25052211fca3baf3ebc39280a720`，并创建新的 annotated tag `v2.1.5-hotfix.1`。
+4. 使用 GitHub CLI + `GH_TOKEN` 读取并认证 `C:\Users\24763\Desktop\GitHub apikey.txt` 中的 API key，配置 git 认证后推送 `master` 和 `v2.1.5-hotfix.1`。
+5. 通过 GitHub CLI 复核远端 `master`、`v2.1.5-hotfix.1` tag object / peeled target，以及旧 `v2.1.5` tag 均与本地一致。
+6. 追加本次完成记录，准备同步桌面副本。
+
+修改文件与路径：
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\weixin.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\general_companion_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-storage\Cargo.toml`
+- `D:\YunXi Agent\crates\yunxi-agent-storage\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-storage\tests\weixin_state_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\app.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_100x30.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_200x50.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\Cargo.toml`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\inbound.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\payload_cipher.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\serve.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\tests\ilink_client_tests.rs`
+- `D:\YunXi Agent\docs\README.md`
+- `D:\YunXi Agent\docs\weixin.md`
+- `D:\YunXi Agent\docs\reports\README.md`
+- `D:\YunXi Agent\docs\reports\audits\2026-07-28-100654-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-audit-report.md`
+- `D:\YunXi Agent\docs\reports\development\2026-07-28-114710-yunxi-agent-v2-1-5-hotfix-1-weixin-encrypted-pending-inbound-development-report.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：
+- `cargo fmt --all -- --check` 通过。
+- `cargo check --workspace` 通过。
+- `cargo test --workspace -- --test-threads=1` 通过。
+- `cargo build --workspace --release` 通过。
+- `yunxi --version` 输出 `yunxi 2.1.5-hotfix.1`。
+- `weixin status --json` 和 `weixin doctor --json` 均为 `secrets_included=false`，`state_store_schema_version=2`，`encrypted_pending_queue=true`。
+- `eval companion --json` 为 31/31，`golden_passed=true`。
+- ConPTY verifier `ok=true`，`read_only=true`。
+- Provider smoke 输出 `YUNXI_V215_HOTFIX1_PROVIDER_OK`。
+- `weixin serve` 单轮轮询 `exit 0`，`polls=1`，`accepted=0`，`pair=0`。
+- `git diff --check`、`git fsck --full --no-dangling` 通过。
+- 远端 `master`、`v2.1.5-hotfix.1` tag object 与 peeled target 已核验一致；旧 `v2.1.5` tag 未变化。
+
+提交和推送状态：
+- release commit：`f990ba1f539d25052211fca3baf3ebc39280a720`
+- annotated tag：`v2.1.5-hotfix.1`
+- tag object：`983e4ea426777a7bba9f74ba66b54506163c4049`
+- 远端 push：`master -> master`，`[new tag] v2.1.5-hotfix.1 -> v2.1.5-hotfix.1`
+- 历史 tag：`v2.1.5` 保持不变，未删除、未移动、未覆盖
+
+署名：开发者
+
 ## 2026-07-28 08:58:15 +08:00
 
 工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-27-233307-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-development-report.md`，完成 `v2.1.5` 微信私聊长轮询、配对准入与幂等接纳开发，并在验证通过后准备 release commit、annotated tag 和 GitHub 推送。

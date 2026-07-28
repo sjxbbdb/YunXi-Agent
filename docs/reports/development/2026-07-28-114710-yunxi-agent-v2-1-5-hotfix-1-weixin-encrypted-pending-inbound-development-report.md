@@ -246,3 +246,36 @@ decrypt_pending_inbound(account_id, item_id, data_key)
 `v2.1.5-hotfix.1` 复审通过前，任何文档、日志、发布说明或回复都不得宣称 Runtime 会话绑定、Provider dispatch、sendmessage、远程审批、流式回信、群聊或完整微信聊天闭环已经完成。
 
 署名：开发报告撰写者
+
+## 八、实际完成与发布记录
+
+时间戳：2026-07-28 14:43:16 +08:00
+
+本次已完成的实际改动：
+
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\payload_cipher.rs`：实现 `WeixinPayloadCipher`，用 `chacha20poly1305` 做 authenticated encryption，加入随机 nonce、AAD、算法版本和解密校验。
+- `D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs`：将 pending inbound 升级为 schema v2，持久化真实密文、nonce、算法版本和 AAD 版本，并增加恢复加载与校验。
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\serve.rs` 与 `D:\YunXi Agent\crates\yunxi-agent-cli\src\weixin.rs`：把 data key 接入加密提交流程，确保加密失败时不推进游标、不半提交。
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\inbound.rs`、`D:\YunXi Agent\crates\yunxi-agent-storage\tests\weixin_state_tests.rs`、`D:\YunXi Agent\crates\yunxi-agent-weixin\tests\ilink_client_tests.rs`、`D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`：补齐加密、AAD 绑定、篡改/截断失败、重启恢复和混合批次测试。
+- `D:\YunXi Agent\README.md`、`D:\YunXi Agent\docs\README.md`、`D:\YunXi Agent\docs\weixin.md`、`D:\YunXi Agent\docs\reports\README.md`：同步能力边界与报告入口。
+- `D:\YunXi Agent\docs\development-log.md` 与本文件：记录本轮整改、验证和发布收口。
+
+验证结果：
+
+- `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace -- --test-threads=1`、`cargo build --workspace --release` 均通过。
+- `yunxi --version` 输出 `yunxi 2.1.5-hotfix.1`。
+- `weixin status --json`、`weixin doctor --json`、单轮 `weixin serve`、`eval companion --json`、ConPTY verifier、Provider smoke 均通过。
+- `git diff --check`、`git fsck --full --no-dangling` 通过。
+
+提交和推送状态：
+
+- release commit：`f990ba1f539d25052211fca3baf3ebc39280a720`
+- annotated tag：`v2.1.5-hotfix.1`
+- tag object：`983e4ea426777a7bba9f74ba66b54506163c4049`
+- 远端 `master`、新 tag object 与 peeled target 已通过 GitHub CLI 核验；旧 `v2.1.5` tag 未变。
+
+清理状态：
+
+- 仅清理了 `D:\YunXi Agent\target`，未触碰用户目录、`.git`、`.yunxi`、凭证存储或历史 tag。
+
+署名：开发者

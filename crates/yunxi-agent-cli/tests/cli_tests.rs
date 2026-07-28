@@ -123,7 +123,7 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.4-hotfix.1"));
+        .stdout(predicate::str::contains("yunxi 2.1.5"));
 }
 
 #[test]
@@ -133,11 +133,11 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.4-hotfix.1"));
+        .stdout(predicate::str::contains("yunxi 2.1.5"));
 }
 
 #[test]
-fn cli_weixin_help_covers_the_v214_hotfix1_login_command_surface() {
+fn cli_weixin_help_covers_the_v215_weixin_command_surface() {
     for args in [
         vec!["weixin", "--help"],
         vec!["weixin", "login", "--help"],
@@ -592,9 +592,13 @@ fn cli_weixin_mutating_commands_fail_honestly_without_starting_runtime() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "not implemented in v2.1.4-hotfix.1",
+            "weixin serve requires login first",
         ))
         .stderr(predicate::str::contains("private-account-name").not());
+    assert!(
+        !workspace.path().join(".yunxi").join("sessions").exists(),
+        "serve must not start Runtime or create YunXi sessions before login"
+    );
 
     for args in [
         [
@@ -914,7 +918,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.4-hotfix.1 interactive CLI",
+            "YunXi Agent v2.1.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -1073,7 +1077,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.4-hotfix.1 interactive CLI",
+            "YunXi Agent v2.1.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -1093,7 +1097,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.4-hotfix.1 interactive CLI",
+            "YunXi Agent v2.1.5 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

@@ -17,7 +17,8 @@ use yunxi_agent_weixin::{
     WeixinAccountStoreError, WeixinConnectionState, WeixinCredentialReference,
     WeixinLoginCancellation, WeixinLoginEvent, WeixinLoginOptions, WeixinLoginOutcome,
     WeixinLoginStateMachine, WeixinLoginTransport, WeixinSecretStore, WeixinSecretStoreError,
-    generate_data_key,
+    WeixinServeCancellation, WeixinServeOptions, WeixinServeReport, WeixinServeStoppedReason,
+    generate_data_key, run_weixin_serve_loop,
 };
 
 use crate::provider_mode::ProviderMode;
@@ -39,7 +40,7 @@ pub(crate) enum WeixinCommand {
         #[arg(long, default_value = "default")]
         account: String,
     },
-    #[command(about = "Validate future service configuration without starting long polling")]
+    #[command(about = "Run the foreground Weixin private-chat long polling service")]
     Serve {
         #[arg(long, default_value = "default")]
         account: String,
@@ -109,27 +110,7 @@ pub(crate) async fn run(
                     .canonicalize()
                     .context("failed to normalize weixin serve workspace")?;
             }
-            let selection = provider_mode.resolve(backend, &config)?;
-            let prepared_config = selection.apply_to_config(config);
-            let account_hash = safe_account(&account);
-            let state_store = FileWeixinStateStore::for_workspace(&prepared_config.cwd);
-            let lock_state = state_store.lock_state(&account_hash)?;
-            if lock_state.state == WeixinAccountLockState::Active {
-                bail!(
-                    "weixin serve refused because another local service holds the account lock (account={account_hash}, lock_state=active)"
-                );
-            }
-            let account_id = WeixinAccountId::new(&account);
-            let store = SystemWeixinSecretStore::new();
-            let credential_state = credential_state(&store, &account_id);
-            let state = state_store.load(&account_hash)?;
-            let encrypted_pending_queue_available =
-                state.is_some() && credential_state == "present";
-            bail!(
-                "weixin serve is not implemented in v2.1.4-hotfix.1; state store, lock, and encrypted pending queue readiness were checked without starting long polling or the agent runtime (account={account_hash}, workspace={}, provider_mode={}, encrypted_pending_queue_available={encrypted_pending_queue_available})",
-                prepared_config.cwd.display(),
-                selection.source.as_str()
-            );
+            run_serve(&account, config, backend, provider_mode, json_output).await
         }
         WeixinCommand::Pair { command } => match command {
             WeixinPairCommand::List { account } => {
@@ -184,6 +165,79 @@ async fn run_login(account: &str, config: &AgentConfig, json_output: bool) -> Re
     .await;
     signal_task.abort();
     result.map(|_| ())
+}
+
+async fn run_serve(
+    account: &str,
+    config: AgentConfig,
+    backend: BackendKind,
+    provider_mode: ProviderMode,
+    json_output: bool,
+) -> Result<()> {
+    let selection = provider_mode.resolve(backend, &config)?;
+    let prepared_config = selection.apply_to_config(config);
+    let account_id = WeixinAccountId::new(account);
+    let account_hash = account_id.to_string();
+    let account_store = WeixinAccountStore::new(&prepared_config.cwd);
+    let state_store = FileWeixinStateStore::for_workspace(&prepared_config.cwd);
+    let record = account_store
+        .load(&account_id)
+        .context("weixin serve account metadata load failed")?
+        .ok_or_else(|| {
+            anyhow::anyhow!("weixin serve requires login first (account={account_hash})")
+        })?;
+    let (state, _migration) =
+        ensure_weixin_state_initialized_from_metadata(&record, &state_store, now_millis_u64())
+            .context("weixin serve state initialization failed")?;
+    let store = SystemWeixinSecretStore::new();
+    let token = store.get_token(&account_id).with_context(|| {
+        format!("weixin serve token credential is unavailable (account={account_hash})")
+    })?;
+    let _data_key = store.get_data_key(&account_id).with_context(|| {
+        format!("weixin serve encrypted pending queue key is unavailable (account={account_hash})")
+    })?;
+    let mut lock = state_store
+        .try_acquire_account_lock(&record.account_id, &record.workspace_id)
+        .with_context(|| {
+            format!("weixin serve refused to acquire account lock (account={account_hash})")
+        })?;
+    let mut client = IlinkHttpClient::new(account, Some(token))
+        .context("weixin serve could not initialize the fixed iLink client")?;
+    let mut options = WeixinServeOptions::new(record.account_id.clone());
+    options.max_polls = serve_max_polls_from_env()?;
+    let cancellation = WeixinServeCancellation::default();
+    if !json_output {
+        println!("weixin serve started");
+        println!("account: {account_hash}");
+        println!("workspace: {}", record.workspace_id);
+        println!("provider mode: {}", selection.source.as_str());
+        println!("state store schema: {}", state.schema_version);
+        println!(
+            "private chat long polling enabled; runtime dispatch, sendmessage, remote approval, and group chat remain disabled"
+        );
+    }
+    let serve_result = tokio::select! {
+        result = run_weixin_serve_loop(&mut client, &state_store, options, &cancellation) => result,
+        signal = tokio::signal::ctrl_c() => {
+            let _ = signal;
+            cancellation.cancel();
+            let now = now_millis_u64();
+            let _ = state_store.record_poll_health(
+                &record.account_id,
+                yunxi_agent_storage::WeixinConnectionStateRecord::Ready,
+                Some("serve_stopped".to_string()),
+                now,
+            );
+            Ok(WeixinServeReport {
+                stopped_reason: Some(WeixinServeStoppedReason::Cancelled),
+                ..WeixinServeReport::default()
+            })
+        }
+    };
+    let release_result = lock.release();
+    let report = serve_result.context("weixin serve loop failed")?;
+    release_result.context("weixin serve account lock release failed")?;
+    print_serve_report(&record.account_id, &report, json_output)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -242,7 +296,7 @@ where
     .context("weixin login output failed")?;
     writeln!(
         output,
-        "messages and long polling remain disabled in v2.1.4-hotfix.1"
+        "messages and long polling remain disabled in v2.1.5"
     )
     .context("weixin login output failed")?;
     Ok(credential)
@@ -400,8 +454,9 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
         "updated_at_millis": record.updated_at_millis,
         "capabilities": {
             "real_login": true,
-            "receive_messages": false,
+            "receive_messages": true,
             "send_messages": false,
+            "foreground_long_polling": true,
             "persistent_service": false,
             "group_chat": false,
         },
@@ -418,7 +473,9 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
             println!("state store initialized from existing metadata");
         }
         println!("account lock state: {}", lock_state.state.as_str());
-        println!("QR login is available; messages and long polling remain disabled");
+        println!(
+            "QR login and foreground private-chat polling are available; runtime dispatch and sendmessage remain disabled"
+        );
     }
     Ok(())
 }
@@ -452,6 +509,7 @@ fn print_unconfigured_status(
                     "real_login": true,
                     "receive_messages": false,
                     "send_messages": false,
+                    "foreground_long_polling": true,
                     "persistent_service": false,
                     "group_chat": false,
                 },
@@ -463,7 +521,9 @@ fn print_unconfigured_status(
         println!("state: not_configured");
         println!("state store configured: {}", state.is_some());
         println!("account lock state: {}", lock_state.state.as_str());
-        println!("QR login is available; messages and long polling remain disabled");
+        println!(
+            "QR login is available; foreground private-chat polling requires a configured account"
+        );
     }
     Ok(())
 }
@@ -573,7 +633,7 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
             "account_lock_state": lock_state.state.as_str(),
             "private_chat_enabled": true,
             "encrypted_pending_queue": record.is_some() && credential_state == "present",
-            "message_receive_enabled": false,
+            "message_receive_enabled": record.is_some() && credential_state == "present",
             "message_send_enabled": false,
             "group_chat_enabled": false,
         },
@@ -600,7 +660,12 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
         println!("account lock state: {}", lock_state.state.as_str());
         println!("network request performed: false");
         println!(
-            "message receive, send, long polling, and group chat: unavailable in v2.1.4-hotfix.1"
+            "private-chat foreground receive: {}; sendmessage, runtime dispatch, remote approval, and group chat: unavailable in v2.1.5",
+            if record.is_some() && credential_state == "present" {
+                "available"
+            } else {
+                "requires configured credentials"
+            }
         );
     }
     Ok(())
@@ -752,7 +817,7 @@ fn print_pair_list(account: &str, workspace: &Path, json_output: bool) -> Result
     } else {
         println!("weixin pairs: {}", pairs.len());
         println!("account: {account}");
-        println!("pairing lifecycle is local-state only in v2.1.4-hotfix.1");
+        println!("pairing lifecycle is local-state only in v2.1.5");
     }
     Ok(())
 }
@@ -808,6 +873,72 @@ fn print_pair_transition_result(
         println!("state: {:?}", request.state);
     }
     Ok(())
+}
+
+fn print_serve_report(account: &str, report: &WeixinServeReport, json_output: bool) -> Result<()> {
+    let stopped_reason = report
+        .stopped_reason
+        .map(serve_stopped_reason_label)
+        .unwrap_or("running");
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "channel": "weixin",
+                "version": env!("CARGO_PKG_VERSION"),
+                "account": account,
+                "service": "foreground_long_polling",
+                "stopped_reason": stopped_reason,
+                "polls": report.polls,
+                "empty_polls": report.empty_polls,
+                "accepted_count": report.accepted_count,
+                "duplicate_count": report.duplicate_count,
+                "pair_request_count": report.pair_request_count,
+                "skipped_group_count": report.skipped_group_count,
+                "skipped_self_count": report.skipped_self_count,
+                "skipped_unsupported_count": report.skipped_unsupported_count,
+                "skipped_unknown_count": report.skipped_unknown_count,
+                "network_error_count": report.network_error_count,
+                "runtime_dispatch_enabled": false,
+                "send_message_enabled": false,
+                "remote_approval_enabled": false,
+                "group_chat_enabled": false,
+                "secrets_included": false,
+            }))?
+        );
+    } else {
+        println!("weixin serve stopped: {stopped_reason}");
+        println!("account: {account}");
+        println!("polls: {}", report.polls);
+        println!("accepted pending inbound: {}", report.accepted_count);
+        println!("pair requests: {}", report.pair_request_count);
+        println!("duplicates skipped: {}", report.duplicate_count);
+        println!("group chat, runtime dispatch, sendmessage, and remote approval remain disabled");
+    }
+    Ok(())
+}
+
+fn serve_stopped_reason_label(reason: WeixinServeStoppedReason) -> &'static str {
+    match reason {
+        WeixinServeStoppedReason::Cancelled => "cancelled",
+        WeixinServeStoppedReason::MaxPolls => "max_polls",
+    }
+}
+
+fn serve_max_polls_from_env() -> Result<Option<usize>> {
+    let Some(value) = std::env::var("YUNXI_WEIXIN_SERVE_MAX_POLLS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let parsed = value
+        .parse::<usize>()
+        .context("YUNXI_WEIXIN_SERVE_MAX_POLLS must be a positive integer")?;
+    if parsed == 0 {
+        bail!("YUNXI_WEIXIN_SERVE_MAX_POLLS must be greater than zero");
+    }
+    Ok(Some(parsed))
 }
 
 fn safe_account(account: &str) -> String {

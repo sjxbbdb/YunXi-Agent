@@ -4,7 +4,9 @@
 
 ## 当前入口
 
-- [v2.1.4-hotfix.1 微信旧账户状态迁移整改开发报告](development/2026-07-27-203440-yunxi-agent-v2-1-4-hotfix-1-weixin-legacy-state-migration-development-report.md)：旧登录 metadata 到 `WeixinStateStore` 的幂等初始化整改记录，禁止进入 v2.1.5 前置门禁。
+- [v2.1.5 微信私聊长轮询、配对准入与幂等接纳开发报告](development/2026-07-27-233307-yunxi-agent-v2-1-5-weixin-long-polling-pairing-idempotency-development-report.md)：前台 `serve`、iLink `getupdates`、配对、游标原子提交和幂等接纳开发记录与发布门禁。
+- [v2.1.4-hotfix.1 微信旧账户状态迁移复审审核报告](audits/2026-07-27-230718-yunxi-agent-v2-1-4-hotfix-1-weixin-state-migration-reaudit-report.md)：整改复审通过，允许进入 v2.1.5。
+- [v2.1.4-hotfix.1 微信旧账户状态迁移整改开发报告](development/2026-07-27-203440-yunxi-agent-v2-1-4-hotfix-1-weixin-legacy-state-migration-development-report.md)：旧登录 metadata 到 `WeixinStateStore` 的幂等初始化整改记录。
 - [v2.1.4 微信状态生命周期审核报告](audits/2026-07-27-201143-yunxi-agent-v2-1-4-weixin-state-lifecycle-audit-report.md)
 - [v2.1.4 微信状态持久化、诊断与安全账户生命周期开发报告](development/2026-07-27-183050-yunxi-agent-v2-1-4-weixin-state-store-diagnostics-lifecycle-development-report.md)：状态 store、原子写入、诊断、账户锁、pair 生命周期、安全 logout 和发布门禁记录。
 - [v2.1.3-hotfix.1 微信登录复审核报告](audits/2026-07-27-181754-yunxi-agent-v2-1-3-hotfix-1-weixin-login-audit-report.md)

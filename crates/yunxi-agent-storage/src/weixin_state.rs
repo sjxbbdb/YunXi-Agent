@@ -15,6 +15,9 @@ use thiserror::Error;
 pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 1;
 const WEIXIN_STATE_DIRECTORY: &str = ".yunxi/weixin/state";
 const WEIXIN_LOCK_ENV: &str = "YUNXI_WEIXIN_LOCK_ROOT";
+const WEIXIN_PENDING_INBOUND_LIMIT: usize = 1024;
+const WEIXIN_TERMINAL_RECEIPT_LIMIT: usize = 2048;
+const WEIXIN_TERMINAL_RECEIPT_TTL_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
 
 pub trait WeixinStateStore: Send + Sync {
     fn root(&self) -> &Path;
@@ -275,6 +278,129 @@ impl FileWeixinStateStore {
         Ok(request)
     }
 
+    pub fn commit_inbound_batch(
+        &self,
+        commit: WeixinInboundBatchCommit,
+    ) -> Result<WeixinInboundBatchCommitResult, WeixinStateError> {
+        self.commit_inbound_batch_with_options(commit, WeixinStateWriteOptions::default())
+    }
+
+    pub fn commit_inbound_batch_with_options(
+        &self,
+        commit: WeixinInboundBatchCommit,
+        options: WeixinStateWriteOptions,
+    ) -> Result<WeixinInboundBatchCommitResult, WeixinStateError> {
+        let mut snapshot = self.load_required(&commit.account_id)?;
+        prune_terminal_receipts(&mut snapshot, commit.now_millis);
+        let mut accepted_count = 0;
+        let mut duplicate_count = 0;
+        let mut pair_request_count = 0;
+        let active_pending = snapshot.pending_inbound_count();
+        if active_pending.saturating_add(commit.accepted.len()) > WEIXIN_PENDING_INBOUND_LIMIT {
+            return Err(WeixinStateError::PendingInboundQueueFull {
+                limit: WEIXIN_PENDING_INBOUND_LIMIT,
+            });
+        }
+
+        for item in commit.accepted {
+            if has_receipt(&snapshot, &item.message_id_hash, &item.peer_id_hash)
+                || has_pending_inbound(&snapshot, &item.message_id_hash, &item.peer_id_hash)
+            {
+                duplicate_count += 1;
+                continue;
+            }
+            snapshot.inbound_receipts.push(WeixinInboundReceiptRecord {
+                schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+                message_id_hash: item.message_id_hash.clone(),
+                peer_id_hash: item.peer_id_hash.clone(),
+                accepted_at_millis: commit.now_millis,
+                state: WeixinReceiptState::Ready,
+                created_at_millis: commit.now_millis,
+                updated_at_millis: commit.now_millis,
+                transitioned_at_millis: commit.now_millis,
+            });
+            snapshot.pending_inbound.push(WeixinPendingInbound {
+                schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+                item_id: item.item_id,
+                account_id: commit.account_id.clone(),
+                message_id_hash: item.message_id_hash,
+                peer_id_hash: item.peer_id_hash,
+                encrypted_payload_ref: item.encrypted_payload_ref,
+                state: WeixinPendingInboundState::Ready,
+                terminal_reason: None,
+                created_at_millis: commit.now_millis,
+                updated_at_millis: commit.now_millis,
+                transitioned_at_millis: commit.now_millis,
+            });
+            accepted_count += 1;
+        }
+
+        for request in commit.pair_requests {
+            if has_active_pair_request(&snapshot, &request.peer_id_hash, commit.now_millis) {
+                continue;
+            }
+            snapshot.pair_requests.push(WeixinPairRequest {
+                schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+                request_id: opaque_request_id(
+                    &commit.account_id,
+                    &request.peer_id_hash,
+                    commit.now_millis,
+                ),
+                account_id: commit.account_id.clone(),
+                peer_id_hash: request.peer_id_hash,
+                state: WeixinPairRequestState::Pending,
+                expires_at_millis: request.expires_at_millis,
+                created_at_millis: commit.now_millis,
+                updated_at_millis: commit.now_millis,
+                transitioned_at_millis: commit.now_millis,
+            });
+            pair_request_count += 1;
+        }
+
+        if let Some(cursor) = commit.next_get_updates_buf {
+            upsert_cursor(
+                &mut snapshot,
+                &commit.account_id,
+                &commit.cursor_source,
+                cursor,
+                commit.now_millis,
+            );
+        }
+        snapshot.connection_state = commit
+            .connection_state
+            .unwrap_or(WeixinConnectionStateRecord::Ready);
+        snapshot.last_redacted_error = commit.last_redacted_error;
+        snapshot.updated_at_millis = commit.now_millis;
+        snapshot.transitioned_at_millis = commit.now_millis;
+        let receipt_count = snapshot.inbound_receipts.len();
+        let pending_inbound_count = snapshot.pending_inbound_count();
+        self.save_with_options(&snapshot, options)?;
+        Ok(WeixinInboundBatchCommitResult {
+            accepted_count,
+            duplicate_count,
+            pair_request_count,
+            receipt_count,
+            pending_inbound_count,
+        })
+    }
+
+    pub fn record_poll_health(
+        &self,
+        account_id: &str,
+        connection_state: WeixinConnectionStateRecord,
+        last_redacted_error: Option<String>,
+        now_millis: u64,
+    ) -> Result<WeixinStateSnapshot, WeixinStateError> {
+        let mut snapshot = self.load_required(account_id)?;
+        snapshot.connection_state = connection_state;
+        snapshot.last_redacted_error = last_redacted_error;
+        snapshot.updated_at_millis = now_millis;
+        snapshot.transitioned_at_millis = now_millis;
+        prune_terminal_receipts(&mut snapshot, now_millis);
+        self.save(&snapshot)?;
+        Ok(snapshot)
+    }
+
     pub fn approve_pair_request(
         &self,
         account_id: &str,
@@ -431,6 +557,56 @@ impl WeixinStateStore for FileWeixinStateStore {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WeixinStateWriteOptions {
     pub fail_before_replace: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinInboundBatchCommit {
+    pub account_id: String,
+    pub cursor_source: String,
+    pub next_get_updates_buf: Option<String>,
+    pub accepted: Vec<WeixinInboundCommitItem>,
+    pub pair_requests: Vec<WeixinPairRequestCommitItem>,
+    pub connection_state: Option<WeixinConnectionStateRecord>,
+    pub last_redacted_error: Option<String>,
+    pub now_millis: u64,
+}
+
+impl WeixinInboundBatchCommit {
+    pub fn new(account_id: impl Into<String>, now_millis: u64) -> Self {
+        Self {
+            account_id: account_id.into(),
+            cursor_source: "getupdates".to_string(),
+            next_get_updates_buf: None,
+            accepted: Vec::new(),
+            pair_requests: Vec::new(),
+            connection_state: Some(WeixinConnectionStateRecord::Ready),
+            last_redacted_error: None,
+            now_millis,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinInboundCommitItem {
+    pub item_id: String,
+    pub message_id_hash: String,
+    pub peer_id_hash: String,
+    pub encrypted_payload_ref: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinPairRequestCommitItem {
+    pub peer_id_hash: String,
+    pub expires_at_millis: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinInboundBatchCommitResult {
+    pub accepted_count: usize,
+    pub duplicate_count: usize,
+    pub pair_request_count: usize,
+    pub receipt_count: usize,
+    pub pending_inbound_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -645,6 +821,15 @@ pub enum WeixinReceiptState {
     Unknown,
 }
 
+impl WeixinReceiptState {
+    fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Succeeded | Self::Failed | Self::Cancelled | Self::Expired | Self::Unknown
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WeixinDeliveryState {
@@ -828,6 +1013,8 @@ pub enum WeixinStateError {
         from: &'static str,
         to: &'static str,
     },
+    #[error("weixin pending inbound queue is full limit={limit}")]
+    PendingInboundQueueFull { limit: usize },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -955,12 +1142,24 @@ fn validate_snapshot(snapshot: &WeixinStateSnapshot) -> Result<(), WeixinStateEr
             });
         }
     }
+    for receipt in &snapshot.inbound_receipts {
+        if receipt.schema_version != WEIXIN_STATE_SCHEMA_VERSION
+            || !receipt.message_id_hash.starts_with("message#")
+            || !receipt.peer_id_hash.starts_with("peer#")
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "inbound receipt failed validation",
+            });
+        }
+    }
     for item in &snapshot.pending_inbound {
         if item.schema_version != WEIXIN_STATE_SCHEMA_VERSION
             || item.account_id != snapshot.account_id
             || !item.message_id_hash.starts_with("message#")
             || !item.peer_id_hash.starts_with("peer#")
             || item.encrypted_payload_ref.trim().is_empty()
+            || item.encrypted_payload_ref.contains("token")
+            || item.encrypted_payload_ref.contains("context")
         {
             return Err(WeixinStateError::InvalidRecord {
                 reason: "pending inbound failed validation",
@@ -980,6 +1179,92 @@ fn looks_redacted(prefix: &str, value: &str) -> bool {
                     .all(|character| character.is_ascii_hexdigit())
         })
         .unwrap_or(false)
+}
+
+fn has_receipt(snapshot: &WeixinStateSnapshot, message_id_hash: &str, peer_id_hash: &str) -> bool {
+    snapshot.inbound_receipts.iter().any(|receipt| {
+        receipt.message_id_hash == message_id_hash && receipt.peer_id_hash == peer_id_hash
+    })
+}
+
+fn has_pending_inbound(
+    snapshot: &WeixinStateSnapshot,
+    message_id_hash: &str,
+    peer_id_hash: &str,
+) -> bool {
+    snapshot.pending_inbound.iter().any(|item| {
+        item.message_id_hash == message_id_hash
+            && item.peer_id_hash == peer_id_hash
+            && !item.state.is_terminal()
+    })
+}
+
+fn has_active_pair_request(
+    snapshot: &WeixinStateSnapshot,
+    peer_id_hash: &str,
+    now_millis: u64,
+) -> bool {
+    snapshot.pair_requests.iter().any(|request| {
+        request.peer_id_hash == peer_id_hash
+            && matches!(
+                request.state,
+                WeixinPairRequestState::Pending | WeixinPairRequestState::Approved
+            )
+            && request.expires_at_millis > now_millis
+    })
+}
+
+fn upsert_cursor(
+    snapshot: &mut WeixinStateSnapshot,
+    account_id: &str,
+    source: &str,
+    get_updates_buf: String,
+    now_millis: u64,
+) {
+    if let Some(cursor) = snapshot
+        .cursors
+        .iter_mut()
+        .find(|cursor| cursor.source == source)
+    {
+        cursor.get_updates_buf = Some(get_updates_buf);
+        cursor.updated_at_millis = now_millis;
+        cursor.transitioned_at_millis = now_millis;
+        return;
+    }
+    snapshot.cursors.push(WeixinCursorRecord {
+        schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+        account_id: account_id.to_string(),
+        get_updates_buf: Some(get_updates_buf),
+        source: source.to_string(),
+        created_at_millis: now_millis,
+        updated_at_millis: now_millis,
+        transitioned_at_millis: now_millis,
+    });
+}
+
+fn prune_terminal_receipts(snapshot: &mut WeixinStateSnapshot, now_millis: u64) {
+    snapshot.inbound_receipts.retain(|receipt| {
+        !receipt.state.is_terminal()
+            || now_millis.saturating_sub(receipt.transitioned_at_millis)
+                <= WEIXIN_TERMINAL_RECEIPT_TTL_MILLIS
+    });
+    let terminal_count = snapshot
+        .inbound_receipts
+        .iter()
+        .filter(|receipt| receipt.state.is_terminal())
+        .count();
+    if terminal_count <= WEIXIN_TERMINAL_RECEIPT_LIMIT {
+        return;
+    }
+    let mut to_remove = terminal_count - WEIXIN_TERMINAL_RECEIPT_LIMIT;
+    snapshot.inbound_receipts.retain(|receipt| {
+        if to_remove > 0 && receipt.state.is_terminal() {
+            to_remove -= 1;
+            false
+        } else {
+            true
+        }
+    });
 }
 
 fn write_lock_file(path: &Path, record: &WeixinLockRecord) -> Result<(), WeixinStateError> {

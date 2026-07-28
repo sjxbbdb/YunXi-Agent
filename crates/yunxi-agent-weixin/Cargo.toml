@@ -13,6 +13,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+yunxi-agent-storage = { path = "../yunxi-agent-storage" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

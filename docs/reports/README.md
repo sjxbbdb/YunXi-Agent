@@ -4,6 +4,9 @@
 
 ## 当前入口
 
+- [v2.2.0 微信接入合并版本开发报告](development/2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md)：把原 v2.1.7、v2.1.8、v2.1.9 和 v2.2.0 合并为一个 v2.2.0 开发线；先关闭 v2.1.6 session history 与 QueueFull 两个 P1，再逐项完成远程控制、可靠回信、陪伴记忆、真实联调和发布收口门禁；补强前台长轮询、不开放入站端口、`/stop` 作用域、审批超时、onboarding、扫码恢复、iLink Bot 身份和群聊排除要求。
+- [v2.1.0 至 v2.2.0 微信接入合并开发范围复审报告](audits/2026-07-31-002150-yunxi-agent-v2-1-0-to-v2-2-0-merged-development-reaudit-report.md)：按新要求重新审核全范围；既有能力保持，后续小版本内容合并为 v2.2.0 内部强制门禁；当前 v2.1.6 的 session history 和 QueueFull 恢复仍有 P1，禁止宣称 v2.2.0 完成。
+- [v2.1.6 微信会话绑定与既有 Runtime 审核报告](audits/2026-07-31-000843-yunxi-agent-v2-1-6-weixin-runtime-session-binding-audit-report.md)：审核不通过；同 session_id 未恢复连续历史，QueueFull 后 Ready pending 没有恢复路径，禁止进入 v2.1.7。
 - [v2.1.6 微信会话绑定既有 Runtime 开发报告](development/2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md)：实现 `WeixinConversationBinding`、`WeixinTurnSupervisor`、共享 Runtime 配置、会话串行队列和 fake backend 集成的开发依据。
 - [v2.1.6 微信会话绑定既有 Runtime 审核报告](audits/2026-07-28-195752-yunxi-agent-v2-1-6-runtime-session-binding-audit-report.md)：开发前审核不通过；确认当时源码仍为 v2.1.5-hotfix.2，并转化为本轮 v2.1.6 开发任务。
 - [v2.1.5-hotfix.2 微信 stale lock 恢复整改复审审核报告](audits/2026-07-28-184005-yunxi-agent-v2-1-5-hotfix-2-weixin-stale-lock-recovery-reaudit-report.md)：审核通过，允许进入 v2.1.6；Windows stale lock、独立进程 pending 解密、原子提交和既有 CLI/TUI/Provider 回归均已通过。

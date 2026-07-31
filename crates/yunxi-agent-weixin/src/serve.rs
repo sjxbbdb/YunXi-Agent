@@ -23,6 +23,9 @@ use crate::{SecretString, WeixinApiError};
 const DEFAULT_PAIR_REQUEST_TTL: Duration = Duration::from_secs(10 * 60);
 const DEFAULT_EMPTY_POLL_DELAY: Duration = Duration::from_millis(250);
 const MAX_EMPTY_POLL_DELAY: Duration = Duration::from_secs(30);
+const READY_PENDING_DRAIN_LIMIT: usize = 32;
+const MIN_READY_PENDING_RETRY_DELAY: Duration = Duration::from_millis(250);
+const MAX_READY_PENDING_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct WeixinServeOptions {
@@ -71,6 +74,7 @@ pub struct WeixinServeReport {
     pub network_error_count: usize,
     pub runtime_dispatch_count: usize,
     pub runtime_error_count: usize,
+    pub runtime_deferred_count: usize,
     pub stopped_reason: Option<WeixinServeStoppedReason>,
 }
 
@@ -144,6 +148,8 @@ where
             report.stopped_reason = Some(WeixinServeStoppedReason::MaxPolls);
             break;
         }
+
+        drain_ready_pending(state_store, &options, &mut report).await?;
 
         let state = state_store.load(&options.account_id)?.ok_or_else(|| {
             WeixinStateError::StateNotFound {
@@ -237,6 +243,7 @@ where
                             item_id,
                             message_id_hash: envelope.message_id_hash.clone(),
                             peer_id_hash: envelope.peer_id_hash.clone(),
+                            direct_message_key: envelope.direct_message_key.clone(),
                             encrypted_payload_ref,
                             encrypted_payload,
                             payload_kind: Some(envelope.kind.as_str().to_string()),
@@ -251,22 +258,11 @@ where
         }
 
         let result = state_store.commit_inbound_batch(commit)?;
-        let accepted_item_ids = result.accepted_item_ids;
         report.accepted_count += result.accepted_count;
         report.duplicate_count += result.duplicate_count;
         report.pair_request_count += result.pair_request_count;
 
-        if let Some(dispatcher) = options.runtime_dispatcher.as_ref() {
-            for item_id in accepted_item_ids {
-                match dispatcher
-                    .dispatch_pending_turn(&options.account_id, &item_id)
-                    .await
-                {
-                    Ok(_) => report.runtime_dispatch_count += 1,
-                    Err(_) => report.runtime_error_count += 1,
-                }
-            }
-        }
+        drain_ready_pending(state_store, &options, &mut report).await?;
 
         if options
             .max_polls
@@ -286,6 +282,81 @@ where
     }
 
     Ok(report)
+}
+
+async fn drain_ready_pending(
+    state_store: &FileWeixinStateStore,
+    options: &WeixinServeOptions,
+    report: &mut WeixinServeReport,
+) -> Result<(), WeixinServeError> {
+    let Some(dispatcher) = options.runtime_dispatcher.as_ref() else {
+        return Ok(());
+    };
+    let now = now_millis_u64();
+    let pending_items = state_store.load_ready_pending_inbound(
+        &options.account_id,
+        now,
+        READY_PENDING_DRAIN_LIMIT,
+    )?;
+    for pending in pending_items {
+        match dispatcher
+            .dispatch_pending_turn(&options.account_id, &pending.item_id)
+            .await
+        {
+            Ok(_) => report.runtime_dispatch_count += 1,
+            Err(error @ crate::turn_supervisor::WeixinTurnSupervisorError::QueueFull { .. }) => {
+                report.runtime_error_count += 1;
+                report.runtime_deferred_count += 1;
+                let delay = ready_pending_retry_delay(pending.dispatch_retry_count);
+                state_store.record_pending_runtime_dispatch_deferred(
+                    &options.account_id,
+                    &pending.item_id,
+                    runtime_dispatch_error_label(&error),
+                    now.saturating_add(delay.as_millis() as u64),
+                    now,
+                )?;
+                break;
+            }
+            Err(error) => {
+                report.runtime_error_count += 1;
+                state_store.complete_pending_runtime_turn(
+                    &options.account_id,
+                    &pending.item_id,
+                    yunxi_agent_storage::WeixinPendingInboundState::Failed,
+                    Some(runtime_dispatch_error_label(&error).to_string()),
+                    now,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ready_pending_retry_delay(retry_count: u32) -> Duration {
+    let shift = retry_count.min(7);
+    let millis = (MIN_READY_PENDING_RETRY_DELAY.as_millis() as u64)
+        .saturating_mul(1_u64 << shift)
+        .min(MAX_READY_PENDING_RETRY_DELAY.as_millis() as u64);
+    Duration::from_millis(millis)
+}
+
+fn runtime_dispatch_error_label(
+    error: &crate::turn_supervisor::WeixinTurnSupervisorError,
+) -> &'static str {
+    match error {
+        crate::turn_supervisor::WeixinTurnSupervisorError::QueueFull { .. } => "runtime_queue_full",
+        crate::turn_supervisor::WeixinTurnSupervisorError::InvalidPendingState { .. } => {
+            "runtime_invalid_pending_state"
+        }
+        crate::turn_supervisor::WeixinTurnSupervisorError::UnsupportedPayload => {
+            "runtime_unsupported_payload"
+        }
+        crate::turn_supervisor::WeixinTurnSupervisorError::PayloadCipher(_) => {
+            "runtime_payload_unavailable"
+        }
+        crate::turn_supervisor::WeixinTurnSupervisorError::State(_) => "runtime_state_error",
+        crate::turn_supervisor::WeixinTurnSupervisorError::SinkFailed => "runtime_sink_failed",
+    }
 }
 
 fn cursor_for(snapshot: &WeixinStateSnapshot, source: &str) -> Option<String> {
@@ -381,12 +452,58 @@ mod tests {
     #[derive(Clone, Default)]
     struct RecordingDispatcher {
         item_ids: Arc<Mutex<Vec<String>>>,
+        store: Option<FileWeixinStateStore>,
     }
 
     impl RecordingDispatcher {
+        fn with_store(store: FileWeixinStateStore) -> Self {
+            Self {
+                item_ids: Arc::new(Mutex::new(Vec::new())),
+                store: Some(store),
+            }
+        }
+
         fn item_ids(&self) -> Vec<String> {
             self.item_ids.lock().expect("item ids").clone()
         }
+    }
+
+    fn complete_pending_for_test(
+        store: &FileWeixinStateStore,
+        account_id: &str,
+        item_id: &str,
+    ) -> String {
+        let state = store.load(account_id).expect("load state").expect("state");
+        let pending = state
+            .pending_inbound
+            .iter()
+            .find(|pending| pending.item_id == item_id)
+            .expect("pending")
+            .clone();
+        let session_id = format!("yunxi-weixin-test-{}", item_id.replace('#', "-"));
+        let binding = store
+            .begin_pending_runtime_turn(yunxi_agent_storage::WeixinRuntimeTurnBeginRequest {
+                account_id: account_id.to_string(),
+                peer_id_hash: pending.peer_id_hash,
+                message_id_hash: pending.message_id_hash,
+                item_id: item_id.to_string(),
+                direct_message_key: pending.direct_message_key,
+                workspace_id: state.workspace_id,
+                candidate_session_id: session_id,
+                source_label: "weixin-private-chat".to_string(),
+                now_millis: now_millis_u64(),
+            })
+            .expect("begin pending runtime turn");
+        store
+            .complete_pending_runtime_turn(
+                account_id,
+                item_id,
+                yunxi_agent_storage::WeixinPendingInboundState::Succeeded,
+                None,
+                now_millis_u64(),
+            )
+            .expect("complete pending");
+        binding.session_id
     }
 
     #[async_trait]
@@ -400,12 +517,70 @@ mod tests {
                 .lock()
                 .expect("item ids")
                 .push(item_id.to_string());
+            let session_id = self
+                .store
+                .as_ref()
+                .map(|store| complete_pending_for_test(store, account_id, item_id))
+                .unwrap_or_else(|| "yunxi-weixin-test".to_string());
             Ok(WeixinTurnReport {
                 account_id: account_id.to_string(),
                 peer_id_hash: "peer#00000000".to_string(),
                 direct_message_key: "dm#00000000".to_string(),
                 item_id: item_id.to_string(),
-                session_id: "yunxi-weixin-test".to_string(),
+                session_id,
+                parent_session_id: None,
+                status: AgentRunStatus::Completed,
+                final_response_present: true,
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct QueueThenCompleteDispatcher {
+        store: FileWeixinStateStore,
+        calls: Arc<Mutex<Vec<String>>>,
+        fail_remaining: Arc<Mutex<usize>>,
+    }
+
+    impl QueueThenCompleteDispatcher {
+        fn new(store: FileWeixinStateStore, fail_count: usize) -> Self {
+            Self {
+                store,
+                calls: Arc::new(Mutex::new(Vec::new())),
+                fail_remaining: Arc::new(Mutex::new(fail_count)),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    #[async_trait]
+    impl WeixinRuntimeDispatcher for QueueThenCompleteDispatcher {
+        async fn dispatch_pending_turn(
+            &self,
+            account_id: &str,
+            item_id: &str,
+        ) -> Result<WeixinTurnReport, WeixinTurnSupervisorError> {
+            self.calls.lock().expect("calls").push(item_id.to_string());
+            let mut remaining = self.fail_remaining.lock().expect("fail remaining");
+            if *remaining > 0 {
+                *remaining -= 1;
+                return Err(WeixinTurnSupervisorError::QueueFull {
+                    scope: "conversation",
+                    limit: 0,
+                });
+            }
+            drop(remaining);
+            let session_id = complete_pending_for_test(&self.store, account_id, item_id);
+            Ok(WeixinTurnReport {
+                account_id: account_id.to_string(),
+                peer_id_hash: "peer#00000000".to_string(),
+                direct_message_key: "dm#00000000".to_string(),
+                item_id: item_id.to_string(),
+                session_id,
+                parent_session_id: None,
                 status: AgentRunStatus::Completed,
                 final_response_present: true,
             })
@@ -577,7 +752,7 @@ mod tests {
         let mut options = WeixinServeOptions::new(account.clone());
         options.max_polls = Some(1);
         options.self_user_id = Some(SecretString::new("bot-user-id"));
-        let dispatcher = RecordingDispatcher::default();
+        let dispatcher = RecordingDispatcher::with_store(store.clone());
         options.runtime_dispatcher = Some(Arc::new(dispatcher.clone()));
         let data_key = test_data_key();
         let report = run_weixin_serve_loop(
@@ -599,16 +774,17 @@ mod tests {
         assert_eq!(report.runtime_error_count, 0);
         assert_eq!(dispatcher.item_ids().len(), 1);
         let state = store.load(&account).expect("load").expect("state");
-        assert_eq!(state.pending_inbound_count(), 1);
+        assert_eq!(state.pending_inbound_count(), 0);
         assert_eq!(state.pair_request_count(), 1);
         assert_eq!(
             state.cursors[0].get_updates_buf.as_deref(),
             Some("cursor-next")
         );
-        let pending = store
-            .load_pending_inbound(&account, &state.pending_inbound[0].item_id)
-            .expect("load pending")
-            .expect("pending");
+        let pending = state.pending_inbound[0].clone();
+        assert_eq!(
+            pending.state,
+            yunxi_agent_storage::WeixinPendingInboundState::Succeeded
+        );
         let recovered = WeixinPayloadCipher::new()
             .decrypt_pending_inbound(&data_key, &pending)
             .expect("decrypt pending");
@@ -685,7 +861,7 @@ mod tests {
         };
         let mut options = WeixinServeOptions::new(account.clone());
         options.max_polls = Some(2);
-        let dispatcher = RecordingDispatcher::default();
+        let dispatcher = RecordingDispatcher::with_store(store.clone());
         options.runtime_dispatcher = Some(Arc::new(dispatcher.clone()));
         let data_key = test_data_key();
         let report = run_weixin_serve_loop(
@@ -707,6 +883,162 @@ mod tests {
             state.cursors[0].get_updates_buf.as_deref(),
             Some("cursor-2")
         );
+    }
+
+    #[tokio::test]
+    async fn serve_loop_drains_ready_pending_after_queue_full_capacity_recovers() {
+        let (_temp, store, account) = store_fixture();
+        let envelope = WeixinInboundEnvelope::from_message(
+            &account,
+            None,
+            &text_message("raw-message-1", "raw-peer-1"),
+            1000,
+        );
+        let pair = store
+            .add_pair_request(&account, &envelope.peer_id_hash, u64::MAX, 1000)
+            .expect("pair request");
+        store
+            .approve_pair_request(&account, &pair.request_id, 1001)
+            .expect("approve peer");
+        let mut transport = ScriptedTransport {
+            responses: VecDeque::from([
+                Ok(GetUpdatesResponse {
+                    ret: 0,
+                    msgs: vec![text_message("raw-message-1", "raw-peer-1")],
+                    get_updates_buf: Some(SecretString::new("cursor-1")),
+                    ..GetUpdatesResponse::default()
+                }),
+                Ok(GetUpdatesResponse {
+                    ret: 0,
+                    msgs: Vec::new(),
+                    get_updates_buf: Some(SecretString::new("cursor-2")),
+                    longpolling_timeout_ms: Some(300),
+                    ..GetUpdatesResponse::default()
+                }),
+                Ok(GetUpdatesResponse {
+                    ret: 0,
+                    msgs: Vec::new(),
+                    get_updates_buf: Some(SecretString::new("cursor-3")),
+                    ..GetUpdatesResponse::default()
+                }),
+            ]),
+        };
+        let mut options = WeixinServeOptions::new(account.clone());
+        options.max_polls = Some(3);
+        let dispatcher = QueueThenCompleteDispatcher::new(store.clone(), 1);
+        options.runtime_dispatcher = Some(Arc::new(dispatcher.clone()));
+        let report = run_weixin_serve_loop(
+            &mut transport,
+            &store,
+            options,
+            &test_data_key(),
+            &WeixinServeCancellation::default(),
+        )
+        .await
+        .expect("serve loop");
+        assert_eq!(report.accepted_count, 1);
+        assert_eq!(report.runtime_error_count, 1);
+        assert_eq!(report.runtime_deferred_count, 1);
+        assert_eq!(report.runtime_dispatch_count, 1);
+        assert_eq!(dispatcher.calls().len(), 2);
+        let state = store.load(&account).expect("load").expect("state");
+        assert_eq!(state.pending_inbound_count(), 0);
+        assert_eq!(
+            state.pending_inbound[0].state,
+            yunxi_agent_storage::WeixinPendingInboundState::Succeeded
+        );
+        assert_eq!(
+            state.cursors[0].get_updates_buf.as_deref(),
+            Some("cursor-3")
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_loop_drains_ready_pending_after_restart_without_duplicate_runtime() {
+        let (_temp, store, account) = store_fixture();
+        let envelope = WeixinInboundEnvelope::from_message(
+            &account,
+            None,
+            &text_message("raw-message-1", "raw-peer-1"),
+            1000,
+        );
+        let pair = store
+            .add_pair_request(&account, &envelope.peer_id_hash, u64::MAX, 1000)
+            .expect("pair request");
+        store
+            .approve_pair_request(&account, &pair.request_id, 1001)
+            .expect("approve peer");
+
+        let mut first_transport = ScriptedTransport {
+            responses: VecDeque::from([Ok(GetUpdatesResponse {
+                ret: 0,
+                msgs: vec![text_message("raw-message-1", "raw-peer-1")],
+                get_updates_buf: Some(SecretString::new("cursor-1")),
+                ..GetUpdatesResponse::default()
+            })]),
+        };
+        let first_dispatcher = QueueThenCompleteDispatcher::new(store.clone(), 1);
+        let mut first_options = WeixinServeOptions::new(account.clone());
+        first_options.max_polls = Some(1);
+        first_options.runtime_dispatcher = Some(Arc::new(first_dispatcher.clone()));
+        let first_report = run_weixin_serve_loop(
+            &mut first_transport,
+            &store,
+            first_options,
+            &test_data_key(),
+            &WeixinServeCancellation::default(),
+        )
+        .await
+        .expect("first serve loop");
+        assert_eq!(first_report.runtime_deferred_count, 1);
+        assert_eq!(first_dispatcher.calls().len(), 1);
+        let pending_after_queue_full = store
+            .load(&account)
+            .expect("load")
+            .expect("state")
+            .pending_inbound[0]
+            .clone();
+        assert_eq!(
+            pending_after_queue_full.state,
+            yunxi_agent_storage::WeixinPendingInboundState::Ready
+        );
+        assert_eq!(pending_after_queue_full.dispatch_retry_count, 1);
+        assert_eq!(
+            pending_after_queue_full.last_dispatch_error.as_deref(),
+            Some("runtime_queue_full")
+        );
+
+        tokio::time::sleep(MIN_READY_PENDING_RETRY_DELAY).await;
+
+        let mut second_transport = ScriptedTransport {
+            responses: VecDeque::from([Ok(GetUpdatesResponse {
+                ret: 0,
+                msgs: Vec::new(),
+                get_updates_buf: Some(SecretString::new("cursor-2")),
+                ..GetUpdatesResponse::default()
+            })]),
+        };
+        let second_dispatcher = QueueThenCompleteDispatcher::new(store.clone(), 0);
+        let mut second_options = WeixinServeOptions::new(account.clone());
+        second_options.max_polls = Some(1);
+        second_options.runtime_dispatcher = Some(Arc::new(second_dispatcher.clone()));
+        let second_report = run_weixin_serve_loop(
+            &mut second_transport,
+            &store,
+            second_options,
+            &test_data_key(),
+            &WeixinServeCancellation::default(),
+        )
+        .await
+        .expect("second serve loop");
+        assert_eq!(second_report.runtime_dispatch_count, 1);
+        assert_eq!(second_report.runtime_error_count, 0);
+        assert_eq!(
+            second_dispatcher.calls(),
+            vec![pending_after_queue_full.item_id]
+        );
+        let state = store.load(&account).expect("load").expect("state");
+        assert_eq!(state.pending_inbound_count(), 0);
     }
 
     #[tokio::test]
@@ -748,7 +1080,7 @@ mod tests {
         assert_eq!(options.cursor_source, "getupdates");
         assert!(options.pairing_required);
         assert_eq!(options.pair_request_ttl, DEFAULT_PAIR_REQUEST_TTL);
-        assert_eq!(WEIXIN_STATE_SCHEMA_VERSION, 3);
+        assert_eq!(WEIXIN_STATE_SCHEMA_VERSION, 4);
     }
 
     #[tokio::test]

@@ -13,7 +13,7 @@ use std::{
 };
 use thiserror::Error;
 
-pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 3;
+pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 4;
 pub const WEIXIN_PAYLOAD_ALGORITHM: &str = "chacha20-poly1305";
 pub const WEIXIN_PAYLOAD_ALGORITHM_VERSION: u32 = 1;
 pub const WEIXIN_PAYLOAD_AAD_VERSION: u32 = 1;
@@ -332,9 +332,15 @@ impl FileWeixinStateStore {
                 account_id: commit.account_id.clone(),
                 message_id_hash: item.message_id_hash,
                 peer_id_hash: item.peer_id_hash,
+                direct_message_key: item.direct_message_key,
                 encrypted_payload_ref: item.encrypted_payload_ref,
                 payload_kind: item.payload_kind,
                 encrypted_payload: Some(item.encrypted_payload),
+                turn_session_id: None,
+                parent_session_id: None,
+                dispatch_retry_count: 0,
+                next_retry_at_millis: None,
+                last_dispatch_error: None,
                 state: WeixinPendingInboundState::Ready,
                 terminal_reason: None,
                 created_at_millis: commit.now_millis,
@@ -495,6 +501,114 @@ impl FileWeixinStateStore {
             .find(|item| item.item_id == item_id && !item.state.is_terminal()))
     }
 
+    pub fn load_ready_pending_inbound(
+        &self,
+        account_id: &str,
+        now_millis: u64,
+        limit: usize,
+    ) -> Result<Vec<WeixinPendingInbound>, WeixinStateError> {
+        let snapshot = self.load_required(account_id)?;
+        Ok(snapshot
+            .pending_inbound
+            .into_iter()
+            .filter(|item| {
+                item.state == WeixinPendingInboundState::Ready
+                    && item
+                        .next_retry_at_millis
+                        .is_none_or(|next_retry| next_retry <= now_millis)
+            })
+            .take(limit)
+            .collect())
+    }
+
+    pub fn remember_pending_runtime_turn_session(
+        &self,
+        account_id: &str,
+        item_id: &str,
+        turn_session_id: &str,
+        now_millis: u64,
+    ) -> Result<WeixinPendingInbound, WeixinStateError> {
+        if turn_session_id.trim().is_empty() || contains_sensitive_marker(turn_session_id) {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending inbound turn session id failed validation",
+            });
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        let pending = snapshot
+            .pending_inbound
+            .iter_mut()
+            .find(|item| item.item_id == item_id && !item.state.is_terminal())
+            .ok_or_else(|| WeixinStateError::PendingInboundNotFound {
+                item_id: item_id.to_string(),
+            })?;
+        if pending.state != WeixinPendingInboundState::Ready {
+            return Err(WeixinStateError::InvalidTransition {
+                from: pending.state.as_str(),
+                to: WeixinPendingInboundState::Ready.as_str(),
+            });
+        }
+        if let Some(existing) = pending.turn_session_id.as_deref() {
+            if existing != turn_session_id {
+                return Err(WeixinStateError::InvalidRecord {
+                    reason: "pending inbound turn session id mismatch",
+                });
+            }
+        } else {
+            pending.turn_session_id = Some(turn_session_id.to_string());
+        }
+        pending.updated_at_millis = now_millis;
+        let updated = pending.clone();
+        snapshot.updated_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(updated)
+    }
+
+    pub fn record_pending_runtime_dispatch_deferred(
+        &self,
+        account_id: &str,
+        item_id: &str,
+        error_label: &str,
+        next_retry_at_millis: u64,
+        now_millis: u64,
+    ) -> Result<WeixinPendingInbound, WeixinStateError> {
+        if error_label.trim().is_empty() || contains_sensitive_marker(error_label) {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending inbound dispatch error failed validation",
+            });
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        let pending = snapshot
+            .pending_inbound
+            .iter_mut()
+            .find(|item| item.item_id == item_id && !item.state.is_terminal())
+            .ok_or_else(|| WeixinStateError::PendingInboundNotFound {
+                item_id: item_id.to_string(),
+            })?;
+        if pending.state != WeixinPendingInboundState::Ready {
+            return Err(WeixinStateError::InvalidTransition {
+                from: pending.state.as_str(),
+                to: WeixinPendingInboundState::Ready.as_str(),
+            });
+        }
+        pending.dispatch_retry_count = pending.dispatch_retry_count.saturating_add(1);
+        pending.next_retry_at_millis = Some(next_retry_at_millis);
+        pending.last_dispatch_error = Some(error_label.to_string());
+        pending.updated_at_millis = now_millis;
+        pending.transitioned_at_millis = now_millis;
+        let updated = pending.clone();
+        if let Some(receipt) = snapshot.inbound_receipts.iter_mut().find(|receipt| {
+            receipt.message_id_hash == updated.message_id_hash
+                && receipt.peer_id_hash == updated.peer_id_hash
+        }) {
+            receipt.state = WeixinReceiptState::Ready;
+            receipt.updated_at_millis = now_millis;
+        }
+        snapshot.updated_at_millis = now_millis;
+        snapshot.transitioned_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(updated)
+    }
+
     pub fn begin_pending_runtime_turn(
         &self,
         request: WeixinRuntimeTurnBeginRequest,
@@ -514,6 +628,12 @@ impl FileWeixinStateStore {
             });
         }
         let mut snapshot = self.load_required(&request.account_id)?;
+        let binding_parent_session_id = conversation_binding_parent_session_id(
+            &snapshot,
+            &request.account_id,
+            &request.peer_id_hash,
+            &request.direct_message_key,
+        );
         let pending = snapshot
             .pending_inbound
             .iter_mut()
@@ -529,6 +649,26 @@ impl FileWeixinStateStore {
                 reason: "pending inbound binding mismatch",
             });
         }
+        if pending.direct_message_key.is_empty() {
+            pending.direct_message_key = request.direct_message_key.clone();
+        } else if pending.direct_message_key != request.direct_message_key {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending inbound direct message key mismatch",
+            });
+        }
+        let turn_session_id = pending
+            .turn_session_id
+            .clone()
+            .unwrap_or_else(|| request.candidate_session_id.clone());
+        if turn_session_id != request.candidate_session_id {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending inbound turn session id mismatch",
+            });
+        }
+        pending.turn_session_id = Some(turn_session_id.clone());
+        pending.parent_session_id = binding_parent_session_id.clone();
+        pending.next_retry_at_millis = None;
+        pending.last_dispatch_error = None;
         pending.transition(WeixinPendingInboundState::Running, request.now_millis)?;
         if let Some(receipt) = snapshot.inbound_receipts.iter_mut().find(|receipt| {
             receipt.message_id_hash == request.message_id_hash
@@ -545,7 +685,8 @@ impl FileWeixinStateStore {
             &request.peer_id_hash,
             &request.direct_message_key,
             &request.workspace_id,
-            &request.candidate_session_id,
+            &turn_session_id,
+            binding_parent_session_id.as_deref(),
             &request.source_label,
             request.now_millis,
         )?;
@@ -587,6 +728,7 @@ impl FileWeixinStateStore {
         pending.transition(target, now_millis)?;
         pending.terminal_reason = terminal_reason;
         let updated = pending.clone();
+        complete_conversation_binding_for_pending(&mut snapshot, &updated, target, now_millis)?;
         if let Some(receipt) = snapshot.inbound_receipts.iter_mut().find(|receipt| {
             receipt.message_id_hash == updated.message_id_hash
                 && receipt.peer_id_hash == updated.peer_id_hash
@@ -729,6 +871,7 @@ pub struct WeixinInboundCommitItem {
     pub item_id: String,
     pub message_id_hash: String,
     pub peer_id_hash: String,
+    pub direct_message_key: String,
     pub encrypted_payload_ref: String,
     pub encrypted_payload: WeixinEncryptedPayload,
     pub payload_kind: Option<String>,
@@ -866,6 +1009,12 @@ pub struct WeixinConversationBinding {
     pub peer_id_hash: String,
     pub direct_message_key: String,
     pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_completed_session_id: Option<String>,
     pub session_id: String,
     pub source_label: String,
     pub created_at_millis: u64,
@@ -938,11 +1087,23 @@ pub struct WeixinPendingInbound {
     pub account_id: String,
     pub message_id_hash: String,
     pub peer_id_hash: String,
+    #[serde(default)]
+    pub direct_message_key: String,
     pub encrypted_payload_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encrypted_payload: Option<WeixinEncryptedPayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub dispatch_retry_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_retry_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_dispatch_error: Option<String>,
     pub state: WeixinPendingInboundState,
     pub terminal_reason: Option<String>,
     pub created_at_millis: u64,
@@ -1069,6 +1230,10 @@ impl WeixinPendingInboundState {
             (self, target),
             (Self::Accepted, Self::Ready)
                 | (Self::Ready, Self::Running)
+                | (Self::Ready, Self::Failed)
+                | (Self::Ready, Self::Cancelled)
+                | (Self::Ready, Self::Expired)
+                | (Self::Ready, Self::Unknown)
                 | (Self::Running, Self::Succeeded)
                 | (Self::Running, Self::Failed)
                 | (Self::Running, Self::Cancelled)
@@ -1264,6 +1429,8 @@ impl WeixinStateMigration {
                 ] {
                     rewrite_child_schema_versions(object, key);
                 }
+                rewrite_conversation_binding_session_fields(object);
+                rewrite_pending_inbound_runtime_fields(object);
                 object
                     .entry("last_redacted_error".to_string())
                     .or_insert(Value::Null);
@@ -1350,6 +1517,24 @@ fn validate_snapshot(snapshot: &WeixinStateSnapshot) -> Result<(), WeixinStateEr
             || binding.workspace_id != snapshot.workspace_id
             || binding.session_id.trim().is_empty()
             || contains_sensitive_marker(&binding.session_id)
+            || binding
+                .root_session_id
+                .as_deref()
+                .is_some_and(|session_id| {
+                    session_id.trim().is_empty() || contains_sensitive_marker(session_id)
+                })
+            || binding
+                .active_session_id
+                .as_deref()
+                .is_some_and(|session_id| {
+                    session_id.trim().is_empty() || contains_sensitive_marker(session_id)
+                })
+            || binding
+                .last_completed_session_id
+                .as_deref()
+                .is_some_and(|session_id| {
+                    session_id.trim().is_empty() || contains_sensitive_marker(session_id)
+                })
             || binding.source_label.trim().is_empty()
             || contains_sensitive_marker(&binding.source_label)
         {
@@ -1364,10 +1549,21 @@ fn validate_snapshot(snapshot: &WeixinStateSnapshot) -> Result<(), WeixinStateEr
             || !item.item_id.starts_with("item#")
             || !item.message_id_hash.starts_with("message#")
             || !item.peer_id_hash.starts_with("peer#")
+            || (!item.direct_message_key.is_empty() && !item.direct_message_key.starts_with("dm#"))
             || item.encrypted_payload_ref.trim().is_empty()
             || contains_sensitive_marker(&item.encrypted_payload_ref)
             || item
                 .payload_kind
+                .as_deref()
+                .is_some_and(contains_sensitive_marker)
+            || item.turn_session_id.as_deref().is_some_and(|session_id| {
+                session_id.trim().is_empty() || contains_sensitive_marker(session_id)
+            })
+            || item.parent_session_id.as_deref().is_some_and(|session_id| {
+                session_id.trim().is_empty() || contains_sensitive_marker(session_id)
+            })
+            || item
+                .last_dispatch_error
                 .as_deref()
                 .is_some_and(contains_sensitive_marker)
         {
@@ -1453,6 +1649,58 @@ fn rewrite_child_schema_versions(object: &mut serde_json::Map<String, Value>, ke
                 json!(WEIXIN_STATE_SCHEMA_VERSION),
             );
         }
+    }
+}
+
+fn rewrite_conversation_binding_session_fields(object: &mut serde_json::Map<String, Value>) {
+    let Some(items) = object
+        .get_mut("conversation_bindings")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for item in items {
+        let Some(item) = item.as_object_mut() else {
+            continue;
+        };
+        let session_id = item
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if let Some(session_id) = session_id {
+            item.entry("root_session_id".to_string())
+                .or_insert_with(|| json!(session_id));
+            item.entry("active_session_id".to_string())
+                .or_insert_with(|| json!(session_id));
+            item.entry("last_completed_session_id".to_string())
+                .or_insert_with(|| json!(session_id));
+        }
+    }
+}
+
+fn rewrite_pending_inbound_runtime_fields(object: &mut serde_json::Map<String, Value>) {
+    let Some(items) = object
+        .get_mut("pending_inbound")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for item in items {
+        let Some(item) = item.as_object_mut() else {
+            continue;
+        };
+        item.entry("direct_message_key".to_string())
+            .or_insert_with(|| json!(""));
+        item.entry("dispatch_retry_count".to_string())
+            .or_insert_with(|| json!(0));
+        item.entry("turn_session_id".to_string())
+            .or_insert(Value::Null);
+        item.entry("parent_session_id".to_string())
+            .or_insert(Value::Null);
+        item.entry("next_retry_at_millis".to_string())
+            .or_insert(Value::Null);
+        item.entry("last_dispatch_error".to_string())
+            .or_insert(Value::Null);
     }
 }
 
@@ -1542,7 +1790,8 @@ fn upsert_conversation_binding(
     peer_id_hash: &str,
     direct_message_key: &str,
     workspace_id: &str,
-    candidate_session_id: &str,
+    turn_session_id: &str,
+    parent_session_id: Option<&str>,
     source_label: &str,
     now_millis: u64,
 ) -> Result<WeixinConversationBinding, WeixinStateError> {
@@ -1552,8 +1801,11 @@ fn upsert_conversation_binding(
         || !direct_message_key.starts_with("dm#")
         || snapshot.workspace_id != workspace_id
         || !looks_redacted("workspace", workspace_id)
-        || candidate_session_id.trim().is_empty()
-        || contains_sensitive_marker(candidate_session_id)
+        || turn_session_id.trim().is_empty()
+        || contains_sensitive_marker(turn_session_id)
+        || parent_session_id.is_some_and(|session_id| {
+            session_id.trim().is_empty() || contains_sensitive_marker(session_id)
+        })
         || source_label.trim().is_empty()
         || contains_sensitive_marker(source_label)
     {
@@ -1567,11 +1819,22 @@ fn upsert_conversation_binding(
             && binding.peer_id_hash == peer_id_hash
             && binding.direct_message_key == direct_message_key
     }) {
+        let root_session_id = binding
+            .root_session_id
+            .clone()
+            .or_else(|| binding.last_completed_session_id.clone())
+            .unwrap_or_else(|| binding.session_id.clone());
+        binding.root_session_id = Some(root_session_id);
+        binding.active_session_id = Some(turn_session_id.to_string());
         binding.workspace_id = workspace_id.to_string();
+        binding.session_id = turn_session_id.to_string();
         binding.source_label = source_label.to_string();
         binding.last_activity_millis = now_millis;
         binding.updated_at_millis = now_millis;
         binding.transitioned_at_millis = now_millis;
+        if binding.last_completed_session_id.is_none() {
+            binding.last_completed_session_id = parent_session_id.map(str::to_string);
+        }
         return Ok(binding.clone());
     }
 
@@ -1581,7 +1844,10 @@ fn upsert_conversation_binding(
         peer_id_hash: peer_id_hash.to_string(),
         direct_message_key: direct_message_key.to_string(),
         workspace_id: workspace_id.to_string(),
-        session_id: candidate_session_id.to_string(),
+        root_session_id: Some(turn_session_id.to_string()),
+        active_session_id: Some(turn_session_id.to_string()),
+        last_completed_session_id: parent_session_id.map(str::to_string),
+        session_id: turn_session_id.to_string(),
         source_label: source_label.to_string(),
         created_at_millis: now_millis,
         last_activity_millis: now_millis,
@@ -1590,6 +1856,63 @@ fn upsert_conversation_binding(
     };
     snapshot.conversation_bindings.push(binding.clone());
     Ok(binding)
+}
+
+fn conversation_binding_parent_session_id(
+    snapshot: &WeixinStateSnapshot,
+    account_id: &str,
+    peer_id_hash: &str,
+    direct_message_key: &str,
+) -> Option<String> {
+    snapshot
+        .conversation_bindings
+        .iter()
+        .find(|binding| {
+            binding.account_id == account_id
+                && binding.peer_id_hash == peer_id_hash
+                && binding.direct_message_key == direct_message_key
+        })
+        .and_then(|binding| {
+            binding
+                .last_completed_session_id
+                .clone()
+                .or_else(|| binding.active_session_id.clone())
+                .or_else(|| (!binding.session_id.is_empty()).then(|| binding.session_id.clone()))
+        })
+}
+
+fn complete_conversation_binding_for_pending(
+    snapshot: &mut WeixinStateSnapshot,
+    pending: &WeixinPendingInbound,
+    target: WeixinPendingInboundState,
+    now_millis: u64,
+) -> Result<(), WeixinStateError> {
+    let Some(turn_session_id) = pending.turn_session_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(binding) = snapshot.conversation_bindings.iter_mut().find(|binding| {
+        binding.account_id == pending.account_id
+            && binding.peer_id_hash == pending.peer_id_hash
+            && binding.direct_message_key == pending.direct_message_key
+            && binding.active_session_id.as_deref() == Some(turn_session_id)
+    }) else {
+        return Ok(());
+    };
+    if binding.root_session_id.is_none() {
+        binding.root_session_id = Some(turn_session_id.to_string());
+    }
+    if target == WeixinPendingInboundState::Succeeded {
+        binding.last_completed_session_id = Some(turn_session_id.to_string());
+        binding.active_session_id = Some(turn_session_id.to_string());
+        binding.session_id = turn_session_id.to_string();
+    } else if let Some(parent_session_id) = pending.parent_session_id.clone() {
+        binding.active_session_id = Some(parent_session_id.clone());
+        binding.session_id = parent_session_id;
+    }
+    binding.last_activity_millis = now_millis;
+    binding.updated_at_millis = now_millis;
+    binding.transitioned_at_millis = now_millis;
+    Ok(())
 }
 
 fn prune_terminal_receipts(snapshot: &mut WeixinStateSnapshot, now_millis: u64) {

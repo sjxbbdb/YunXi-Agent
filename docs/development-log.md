@@ -78,6 +78,52 @@
 提交、推送和 Git tag 状态：发布前本地 `v2.1.4` tag 不存在，历史 tag 未移动、删除或覆盖。下一步创建 release commit、新 annotated `v2.1.4` tag，并使用 GitHub CLI 与 API key 非强制推送；推送成功后将追加发布后 docs-only 收口记录，只推进 `master`，不移动 tag。
 
 署名：开发者
++
+## 2026-07-31 00:08:43 +08:00
+
+工作目标：依据 v2.1.1 至 v2.2.0 微信端接入总纲图，对当前 v2.1.6 进行源码审核，判断是否可以进入总纲中的 v2.1.7，并按固定流程形成审核报告。
+
+执行流程：
+1. 先使用 CodeGraph 定位微信状态绑定、WeixinTurnSupervisor、serve 调度、Agent::run_with_backend_stream、SessionStore 和本地 interactive parent/history 规则。
+2. 核对 Cargo 工作区版本、当前 HEAD、v2.1.6 annotated tag、tag target、工作树状态和报告索引。
+3. 审阅 WeixinConversationBinding、pending 状态转换、会话队列、CLI Runtime 配置复用及 serve 提交和调度顺序。
+4. 统一执行 fmt check、workspace check、workspace test、微信 supervisor 和 storage 定向测试、release build、版本输出、Git 完整性和依赖边界检查。
+5. 依据总纲逐项判定：基础绑定、既有 Runtime 复用、测试 sink 边界通过；连续 session history 未恢复、QueueFull 后 Ready pending 无自动恢复路径，判定为两个 P1 阻塞点。
+6. 新增本轮审核报告并更新报告索引；未修改 Rust 源码、Cargo 配置或测试源码。
+7. 本轮不执行递归删除或清理 target；审核文档和项目日志完成后，再将报告及日志同步至桌面指定目录并核对 SHA-256。
+
+修改文件与路径：
+- 新增审核报告：D:\YunXi Agent\docs\reports\audits\2026-07-31-000843-yunxi-agent-v2-1-6-weixin-runtime-session-binding-audit-report.md
+- 更新报告索引：D:\YunXi Agent\docs\reports\README.md
+- 追加项目开发日志：D:\YunXi Agent\docs\development-log.md
+- 已同步审核报告：C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-31-000843-YunXi-Agent-v2.1.6-微信会话绑定Runtime审核报告.md
+- 已同步开发日志：C:\Users\24763\Desktop\YunXi Agent开发日志.md
+- Rust 源码：本轮未修改。
+
+审核结论：
+- v2.1.6 审核不通过。
+- P1-1：supervisor 只复用 session_id，没有按本地 interactive 的 parent_session_id/history 规则恢复第二轮上下文；现有 fake backend 测试未证明真实 Runtime 的连续历史。
+- P1-2：serve 先提交网络 cursor 和 pending，再遇到 QueueFull；当前错误路径没有 drain、重试或重启恢复 Ready pending，可能造成任务长期滞留。
+- 在上述问题整改并重新审核通过前，禁止进入 v2.1.7。
+
+验证结果：
+- cargo fmt --all -- --check：通过。
+- cargo check --workspace：通过。
+- cargo test --workspace -- --test-threads=1：通过。
+- 微信 supervisor、storage 定向测试和微信 lib 测试：通过。
+- cargo build --workspace --release：通过。
+- target/release/yunxi.exe --version 输出 yunxi 2.1.6。
+- git diff --check、git fsck --full --no-dangling：通过。
+- 依赖边界检查未发现 codex、vendor 或 yunxi-agent-codex 的正常依赖匹配。
+- 审核报告项目正本 SHA-256：1A6E11DAE36820145777B03B6DFF05AD1AA74E237C1FB77ADB00898ACEA403E0。
+- 本轮没有执行真实微信网络会话或真实模型服务 smoke test；源码路径和测试缺口已足以确认不通过。
+
+清理与安全状态：本轮未删除、递归清理、强制移动、清空目录、git clean、系统安装/卸载、PATH/注册表/系统配置、凭证或用户微信 state。编译和测试使用精确路径 D:\YunXi Agent\target；target 因构建重新生成并保留，删除该目录需要对该绝对路径的明确确认。涉及 C 盘用户目录的操作仅为同步审核报告和开发日志到用户指定桌面目录。
+
+提交、推送和 Git tag 状态：本轮未创建 commit、未推送、未创建、移动或删除 tag。既有 v2.1.6 tag 未修改，历史 tag 未删除；本轮变更仅为审核报告、报告索引和日志的 docs-only 记录。
+
+署名：审核者
+
 
 ## 2026-07-28 09:05:08 +08:00
 
@@ -218,6 +264,55 @@
 验证结果：发布前 `cargo fmt --all -- --check`、`cargo check --workspace`、`cargo test --workspace -- --test-threads=1`、`cargo build --workspace --release`、release `yunxi 2.1.6`、依赖边界、`git diff --check` 和 `git fsck --full --no-dangling` 已通过；发布后 GitHub 远端 master、tag object 和 tag target 均与本地一致。本次发布命令没有输出 API key、token、微信凭证、二维码 payload、联系人或消息正文。
 
 清理与安全状态：`D:\YunXi Agent\target` 已按精确路径确认删除，删除后不存在。本次发布收口未执行 `git clean`、gc、prune、force push、系统安装/卸载、PATH/注册表修改、用户目录清理、微信 state 清理或历史 tag 修改。涉及 C 盘用户目录的操作仅为读取 GitHub API key 到当前进程环境和同步桌面开发日志；token 未持久化。
+
+署名：开发报告撰写者
+
+## 2026-07-31 14:22:39 +08:00
+
+工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md` 执行 `v2.2.0` 微信接入合并版本的 P1 整改批次，先关闭 `v2.1.6` 复审点名的 session history 与 QueueFull Ready pending 恢复两个阻塞点；在 P1 复审通过前不进入远程审批、微信回信、陪伴记忆或最终联调。
+
+执行流程：
+1. 读取合并版本开发报告，确认硬性门禁：工作树限定在 `D:\YunXi Agent`；默认路径不得依赖 `vendor/codex-rs`、`codex-*` crate 或 `yunxi-agent-codex`；历史 tag 不删除、不移动、不覆盖，不使用 force；`v2.2.0` tag 必须等待全部内部门禁、真实验证、全量回归和审核通过。
+2. 使用 CodeGraph 与直接源码读取核对 `WeixinStateStore`、`WeixinConversationBinding`、`WeixinTurnSupervisor`、`yunxi weixin serve`、`Agent::run_with_backend_stream`、`AgentInput::text`、`AgentConfig.parent_session_id` 和 session history 恢复路径。
+3. 将微信 state schema 升级到 v4，为 pending inbound 增加 `direct_message_key`、稳定 `turn_session_id`、`parent_session_id`、dispatch retry、next retry 和脱敏 dispatch error 字段。
+4. 将会话绑定扩展为 `root_session_id`、`active_session_id`、`last_completed_session_id` 与兼容 `session_id` 镜像；第一轮无 parent，后续轮 parent 指向上一轮成功完成 session，失败时回退 active/session mirror。
+5. 调整 runtime turn begin/complete 流程，确保重试复用同一 `turn_session_id`，并通过既有 `Agent::run_with_backend_stream` 与 `AgentInput::text` 恢复 parent history；不把微信字段写入 `SessionRecord`。
+6. 调整 `WeixinTurnSupervisor`，在队列准入前持久化稳定 turn session；同一 `account + peer + direct_message_key` 串行执行，不同私聊隔离；QueueFull 不推进 pending，不写终态。
+7. 调整 `yunxi weixin serve`，在启动/轮询前后 drain Ready pending；QueueFull 记录 `runtime_queue_full`、retry count 与 next retry，容量释放或重启后继续处理同一 pending；其他不可恢复 dispatch 错误才进入 Failed。
+8. 补充 storage、serve 和 supervisor 测试，覆盖 parent history、真实 Runtime fake provider history 恢复、QueueFull 后 Ready pending 保持、容量释放继续处理和重启 drain 幂等。
+9. 更新 `docs/README.md` 与 `docs/weixin.md`，明确当前仅完成 P1 批次，`v2.2.0` 仍未完成，远程审批、生产回信、群聊和完整微信闭环仍不可宣称。
+
+修改文件与路径：
+- 更新 workspace 锁文件：`D:\YunXi Agent\Cargo.lock`
+- 更新微信状态 store：`D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs`
+- 更新微信状态测试：`D:\YunXi Agent\crates\yunxi-agent-storage\tests\weixin_state_tests.rs`
+- 更新微信 crate 测试依赖：`D:\YunXi Agent\crates\yunxi-agent-weixin\Cargo.toml`
+- 更新微信 serve 调度：`D:\YunXi Agent\crates\yunxi-agent-weixin\src\serve.rs`
+- 更新微信 turn supervisor：`D:\YunXi Agent\crates\yunxi-agent-weixin\src\turn_supervisor.rs`
+- 更新 pending inbound 恢复测试：`D:\YunXi Agent\crates\yunxi-agent-weixin\tests\pending_inbound_recovery_tests.rs`
+- 更新 turn supervisor 集成测试：`D:\YunXi Agent\crates\yunxi-agent-weixin\tests\turn_supervisor_tests.rs`
+- 更新文档索引：`D:\YunXi Agent\docs\README.md`
+- 更新微信边界文档：`D:\YunXi Agent\docs\weixin.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 保留并准备提交 2026-07-31 项目报告索引与报告正本：`D:\YunXi Agent\docs\reports\README.md`、`D:\YunXi Agent\docs\reports\audits\2026-07-31-000843-yunxi-agent-v2-1-6-weixin-runtime-session-binding-audit-report.md`、`D:\YunXi Agent\docs\reports\audits\2026-07-31-002150-yunxi-agent-v2-1-0-to-v2-2-0-merged-development-reaudit-report.md`、`D:\YunXi Agent\docs\reports\development\2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md`
+
+验证结果：
+- `cargo fmt --all`：通过。
+- `cargo test -p yunxi-agent-storage --test weixin_state_tests -- --test-threads=1`：通过，14 passed，1 ignored。
+- `cargo test -p yunxi-agent-weixin --lib -- --test-threads=1`：通过，16 passed。
+- `cargo test -p yunxi-agent-weixin --test turn_supervisor_tests -- --test-threads=1`：通过，3 passed。
+- `cargo test -p yunxi-agent-weixin -- --test-threads=1`：通过，微信 crate 全部测试通过。
+- `cargo fmt --all -- --check`：通过。
+- `cargo check --workspace`：通过。
+- `cargo test -p yunxi-agent-cli --test cli_tests -- --test-threads=1`：通过，54 passed。
+- 再次执行 `cargo test -p yunxi-agent-storage --test weixin_state_tests -- --test-threads=1`：通过，14 passed，1 ignored。
+- `git diff --check`：通过；Windows CRLF 提示为换行提示，未构成空白错误。
+- 桌面开发日志同步校验：项目日志已复制到桌面日志文件，并通过 SHA-256 命令核验两端一致；不在日志正文固化日志文件自身哈希，避免自引用哈希漂移。
+
+清理与安全状态：本轮尚未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装/卸载、PATH/注册表修改、凭证读取、二维码登录、发送微信消息或用户数据清理。构建中间产物位于 `D:\YunXi Agent\target`；如需删除该目录，必须获得用户对这一精确绝对路径的明确确认。
+
+提交、推送和 Git tag 状态：本条日志写入时尚未创建 commit、尚未 push、尚未创建、移动或删除 tag；本轮只允许提交 P1 整改批次，不允许创建 `v2.2.0` tag。历史 `v2.1.0` 至 `v2.1.6` tag 必须保持不变。
 
 署名：开发报告撰写者
 
@@ -4208,5 +4303,115 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 清理与安全状态：未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改或用户数据清理。涉及 C 盘用户目录的操作仅为读取桌面审核报告、写入桌面开发报告副本和同步桌面开发日志；涉及项目外 D 盘操作为尝试向 `D:\源码\CowAgent` 拉取参考源码但未成功生成目录。
 
 提交、推送和 Git tag 状态：本次未创建 commit、未推送、未创建或移动 tag；`v2.1.6` 仍需由后续开发者在实现、统一验证和审核通过后创建新的 annotated tag，历史 `v2.1.5-hotfix.2` 及更早 tag 不得删除、移动或覆盖。
+
+署名：开发报告撰写者
+## 2026-07-31 00:21:50 +08:00
+
+工作目标：依据用户新的审核口径，对 v2.1.0 至 v2.2.0 全范围重新审核；确认 v2.1.0 至 v2.1.6 已有能力没有丢失，并把原 v2.1.7、v2.1.8、v2.1.9 和 v2.2.0 的内容合并为一个 v2.2.0 大版本开发线，明确全部小版本内容仍是强制内部门禁。
+
+执行流程：
+1. 使用 CodeGraph 定位 WeixinConversationBinding、WeixinTurnSupervisor、serve 调度、Agent::run_with_backend_stream、SessionStore、restore_parent_history 和 CLI 配置调用路径。
+2. 读取项目内总纲正本，记录总纲 SHA-256 为 2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F。
+3. 核对 Cargo 版本、HEAD、v2.1.0 至 v2.1.6 annotated tag、tag target、历史审核/开发报告和当前目录治理边界。
+4. 复核 v2.1.0 至 v2.1.5 的 TUI、CLI、登录、凭证、状态 store、账户锁、长轮询、配对、加密 pending 和幂等能力。
+5. 复核 v2.1.6 的会话绑定、Runtime 配置复用、session history、QueueFull、serve 提交顺序和 supervisor 测试覆盖。
+6. 统一执行 cargo fmt、cargo check、cargo test、release build、release CLI 版本输出和 git diff check。
+7. 只读执行 v205、v206、v207、v207-hotfix、v208、v209、v210 ConPTY verifier；全部通过，未执行重新采集。
+8. 检索后续功能实现状态，确认远程审批、微信文字控制、生产 sendmessage、可靠流式回信、session reset、evals/weixin 和 v2.2.0 tag 尚未形成完整闭环。
+9. 新增全范围复审报告，更新项目报告索引，并准备将报告和本日志同步到桌面指定目录。
+
+审核结论：
+- v2.1.0 至 v2.1.5 的既有能力保持，未发现源码删除、tag 漂移、TUI/CLI/Provider 回归。
+- v2.1.6 不通过。
+- P1-1：session_id 复用没有按 parent/history 规则证明连续会话历史进入下一轮 Runtime。
+- P1-2：QueueFull 后 Ready pending 没有 drain、重试或重启恢复路径。
+- 原 v2.1.7、v2.1.8、v2.1.9 和 v2.2.0 的内容转为 v2.2.0 内部强制门禁，内容不得减少。
+- 在 v2.1.6 两个 P1 关闭并重新审核通过前，不得进入 v2.2.0 合并开发的正式下一阶段，不得创建 v2.2.0 发布 tag。
+
+修改文件与路径：
+- 新增项目审核报告：D:\YunXi Agent\docs\reports\audits\2026-07-31-002150-yunxi-agent-v2-1-0-to-v2-2-0-merged-development-reaudit-report.md
+- 更新项目报告索引：D:\YunXi Agent\docs\reports\README.md
+- 追加项目开发日志：D:\YunXi Agent\docs\development-log.md
+- 已同步桌面审核报告：C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-31-002150-YunXi-Agent-v2.1.0-to-v2.2.0-合并开发范围复审报告.md
+- 已同步桌面开发日志：C:\Users\24763\Desktop\YunXi Agent开发日志.md
+- Rust 源码、Cargo 配置、测试源码、vendor 和 extracted：本轮未修改。
+
+验证结果：
+- cargo fmt --all -- --check：通过。
+- cargo check --workspace：通过。
+- cargo test --workspace -- --test-threads=1：通过，无失败。
+- cargo build --workspace --release：通过。
+- release CLI 输出 yunxi 2.1.6。
+- git diff --check：通过。
+- 七组 ConPTY verifier 全部返回 ok；v209/v210 以 read_only=true 复核。
+- v2.1.0 至 v2.1.6 tag 均为 annotated tag，未发现缺失或漂移。
+- v2.1.0 至 v2.1.6 的 crates diff summary 未发现源码删除。
+- evals/weixin 当前不存在；v2.2.0 真实 iLink、真实 Provider、回信投递和重启联调尚未执行。
+- 本轮审核报告 SHA-256：E767DB1A40319165C5A5DDE4FB641D9ABB97EF3256137AD78E73DF0B64D46A57。
+
+清理与安全状态：本轮未删除、递归清理、强制移动、清空目录、git clean、系统安装/卸载、PATH/注册表修改、凭证读取、二维码登录、发送微信消息或用户数据。构建使用 D:\YunXi Agent\target；target 重新生成后保留，删除该绝对路径需要用户明确确认。
+
+提交、推送和 Git tag 状态：本轮未创建 commit、未 push、未创建、移动或删除 tag。v2.1.0 至 v2.1.6 历史 tag 保持不变；v2.2.0 尚未创建，必须在全部合并内部门禁、真实联调和发布验证通过后创建新的 annotated tag。
+
+署名：审核者
+
+## 2026-07-31 09:01:49 +08:00
+
+工作目标：依据 `C:\Users\24763\Desktop\YunXi Agent审核报告\2026-07-31-002150-YunXi-Agent-v2.1.0-to-v2.2.0-合并开发范围复审报告.md` 和总纲 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md`，撰写面向开发者的 `v2.2.0` 微信接入合并版本开发报告，明确原 `v2.1.7`、`v2.1.8`、`v2.1.9` 和 `v2.2.0` 合并为一个大版本开发线后的实现顺序、内部门禁、源码参考、验证和发布约束。
+
+执行流程：
+1. 读取桌面审核报告，确认审核报告 SHA-256 为 `E767DB1A40319165C5A5DDE4FB641D9ABB97EF3256137AD78E73DF0B64D46A57`，审核结论为全范围不通过，当前不得宣称 `v2.2.0` 完成，不得创建 `v2.2.0` 发布 tag。
+2. 核对项目内总纲正本，确认总纲 SHA-256 为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`。
+3. 读取报告索引和上一份开发报告格式，确认新开发报告应写入 `D:\YunXi Agent\docs\reports\development\`，并同步桌面开发报告目录。
+4. 使用 CodeGraph 核对 `WeixinTurnSupervisor`、`AgentConfig.parent_session_id`、`restore_parent_history`、`commit_inbound_batch` 和 serve 调度关系，确认开发报告需重点约束 `v2.1.6` 的 session history 与 QueueFull Ready pending 恢复两个 P1。
+5. 只读核对审核报告点名的参考源码状态；`reasonix`、`openclaw-weixin` 和 `CowAgent` 关键路径存在，`D:\源码\OpenAkita`、`D:\源码\Leon\core\context\LEON.md`、`D:\源码\Leon\core\context\ARCHITECTURE.md`、`D:\源码\Letta Code`、`D:\源码\Project N.E.K.O.`、`D:\源码\Tencent\openclaw-weixin` 当前缺失。本次未根据名称猜测 GitHub URL，未执行拉取；已在开发报告中要求开发者在对应门禁前补齐 canonical 源码、记录 URL/HEAD 或明确无法引用原因。
+6. 新增项目内 `v2.2.0` 合并版本开发报告，报告包含 14 条硬性约束、合并开发口径、两个 P1 阻塞点整改要求、G-2.1.7/G-2.1.8/G-2.1.9/G-2.2.0 内部门禁、既有能力保留门禁、参考源码状态、文档同步、统一验证、清理、发布和回滚门禁。
+7. 更新项目报告索引，将合并版本开发报告加入当前入口。
+8. 将项目内开发报告正本复制到 `C:\Users\24763\Desktop\YunXi Agent开发报告\` 的同名副本，并核验项目正本与桌面副本 SHA-256 一致。
+9. 追加本条项目开发日志，并准备同步到 `C:\Users\24763\Desktop\YunXi Agent开发日志.md`。
+
+修改文件与路径：
+- 新增项目内开发报告：`D:\YunXi Agent\docs\reports\development\2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md`
+- 新增桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md`
+- 更新项目报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 本轮未修改 Rust 源码、测试源码、Cargo 配置、vendor、extracted、历史审核报告正文或历史 tag。
+
+验证结果：项目内开发报告与桌面开发报告副本 SHA-256 均为 `EFD89D0451B888F49C7BE9962E3C14B2FAB0F19CA0D8F21755518C26E3478C52`；审核报告 SHA-256 核对通过；总纲 SHA-256 核对通过；参考源码存在性已只读核对并写入开发报告。本次只撰写和同步开发报告、索引与日志，未修改 Rust 源码、测试源码或 Cargo 配置，因此未运行 `cargo fmt`、`cargo check` 或 `cargo test`。
+
+清理与安全状态：本轮未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改、凭证读取、二维码登录、发送微信消息或用户数据操作；未触发编译构建，未产生新的编译中间产物，因此无 `target` 清理事项。涉及 C 盘用户目录的操作为读取桌面审核报告、写入桌面开发报告副本和同步桌面开发日志；涉及项目外 D 盘操作仅为只读核对 `D:\源码` 下参考源码路径。
+
+提交、推送和 Git tag 状态：本轮未创建 commit、未推送、未创建、移动或删除 tag；历史 `v2.1.0` 至 `v2.1.6` tag 保持不变，`v2.2.0` tag 仍不得创建，必须在全部合并内部门禁、真实联调、全量回归和审核通过后创建新的 annotated tag。
+
+署名：开发报告撰写者
+
+## 2026-07-31 09:13:02 +08:00
+
+工作目标：按用户要求补强 `v2.2.0` 微信接入合并版本开发报告，对比总纲图后把未写得足够显式的能力边界和验收要求补入报告，避免开发者误认为合并开发减少了总纲功能。
+
+执行流程：
+1. 只读对比总纲正本 `D:\YunXi Agent\docs\superpowers\plans\2026-07-22-yunxi-agent-v2-1-1-to-v2-2-0-personal-wechat-roadmap.md` 与项目内合并版本开发报告，确认主功能未减少，但前台长轮询、不开放公网回调/入站端口、`/stop` 作用域、审批展示、approval/user-input 超时、onboarding、扫码恢复、iLink Bot 身份和群聊排除等细节需要补强。
+2. 更新项目内合并版本开发报告，在合并开发口径中补入“本机前台 `weixin serve`、iLink 长轮询、不开放公网回调地址、不新增入站端口、不新增后台常驻守护进程、远程消息不得改变 workspace/cwd/provider/model/sandbox/approval”等边界。
+3. 更新 `G-2.1.7` 门禁，补入 `/stop` 只能取消当前私聊 turn、审批展示只允许安全 action/reason/cwd 标签、approval/user-input 必须有上限等待期限并向既有 one-shot 明确拒绝或返回 `None` 的要求，并补充对应测试。
+4. 更新 `G-2.2.0` 门禁，补入 onboarding、扫码恢复、iLink Bot 身份说明、群聊/企业微信/公众号/多渠道网关/联系人抓取/自动加好友/群发/未验证主动推送排除说明，并补充 CLI 帮助、JSON/JSONL、文档一致性测试。
+5. 更新既有能力保留门禁，补入不开放公网回调地址、不新增入站端口，以及前台微信服务不得破坏本地 CLI、JSON/JSONL、TUI、ConPTY、Provider、Approval 和 companion 既有行为。
+6. 更新项目报告索引摘要，说明本报告已补强上述总纲细节。
+7. 将补强后的项目内开发报告正本同步到 `C:\Users\24763\Desktop\YunXi Agent开发报告\` 的同名副本，并核验 SHA-256 一致。
+8. 追加本条项目日志，并准备同步到 `C:\Users\24763\Desktop\YunXi Agent开发日志.md`。
+
+修改文件与路径：
+- 更新项目内开发报告：`D:\YunXi Agent\docs\reports\development\2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md`
+- 更新桌面开发报告副本：`C:\Users\24763\Desktop\YunXi Agent开发报告\2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md`
+- 更新项目报告索引：`D:\YunXi Agent\docs\reports\README.md`
+- 追加项目开发日志：`D:\YunXi Agent\docs\development-log.md`
+- 同步桌面开发日志：`C:\Users\24763\Desktop\YunXi Agent开发日志.md`
+- 本轮未修改 Rust 源码、测试源码、Cargo 配置、vendor、extracted、历史审核报告正文或历史 tag。
+
+验证结果：补强后的项目内开发报告与桌面开发报告副本 SHA-256 均为 `8412B8D6F86C0B4FE88446C04A83F31FBF57E932CBBAF97A6714F0D42B0B8C60`；总纲正本 SHA-256 仍为 `2DF30D503F46CFE7496567F5011BF5CBFB8BA73C91C2D2FA3E9F29AF0932EA0F`；报告中已可检索到“不开放公网回调地址”“不新增入站端口”“/stop 只能取消当前 account/peer/conversation/turn”“one-shot”“onboarding”“扫码恢复”“iLink 扫码绑定的是 Bot 身份”“群聊”等补强关键词。本次只修改和同步开发报告、索引与日志，未修改 Rust 源码、测试源码或 Cargo 配置，因此未运行 `cargo fmt`、`cargo check` 或 `cargo test`。
+
+清理与安全状态：本轮未执行删除、递归清理、强制移动、清空目录、`git clean`、gc、prune、系统安装、卸载、PATH/注册表/系统配置修改、凭证读取、二维码登录、发送微信消息或用户数据操作；未触发编译构建，未产生新的编译中间产物，因此无 `target` 清理事项。涉及 C 盘用户目录的操作仅为覆盖同名桌面开发报告副本并同步桌面开发日志；涉及项目外 D 盘操作仅为只读对比总纲正本，不修改 `D:\源码`。
+
+提交、推送和 Git tag 状态：本轮未创建 commit、未推送、未创建、移动或删除 tag；历史 `v2.1.0` 至 `v2.1.6` tag 保持不变，`v2.2.0` tag 仍不得创建，必须在全部合并内部门禁、真实联调、全量回归和审核通过后创建新的 annotated tag。
 
 署名：开发报告撰写者

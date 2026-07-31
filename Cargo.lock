@@ -2516,7 +2516,10 @@ dependencies = [
  "windows-sys 0.61.2",
  "wiremock",
  "yunxi-agent-core",
+ "yunxi-agent-provider",
+ "yunxi-agent-runtime",
  "yunxi-agent-storage",
+ "yunxi-agent-tools",
 ]
 
 [[package]]

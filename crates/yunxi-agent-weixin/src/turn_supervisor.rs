@@ -93,6 +93,14 @@ impl WeixinTurnSupervisor {
             return Err(WeixinTurnSupervisorError::UnsupportedPayload);
         }
 
+        let candidate_session_id = self.candidate_session_id(&payload);
+        self.state_store.remember_pending_runtime_turn_session(
+            &payload.account_id,
+            &payload.item_id,
+            &candidate_session_id,
+            now_millis_u64(),
+        )?;
+
         let queue_key = ConversationQueueKey::from_payload(&payload);
         let _slot = self
             .queue_limiter
@@ -103,7 +111,6 @@ impl WeixinTurnSupervisor {
             )
             .await?;
 
-        let candidate_session_id = self.candidate_session_id(&payload);
         let binding =
             self.state_store
                 .begin_pending_runtime_turn(WeixinRuntimeTurnBeginRequest {
@@ -118,12 +125,20 @@ impl WeixinTurnSupervisor {
                     now_millis: now_millis_u64(),
                 })?;
 
-        let runtime_config = self
+        let runtime_session_id = binding
+            .active_session_id
+            .clone()
+            .unwrap_or_else(|| binding.session_id.clone());
+        let parent_session_id = binding.last_completed_session_id.clone();
+        let mut runtime_config = self
             .options
             .config
             .clone()
-            .with_session_id(binding.session_id.clone())
+            .with_session_id(runtime_session_id.clone())
             .with_session_title(DEFAULT_SESSION_TITLE);
+        if let Some(parent_session_id) = parent_session_id.clone() {
+            runtime_config = runtime_config.with_parent_session_id(parent_session_id);
+        }
         let result = Agent::new(runtime_config)
             .run_with_backend_stream(
                 backend,
@@ -149,7 +164,7 @@ impl WeixinTurnSupervisor {
                         peer_id_hash: payload.peer_id_hash.clone(),
                         direct_message_key: payload.direct_message_key.clone(),
                         item_id: payload.item_id.clone(),
-                        session_id: binding.session_id.clone(),
+                        session_id: runtime_session_id.clone(),
                         final_response: final_response.clone(),
                     })?;
                     final_response_present = true;
@@ -166,7 +181,8 @@ impl WeixinTurnSupervisor {
                     peer_id_hash: payload.peer_id_hash,
                     direct_message_key: payload.direct_message_key,
                     item_id: payload.item_id,
-                    session_id: binding.session_id,
+                    session_id: runtime_session_id,
+                    parent_session_id,
                     status: result.status,
                     final_response_present,
                 }
@@ -184,7 +200,8 @@ impl WeixinTurnSupervisor {
                     peer_id_hash: payload.peer_id_hash,
                     direct_message_key: payload.direct_message_key,
                     item_id: payload.item_id,
-                    session_id: binding.session_id,
+                    session_id: runtime_session_id,
+                    parent_session_id,
                     status: AgentRunStatus::Failed,
                     final_response_present: false,
                 }
@@ -199,8 +216,9 @@ impl WeixinTurnSupervisor {
         payload.account_id.hash(&mut hasher);
         payload.peer_id_hash.hash(&mut hasher);
         payload.direct_message_key.hash(&mut hasher);
+        payload.item_id.hash(&mut hasher);
         self.options.workspace_id.hash(&mut hasher);
-        format!("yunxi-weixin-{:016x}", hasher.finish())
+        format!("yunxi-weixin-turn-{:016x}", hasher.finish())
     }
 }
 
@@ -232,6 +250,7 @@ pub struct WeixinTurnReport {
     pub direct_message_key: String,
     pub item_id: String,
     pub session_id: String,
+    pub parent_session_id: Option<String>,
     pub status: AgentRunStatus,
     pub final_response_present: bool,
 }

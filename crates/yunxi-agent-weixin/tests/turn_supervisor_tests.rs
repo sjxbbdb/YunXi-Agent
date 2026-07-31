@@ -7,12 +7,15 @@ use tempfile::TempDir;
 use tokio::sync::Notify;
 use yunxi_agent_core::{
     AgentBackend, AgentConfig, AgentInput, AgentResult, AgentRunControl, AgentRunResult,
-    AgentRunStatus, ApprovalMode, SandboxMode,
+    AgentRunStatus, ApprovalMode, MemoryExtractionMode, SandboxMode,
 };
+use yunxi_agent_provider::{AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse};
+use yunxi_agent_runtime::YunXiRuntimeBackend;
 use yunxi_agent_storage::{
-    FileWeixinStateStore, WeixinConnectionStateRecord, WeixinInboundBatchCommit,
+    FileSessionStore, FileWeixinStateStore, WeixinConnectionStateRecord, WeixinInboundBatchCommit,
     WeixinInboundCommitItem, WeixinPendingInboundState, WeixinStateSnapshot, WeixinStateStore,
 };
+use yunxi_agent_tools::NoopToolRuntime;
 use yunxi_agent_weixin::ilink::{MessageItem, TextItem, WeixinMessage};
 use yunxi_agent_weixin::{
     SecretString, WeixinInboundEnvelope, WeixinMessageId, WeixinPayloadAad, WeixinPayloadCipher,
@@ -88,6 +91,7 @@ fn seed_pending(
         item_id: item_id.clone(),
         message_id_hash: envelope.message_id_hash.clone(),
         peer_id_hash: envelope.peer_id_hash.clone(),
+        direct_message_key: envelope.direct_message_key.clone(),
         encrypted_payload_ref: envelope.encrypted_payload_ref(),
         encrypted_payload,
         payload_kind: Some("text".to_string()),
@@ -103,7 +107,8 @@ fn supervisor_options(workspace: &Path) -> WeixinTurnSupervisorOptions {
         .with_model("configured-model")
         .with_approval_mode(ApprovalMode::OnRequest)
         .with_sandbox_mode(SandboxMode::WorkspaceWrite)
-        .with_context_window_tokens(12345);
+        .with_context_window_tokens(12345)
+        .with_memory_extraction_mode(MemoryExtractionMode::RuleOnly);
     WeixinTurnSupervisorOptions::new(config, WORKSPACE)
 }
 
@@ -140,6 +145,29 @@ impl AgentBackend for CapturingBackend {
             final_response: Some(format!("reply: {}", input.prompt)),
             events: Vec::new(),
         })
+    }
+}
+
+#[derive(Clone, Default)]
+struct HistoryCapturingProvider {
+    requests: Arc<Mutex<Vec<Vec<ProviderMessage>>>>,
+}
+
+impl HistoryCapturingProvider {
+    fn requests(&self) -> Vec<Vec<ProviderMessage>> {
+        self.requests.lock().expect("requests").clone()
+    }
+}
+
+#[async_trait]
+impl AgentProvider for HistoryCapturingProvider {
+    async fn complete(&self, request: ProviderRequest) -> AgentResult<ProviderResponse> {
+        let mut requests = self.requests.lock().expect("requests");
+        requests.push(request.messages.clone());
+        Ok(ProviderResponse::assistant(format!(
+            "captured response {}",
+            requests.len()
+        )))
     }
 }
 
@@ -194,8 +222,14 @@ async fn supervisor_reuses_session_writes_sink_and_preserves_runtime_config() {
         .expect("third turn");
 
     assert_eq!(first.status, AgentRunStatus::Completed);
-    assert_eq!(first.session_id, second.session_id);
+    assert_ne!(first.session_id, second.session_id);
     assert_ne!(first.session_id, third.session_id);
+    assert_eq!(first.parent_session_id, None);
+    assert_eq!(
+        second.parent_session_id.as_deref(),
+        Some(first.session_id.as_str())
+    );
+    assert_eq!(third.parent_session_id, None);
     assert!(first.final_response_present);
     assert!(second.final_response_present);
     assert!(third.final_response_present);
@@ -203,7 +237,7 @@ async fn supervisor_reuses_session_writes_sink_and_preserves_runtime_config() {
     let records = sink.records();
     assert_eq!(records.len(), 3);
     assert_eq!(records[0].final_response, "reply: hello");
-    assert_eq!(records[1].session_id, first.session_id);
+    assert_eq!(records[1].session_id, second.session_id);
     assert_eq!(records[2].session_id, third.session_id);
 
     let calls = backend.calls();
@@ -222,20 +256,123 @@ async fn supervisor_reuses_session_writes_sink_and_preserves_runtime_config() {
     );
     assert_eq!(
         calls[1].0.session_id.as_deref(),
+        Some(second.session_id.as_str())
+    );
+    assert_eq!(
+        calls[1].0.parent_session_id.as_deref(),
         Some(first.session_id.as_str())
     );
     assert_eq!(
         calls[2].0.session_id.as_deref(),
         Some(third.session_id.as_str())
     );
+    assert_eq!(calls[2].0.parent_session_id, None);
 
     let state = store.load(ACCOUNT).expect("load").expect("state");
     assert_eq!(state.conversation_bindings.len(), 2);
+    let first_peer_binding = state
+        .conversation_bindings
+        .iter()
+        .find(|binding| binding.peer_id_hash == first.peer_id_hash)
+        .expect("first peer binding");
+    assert_eq!(
+        first_peer_binding.root_session_id.as_deref(),
+        Some(first.session_id.as_str())
+    );
+    assert_eq!(
+        first_peer_binding.last_completed_session_id.as_deref(),
+        Some(second.session_id.as_str())
+    );
     assert!(
         state
             .pending_inbound
             .iter()
             .all(|pending| pending.state == WeixinPendingInboundState::Succeeded)
+    );
+}
+
+#[tokio::test]
+async fn supervisor_restores_parent_history_with_real_runtime_after_store_reload() {
+    let (temp, store) = store_fixture();
+    let first_item = seed_pending(
+        &store,
+        ACCOUNT,
+        "raw-message-history-1",
+        "raw-peer-history",
+        "remember apples",
+        1100,
+    );
+    let second_item = seed_pending(
+        &store,
+        ACCOUNT,
+        "raw-message-history-2",
+        "raw-peer-history",
+        "what fruit did I mention?",
+        1200,
+    );
+
+    let sink = WeixinRuntimeTestSink::default();
+    let supervisor = WeixinTurnSupervisor::with_test_sink(
+        store.clone(),
+        test_data_key(),
+        supervisor_options(temp.path()),
+        sink,
+    );
+    let provider = HistoryCapturingProvider::default();
+    let session_store = FileSessionStore::for_workspace(temp.path());
+    let first_backend =
+        YunXiRuntimeBackend::with_parts(provider.clone(), NoopToolRuntime, session_store.clone());
+
+    let first = supervisor
+        .run_pending_turn(&first_backend, ACCOUNT, &first_item)
+        .await
+        .expect("first runtime turn");
+    assert_eq!(first.status, AgentRunStatus::Completed);
+    assert_eq!(first.parent_session_id, None);
+
+    let reloaded_session_store = FileSessionStore::for_workspace(temp.path());
+    let second_backend =
+        YunXiRuntimeBackend::with_parts(provider.clone(), NoopToolRuntime, reloaded_session_store);
+    let second = supervisor
+        .run_pending_turn(&second_backend, ACCOUNT, &second_item)
+        .await
+        .expect("second runtime turn");
+    assert_eq!(second.status, AgentRunStatus::Completed);
+    assert_eq!(
+        second.parent_session_id.as_deref(),
+        Some(first.session_id.as_str())
+    );
+    assert_ne!(first.session_id, second.session_id);
+
+    let requests = provider.requests();
+    assert_eq!(requests.len(), 2);
+    let second_messages = &requests[1];
+    assert!(
+        second_messages
+            .iter()
+            .any(|message| message.content.contains("remember apples")),
+        "second provider request should include first user message: {second_messages:?}"
+    );
+    assert!(
+        second_messages
+            .iter()
+            .any(|message| message.content.contains("captured response 1")),
+        "second provider request should include first assistant response: {second_messages:?}"
+    );
+
+    let state = store.load(ACCOUNT).expect("load").expect("state");
+    let binding = state
+        .conversation_bindings
+        .iter()
+        .find(|binding| binding.peer_id_hash == first.peer_id_hash)
+        .expect("conversation binding");
+    assert_eq!(
+        binding.root_session_id.as_deref(),
+        Some(first.session_id.as_str())
+    );
+    assert_eq!(
+        binding.last_completed_session_id.as_deref(),
+        Some(second.session_id.as_str())
     );
 }
 
@@ -323,10 +460,22 @@ async fn supervisor_queue_full_does_not_advance_second_pending() {
         .find(|pending| pending.item_id == second_item)
         .expect("second pending");
     assert_eq!(second.state, WeixinPendingInboundState::Ready);
+    let queued_turn_session_id = second
+        .turn_session_id
+        .clone()
+        .expect("turn session id is stable before queue admission");
+    assert!(queued_turn_session_id.starts_with("yunxi-weixin-turn-"));
 
     backend.release.notify_waiters();
     first_task
         .await
         .expect("first task")
         .expect("first turn completes");
+
+    let retry_backend = CapturingBackend::default();
+    let completed = supervisor
+        .run_pending_turn(&retry_backend, ACCOUNT, &second_item)
+        .await
+        .expect("queued turn completes after capacity is released");
+    assert_eq!(completed.session_id, queued_turn_session_id);
 }

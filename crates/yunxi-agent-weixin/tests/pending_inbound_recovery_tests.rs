@@ -87,12 +87,14 @@ fn seed_encrypted_pending(workspace: &Path, lock_root: &Path) -> String {
     let encrypted_payload_ref = envelope.encrypted_payload_ref();
     let message_id_hash = envelope.message_id_hash.clone();
     let peer_id_hash = envelope.peer_id_hash.clone();
+    let direct_message_key = envelope.direct_message_key.clone();
     let mut commit = WeixinInboundBatchCommit::new(ACCOUNT, 1100);
     commit.next_get_updates_buf = Some("cursor-restart".to_string());
     commit.accepted.push(WeixinInboundCommitItem {
         item_id: item_id.clone(),
         message_id_hash,
         peer_id_hash,
+        direct_message_key,
         encrypted_payload_ref,
         encrypted_payload,
         payload_kind: Some("text".to_string()),

@@ -61,6 +61,7 @@ fn commit_item(
         item_id: item_id.to_string(),
         message_id_hash: message_id_hash.to_string(),
         peer_id_hash: peer_id_hash.to_string(),
+        direct_message_key: peer_id_hash.replace("peer#", "dm#"),
         encrypted_payload_ref: item_id.replace("item#", "pending#"),
         encrypted_payload: encrypted_payload(),
         payload_kind: Some("text".to_string()),
@@ -74,9 +75,15 @@ fn pending_item(encrypted_payload: Option<WeixinEncryptedPayload>) -> WeixinPend
         account_id: ACCOUNT.to_string(),
         message_id_hash: "message#00000001".to_string(),
         peer_id_hash: "peer#00000001".to_string(),
+        direct_message_key: "dm#00000001".to_string(),
         encrypted_payload_ref: "pending#00000001".to_string(),
         payload_kind: Some("text".to_string()),
         encrypted_payload,
+        turn_session_id: None,
+        parent_session_id: None,
+        dispatch_retry_count: 0,
+        next_retry_at_millis: None,
+        last_dispatch_error: None,
         state: WeixinPendingInboundState::Ready,
         terminal_reason: None,
         created_at_millis: 1000,
@@ -261,9 +268,15 @@ fn pending_inbound_state_machine_is_strict_and_terminal_states_are_not_recovered
         account_id: ACCOUNT.to_string(),
         message_id_hash: "message#00000001".to_string(),
         peer_id_hash: "peer#00000001".to_string(),
+        direct_message_key: "dm#00000001".to_string(),
         encrypted_payload_ref: "pending#00000001".to_string(),
         payload_kind: Some("text".to_string()),
         encrypted_payload: Some(encrypted_payload()),
+        turn_session_id: None,
+        parent_session_id: None,
+        dispatch_retry_count: 0,
+        next_retry_at_millis: None,
+        last_dispatch_error: None,
         state: WeixinPendingInboundState::Accepted,
         terminal_reason: None,
         created_at_millis: 1000,
@@ -556,6 +569,15 @@ fn runtime_turn_binding_reuses_session_and_isolates_conversations() {
         })
         .expect("begin first runtime turn");
     assert_eq!(first_binding.session_id, "yunxi-weixin-first");
+    assert_eq!(
+        first_binding.root_session_id.as_deref(),
+        Some("yunxi-weixin-first")
+    );
+    assert_eq!(
+        first_binding.active_session_id.as_deref(),
+        Some("yunxi-weixin-first")
+    );
+    assert_eq!(first_binding.last_completed_session_id, None);
     store
         .complete_pending_runtime_turn(
             ACCOUNT,
@@ -586,7 +608,19 @@ fn runtime_turn_binding_reuses_session_and_isolates_conversations() {
             now_millis: 1500,
         })
         .expect("begin reused runtime turn");
-    assert_eq!(reused.session_id, first_binding.session_id);
+    assert_eq!(reused.session_id, "yunxi-weixin-second");
+    assert_eq!(
+        reused.root_session_id.as_deref(),
+        Some(first_binding.session_id.as_str())
+    );
+    assert_eq!(
+        reused.active_session_id.as_deref(),
+        Some("yunxi-weixin-second")
+    );
+    assert_eq!(
+        reused.last_completed_session_id.as_deref(),
+        Some(first_binding.session_id.as_str())
+    );
 
     let mut third = WeixinInboundBatchCommit::new(ACCOUNT, 1600);
     third.accepted.push(commit_item(
@@ -609,9 +643,35 @@ fn runtime_turn_binding_reuses_session_and_isolates_conversations() {
         })
         .expect("begin isolated runtime turn");
     assert_ne!(isolated.session_id, first_binding.session_id);
+    assert_eq!(isolated.last_completed_session_id, None);
 
     let state = store.load(ACCOUNT).expect("load").expect("state");
     assert_eq!(state.conversation_bindings.len(), 2);
+    let first_peer_binding = state
+        .conversation_bindings
+        .iter()
+        .find(|binding| binding.peer_id_hash == "peer#00000001")
+        .expect("first peer binding");
+    assert_eq!(
+        first_peer_binding.root_session_id.as_deref(),
+        Some("yunxi-weixin-first")
+    );
+    assert_eq!(
+        first_peer_binding.active_session_id.as_deref(),
+        Some("yunxi-weixin-second")
+    );
+    assert_eq!(
+        first_peer_binding.last_completed_session_id.as_deref(),
+        Some("yunxi-weixin-first")
+    );
+    assert_eq!(
+        state.pending_inbound[1].turn_session_id.as_deref(),
+        Some("yunxi-weixin-second")
+    );
+    assert_eq!(
+        state.pending_inbound[1].parent_session_id.as_deref(),
+        Some("yunxi-weixin-first")
+    );
     assert_eq!(
         state.pending_inbound[0].state,
         WeixinPendingInboundState::Succeeded

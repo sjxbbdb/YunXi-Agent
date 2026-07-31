@@ -1,5 +1,14 @@
 # YunXi Agent 微信接入边界
 
+## v2.2.0 合并开发线当前状态
+
+当前代码只完成 `v2.2.0` 合并开发线的 P1 整改批次，用于关闭 2026-07-31 复审点名的两个阻塞点：
+
+- 会话连续性：`WeixinConversationBinding` 现在保留 `root_session_id`、`active_session_id`、`last_completed_session_id` 和兼容镜像 `session_id`；每条 pending runtime turn 持久化稳定 `turn_session_id` 与 `parent_session_id`。第一轮没有 parent，后续轮使用上一轮成功完成的 session 作为 parent，并通过既有 `Agent::run_with_backend_stream` 与 `AgentInput::text` 恢复历史。
+- QueueFull 恢复：`yunxi weixin serve` 在启动/轮询前后 drain Ready pending；同一 pending 的 QueueFull 不标失败，只记录脱敏诊断、重试次数和下次重试时间。容量释放或进程重启后，Ready pending 继续进入同一稳定 `turn_session_id`，避免重复推进或丢失。
+
+该批次仍不是完整 `v2.2.0`。远程审批、微信文字控制、生产 `sendmessage`、可靠流式回信、陪伴记忆、真实 iLink 回信闭环、最终联调和 `v2.2.0` tag 仍受后续内部门禁约束；P1 复审通过前不得进入这些实现。
+
 ## v2.1.6 能力
 
 v2.1.6 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命周期和旧登录账户 metadata 到 `WeixinStateStore` 安全初始化基础上，保留前台私聊长轮询接纳层、认证加密 pending inbound 和 stale lock 恢复，并把已准入私聊文本绑定到既有 YunXi Runtime session：

@@ -1,6 +1,6 @@
 # YunXi Agent 文档索引
 
-本页是 `docs/` 的稳定导航入口。`v2.1.6` 保留 v2.1.4/hotfix 独立版本化微信状态 store、原子写入、账户锁诊断、配对请求本地生命周期、pending 计数、安全 logout、旧登录 metadata 到 `WeixinStateStore` 的安全幂等初始化、前台 `yunxi weixin serve` 私聊长轮询接纳层、认证加密 pending inbound、重启恢复入口和 Windows stale lock 恢复；本版本新增 `WeixinConversationBinding`，把已准入私聊的 `account + peer + dm` 绑定到既有 YunXi `SessionId`，并通过 `WeixinTurnSupervisor` 复用 `Agent::run_with_backend_stream`、共享 Provider/model/cwd/sandbox/approval/context-window/companion 配置、同会话有界串行队列和测试 sink 最终文本。本版本仍不发送或流式回复微信消息，不实现远程审批、群聊、附件解析或完整微信聊天闭环。
+本页是 `docs/` 的稳定导航入口。`v2.2.0` 合并开发线当前停在 P1 整改批次：在 `v2.1.6` 既有微信 Runtime session binding 基础上，已补强会话 root/active/last_completed 绑定、稳定 turn session、parent history 恢复、QueueFull 后 Ready pending drain/重试/重启恢复和幂等调度。该批次只关闭审核报告点名的两个 P1 阻塞点，仍需复审通过后才能进入远程审批、微信回信、陪伴记忆和最终联调门禁；当前不得宣称 `v2.2.0` 完成，不得创建 `v2.2.0` tag。
 
 ## 架构与运行边界
 
@@ -10,7 +10,7 @@
 - [人格与记忆](persona-memory.md)：人格、Memory Schema、召回、隐私和审核边界。
 - [TUI 表现与终端生命周期](tui-presentation.md)：布局、流式输出、焦点和恢复约束。
 - [Sandbox 协议事件](protocol/sandbox-events.md)：执行策略与协议事件说明。
-- [微信接入边界](weixin.md)：v2.1.6 QR 登录、安全凭证引用、状态持久化、旧 metadata 初始化、账户锁、pair 生命周期、前台私聊长轮询接纳、认证加密 pending inbound、Runtime session binding、同会话串行、测试 sink、logout 安全边界和明确未实现能力。
+- [微信接入边界](weixin.md)：v2.2.0 合并开发线 P1 批次状态、v2.1.6 QR 登录、安全凭证引用、状态持久化、旧 metadata 初始化、账户锁、pair 生命周期、前台私聊长轮询接纳、认证加密 pending inbound、Runtime session binding、parent history、QueueFull Ready pending 恢复、logout 安全边界和明确未实现能力。
 
 ## 规格与路线图
 

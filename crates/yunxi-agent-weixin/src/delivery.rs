@@ -295,22 +295,24 @@ impl WeixinDeliveryDispatcher {
         )?;
         for delivery in deliveries {
             report.attempted_count += 1;
+            let delivery_started_at_millis = now_millis_u64();
             let running = self.state_store.mark_pending_delivery_running(
                 account_id,
                 &delivery.delivery_id,
-                now_millis,
+                delivery_started_at_millis,
             )?;
             let payload =
                 match decrypt_delivery_payload(&self.payload_cipher, &self.data_key, &running) {
                     Ok(payload) => payload,
                     Err(error) => {
+                        let delivery_completed_at_millis = now_millis_u64();
                         self.state_store.complete_pending_delivery(
                             account_id,
                             &running.delivery_id,
                             WeixinDeliveryState::Failed,
                             Some("payload_unavailable".to_string()),
                             Some("delivery_payload_unavailable".to_string()),
-                            now_millis,
+                            delivery_completed_at_millis,
                         )?;
                         report.failed_count += 1;
                         let _ = error;
@@ -319,18 +321,20 @@ impl WeixinDeliveryDispatcher {
                 };
             match send_delivery_payload(self.transport.as_ref(), payload).await {
                 Ok(_) => {
+                    let delivery_completed_at_millis = now_millis_u64();
                     self.state_store.complete_pending_delivery(
                         account_id,
                         &running.delivery_id,
                         WeixinDeliveryState::Succeeded,
                         Some("sent".to_string()),
                         None,
-                        now_millis,
+                        delivery_completed_at_millis,
                     )?;
                     report.succeeded_count += 1;
                 }
                 Err(error) => match classify_delivery_error(&error, self.verified_idempotency) {
                     WeixinDeliveryOutcomeClass::DefiniteFailure => {
+                        let delivery_completed_at_millis = now_millis_u64();
                         let error_label = delivery_error_label(&error);
                         self.state_store.complete_pending_delivery(
                             account_id,
@@ -338,11 +342,12 @@ impl WeixinDeliveryDispatcher {
                             WeixinDeliveryState::Failed,
                             Some("definite_failure".to_string()),
                             Some(error_label),
-                            now_millis,
+                            delivery_completed_at_millis,
                         )?;
                         report.failed_count += 1;
                     }
                     WeixinDeliveryOutcomeClass::OutcomeUnknown => {
+                        let delivery_completed_at_millis = now_millis_u64();
                         let error_label = delivery_error_label(&error);
                         self.state_store.complete_pending_delivery(
                             account_id,
@@ -350,19 +355,20 @@ impl WeixinDeliveryDispatcher {
                             WeixinDeliveryState::Unknown,
                             Some("outcome_unknown".to_string()),
                             Some(error_label),
-                            now_millis,
+                            delivery_completed_at_millis,
                         )?;
                         report.unknown_outcome_count += 1;
                     }
                     WeixinDeliveryOutcomeClass::RetryableWithVerifiedIdempotency => {
+                        let delivery_completed_at_millis = now_millis_u64();
                         let delay = delivery_retry_delay(running.retry_count);
                         let error_label = delivery_error_label(&error);
                         self.state_store.record_pending_delivery_deferred(
                             account_id,
                             &running.delivery_id,
                             &error_label,
-                            now_millis.saturating_add(delay.as_millis() as u64),
-                            now_millis,
+                            delivery_completed_at_millis.saturating_add(delay.as_millis() as u64),
+                            delivery_completed_at_millis,
                         )?;
                         report.deferred_count += 1;
                         break;

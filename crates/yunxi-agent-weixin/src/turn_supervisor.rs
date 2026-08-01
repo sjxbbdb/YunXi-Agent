@@ -213,6 +213,12 @@ impl WeixinTurnSupervisor {
                 )
             };
 
+        self.state_store.record_pending_runtime_agent_completed(
+            &payload.account_id,
+            &payload.item_id,
+            now_millis_u64(),
+        )?;
+
         let report = match result {
             Ok(result) => {
                 let target = match result.status {

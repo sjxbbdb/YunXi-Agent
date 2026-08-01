@@ -12,11 +12,11 @@ use tempfile::TempDir;
 use yunxi_agent_storage::{
     FileWeixinStateStore, WEIXIN_PAYLOAD_AAD_VERSION, WEIXIN_PAYLOAD_ALGORITHM,
     WEIXIN_PAYLOAD_ALGORITHM_VERSION, WEIXIN_STATE_SCHEMA_VERSION, WeixinAccountLockState,
-    WeixinConnectionStateRecord, WeixinCredentialReferenceRecord, WeixinEncryptedPayload,
-    WeixinInboundBatchCommit, WeixinInboundCommitItem, WeixinPairRequestCommitItem,
-    WeixinPairRequestState, WeixinPendingInbound, WeixinPendingInboundState,
-    WeixinRuntimeTurnBeginRequest, WeixinStateError, WeixinStateSnapshot, WeixinStateStore,
-    WeixinStateWriteOptions,
+    WeixinConnectionStateRecord, WeixinCredentialReferenceRecord, WeixinDeliveryManifestCommitItem,
+    WeixinDeliveryState, WeixinEncryptedPayload, WeixinInboundBatchCommit, WeixinInboundCommitItem,
+    WeixinPairRequestCommitItem, WeixinPairRequestState, WeixinPendingDeliveryCommitItem,
+    WeixinPendingInbound, WeixinPendingInboundState, WeixinRuntimeTurnBeginRequest,
+    WeixinStateError, WeixinStateSnapshot, WeixinStateStore, WeixinStateWriteOptions,
 };
 
 const ACCOUNT: &str = "account#933b5bde";
@@ -65,6 +65,24 @@ fn commit_item(
         encrypted_payload_ref: item_id.replace("item#", "pending#"),
         encrypted_payload: encrypted_payload(),
         payload_kind: Some("text".to_string()),
+    }
+}
+
+fn pending_delivery_item(
+    delivery_id: &str,
+    item_id: &str,
+    session_id: &str,
+) -> WeixinPendingDeliveryCommitItem {
+    WeixinPendingDeliveryCommitItem {
+        delivery_id: delivery_id.to_string(),
+        peer_id_hash: "peer#00000001".to_string(),
+        direct_message_key: "dm#00000001".to_string(),
+        item_id: item_id.to_string(),
+        session_id: session_id.to_string(),
+        message_hash: "reply#00000001".to_string(),
+        segment_index: 0,
+        total_segments: 1,
+        encrypted_payload: encrypted_payload(),
     }
 }
 
@@ -621,6 +639,109 @@ fn inbound_batch_commit_writes_cursor_receipt_and_pending_in_one_snapshot() {
         state.pending_inbound[0].state,
         WeixinPendingInboundState::Ready
     );
+}
+
+#[test]
+fn latency_trace_tracks_inbound_runtime_spool_and_delivery_stages() {
+    let (_temp, store) = store_fixture();
+    store.save(&snapshot(1000)).expect("save state");
+    let mut commit = WeixinInboundBatchCommit::new(ACCOUNT, 1100);
+    commit.poll_started_at_millis = Some(1005);
+    commit.poll_completed_at_millis = Some(1090);
+    commit.accepted.push(commit_item(
+        "item#00000001",
+        "message#00000001",
+        "peer#00000001",
+    ));
+    store.commit_inbound_batch(commit).expect("commit inbound");
+
+    store
+        .claim_pending_runtime_dispatch(
+            ACCOUNT,
+            "item#00000001",
+            "lease#unit-test",
+            "attempt#unit-test",
+            1600,
+            1200,
+        )
+        .expect("claim dispatch");
+    store
+        .begin_pending_runtime_turn(WeixinRuntimeTurnBeginRequest {
+            account_id: ACCOUNT.to_string(),
+            peer_id_hash: "peer#00000001".to_string(),
+            message_id_hash: "message#00000001".to_string(),
+            item_id: "item#00000001".to_string(),
+            direct_message_key: "dm#00000001".to_string(),
+            workspace_id: WORKSPACE.to_string(),
+            candidate_session_id: "yunxi-weixin-trace".to_string(),
+            source_label: "weixin-private-chat".to_string(),
+            now_millis: 1300,
+        })
+        .expect("begin runtime");
+    store
+        .record_pending_runtime_agent_completed(ACCOUNT, "item#00000001", 2400)
+        .expect("runtime completed");
+    store
+        .enqueue_pending_delivery_batch(
+            ACCOUNT,
+            WeixinDeliveryManifestCommitItem {
+                message_hash: "reply#00000001".to_string(),
+                item_id: "item#00000001".to_string(),
+                session_id: "yunxi-weixin-trace".to_string(),
+                total_segments: 1,
+                delivery_ids: vec!["delivery#00000001".to_string()],
+            },
+            vec![pending_delivery_item(
+                "delivery#00000001",
+                "item#00000001",
+                "yunxi-weixin-trace",
+            )],
+            2450,
+        )
+        .expect("spool delivery");
+    store
+        .complete_pending_runtime_turn(
+            ACCOUNT,
+            "item#00000001",
+            WeixinPendingInboundState::Succeeded,
+            None,
+            2460,
+        )
+        .expect("complete runtime");
+    store
+        .mark_pending_delivery_running(ACCOUNT, "delivery#00000001", 2500)
+        .expect("delivery running");
+    store
+        .complete_pending_delivery(
+            ACCOUNT,
+            "delivery#00000001",
+            WeixinDeliveryState::Succeeded,
+            Some("sent".to_string()),
+            None,
+            2600,
+        )
+        .expect("delivery complete");
+
+    let state = store.load(ACCOUNT).expect("load").expect("state");
+    let trace = state
+        .recent_latency_traces(1)
+        .into_iter()
+        .next()
+        .expect("trace");
+    assert_eq!(trace.item_id, "item#00000001");
+    assert_eq!(trace.poll_latency_millis(), Some(85));
+    assert_eq!(trace.queue_latency_millis(), Some(200));
+    assert_eq!(trace.runtime_latency_millis(), Some(1100));
+    assert_eq!(trace.spool_latency_millis(), Some(50));
+    assert_eq!(trace.delivery_wait_millis(), Some(50));
+    assert_eq!(trace.delivery_latency_millis(), Some(100));
+    assert_eq!(trace.total_latency_millis(), Some(1595));
+    assert_eq!(trace.delivery_segment_count, 1);
+    assert_eq!(trace.delivery_attempt_count, 1);
+    assert_eq!(trace.delivery_success_count, 1);
+    assert_eq!(trace.terminal_status.as_deref(), Some("succeeded"));
+    assert_eq!(trace.delivery_status.as_deref(), Some("succeeded"));
+    assert_eq!(trace.session_id.as_deref(), Some("yunxi-weixin-trace"));
 }
 
 #[test]

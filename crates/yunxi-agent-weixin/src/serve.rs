@@ -207,6 +207,7 @@ where
                 }
             })?;
             let cursor = cursor_for(&state, &options.cursor_source).unwrap_or_default();
+            let poll_started_at_millis = now_millis_u64();
             let response = match transport
                 .get_updates(GetUpdatesRequest::new(cursor.to_string()))
                 .await
@@ -242,11 +243,14 @@ where
                     continue;
                 }
             };
+            let poll_completed_at_millis = now_millis_u64();
             report.polls += 1;
             backoff.reset();
             let now = now_millis_u64();
             let mut commit = WeixinInboundBatchCommit::new(options.account_id.clone(), now);
             commit.cursor_source = options.cursor_source.clone();
+            commit.poll_started_at_millis = Some(poll_started_at_millis);
+            commit.poll_completed_at_millis = Some(poll_completed_at_millis);
             commit.next_get_updates_buf = response
                 .get_updates_buf
                 .as_ref()

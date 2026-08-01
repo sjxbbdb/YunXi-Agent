@@ -4929,6 +4929,57 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 
 署名：开发者
 
+## 2026-08-01 22:24:39 +08:00
+
+工作目标：新增微信回复慢点定位的低风险耗时诊断能力，发布并安装 v2.2.0-hotfix.3。
+
+执行流程：
+1. 使用 CodeGraph 和只读检查定位微信收消息、pending 入队、runtime 调度、final-text spool、微信投递和 status 输出路径。
+2. 将版本号从 2.2.0-hotfix.2 提升到 2.2.0-hotfix.3，未覆盖或移动历史 tag。
+3. 在微信状态快照中新增脱敏 latency trace，最多保留 128 条，仅记录 item/message/peer/session 哈希、阶段时间戳、阶段耗时、状态和脱敏错误标签，不记录微信原文、回复正文、token 或原始用户 ID。
+4. 在收消息 poll、inbound commit、runtime dispatch claimed、runtime started、runtime completed、final-text spool written、delivery started、delivery completed/deferred、turn completed 等阶段打点。
+5. 在 `yunxi weixin status --json` 中新增 `latency_trace_count` 和 `recent_latency_traces`，普通状态输出中新增最近一条 latency 摘要。
+6. 补充 storage 主链路测试，验证 poll、queue、runtime、spool、delivery_wait、delivery、total 耗时计算。
+7. 构建 release，停止旧微信 bot 单进程后安装新版到 PATH 首位目录，并重新启动微信 bot。
+
+修改文件与路径：
+- 工作区 manifest：D:\YunXi Agent\Cargo.toml
+- 锁文件：D:\YunXi Agent\Cargo.lock
+- CLI 微信状态输出：D:\YunXi Agent\crates\yunxi-agent-cli\src\weixin.rs
+- storage 导出：D:\YunXi Agent\crates\yunxi-agent-storage\src\lib.rs
+- 微信状态存储：D:\YunXi Agent\crates\yunxi-agent-storage\src\weixin_state.rs
+- storage 测试：D:\YunXi Agent\crates\yunxi-agent-storage\tests\weixin_state_tests.rs
+- 微信投递：D:\YunXi Agent\crates\yunxi-agent-weixin\src\delivery.rs
+- 微信 serve 循环：D:\YunXi Agent\crates\yunxi-agent-weixin\src\serve.rs
+- 微信 runtime supervisor：D:\YunXi Agent\crates\yunxi-agent-weixin\src\turn_supervisor.rs
+- TUI 版本快照：D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_100x30.txt
+- TUI 版本快照：D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt
+- TUI 版本快照：D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_200x50.txt
+- TUI 版本快照：D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt
+- TUI 版本快照：D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt
+- 正式安装入口：D:\Apps\YunXi Agent\bin\yunxi.exe
+- 正式兼容入口：D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe
+- 本轮 bot 启动日志：D:\YunXi Agent\.tmp\weixin-bot-hotfix.3.stdout.log
+- 本轮 bot 错误日志：D:\YunXi Agent\.tmp\weixin-bot-hotfix.3.stderr.log
+- 桌面开发日志：C:\Users\24763\Desktop\YunXi Agent开发日志.md
+- 项目开发日志：D:\YunXi Agent\docs\development-log.md
+
+验证结果：
+- `cargo fmt`：通过。
+- `cargo test -p yunxi-agent-storage -p yunxi-agent-weixin -p yunxi-agent-cli`：通过。
+- `cargo test -p yunxi-agent-tui --lib`：通过。
+- `cargo test --workspace`：通过。
+- `scripts\install\install-yunxi.ps1 -InstallDir "D:\Apps\YunXi Agent\bin" -Configuration release`：通过。
+- `yunxi --version`：yunxi 2.2.0-hotfix.3。
+- `yunxi --json weixin status`：state=ready，account_lock_state=active，credential_state=present，pending_inbound_count=0，pending_delivery_count=0，pending_remote_control_count=0，latency_trace_count=0，recent_latency_traces=[]。
+- 当前微信 bot 进程：PID 21764，路径 D:\Apps\YunXi Agent\bin\yunxi.exe。
+
+提交、推送和 tag 状态：日志书写时尚未提交、尚未 push、尚未创建新 tag；下一步将创建新 commit 和 v2.2.0-hotfix.3 tag，并推送到 GitHub，不删除、不移动、不覆盖任何历史 tag。
+
+清理状态：未执行递归删除、目录移动、git clean、force 操作、历史 tag 覆盖、系统 PATH/注册表修改或用户目录清理；仅停止旧 YunXi bot 单进程以解除 exe 占用，并重新启动新版 bot。
+
+署名：开发者
+
 ## 2026-08-01 20:50:58 +08:00
 
 工作目标：按用户反馈隐藏微信侧“我正在处理这条消息，如需中止本轮处理，回复 /stop”取消控制提示，使用户只看到真实业务回复。

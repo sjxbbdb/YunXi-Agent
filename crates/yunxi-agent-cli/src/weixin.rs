@@ -10,8 +10,8 @@ use std::{
 use yunxi_agent_core::{AgentConfig, BackendKind, DryRunBackend};
 use yunxi_agent_storage::{
     FileSessionStore, FileWeixinStateStore, SessionId, SessionStore, WeixinAccountLockState,
-    WeixinCredentialReferenceRecord, WeixinPairRequest, WeixinStateError, WeixinStateSnapshot,
-    WeixinStateStore,
+    WeixinCredentialReferenceRecord, WeixinLatencyTraceRecord, WeixinPairRequest, WeixinStateError,
+    WeixinStateSnapshot, WeixinStateStore,
 };
 use yunxi_agent_weixin::{
     IlinkHttpClient, LoginPollState, PRODUCTION_ILINK_ENDPOINT, SystemWeixinSecretStore,
@@ -522,6 +522,8 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
         "pending_delivery_count": state.pending_delivery_count(),
         "pending_remote_control_count": state.pending_remote_control_count(),
         "pair_request_count": state.pair_request_count(),
+        "latency_trace_count": state.latency_traces.len(),
+        "recent_latency_traces": latency_trace_reports(&state, 5),
         "last_redacted_error": state.last_redacted_error.clone(),
         "created_at_millis": record.created_at_millis,
         "updated_at_millis": record.updated_at_millis,
@@ -552,6 +554,7 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
             println!("state store initialized from existing metadata");
         }
         println!("account lock state: {}", lock_state.state.as_str());
+        print_latency_summary(&state);
         println!(
             "QR login, foreground private-chat polling, runtime dispatch, final-text sendmessage spool, and slash-command AgentRunControl are available"
         );
@@ -584,6 +587,8 @@ fn print_unconfigured_status(
                 "pending_delivery_count": state.map(|state| state.pending_delivery_count()).unwrap_or(0),
                 "pending_remote_control_count": state.map(|state| state.pending_remote_control_count()).unwrap_or(0),
                 "pair_request_count": state.map(|state| state.pair_request_count()).unwrap_or(0),
+                "latency_trace_count": state.map(|state| state.latency_traces.len()).unwrap_or(0),
+                "recent_latency_traces": state.map(|state| latency_trace_reports(state, 5)).unwrap_or_default(),
                 "last_redacted_error": state.and_then(|state| state.last_redacted_error.clone()),
                 "capabilities": {
                     "real_login": true,
@@ -612,6 +617,81 @@ fn print_unconfigured_status(
         );
     }
     Ok(())
+}
+
+fn latency_trace_reports(state: &WeixinStateSnapshot, limit: usize) -> Vec<serde_json::Value> {
+    state
+        .recent_latency_traces(limit)
+        .iter()
+        .map(latency_trace_report)
+        .collect()
+}
+
+fn latency_trace_report(trace: &WeixinLatencyTraceRecord) -> serde_json::Value {
+    json!({
+        "item_id": trace.item_id.clone(),
+        "message_id_hash": trace.message_id_hash.clone(),
+        "peer_id_hash": trace.peer_id_hash.clone(),
+        "session_id": trace.session_id.clone(),
+        "terminal_status": trace.terminal_status.clone(),
+        "terminal_reason": trace.terminal_reason.clone(),
+        "delivery_status": trace.delivery_status.clone(),
+        "delivery_segment_count": trace.delivery_segment_count,
+        "delivery_attempt_count": trace.delivery_attempt_count,
+        "delivery_success_count": trace.delivery_success_count,
+        "error_label": trace.error_label.clone(),
+        "timestamps": {
+            "poll_started_at_millis": trace.poll_started_at_millis,
+            "poll_completed_at_millis": trace.poll_completed_at_millis,
+            "inbound_committed_at_millis": trace.inbound_committed_at_millis,
+            "dispatch_claimed_at_millis": trace.dispatch_claimed_at_millis,
+            "runtime_started_at_millis": trace.runtime_started_at_millis,
+            "runtime_completed_at_millis": trace.runtime_completed_at_millis,
+            "spool_written_at_millis": trace.spool_written_at_millis,
+            "turn_completed_at_millis": trace.turn_completed_at_millis,
+            "delivery_started_at_millis": trace.delivery_started_at_millis,
+            "delivery_completed_at_millis": trace.delivery_completed_at_millis,
+        },
+        "durations_millis": {
+            "total": trace.total_latency_millis(),
+            "poll": trace.poll_latency_millis(),
+            "queue": trace.queue_latency_millis(),
+            "runtime": trace.runtime_latency_millis(),
+            "spool": trace.spool_latency_millis(),
+            "delivery_wait": trace.delivery_wait_millis(),
+            "delivery": trace.delivery_latency_millis(),
+        },
+    })
+}
+
+fn print_latency_summary(state: &WeixinStateSnapshot) {
+    let Some(trace) = state.recent_latency_traces(1).into_iter().next() else {
+        return;
+    };
+    let status = trace.terminal_status.as_deref().unwrap_or("in_progress");
+    let delivery_status = trace.delivery_status.as_deref().unwrap_or("not_started");
+    println!(
+        "last latency trace: item={} total={} poll={} queue={} runtime={} spool={} delivery_wait={} delivery={} status={} delivery_status={}",
+        trace.item_id,
+        duration_label(trace.total_latency_millis()),
+        duration_label(trace.poll_latency_millis()),
+        duration_label(trace.queue_latency_millis()),
+        duration_label(trace.runtime_latency_millis()),
+        duration_label(trace.spool_latency_millis()),
+        duration_label(trace.delivery_wait_millis()),
+        duration_label(trace.delivery_latency_millis()),
+        status,
+        delivery_status,
+    );
+    if let Some(error_label) = trace.error_label.as_deref() {
+        println!("last latency error: {error_label}");
+    }
+}
+
+fn duration_label(duration_millis: Option<u64>) -> String {
+    duration_millis
+        .map(|duration| format!("{duration}ms"))
+        .unwrap_or_else(|| "n/a".to_string())
 }
 
 fn credential_state<S: WeixinSecretStore>(store: &S, account_id: &WeixinAccountId) -> &'static str {
@@ -734,6 +814,8 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
         "pending_delivery_count": state.map(|state| state.pending_delivery_count()).unwrap_or(0),
         "pending_remote_control_count": state.map(|state| state.pending_remote_control_count()).unwrap_or(0),
         "pair_request_count": state.map(|state| state.pair_request_count()).unwrap_or(0),
+        "latency_trace_count": state.map(|state| state.latency_traces.len()).unwrap_or(0),
+        "recent_latency_traces": state.map(|state| latency_trace_reports(state, 5)).unwrap_or_default(),
         "last_redacted_error": state.and_then(|state| state.last_redacted_error.clone()),
         "network_request_performed": false,
         "secrets_included": false,
@@ -804,6 +886,8 @@ fn print_doctor_metadata_error(
         "pending_delivery_count": 0,
         "pending_remote_control_count": 0,
         "pair_request_count": 0,
+        "latency_trace_count": 0,
+        "recent_latency_traces": [],
         "last_redacted_error": safe_error,
         "network_request_performed": false,
         "secrets_included": false,

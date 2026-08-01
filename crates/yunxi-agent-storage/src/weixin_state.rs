@@ -26,6 +26,7 @@ const WEIXIN_LOCK_ENV: &str = "YUNXI_WEIXIN_LOCK_ROOT";
 const WEIXIN_PENDING_INBOUND_LIMIT: usize = 1024;
 const WEIXIN_TERMINAL_RECEIPT_LIMIT: usize = 2048;
 const WEIXIN_TERMINAL_RECEIPT_TTL_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
+const WEIXIN_LATENCY_TRACE_LIMIT: usize = 128;
 static STATE_TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub trait WeixinStateStore: Send + Sync {
@@ -320,24 +321,27 @@ impl FileWeixinStateStore {
                 duplicate_count += 1;
                 continue;
             }
+            let item_id = item.item_id;
+            let message_id_hash = item.message_id_hash;
+            let peer_id_hash = item.peer_id_hash;
+            let direct_message_key = item.direct_message_key;
             snapshot.inbound_receipts.push(WeixinInboundReceiptRecord {
                 schema_version: WEIXIN_STATE_SCHEMA_VERSION,
-                message_id_hash: item.message_id_hash.clone(),
-                peer_id_hash: item.peer_id_hash.clone(),
+                message_id_hash: message_id_hash.clone(),
+                peer_id_hash: peer_id_hash.clone(),
                 accepted_at_millis: commit.now_millis,
                 state: WeixinReceiptState::Ready,
                 created_at_millis: commit.now_millis,
                 updated_at_millis: commit.now_millis,
                 transitioned_at_millis: commit.now_millis,
             });
-            let item_id = item.item_id;
             snapshot.pending_inbound.push(WeixinPendingInbound {
                 schema_version: WEIXIN_STATE_SCHEMA_VERSION,
                 item_id: item_id.clone(),
                 account_id: commit.account_id.clone(),
-                message_id_hash: item.message_id_hash,
-                peer_id_hash: item.peer_id_hash,
-                direct_message_key: item.direct_message_key,
+                message_id_hash: message_id_hash.clone(),
+                peer_id_hash: peer_id_hash.clone(),
+                direct_message_key: direct_message_key.clone(),
                 encrypted_payload_ref: item.encrypted_payload_ref,
                 payload_kind: item.payload_kind,
                 encrypted_payload: Some(item.encrypted_payload),
@@ -355,6 +359,33 @@ impl FileWeixinStateStore {
                 created_at_millis: commit.now_millis,
                 updated_at_millis: commit.now_millis,
                 transitioned_at_millis: commit.now_millis,
+            });
+            snapshot.latency_traces.push(WeixinLatencyTraceRecord {
+                schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+                item_id: item_id.clone(),
+                message_id_hash,
+                peer_id_hash,
+                direct_message_key,
+                session_id: None,
+                poll_started_at_millis: commit.poll_started_at_millis,
+                poll_completed_at_millis: commit.poll_completed_at_millis,
+                inbound_committed_at_millis: Some(commit.now_millis),
+                dispatch_claimed_at_millis: None,
+                runtime_started_at_millis: None,
+                runtime_completed_at_millis: None,
+                spool_written_at_millis: None,
+                turn_completed_at_millis: None,
+                delivery_started_at_millis: None,
+                delivery_completed_at_millis: None,
+                delivery_segment_count: 0,
+                delivery_attempt_count: 0,
+                delivery_success_count: 0,
+                terminal_status: None,
+                terminal_reason: None,
+                delivery_status: None,
+                error_label: None,
+                created_at_millis: commit.now_millis,
+                updated_at_millis: commit.now_millis,
             });
             accepted_item_ids.push(item_id);
             accepted_count += 1;
@@ -397,6 +428,7 @@ impl FileWeixinStateStore {
         snapshot.last_redacted_error = commit.last_redacted_error;
         snapshot.updated_at_millis = commit.now_millis;
         snapshot.transitioned_at_millis = commit.now_millis;
+        prune_latency_traces(&mut snapshot);
         let receipt_count = snapshot.inbound_receipts.len();
         let pending_inbound_count = snapshot.pending_inbound_count();
         self.save_with_options(&snapshot, options)?;
@@ -616,6 +648,9 @@ impl FileWeixinStateStore {
             receipt.state = WeixinReceiptState::Ready;
             receipt.updated_at_millis = now_millis;
         }
+        update_latency_trace_for_item(&mut snapshot, item_id, now_millis, |trace| {
+            trace.error_label = Some(error_label.to_string());
+        });
         snapshot.updated_at_millis = now_millis;
         snapshot.transitioned_at_millis = now_millis;
         self.save(&snapshot)?;
@@ -680,6 +715,9 @@ impl FileWeixinStateStore {
         pending.lease_expires_at_millis = Some(lease_expires_at_millis);
         pending.updated_at_millis = now_millis;
         let updated = pending.clone();
+        update_latency_trace_for_item(&mut snapshot, item_id, now_millis, |trace| {
+            trace.dispatch_claimed_at_millis = Some(now_millis);
+        });
         snapshot.updated_at_millis = now_millis;
         self.save(&snapshot)?;
         Ok(updated)
@@ -779,6 +817,9 @@ impl FileWeixinStateStore {
             receipt.updated_at_millis = now_millis;
             receipt.transitioned_at_millis = now_millis;
         }
+        update_latency_trace_for_item(&mut snapshot, item_id, now_millis, |trace| {
+            trace.error_label = Some(error_label.to_string());
+        });
         snapshot.updated_at_millis = now_millis;
         snapshot.transitioned_at_millis = now_millis;
         self.save(&snapshot)?;
@@ -855,6 +896,9 @@ impl FileWeixinStateStore {
                 reason: "delivery manifest failed validation",
             });
         }
+        let manifest_item_id = manifest.item_id.clone();
+        let manifest_session_id = manifest.session_id.clone();
+        let manifest_total_segments = manifest.total_segments;
         for item in &items {
             validate_delivery_commit_item(account_id, item)?;
             if item.message_hash != manifest.message_hash
@@ -937,6 +981,11 @@ impl FileWeixinStateStore {
             updated_at_millis: now_millis,
         });
         snapshot.pending_deliveries.extend(pending.iter().cloned());
+        update_latency_trace_for_item(&mut snapshot, &manifest_item_id, now_millis, |trace| {
+            trace.spool_written_at_millis = Some(now_millis);
+            trace.session_id = Some(manifest_session_id);
+            trace.delivery_segment_count = manifest_total_segments;
+        });
         snapshot.updated_at_millis = now_millis;
         self.save(&snapshot)?;
         Ok(pending)
@@ -986,6 +1035,13 @@ impl FileWeixinStateStore {
         delivery.updated_at_millis = now_millis;
         delivery.transitioned_at_millis = now_millis;
         let updated = delivery.clone();
+        update_latency_trace_for_item(&mut snapshot, &updated.item_id, now_millis, |trace| {
+            if trace.delivery_started_at_millis.is_none() {
+                trace.delivery_started_at_millis = Some(now_millis);
+            }
+            trace.delivery_attempt_count = trace.delivery_attempt_count.saturating_add(1);
+            trace.delivery_status = Some(WeixinDeliveryState::Running.as_str().to_string());
+        });
         snapshot.updated_at_millis = now_millis;
         self.save(&snapshot)?;
         Ok(updated)
@@ -1020,6 +1076,11 @@ impl FileWeixinStateStore {
         delivery.updated_at_millis = now_millis;
         delivery.transitioned_at_millis = now_millis;
         let updated = delivery.clone();
+        update_latency_trace_for_item(&mut snapshot, &updated.item_id, now_millis, |trace| {
+            trace.delivery_completed_at_millis = Some(now_millis);
+            trace.delivery_status = Some("deferred".to_string());
+            trace.error_label = Some(error_label.to_string());
+        });
         snapshot.updated_at_millis = now_millis;
         self.save(&snapshot)?;
         Ok(updated)
@@ -1068,6 +1129,7 @@ impl FileWeixinStateStore {
         pending.last_redacted_error = last_redacted_error.clone();
         pending.updated_at_millis = now_millis;
         pending.transitioned_at_millis = now_millis;
+        let pending_item_id = pending.item_id.clone();
         let record = WeixinDeliveryRecord {
             schema_version: WEIXIN_STATE_SCHEMA_VERSION,
             delivery_id: pending.delivery_id,
@@ -1079,6 +1141,16 @@ impl FileWeixinStateStore {
         };
         snapshot.deliveries.push(record.clone());
         refresh_delivery_manifest_states(&mut snapshot);
+        update_latency_trace_for_item(&mut snapshot, &pending_item_id, now_millis, |trace| {
+            trace.delivery_completed_at_millis = Some(now_millis);
+            trace.delivery_status = Some(target.as_str().to_string());
+            if target == WeixinDeliveryState::Succeeded {
+                trace.delivery_success_count = trace.delivery_success_count.saturating_add(1);
+            }
+            if target != WeixinDeliveryState::Succeeded {
+                trace.error_label = record.last_redacted_error.clone();
+            }
+        });
         snapshot.updated_at_millis = now_millis;
         snapshot.transitioned_at_millis = now_millis;
         self.save(&snapshot)?;
@@ -1253,10 +1325,34 @@ impl FileWeixinStateStore {
             &request.source_label,
             request.now_millis,
         )?;
+        update_latency_trace_for_item(
+            &mut snapshot,
+            &request.item_id,
+            request.now_millis,
+            |trace| {
+                trace.runtime_started_at_millis = Some(request.now_millis);
+                trace.session_id = Some(turn_session_id.clone());
+            },
+        );
         snapshot.updated_at_millis = request.now_millis;
         snapshot.transitioned_at_millis = request.now_millis;
         self.save(&snapshot)?;
         Ok(binding)
+    }
+
+    pub fn record_pending_runtime_agent_completed(
+        &self,
+        account_id: &str,
+        item_id: &str,
+        now_millis: u64,
+    ) -> Result<(), WeixinStateError> {
+        let mut snapshot = self.load_required(account_id)?;
+        update_latency_trace_for_item(&mut snapshot, item_id, now_millis, |trace| {
+            trace.runtime_completed_at_millis = Some(now_millis);
+        });
+        snapshot.updated_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(())
     }
 
     pub fn complete_pending_runtime_turn(
@@ -1280,6 +1376,7 @@ impl FileWeixinStateStore {
                 reason: "pending inbound terminal reason is unsafe",
             });
         }
+        let terminal_reason_for_trace = terminal_reason.clone();
         let mut snapshot = self.load_required(account_id)?;
         let pending = snapshot
             .pending_inbound
@@ -1313,6 +1410,19 @@ impl FileWeixinStateStore {
             receipt.updated_at_millis = now_millis;
             receipt.transitioned_at_millis = now_millis;
         }
+        update_latency_trace_for_item(&mut snapshot, item_id, now_millis, |trace| {
+            if trace.runtime_completed_at_millis.is_none() {
+                trace.runtime_completed_at_millis = Some(now_millis);
+            }
+            trace.turn_completed_at_millis = Some(now_millis);
+            trace.terminal_status = Some(target.as_str().to_string());
+            trace.terminal_reason = terminal_reason_for_trace.clone();
+            if target != WeixinPendingInboundState::Succeeded
+                && let Some(reason) = terminal_reason_for_trace.clone()
+            {
+                trace.error_label = Some(reason);
+            }
+        });
         snapshot.updated_at_millis = now_millis;
         snapshot.transitioned_at_millis = now_millis;
         self.save(&snapshot)?;
@@ -1411,6 +1521,8 @@ pub struct WeixinInboundBatchCommit {
     pub account_id: String,
     pub cursor_source: String,
     pub next_get_updates_buf: Option<String>,
+    pub poll_started_at_millis: Option<u64>,
+    pub poll_completed_at_millis: Option<u64>,
     pub accepted: Vec<WeixinInboundCommitItem>,
     pub pair_requests: Vec<WeixinPairRequestCommitItem>,
     pub connection_state: Option<WeixinConnectionStateRecord>,
@@ -1424,6 +1536,8 @@ impl WeixinInboundBatchCommit {
             account_id: account_id.into(),
             cursor_source: "getupdates".to_string(),
             next_get_updates_buf: None,
+            poll_started_at_millis: None,
+            poll_completed_at_millis: None,
             accepted: Vec::new(),
             pair_requests: Vec::new(),
             connection_state: Some(WeixinConnectionStateRecord::Ready),
@@ -1515,6 +1629,8 @@ pub struct WeixinStateSnapshot {
     pub remote_control_requests: Vec<WeixinRemoteControlRequestRecord>,
     pub pair_requests: Vec<WeixinPairRequest>,
     pub pending_inbound: Vec<WeixinPendingInbound>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub latency_traces: Vec<WeixinLatencyTraceRecord>,
     pub last_redacted_error: Option<String>,
     pub created_at_millis: u64,
     pub updated_at_millis: u64,
@@ -1540,6 +1656,7 @@ impl WeixinStateSnapshot {
             remote_control_requests: Vec::new(),
             pair_requests: Vec::new(),
             pending_inbound: Vec::new(),
+            latency_traces: Vec::new(),
             last_redacted_error: None,
             created_at_millis: now_millis,
             updated_at_millis: now_millis,
@@ -1573,6 +1690,13 @@ impl WeixinStateSnapshot {
             .iter()
             .filter(|request| request.state == WeixinPairRequestState::Pending)
             .count()
+    }
+
+    pub fn recent_latency_traces(&self, limit: usize) -> Vec<WeixinLatencyTraceRecord> {
+        let limit = limit.max(1);
+        let mut traces = self.latency_traces.clone();
+        traces.sort_by_key(|trace| trace.created_at_millis);
+        traces.into_iter().rev().take(limit).collect()
     }
 }
 
@@ -1820,6 +1944,109 @@ impl WeixinPendingInbound {
         self.updated_at_millis = now_millis;
         self.transitioned_at_millis = now_millis;
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WeixinLatencyTraceRecord {
+    pub schema_version: u32,
+    pub item_id: String,
+    pub message_id_hash: String,
+    pub peer_id_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub direct_message_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll_started_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll_completed_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbound_committed_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_claimed_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_started_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_completed_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spool_written_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_completed_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_started_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_completed_at_millis: Option<u64>,
+    #[serde(default)]
+    pub delivery_segment_count: u32,
+    #[serde(default)]
+    pub delivery_attempt_count: u32,
+    #[serde(default)]
+    pub delivery_success_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_label: Option<String>,
+    pub created_at_millis: u64,
+    pub updated_at_millis: u64,
+}
+
+impl WeixinLatencyTraceRecord {
+    pub fn total_latency_millis(&self) -> Option<u64> {
+        let start = self
+            .poll_started_at_millis
+            .or(self.inbound_committed_at_millis)
+            .or(self.runtime_started_at_millis)?;
+        let end = self
+            .delivery_completed_at_millis
+            .or(self.turn_completed_at_millis)
+            .or(self.spool_written_at_millis)
+            .or(self.runtime_completed_at_millis)
+            .or(self.inbound_committed_at_millis)?;
+        Some(end.saturating_sub(start))
+    }
+
+    pub fn poll_latency_millis(&self) -> Option<u64> {
+        duration_millis(self.poll_started_at_millis, self.poll_completed_at_millis)
+    }
+
+    pub fn queue_latency_millis(&self) -> Option<u64> {
+        duration_millis(
+            self.inbound_committed_at_millis,
+            self.runtime_started_at_millis,
+        )
+    }
+
+    pub fn runtime_latency_millis(&self) -> Option<u64> {
+        duration_millis(
+            self.runtime_started_at_millis,
+            self.runtime_completed_at_millis,
+        )
+    }
+
+    pub fn spool_latency_millis(&self) -> Option<u64> {
+        duration_millis(
+            self.runtime_completed_at_millis,
+            self.spool_written_at_millis,
+        )
+    }
+
+    pub fn delivery_wait_millis(&self) -> Option<u64> {
+        duration_millis(
+            self.spool_written_at_millis,
+            self.delivery_started_at_millis,
+        )
+    }
+
+    pub fn delivery_latency_millis(&self) -> Option<u64> {
+        duration_millis(
+            self.delivery_started_at_millis,
+            self.delivery_completed_at_millis,
+        )
     }
 }
 
@@ -2243,6 +2470,9 @@ fn validate_snapshot(snapshot: &WeixinStateSnapshot) -> Result<(), WeixinStateEr
             });
         }
     }
+    for trace in &snapshot.latency_traces {
+        validate_latency_trace(trace)?;
+    }
     for receipt in &snapshot.inbound_receipts {
         if receipt.schema_version != WEIXIN_STATE_SCHEMA_VERSION
             || !receipt.message_id_hash.starts_with("message#")
@@ -2461,6 +2691,39 @@ fn validate_encrypted_payload(payload: &WeixinEncryptedPayload) -> Result<(), We
     if ciphertext.is_empty() {
         return Err(WeixinStateError::InvalidRecord {
             reason: "pending inbound encrypted payload ciphertext is empty",
+        });
+    }
+    Ok(())
+}
+
+fn validate_latency_trace(trace: &WeixinLatencyTraceRecord) -> Result<(), WeixinStateError> {
+    if trace.schema_version != WEIXIN_STATE_SCHEMA_VERSION
+        || !trace.item_id.starts_with("item#")
+        || !trace.message_id_hash.starts_with("message#")
+        || !trace.peer_id_hash.starts_with("peer#")
+        || (!trace.direct_message_key.is_empty() && !trace.direct_message_key.starts_with("dm#"))
+        || trace.session_id.as_deref().is_some_and(|session_id| {
+            session_id.trim().is_empty() || contains_sensitive_marker(session_id)
+        })
+        || trace
+            .terminal_status
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty() || contains_sensitive_marker(value))
+        || trace
+            .terminal_reason
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty() || contains_sensitive_marker(value))
+        || trace
+            .delivery_status
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty() || contains_sensitive_marker(value))
+        || trace
+            .error_label
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty() || contains_sensitive_marker(value))
+    {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "latency trace failed validation",
         });
     }
     Ok(())
@@ -2931,6 +3194,38 @@ fn prune_terminal_receipts(snapshot: &mut WeixinStateSnapshot, now_millis: u64) 
     });
 }
 
+fn prune_latency_traces(snapshot: &mut WeixinStateSnapshot) {
+    if snapshot.latency_traces.len() <= WEIXIN_LATENCY_TRACE_LIMIT {
+        return;
+    }
+    snapshot
+        .latency_traces
+        .sort_by_key(|trace| trace.created_at_millis);
+    let remove_count = snapshot
+        .latency_traces
+        .len()
+        .saturating_sub(WEIXIN_LATENCY_TRACE_LIMIT);
+    snapshot.latency_traces.drain(0..remove_count);
+}
+
+fn update_latency_trace_for_item<F>(
+    snapshot: &mut WeixinStateSnapshot,
+    item_id: &str,
+    now_millis: u64,
+    update: F,
+) where
+    F: FnOnce(&mut WeixinLatencyTraceRecord),
+{
+    if let Some(trace) = snapshot
+        .latency_traces
+        .iter_mut()
+        .find(|trace| trace.item_id == item_id)
+    {
+        update(trace);
+        trace.updated_at_millis = now_millis;
+    }
+}
+
 fn write_lock_file(path: &Path, record: &WeixinLockRecord) -> Result<(), WeixinStateError> {
     let bytes = serde_json::to_vec_pretty(record).map_err(|_| WeixinStateError::InvalidRecord {
         reason: "lock serialization failed",
@@ -3073,6 +3368,10 @@ fn now_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default()
+}
+
+fn duration_millis(start: Option<u64>, end: Option<u64>) -> Option<u64> {
+    Some(end?.saturating_sub(start?))
 }
 
 fn safe_file_component(value: &str) -> String {

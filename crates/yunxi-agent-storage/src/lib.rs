@@ -31,12 +31,13 @@ pub use weixin_state::{
     WeixinDeliveryManifest, WeixinDeliveryManifestCommitItem, WeixinDeliveryManifestState,
     WeixinDeliveryRecord, WeixinDeliveryState, WeixinEncryptedPayload, WeixinInboundBatchCommit,
     WeixinInboundBatchCommitResult, WeixinInboundCommitItem, WeixinInboundReceiptRecord,
-    WeixinPairRequest, WeixinPairRequestCommitItem, WeixinPairRequestState,
-    WeixinPendingDeliveryCommitItem, WeixinPendingDeliveryMetadata, WeixinPendingInbound,
-    WeixinPendingInboundState, WeixinReceiptState, WeixinRemoteControlCommitItem,
-    WeixinRemoteControlPurposeRecord, WeixinRemoteControlRequestRecord, WeixinRemoteControlState,
-    WeixinReplyContextReference, WeixinRuntimeTurnBeginRequest, WeixinStateError,
-    WeixinStateMigration, WeixinStateSnapshot, WeixinStateStore, WeixinStateWriteOptions,
+    WeixinLatencyTraceRecord, WeixinPairRequest, WeixinPairRequestCommitItem,
+    WeixinPairRequestState, WeixinPendingDeliveryCommitItem, WeixinPendingDeliveryMetadata,
+    WeixinPendingInbound, WeixinPendingInboundState, WeixinReceiptState,
+    WeixinRemoteControlCommitItem, WeixinRemoteControlPurposeRecord,
+    WeixinRemoteControlRequestRecord, WeixinRemoteControlState, WeixinReplyContextReference,
+    WeixinRuntimeTurnBeginRequest, WeixinStateError, WeixinStateMigration, WeixinStateSnapshot,
+    WeixinStateStore, WeixinStateWriteOptions,
 };
 
 static NEXT_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);

@@ -18,14 +18,14 @@ pub enum WeixinRemoteCommand {
     Status,
     Stop,
     Approve {
-        request_id: String,
+        request_id: Option<String>,
     },
     Deny {
-        request_id: String,
+        request_id: Option<String>,
         reason: Option<String>,
     },
     Answer {
-        request_id: String,
+        request_id: Option<String>,
         text: String,
     },
 }
@@ -35,32 +35,62 @@ pub fn parse_weixin_remote_command(input: &str) -> Option<WeixinRemoteCommand> {
     if !trimmed.starts_with('/') {
         return None;
     }
-    let mut parts = trimmed.splitn(3, char::is_whitespace);
-    let command = parts.next()?.to_ascii_lowercase();
-    let first = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let rest = parts
-        .next()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
+    let (command, arguments) = split_remote_command(trimmed);
     match command.as_str() {
         "/status" => Some(WeixinRemoteCommand::Status),
         "/stop" => Some(WeixinRemoteCommand::Stop),
         "/approve" => Some(WeixinRemoteCommand::Approve {
-            request_id: first?.to_string(),
+            request_id: arguments
+                .filter(|value| is_remote_request_id(value))
+                .map(str::to_string),
         }),
-        "/deny" => Some(WeixinRemoteCommand::Deny {
-            request_id: first?.to_string(),
-            reason: rest.map(safe_remote_text),
-        }),
-        "/answer" => Some(WeixinRemoteCommand::Answer {
-            request_id: first?.to_string(),
-            text: safe_remote_text(rest?),
-        }),
+        "/deny" => {
+            let (request_id, reason) = split_optional_remote_request_id(arguments);
+            Some(WeixinRemoteCommand::Deny {
+                request_id: request_id.map(str::to_string),
+                reason: reason.map(safe_remote_text),
+            })
+        }
+        "/answer" => {
+            let (request_id, text) = split_optional_remote_request_id(arguments);
+            Some(WeixinRemoteCommand::Answer {
+                request_id: request_id.map(str::to_string),
+                text: safe_remote_text(text?),
+            })
+        }
         _ => None,
     }
+}
+
+fn split_remote_command(trimmed: &str) -> (String, Option<&str>) {
+    match trimmed.split_once(char::is_whitespace) {
+        Some((command, arguments)) => (
+            command.to_ascii_lowercase(),
+            Some(arguments.trim()).filter(|value| !value.is_empty()),
+        ),
+        None => (trimmed.to_ascii_lowercase(), None),
+    }
+}
+
+fn split_optional_remote_request_id(arguments: Option<&str>) -> (Option<&str>, Option<&str>) {
+    let Some(arguments) = arguments.map(str::trim).filter(|value| !value.is_empty()) else {
+        return (None, None);
+    };
+    match arguments.split_once(char::is_whitespace) {
+        Some((first, rest)) if is_remote_request_id(first) => (
+            Some(first),
+            Some(rest.trim()).filter(|value| !value.is_empty()),
+        ),
+        _ if is_remote_request_id(arguments) => (Some(arguments), None),
+        _ => (None, Some(arguments)),
+    }
+}
+
+fn is_remote_request_id(value: &str) -> bool {
+    let Some(hash) = value.strip_prefix("wxctl#") else {
+        return false;
+    };
+    hash.len() == 8 && hash.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,13 +286,37 @@ impl WeixinRemoteControlHub {
                 message: format!("pending_control_requests={}", self.pending_count()),
             }),
             WeixinRemoteCommand::Stop => self.stop_scope(scope, now_millis),
-            WeixinRemoteCommand::Approve { request_id } => {
-                self.approve(scope, &request_id, now_millis)
-            }
+            WeixinRemoteCommand::Approve { request_id } => match request_id {
+                Some(request_id) => self.approve(scope, &request_id, now_millis),
+                None => {
+                    let request_id = self.resolve_single_request(
+                        scope,
+                        WeixinRemoteControlPurpose::Approval,
+                        now_millis,
+                    )?;
+                    self.approve(scope, &request_id, now_millis)
+                }
+            },
             WeixinRemoteCommand::Deny { request_id, reason } => {
+                let request_id = match request_id {
+                    Some(request_id) => request_id,
+                    None => self.resolve_single_request(
+                        scope,
+                        WeixinRemoteControlPurpose::Approval,
+                        now_millis,
+                    )?,
+                };
                 self.deny(scope, &request_id, reason, now_millis)
             }
             WeixinRemoteCommand::Answer { request_id, text } => {
+                let request_id = match request_id {
+                    Some(request_id) => request_id,
+                    None => self.resolve_single_request(
+                        scope,
+                        WeixinRemoteControlPurpose::UserInput,
+                        now_millis,
+                    )?,
+                };
                 self.answer(scope, &request_id, text, now_millis)
             }
         }
@@ -450,6 +504,31 @@ impl WeixinRemoteControlHub {
             now_millis,
         )?;
         Ok(())
+    }
+
+    fn resolve_single_request(
+        &self,
+        scope: &WeixinRemoteControlScope,
+        purpose: WeixinRemoteControlPurpose,
+        now_millis: u64,
+    ) -> Result<String, WeixinRemoteControlError> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| WeixinRemoteControlError::Poisoned)?;
+        let mut matches = inner.iter().filter_map(|(request_id, request)| {
+            (request.scope.matches(scope)
+                && request.expires_at_millis > now_millis
+                && request_kind_matches(&request.kind, purpose))
+            .then(|| request_id.clone())
+        });
+        let Some(request_id) = matches.next() else {
+            return Err(WeixinRemoteControlError::RequestNotFound);
+        };
+        if matches.next().is_some() {
+            return Err(WeixinRemoteControlError::AmbiguousRequest);
+        }
+        Ok(request_id)
     }
 
     fn approve(
@@ -708,6 +787,22 @@ enum RegisteredControlKind {
     },
 }
 
+fn request_kind_matches(kind: &RegisteredControlKind, purpose: WeixinRemoteControlPurpose) -> bool {
+    matches!(
+        (kind, purpose),
+        (
+            RegisteredControlKind::Approval { .. },
+            WeixinRemoteControlPurpose::Approval
+        ) | (
+            RegisteredControlKind::UserInput { .. },
+            WeixinRemoteControlPurpose::UserInput
+        ) | (
+            RegisteredControlKind::Cancellation { .. },
+            WeixinRemoteControlPurpose::Cancellation
+        )
+    )
+}
+
 impl WeixinRemoteControlScope {
     fn matches(&self, other: &Self) -> bool {
         self.account_id == other.account_id
@@ -728,6 +823,8 @@ pub enum WeixinRemoteControlError {
     ScopeMismatch,
     #[error("weixin remote control request purpose mismatch")]
     PurposeMismatch,
+    #[error("multiple weixin remote control requests matched this command")]
+    AmbiguousRequest,
     #[error("weixin remote control request expired")]
     Expired,
     #[error("weixin remote control response channel was closed")]
@@ -800,61 +897,62 @@ fn outcome(
 }
 
 pub fn render_remote_control_prompt(prompt: &WeixinRemoteControlPrompt) -> String {
-    let purpose = match prompt.purpose {
-        WeixinRemoteControlPurpose::Approval => "approval",
-        WeixinRemoteControlPurpose::UserInput => "user_input",
-        WeixinRemoteControlPurpose::Cancellation => "cancellation",
-    };
-    let cwd = prompt.cwd_label.as_deref().unwrap_or("not_applicable");
-    format!(
-        "[YunXi 微信控制]\npurpose={purpose}\nrequest_id={}\naccount={}\npeer={}\ndm={}\nitem={}\nsession={}\naction={}\nreason={}\ncwd={cwd}\nexpires_at_millis={}\nuse /approve, /deny, /answer, or /stop as applicable",
-        prompt.request_id,
-        prompt.scope.account_id,
-        prompt.scope.peer_id_hash,
-        prompt.scope.direct_message_key,
-        prompt.scope.item_id,
-        prompt.scope.session_id,
-        safe_remote_text(&prompt.action),
-        safe_remote_text(&prompt.reason),
-        prompt.expires_at_millis,
-    )
+    match prompt.purpose {
+        WeixinRemoteControlPurpose::Approval => format!(
+            "[YunXi]\n需要你确认一次操作：{}\n原因：{}\n回复 /approve 允许，或回复 /deny 拒绝。\n如同时有多个待确认请求，请带控制码重试：{}",
+            safe_remote_text(&prompt.action),
+            safe_remote_text(&prompt.reason),
+            prompt.request_id,
+        ),
+        WeixinRemoteControlPurpose::UserInput => format!(
+            "[YunXi]\n需要你补充信息：{}\n回复 /answer 你的回答。\n如同时有多个待回答请求，请带控制码重试：{}",
+            safe_remote_text(&prompt.reason),
+            prompt.request_id,
+        ),
+        WeixinRemoteControlPurpose::Cancellation => {
+            "[YunXi]\n我正在处理这条消息。\n如需中止本轮处理，回复 /stop。".to_string()
+        }
+    }
 }
 
 pub fn render_remote_control_outcome(outcome: &WeixinRemoteControlOutcome) -> String {
-    let request_id = outcome.request_id.as_deref().unwrap_or("none");
-    format!(
-        "[YunXi 微信控制结果]\nstatus={}\nrequest_id={request_id}\naccount={}\npeer={}\ndm={}\nitem={}\nsession={}\nmessage={}",
-        outcome.status,
-        outcome.scope.account_id,
-        outcome.scope.peer_id_hash,
-        outcome.scope.direct_message_key,
-        outcome.scope.item_id,
-        outcome.scope.session_id,
-        safe_remote_text(&outcome.message),
-    )
+    format!("[YunXi]\n{}", public_outcome_message(outcome))
 }
 
 pub fn render_remote_control_error(
-    scope: &WeixinRemoteControlScope,
+    _scope: &WeixinRemoteControlScope,
     error: &WeixinRemoteControlError,
 ) -> String {
-    let label = match error {
-        WeixinRemoteControlError::Poisoned => "lock_unavailable",
-        WeixinRemoteControlError::State(_) => "state_unavailable",
-        WeixinRemoteControlError::RequestNotFound => "request_not_found",
-        WeixinRemoteControlError::ScopeMismatch => "scope_mismatch",
-        WeixinRemoteControlError::PurposeMismatch => "purpose_mismatch",
-        WeixinRemoteControlError::Expired => "expired",
-        WeixinRemoteControlError::ResponseChannelClosed => "response_channel_closed",
+    let message = match error {
+        WeixinRemoteControlError::Poisoned | WeixinRemoteControlError::State(_) => {
+            "微信控制暂不可用，请稍后重试。"
+        }
+        WeixinRemoteControlError::RequestNotFound => "没有找到可处理的请求，可能已过期或已完成。",
+        WeixinRemoteControlError::ScopeMismatch => "这条控制命令不属于当前会话，已拒绝处理。",
+        WeixinRemoteControlError::PurposeMismatch => "控制命令类型不匹配，请按提示使用对应命令。",
+        WeixinRemoteControlError::AmbiguousRequest => {
+            "当前有多个待处理请求，请按提示里的控制码重试。"
+        }
+        WeixinRemoteControlError::Expired => "这个控制请求已过期，请重新发起。",
+        WeixinRemoteControlError::ResponseChannelClosed => "当前任务已结束，控制命令未生效。",
     };
-    format!(
-        "[YunXi 微信控制结果]\nstatus=error\nerror={label}\naccount={}\npeer={}\ndm={}\nitem={}\nsession={}\nmessage=remote control request was not applied",
-        scope.account_id,
-        scope.peer_id_hash,
-        scope.direct_message_key,
-        scope.item_id,
-        scope.session_id,
-    )
+    format!("[YunXi]\n{message}")
+}
+
+fn public_outcome_message(outcome: &WeixinRemoteControlOutcome) -> String {
+    match outcome.message.as_str() {
+        "approval accepted" => "已允许这次操作。".to_string(),
+        "approval denied" => "已拒绝这次操作。".to_string(),
+        "answer accepted" => "已收到补充信息。".to_string(),
+        "turn cancellation requested" => "已请求中止本轮处理。".to_string(),
+        message if message.starts_with("pending_control_requests=") => {
+            let count = message
+                .strip_prefix("pending_control_requests=")
+                .unwrap_or("0");
+            format!("当前有 {count} 个待处理控制请求。")
+        }
+        message => safe_remote_text(message),
+    }
 }
 
 #[cfg(test)]
@@ -874,6 +972,30 @@ mod tests {
         }
     }
 
+    fn assert_public_message_hides_control_internals(message: &str) {
+        for marker in [
+            "purpose=",
+            "request_id=",
+            "account=",
+            "peer=",
+            "dm=",
+            "item=",
+            "session=",
+            "cwd=",
+            "expires_at_millis=",
+            "account#11111111",
+            "peer#22222222",
+            "dm#33333333",
+            "item#11111111",
+            "session-1",
+        ] {
+            assert!(
+                !message.contains(marker),
+                "public message leaked internal marker {marker}: {message}"
+            );
+        }
+    }
+
     #[test]
     fn parser_accepts_only_explicit_slash_commands() {
         assert_eq!(parse_weixin_remote_command("好的"), None);
@@ -882,25 +1004,110 @@ mod tests {
             Some(WeixinRemoteCommand::Status)
         );
         assert_eq!(
+            parse_weixin_remote_command("/approve"),
+            Some(WeixinRemoteCommand::Approve { request_id: None })
+        );
+        assert_eq!(
             parse_weixin_remote_command("/approve wxctl#12345678"),
             Some(WeixinRemoteCommand::Approve {
-                request_id: "wxctl#12345678".to_string()
+                request_id: Some("wxctl#12345678".to_string())
+            })
+        );
+        assert_eq!(
+            parse_weixin_remote_command("/deny 这次先不要执行"),
+            Some(WeixinRemoteCommand::Deny {
+                request_id: None,
+                reason: Some("这次先不要执行".to_string())
             })
         );
         assert_eq!(
             parse_weixin_remote_command("/deny wxctl#12345678 too risky"),
             Some(WeixinRemoteCommand::Deny {
-                request_id: "wxctl#12345678".to_string(),
+                request_id: Some("wxctl#12345678".to_string()),
                 reason: Some("too risky".to_string())
+            })
+        );
+        assert_eq!(
+            parse_weixin_remote_command("/answer 可以"),
+            Some(WeixinRemoteCommand::Answer {
+                request_id: None,
+                text: "可以".to_string()
             })
         );
         assert_eq!(
             parse_weixin_remote_command("/answer wxctl#12345678 yes"),
             Some(WeixinRemoteCommand::Answer {
-                request_id: "wxctl#12345678".to_string(),
+                request_id: Some("wxctl#12345678".to_string()),
                 text: "yes".to_string()
             })
         );
+    }
+
+    #[test]
+    fn remote_control_prompt_is_public_facing() {
+        let rendered = render_remote_control_prompt(&WeixinRemoteControlPrompt {
+            scope: scope("item#11111111"),
+            request_id: "wxctl#12345678".to_string(),
+            purpose: WeixinRemoteControlPurpose::Cancellation,
+            action: "stop".to_string(),
+            reason: "cancel current turn".to_string(),
+            cwd_label: Some("cwd#99999999".to_string()),
+            expires_at_millis: 123456789,
+        });
+
+        assert!(rendered.contains("/stop"));
+        assert_public_message_hides_control_internals(&rendered);
+        assert!(!rendered.contains("wxctl#12345678"));
+    }
+
+    #[test]
+    fn approval_and_user_input_prompts_hide_scope_fields() {
+        let approval = render_remote_control_prompt(&WeixinRemoteControlPrompt {
+            scope: scope("item#11111111"),
+            request_id: "wxctl#12345678".to_string(),
+            purpose: WeixinRemoteControlPurpose::Approval,
+            action: "shell".to_string(),
+            reason: "safe test".to_string(),
+            cwd_label: Some("cwd#99999999".to_string()),
+            expires_at_millis: 123456789,
+        });
+        assert!(approval.contains("/approve"));
+        assert!(approval.contains("/deny"));
+        assert!(approval.contains("wxctl#12345678"));
+        assert_public_message_hides_control_internals(&approval);
+
+        let user_input = render_remote_control_prompt(&WeixinRemoteControlPrompt {
+            scope: scope("item#11111111"),
+            request_id: "wxctl#87654321".to_string(),
+            purpose: WeixinRemoteControlPurpose::UserInput,
+            action: "answer".to_string(),
+            reason: "请选择下一步".to_string(),
+            cwd_label: None,
+            expires_at_millis: 123456789,
+        });
+        assert!(user_input.contains("/answer"));
+        assert!(user_input.contains("wxctl#87654321"));
+        assert_public_message_hides_control_internals(&user_input);
+    }
+
+    #[test]
+    fn remote_control_result_messages_are_public_facing() {
+        let rendered = render_remote_control_outcome(&WeixinRemoteControlOutcome {
+            scope: scope("item#11111111"),
+            request_id: Some("wxctl#12345678".to_string()),
+            status: "consumed",
+            message: "turn cancellation requested".to_string(),
+        });
+        assert!(rendered.contains("已请求中止"));
+        assert_public_message_hides_control_internals(&rendered);
+        assert!(!rendered.contains("wxctl#12345678"));
+
+        let error = render_remote_control_error(
+            &scope("item#11111111"),
+            &WeixinRemoteControlError::AmbiguousRequest,
+        );
+        assert!(error.contains("多个待处理请求"));
+        assert_public_message_hides_control_internals(&error);
     }
 
     #[tokio::test]
@@ -926,7 +1133,7 @@ mod tests {
             .handle_command(
                 &scope("item#11111111"),
                 WeixinRemoteCommand::Approve {
-                    request_id: prompt.request_id.clone(),
+                    request_id: Some(prompt.request_id.clone()),
                 },
                 1000,
             )
@@ -943,12 +1150,85 @@ mod tests {
             hub.handle_command(
                 &scope("item#11111111"),
                 WeixinRemoteCommand::Approve {
-                    request_id: prompt.request_id
+                    request_id: Some(prompt.request_id)
                 },
                 1001,
             ),
             Err(WeixinRemoteControlError::RequestNotFound)
         ));
+    }
+
+    #[tokio::test]
+    async fn hub_routes_single_approval_without_request_id() {
+        let hub = WeixinRemoteControlHub::default();
+        let (tx, rx) = oneshot::channel();
+        hub.register_approval(
+            scope("item#11111111"),
+            AgentRunApprovalRequest {
+                id: Some("approval-1".to_string()),
+                tool_name: "shell".to_string(),
+                reason: "safe test".to_string(),
+                command: Some("echo ok".to_string()),
+                cwd: "D:/YunXi Agent".to_string(),
+                respond_to: tx,
+            },
+            2000,
+        )
+        .expect("register");
+
+        let outcome = hub
+            .handle_command(
+                &scope("item#11111111"),
+                WeixinRemoteCommand::Approve { request_id: None },
+                1000,
+            )
+            .expect("approve without id");
+
+        assert_eq!(outcome.status, "consumed");
+        assert!(rx.await.expect("approval response").approved);
+    }
+
+    #[tokio::test]
+    async fn hub_rejects_ambiguous_approval_without_request_id() {
+        let hub = WeixinRemoteControlHub::default();
+        let (first_tx, _first_rx) = oneshot::channel();
+        let (second_tx, _second_rx) = oneshot::channel();
+        hub.register_approval(
+            scope("item#11111111"),
+            AgentRunApprovalRequest {
+                id: Some("approval-1".to_string()),
+                tool_name: "shell".to_string(),
+                reason: "safe test".to_string(),
+                command: Some("echo ok".to_string()),
+                cwd: "D:/YunXi Agent".to_string(),
+                respond_to: first_tx,
+            },
+            2000,
+        )
+        .expect("register first");
+        hub.register_approval(
+            scope("item#11111111"),
+            AgentRunApprovalRequest {
+                id: Some("approval-2".to_string()),
+                tool_name: "shell".to_string(),
+                reason: "safe test 2".to_string(),
+                command: Some("echo ok 2".to_string()),
+                cwd: "D:/YunXi Agent".to_string(),
+                respond_to: second_tx,
+            },
+            2000,
+        )
+        .expect("register second");
+
+        assert!(matches!(
+            hub.handle_command(
+                &scope("item#11111111"),
+                WeixinRemoteCommand::Approve { request_id: None },
+                1000,
+            ),
+            Err(WeixinRemoteControlError::AmbiguousRequest)
+        ));
+        assert_eq!(hub.pending_count(), 2);
     }
 
     #[tokio::test]
@@ -1005,7 +1285,7 @@ mod tests {
         hub.handle_command(
             &control_scope,
             WeixinRemoteCommand::Approve {
-                request_id: prompt.request_id.clone(),
+                request_id: Some(prompt.request_id.clone()),
             },
             1500,
         )

@@ -906,13 +906,30 @@ mod tests {
         .await
         .expect("approval prompt to be recorded");
         let record = sink.records().pop().expect("sink record");
-        assert!(record.final_response.contains("[YunXi 微信控制]"));
-        assert!(record.final_response.contains("purpose=approval"));
-        assert!(record.final_response.contains("account=account#11111111"));
-        assert!(record.final_response.contains("peer=peer#22222222"));
-        assert!(record.final_response.contains("dm=dm#33333333"));
-        assert!(record.final_response.contains("item=item#44444444"));
-        assert!(record.final_response.contains("session=session#55555555"));
+        assert!(record.final_response.contains("[YunXi]"));
+        assert!(record.final_response.contains("/approve"));
+        assert!(record.final_response.contains("/deny"));
+        for marker in [
+            "purpose=",
+            "request_id=",
+            "account=",
+            "peer=",
+            "dm=",
+            "item=",
+            "session=",
+            "expires_at_millis=",
+            "account#11111111",
+            "peer#22222222",
+            "dm#33333333",
+            "item#44444444",
+            "session#55555555",
+        ] {
+            assert!(
+                !record.final_response.contains(marker),
+                "remote control prompt leaked {marker}: {}",
+                record.final_response
+            );
+        }
         request_task.abort();
         let _ = request_task.await;
         let _ = supervise.await;

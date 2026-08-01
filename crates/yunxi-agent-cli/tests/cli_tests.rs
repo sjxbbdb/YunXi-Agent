@@ -19,6 +19,10 @@ use yunxi_agent_weixin::{
 
 const PRIVATE_WEIXIN_ACCOUNT: &str = "private-account-name";
 
+fn interactive_banner() -> String {
+    format!("YunXi Agent v{} interactive CLI", env!("CARGO_PKG_VERSION"))
+}
+
 fn write_legacy_weixin_metadata(workspace: &TempDir) -> (WeixinAccountId, String) {
     let account_id = WeixinAccountId::new(PRIVATE_WEIXIN_ACCOUNT);
     let credential = WeixinCredentialReference {
@@ -1091,9 +1095,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .write_stdin("/exit\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "YunXi Agent v2.2.0 interactive CLI",
-        ))
+        .stdout(predicate::str::contains(interactive_banner()))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
             "offline_runtime: static_provider (stage fixtures disabled by default)",
@@ -1250,9 +1252,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .write_stdin("hello from repl\n/session\n/exit\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "YunXi Agent v2.2.0 interactive CLI",
-        ))
+        .stdout(predicate::str::contains(interactive_banner()))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
             "YunXi autonomous runtime accepted prompt: hello from repl",
@@ -1270,9 +1270,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .write_stdin("/exit\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "YunXi Agent v2.2.0 interactive CLI",
-        ))
+        .stdout(predicate::str::contains(interactive_banner()))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }
 

@@ -1781,10 +1781,11 @@ mod tests {
         let records = sink.records();
         assert_eq!(records.len(), 1);
         let text = &records[0].final_response;
-        assert!(text.contains("[YunXi 微信控制结果]"));
-        assert!(text.contains("status=ok"));
-        assert!(text.contains("pending_control_requests=0"));
-        assert!(text.contains("account=account#"));
+        assert!(text.contains("[YunXi]"));
+        assert!(text.contains("当前有 0 个待处理控制请求"));
+        assert!(!text.contains("status=ok"));
+        assert!(!text.contains("pending_control_requests=0"));
+        assert!(!text.contains("account=account#"));
     }
 
     #[tokio::test]

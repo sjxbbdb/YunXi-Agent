@@ -578,11 +578,27 @@ async fn supervisor_observes_agent_events_but_weixin_uses_final_text_only() {
 
     let records = sink.records();
     assert_eq!(records.len(), 2);
-    assert!(records.iter().any(|record| {
-        record
-            .final_response
-            .contains("[YunXi 微信控制]\npurpose=cancellation")
-    }));
+    let cancellation_prompt = records
+        .iter()
+        .find(|record| record.final_response.contains("/stop"))
+        .expect("cancellation prompt");
+    assert!(cancellation_prompt.final_response.contains("[YunXi]"));
+    for marker in [
+        "purpose=",
+        "request_id=",
+        "account=",
+        "peer=",
+        "dm=",
+        "item=",
+        "session=",
+        "expires_at_millis=",
+    ] {
+        assert!(
+            !cancellation_prompt.final_response.contains(marker),
+            "cancellation prompt leaked {marker}: {}",
+            cancellation_prompt.final_response
+        );
+    }
     assert!(
         records
             .iter()

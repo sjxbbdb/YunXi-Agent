@@ -4929,6 +4929,63 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 
 署名：开发者
 
+## 2026-08-01 20:50:58 +08:00
+
+工作目标：按用户反馈隐藏微信侧“我正在处理这条消息，如需中止本轮处理，回复 /stop”取消控制提示，使用户只看到真实业务回复。
+
+执行流程：
+1. 使用 CodeGraph 定位取消提示发送路径，确认正常消息处理时 `run_pending_turn` 在注册取消控制后主动写入 outbound sink。
+2. 保留远程取消注册和 `/stop` 后台控制能力，但移除正常处理路径中的取消提示发送。
+3. 将取消控制提示渲染结果改为空字符串，避免未来误调用重新把该提示发到微信。
+4. 调整 delivery 测试夹具，避免继续使用 `/stop` 取消提示作为可见控制消息样例。
+5. 补充和调整回归测试，断言微信 turn supervisor 正常处理时只发送最终业务回复，不发送 `/stop`、`我正在处理这条消息` 或任何内部控制字段。
+6. 将 workspace 版本切换为 `2.2.0-hotfix.2`，同步更新 TUI 版本快照。
+7. 构建 release 版本，精确停止安装目录下旧微信 bot 进程 PID 8048，备份并替换安装版 `yunxi.exe` 与 `yunxi-agent-cli.exe`。
+8. 使用新版本重新拉起微信 bot 并确认状态 ready。
+
+修改文件与路径：
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\turn_supervisor.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\remote_control.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\src\delivery.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\tests\turn_supervisor_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_100x30.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_200x50.txt`
+- `D:\YunXi Agent\docs\development-log.md`
+
+安装与备份路径：
+- 安装源：`D:\YunXi Agent\target\release\yunxi.exe`
+- 安装源：`D:\YunXi Agent\target\release\yunxi-agent-cli.exe`
+- 安装目标：`D:\Apps\YunXi Agent\bin\yunxi.exe`
+- 安装目标：`D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe`
+- 旧版本备份：`D:\Apps\YunXi Agent\bin\yunxi.exe.previous-20260801-204918`
+- 旧版本备份：`D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe.previous-20260801-204918`
+
+验证结果：
+- `rg "我正在处理这条消息|如需中止本轮处理|回复 /stop" crates/yunxi-agent-weixin/src crates/yunxi-agent-weixin/tests`：生产源码无命中，测试仅保留 forbidden 断言命中。
+- `cargo fmt`：通过。
+- `cargo test -p yunxi-agent-weixin remote_control`：10 项相关测试通过。
+- `cargo test -p yunxi-agent-weixin`：通过。
+- `cargo test -p yunxi-agent-tui --lib full_frame_snapshot`（带 `YUNXI_UPDATE_SNAPSHOTS=1` 更新快照）：5 项通过。
+- `cargo test --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release`：通过。
+- `D:\Apps\YunXi Agent\bin\yunxi.exe --version`：输出 `yunxi 2.2.0-hotfix.2`。
+- `D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe --version`：输出 `yunxi 2.2.0-hotfix.2`。
+- `yunxi.exe` 安装目标 SHA-256 与 release 源一致：`D709829C5000C7911AECEA602F1DCFD836B6C03545611C95EB91A33A848942EB`。
+- `yunxi-agent-cli.exe` 安装目标 SHA-256 与 release 源一致：`8AC9455A8EEA171090343C2E749C663E205C13BD9EF0C02FADF09B60950ED416`。
+- 新微信 bot 进程：PID 17628，路径 `D:\Apps\YunXi Agent\bin\yunxi.exe`。
+- `weixin status --json`：`state=ready`，`account_lock_state=active`，`credential_state=present`，`pending_inbound_count=0`，`pending_delivery_count=0`，`pending_remote_control_count=0`，`version=2.2.0-hotfix.2`。
+
+提交、推送和 tag 状态：等待本轮后续 commit、push 与 `v2.2.0-hotfix.2` 新 tag；不会删除、移动或覆盖历史 tag。
+
+清理状态：未执行删除、递归清理、移动目录、git clean、force 操作、用户目录清理或系统配置修改；仅停止并重启安装路径精确匹配的 YunXi 微信 bot 进程。
+
+署名：开发者
+
 ## 2026-08-01 20:23:44 +08:00
 
 工作目标：修复微信远程控制提示把内部 payload 直接展示给用户的问题，并发布 `v2.2.0-hotfix.1`。

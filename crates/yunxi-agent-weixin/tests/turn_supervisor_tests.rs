@@ -577,13 +577,17 @@ async fn supervisor_observes_agent_events_but_weixin_uses_final_text_only() {
     );
 
     let records = sink.records();
-    assert_eq!(records.len(), 2);
-    let cancellation_prompt = records
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].final_response, "final safe answer");
+    let outbound_text = records
         .iter()
-        .find(|record| record.final_response.contains("/stop"))
-        .expect("cancellation prompt");
-    assert!(cancellation_prompt.final_response.contains("[YunXi]"));
-    for marker in [
+        .map(|record| record.final_response.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for forbidden in [
+        "/stop",
+        "我正在处理这条消息",
+        "如需中止本轮处理",
         "purpose=",
         "request_id=",
         "account=",
@@ -592,24 +596,6 @@ async fn supervisor_observes_agent_events_but_weixin_uses_final_text_only() {
         "item=",
         "session=",
         "expires_at_millis=",
-    ] {
-        assert!(
-            !cancellation_prompt.final_response.contains(marker),
-            "cancellation prompt leaked {marker}: {}",
-            cancellation_prompt.final_response
-        );
-    }
-    assert!(
-        records
-            .iter()
-            .any(|record| record.final_response == "final safe answer")
-    );
-    let outbound_text = records
-        .iter()
-        .map(|record| record.final_response.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
-    for forbidden in [
         "partial visible text",
         "hidden reasoning",
         "provider wire",

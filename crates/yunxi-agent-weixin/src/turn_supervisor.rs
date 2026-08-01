@@ -146,25 +146,22 @@ impl WeixinTurnSupervisor {
         if let Some(parent_session_id) = parent_session_id.clone() {
             runtime_config = runtime_config.with_parent_session_id(parent_session_id);
         }
-        let (result, stream_observation) = if let Some(remote_control_hub) =
-            self.options.remote_control_hub.clone()
-        {
-            let (control, stream) = AgentRunControl::streaming();
-            let scope = WeixinRemoteControlScope {
-                account_id: payload.account_id.clone(),
-                peer_id_hash: payload.peer_id_hash.clone(),
-                direct_message_key: payload.direct_message_key.clone(),
-                item_id: payload.item_id.clone(),
-                session_id: runtime_session_id.clone(),
-            };
-            let cancellation_prompt = match remote_control_hub.register_cancellation(
-                scope.clone(),
-                control.cancellation_token(),
-                now_millis_u64()
-                    .saturating_add(self.options.remote_control_timeout.as_millis() as u64),
-            ) {
-                Ok(prompt) => prompt,
-                Err(_error) => {
+        let (result, stream_observation) =
+            if let Some(remote_control_hub) = self.options.remote_control_hub.clone() {
+                let (control, stream) = AgentRunControl::streaming();
+                let scope = WeixinRemoteControlScope {
+                    account_id: payload.account_id.clone(),
+                    peer_id_hash: payload.peer_id_hash.clone(),
+                    direct_message_key: payload.direct_message_key.clone(),
+                    item_id: payload.item_id.clone(),
+                    session_id: runtime_session_id.clone(),
+                };
+                if let Err(_error) = remote_control_hub.register_cancellation(
+                    scope.clone(),
+                    control.cancellation_token(),
+                    now_millis_u64()
+                        .saturating_add(self.options.remote_control_timeout.as_millis() as u64),
+                ) {
                     let _ = self.sink.write_outbound_text(WeixinRuntimeSinkRecord {
                         account_id: payload.account_id.clone(),
                         peer_id_hash: payload.peer_id_hash.clone(),
@@ -184,48 +181,37 @@ impl WeixinTurnSupervisor {
                     )?;
                     return Err(WeixinTurnSupervisorError::RemoteControlRegistrationFailed);
                 }
+                let timeout = self.options.remote_control_timeout;
+                let monitor = supervise_remote_control_stream(
+                    remote_control_hub.clone(),
+                    scope.clone(),
+                    stream,
+                    timeout,
+                    Arc::clone(&self.sink),
+                    payload.reply_to_user_id.clone(),
+                    payload.reply_context_token.clone(),
+                );
+                let agent = Agent::new(runtime_config);
+                let run = agent.run_with_backend_stream(
+                    backend,
+                    AgentInput::text(text.expose().to_string()),
+                    control,
+                );
+                let (result, observation) = tokio::join!(run, monitor);
+                let _ = remote_control_hub.close_scope(&scope);
+                (result, Some(observation))
+            } else {
+                (
+                    Agent::new(runtime_config)
+                        .run_with_backend_stream(
+                            backend,
+                            AgentInput::text(text.expose().to_string()),
+                            AgentRunControl::detached(),
+                        )
+                        .await,
+                    None,
+                )
             };
-            let timeout = self.options.remote_control_timeout;
-            let monitor = supervise_remote_control_stream(
-                remote_control_hub.clone(),
-                scope.clone(),
-                stream,
-                timeout,
-                Arc::clone(&self.sink),
-                payload.reply_to_user_id.clone(),
-                payload.reply_context_token.clone(),
-            );
-            let _ = self.sink.write_outbound_text(WeixinRuntimeSinkRecord {
-                account_id: payload.account_id.clone(),
-                peer_id_hash: payload.peer_id_hash.clone(),
-                direct_message_key: payload.direct_message_key.clone(),
-                item_id: payload.item_id.clone(),
-                session_id: runtime_session_id.clone(),
-                reply_to_user_id: payload.reply_to_user_id.clone(),
-                reply_context_token: payload.reply_context_token.clone(),
-                final_response: render_remote_control_prompt(&cancellation_prompt),
-            });
-            let agent = Agent::new(runtime_config);
-            let run = agent.run_with_backend_stream(
-                backend,
-                AgentInput::text(text.expose().to_string()),
-                control,
-            );
-            let (result, observation) = tokio::join!(run, monitor);
-            let _ = remote_control_hub.close_scope(&scope);
-            (result, Some(observation))
-        } else {
-            (
-                Agent::new(runtime_config)
-                    .run_with_backend_stream(
-                        backend,
-                        AgentInput::text(text.expose().to_string()),
-                        AgentRunControl::detached(),
-                    )
-                    .await,
-                None,
-            )
-        };
 
         let report = match result {
             Ok(result) => {

@@ -779,7 +779,9 @@ mod tests {
             session_id: "session-1".to_string(),
             reply_to_user_id: Some(SecretString::new("raw-user")),
             reply_context_token: Some(SecretString::new("raw-context")),
-            final_response: "[YunXi]\n如需中止本轮处理，回复 /stop。".to_string(),
+            final_response:
+                "[YunXi]\n需要你确认一次操作：shell\n回复 /approve 允许，或回复 /deny 拒绝。"
+                    .to_string(),
         };
 
         sink.write_outbound_text(base_record.clone())

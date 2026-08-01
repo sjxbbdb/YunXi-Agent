@@ -909,9 +909,7 @@ pub fn render_remote_control_prompt(prompt: &WeixinRemoteControlPrompt) -> Strin
             safe_remote_text(&prompt.reason),
             prompt.request_id,
         ),
-        WeixinRemoteControlPurpose::Cancellation => {
-            "[YunXi]\n我正在处理这条消息。\n如需中止本轮处理，回复 /stop。".to_string()
-        }
+        WeixinRemoteControlPurpose::Cancellation => String::new(),
     }
 }
 
@@ -1044,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_control_prompt_is_public_facing() {
+    fn cancellation_prompt_is_suppressed_for_public_weixin_messages() {
         let rendered = render_remote_control_prompt(&WeixinRemoteControlPrompt {
             scope: scope("item#11111111"),
             request_id: "wxctl#12345678".to_string(),
@@ -1055,9 +1053,7 @@ mod tests {
             expires_at_millis: 123456789,
         });
 
-        assert!(rendered.contains("/stop"));
-        assert_public_message_hides_control_internals(&rendered);
-        assert!(!rendered.contains("wxctl#12345678"));
+        assert!(rendered.is_empty());
     }
 
     #[test]

@@ -4980,7 +4980,7 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 - 新微信 bot 进程：PID 8048，路径 `D:\Apps\YunXi Agent\bin\yunxi.exe`。
 - `weixin status --json`：`state=ready`，`account_lock_state=active`，`credential_state=present`，`pending_inbound_count=0`，`pending_delivery_count=0`，`pending_remote_control_count=0`，`version=2.2.0-hotfix.1`。
 
-提交、推送和 tag 状态：等待本轮后续 commit、push 与 `v2.2.0-hotfix.1` 新 tag；不会删除、移动或覆盖历史 tag。
+提交、推送和 tag 状态：已创建 commit `0b18cc5 fix: hide weixin remote control internals`，已推送 `master` 到 `origin/master`，已创建并推送新 tag `v2.2.0-hotfix.1`，已创建 GitHub Release `https://github.com/sjxbbdb/YunXi-Agent/releases/tag/v2.2.0-hotfix.1`；未删除、移动或覆盖任何历史 tag，未使用 force。
 
 清理状态：未执行删除、递归清理、移动目录、git clean、force 操作、用户目录清理或系统配置修改；仅停止并重启安装路径精确匹配的 YunXi 微信 bot 进程。
 

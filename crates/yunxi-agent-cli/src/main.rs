@@ -1,7 +1,10 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use std::fs::{self, OpenOptions};
 use std::io::IsTerminal;
 use std::path::PathBuf;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentRunControl, AgentRunResult,
     ApprovalMode, BackendKind, CommandStatus, ControlAuditRecord, ControlRequest, ControlScope,
@@ -19,8 +22,9 @@ use yunxi_agent_runtime::control_snapshot;
 use yunxi_agent_storage::{
     FileControlStore, FilePersonaMemoryStore, FileSessionStore, HistoryLoadOptions,
     PersonaMemoryScope, RolloutRecord, SessionGraphView, SessionHistory, SessionId, SessionRecord,
-    SessionStore, SessionSummary,
+    SessionStore, SessionSummary, WeixinAccountLockState,
 };
+use yunxi_agent_weixin::{WeixinAccountId, WeixinAccountStore};
 
 mod commands {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/commands.rs"));
@@ -54,6 +58,14 @@ mod tui {
 
 const CODEX_CORE_PARITY_MAP: &str =
     include_str!("../../../docs/extraction-index/codex-core-agent-parity-map.md");
+const DEFAULT_WEIXIN_AUTOSTART_ACCOUNT: &str = "default";
+const WEIXIN_AUTOSTART_ENV: &str = "YUNXI_WEIXIN_AUTOSTART";
+const WEIXIN_AUTOSTART_ACCOUNT_ENV: &str = "YUNXI_WEIXIN_ACCOUNT";
+const WEIXIN_AUTOSTART_READY_TIMEOUT_MS_ENV: &str = "YUNXI_WEIXIN_AUTOSTART_READY_TIMEOUT_MS";
+const DEFAULT_WEIXIN_AUTOSTART_READY_TIMEOUT_MS: u64 = 4_000;
+const MAX_WEIXIN_AUTOSTART_READY_TIMEOUT_MS: u64 = 30_000;
+const WEIXIN_AUTOSTART_READY_POLL_MS: u64 = 100;
+const WEIXIN_AUTOSTART_READY_SETTLE_MS: u64 = 150;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CliExitCode {
@@ -167,6 +179,13 @@ struct Cli {
     )]
     companion: bool,
 
+    #[arg(
+        long = "no-weixin-autostart",
+        global = true,
+        help = "Do not automatically start the local Weixin gateway when entering interactive CLI"
+    )]
+    no_weixin_autostart: bool,
+
     #[command(subcommand)]
     command: Option<CliCommand>,
 
@@ -211,6 +230,27 @@ enum CliCommand {
     Weixin {
         #[command(subcommand)]
         command: weixin::WeixinCommand,
+    },
+    Bot {
+        #[command(subcommand)]
+        command: BotCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BotCommand {
+    #[command(about = "Start the local companion gateway")]
+    Start {
+        #[arg(
+            long,
+            default_value = "weixin",
+            help = "Comma-separated channels to enable; currently only weixin is supported"
+        )]
+        channels: String,
+        #[arg(long, value_name = "PATH")]
+        dir: Option<PathBuf>,
+        #[arg(long, default_value = "default")]
+        account: String,
     },
 }
 
@@ -258,6 +298,7 @@ enum ControlCommand {
 #[derive(Debug, Subcommand)]
 enum EvalCommand {
     Companion,
+    Weixin,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -480,6 +521,8 @@ async fn run_cli() -> Result<()> {
     let Some(cli) = parse_cli()? else {
         return Ok(());
     };
+    let stdin_is_terminal = std::io::stdin().is_terminal();
+    let stdout_is_terminal = std::io::stdout().is_terminal();
     let invocation = if cli.jsonl {
         terminal_mode::InvocationKind::Jsonl
     } else if cli.json {
@@ -494,8 +537,8 @@ async fn run_cli() -> Result<()> {
     let terminal_resolution = terminal_mode::TerminalModeRequest {
         tui: cli.tui,
         no_tui: cli.no_tui,
-        stdin_is_terminal: std::io::stdin().is_terminal(),
-        stdout_is_terminal: std::io::stdout().is_terminal(),
+        stdin_is_terminal,
+        stdout_is_terminal,
         ci: continuous_integration_environment(),
         invocation,
     }
@@ -519,6 +562,41 @@ async fn run_cli() -> Result<()> {
             if let Some(notice) = terminal_resolution.fallback_notice {
                 eprintln!("{notice}");
             }
+            if should_attempt_interactive_weixin_autostart(
+                &cli,
+                stdin_is_terminal,
+                stdout_is_terminal,
+            ) {
+                match maybe_autostart_weixin_gateway(&config, backend, provider_mode, cli.companion)
+                {
+                    Ok(Some(report)) => match report.readiness {
+                        WeixinAutostartReadiness::Ready => eprintln!(
+                            "[weixin] gateway ready: pid={}, stdout={}, stderr={}",
+                            report.pid,
+                            report.stdout_log.display(),
+                            report.stderr_log.display()
+                        ),
+                        WeixinAutostartReadiness::TimedOut { timeout_ms } => eprintln!(
+                            "[weixin] gateway startup timed out after {timeout_ms}ms: pid={}, stdout={}, stderr={}",
+                            report.pid,
+                            report.stdout_log.display(),
+                            report.stderr_log.display()
+                        ),
+                        WeixinAutostartReadiness::Exited { status } => eprintln!(
+                            "[weixin] gateway exited before ready (status={status}): stdout={}, stderr={}",
+                            report.stdout_log.display(),
+                            report.stderr_log.display()
+                        ),
+                    },
+                    Ok(None) => {}
+                    Err(error) => {
+                        eprintln!(
+                            "[weixin] gateway autostart skipped: {}",
+                            redact_secret_fragments(&format!("{error:#}"))
+                        );
+                    }
+                }
+            }
             return interactive::run_interactive(interactive::InteractiveOptions {
                 config,
                 backend,
@@ -531,6 +609,421 @@ async fn run_cli() -> Result<()> {
     }
 
     run_prompt(prompt, config, backend, provider_mode, cli.json, cli.jsonl).await
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WeixinAutostartReport {
+    pid: u32,
+    stdout_log: PathBuf,
+    stderr_log: PathBuf,
+    readiness: WeixinAutostartReadiness,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WeixinAutostartReadiness {
+    Ready,
+    TimedOut { timeout_ms: u64 },
+    Exited { status: ExitStatus },
+}
+
+fn should_attempt_interactive_weixin_autostart(
+    cli: &Cli,
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+) -> bool {
+    !cli.no_weixin_autostart
+        && weixin_autostart_enabled()
+        && cli.command.is_none()
+        && cli.prompt.iter().all(|part| part.trim().is_empty())
+        && !cli.json
+        && !cli.jsonl
+        && stdin_is_terminal
+        && stdout_is_terminal
+}
+
+fn weixin_autostart_enabled() -> bool {
+    weixin_autostart_env_value_enabled(std::env::var(WEIXIN_AUTOSTART_ENV).ok().as_deref())
+}
+
+fn weixin_autostart_env_value_enabled(value: Option<&str>) -> bool {
+    let Some(value) = value else {
+        return true;
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return true;
+    }
+    !matches!(
+        value.to_ascii_lowercase().as_str(),
+        "0" | "false" | "off" | "no"
+    )
+}
+
+fn maybe_autostart_weixin_gateway(
+    config: &AgentConfig,
+    backend: BackendKind,
+    provider_mode: provider_mode::ProviderMode,
+    explicit_companion: bool,
+) -> Result<Option<WeixinAutostartReport>> {
+    if backend == BackendKind::Codex {
+        return Ok(None);
+    }
+    let account = std::env::var(WEIXIN_AUTOSTART_ACCOUNT_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_WEIXIN_AUTOSTART_ACCOUNT.to_string());
+    let account_id = WeixinAccountId::new(&account);
+    let account_store = WeixinAccountStore::new(&config.cwd);
+    let Some(record) = account_store
+        .load(&account_id)
+        .context("weixin autostart metadata load failed")?
+    else {
+        return Ok(None);
+    };
+    let state_store = yunxi_agent_storage::FileWeixinStateStore::for_workspace(&config.cwd);
+    let lock_state = state_store
+        .lock_state(&record.account_id)
+        .context("weixin autostart account lock check failed")?;
+    if lock_state.state == WeixinAccountLockState::Active {
+        return Ok(None);
+    }
+
+    let log_dir = config.cwd.join(".yunxi").join("weixin").join("logs");
+    fs::create_dir_all(&log_dir).context("weixin autostart log directory creation failed")?;
+    let stamp = now_millis_u64();
+    let stdout_log = log_dir.join(format!("autostart-{stamp}.stdout.log"));
+    let stderr_log = log_dir.join(format!("autostart-{stamp}.stderr.log"));
+    let stdout_file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&stdout_log)
+        .context("weixin autostart stdout log open failed")?;
+    let stderr_file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&stderr_log)
+        .context("weixin autostart stderr log open failed")?;
+
+    let exe = std::env::current_exe().context("weixin autostart current executable failed")?;
+    let mut command = Command::new(exe);
+    append_runtime_cli_args(
+        &mut command,
+        config,
+        backend,
+        provider_mode,
+        explicit_companion,
+    );
+    command
+        .args([
+            "bot",
+            "start",
+            "--channels",
+            "weixin",
+            "--account",
+            account.as_str(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
+    configure_background_process(&mut command);
+    let mut child = command
+        .spawn()
+        .context("weixin autostart process spawn failed")?;
+    let pid = child.id();
+    let readiness =
+        wait_for_weixin_autostart_readiness(&mut child, &state_store, &record.account_id, pid)?;
+    Ok(Some(WeixinAutostartReport {
+        pid,
+        stdout_log,
+        stderr_log,
+        readiness,
+    }))
+}
+
+fn weixin_autostart_ready_timeout_ms() -> u64 {
+    parse_weixin_autostart_ready_timeout(
+        std::env::var(WEIXIN_AUTOSTART_READY_TIMEOUT_MS_ENV)
+            .ok()
+            .as_deref(),
+    )
+}
+
+fn parse_weixin_autostart_ready_timeout(value: Option<&str>) -> u64 {
+    value
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_WEIXIN_AUTOSTART_READY_TIMEOUT_MS)
+        .clamp(100, MAX_WEIXIN_AUTOSTART_READY_TIMEOUT_MS)
+}
+
+fn wait_for_weixin_autostart_readiness(
+    child: &mut Child,
+    state_store: &yunxi_agent_storage::FileWeixinStateStore,
+    account_id: &str,
+    pid: u32,
+) -> Result<WeixinAutostartReadiness> {
+    let timeout_ms = weixin_autostart_ready_timeout_ms();
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .context("weixin autostart readiness process probe failed")?
+        {
+            return Ok(WeixinAutostartReadiness::Exited { status });
+        }
+        let lock_state = state_store
+            .lock_state(account_id)
+            .context("weixin autostart readiness lock check failed")?;
+        if lock_state.state == WeixinAccountLockState::Active && lock_state.pid == Some(pid) {
+            std::thread::sleep(Duration::from_millis(WEIXIN_AUTOSTART_READY_SETTLE_MS));
+            if child
+                .try_wait()
+                .context("weixin autostart readiness settle probe failed")?
+                .is_none()
+            {
+                return Ok(WeixinAutostartReadiness::Ready);
+            }
+        }
+        if Instant::now() >= deadline {
+            return Ok(WeixinAutostartReadiness::TimedOut { timeout_ms });
+        }
+        std::thread::sleep(Duration::from_millis(WEIXIN_AUTOSTART_READY_POLL_MS));
+    }
+}
+
+fn append_runtime_cli_args(
+    command: &mut Command,
+    config: &AgentConfig,
+    backend: BackendKind,
+    provider_mode: provider_mode::ProviderMode,
+    explicit_companion: bool,
+) {
+    command.arg("--cwd").arg(&config.cwd);
+    match backend {
+        BackendKind::Yunxi => {}
+        BackendKind::DryRun => {
+            command.args(["--backend", "dry-run"]);
+        }
+        BackendKind::Codex => {
+            command.args(["--backend", "codex"]);
+        }
+    }
+    match provider_mode {
+        provider_mode::ProviderMode::Auto => {}
+        provider_mode::ProviderMode::ForcedLive => {
+            command.arg("--provider-live");
+        }
+        provider_mode::ProviderMode::ForcedOffline => {
+            command.arg("--offline");
+        }
+    }
+    if let Some(model) = &config.model {
+        command.args(["--model", model]);
+    }
+    if let Some(provider) = &config.provider {
+        command.args(["--provider", provider]);
+    }
+    if let Some(codex_home) = &config.codex_home {
+        command.arg("--codex-home").arg(codex_home);
+    }
+    if let Some(context_window_tokens) = config.context_window_tokens {
+        command.args([
+            "--context-window-tokens",
+            &context_window_tokens.to_string(),
+        ]);
+    }
+    if let Some(auto_compact_threshold_tokens) = config.auto_compact_threshold_tokens {
+        command.args([
+            "--auto-compact-threshold-tokens",
+            &auto_compact_threshold_tokens.to_string(),
+        ]);
+    }
+    if explicit_companion {
+        command.arg("--companion");
+    }
+    command.args(["--approval", approval_mode_arg(config.approval_mode)]);
+    command.args(["--sandbox", sandbox_mode_arg(config.sandbox_mode)]);
+    command.args([
+        "--memory-extraction",
+        memory_extraction_mode_arg(config.memory_extraction_mode),
+    ]);
+}
+
+fn approval_mode_arg(mode: ApprovalMode) -> &'static str {
+    match mode {
+        ApprovalMode::Never => "never",
+        ApprovalMode::OnRequest => "on-request",
+        ApprovalMode::OnFailure => "on-failure",
+        ApprovalMode::Untrusted => "untrusted",
+    }
+}
+
+fn sandbox_mode_arg(mode: SandboxMode) -> &'static str {
+    match mode {
+        SandboxMode::ReadOnly => "read-only",
+        SandboxMode::WorkspaceWrite => "workspace-write",
+        SandboxMode::DangerFullAccess => "danger-full-access",
+    }
+}
+
+fn memory_extraction_mode_arg(mode: MemoryExtractionMode) -> &'static str {
+    match mode {
+        MemoryExtractionMode::Auto => "auto",
+        MemoryExtractionMode::RuleOnly => "rule-only",
+        MemoryExtractionMode::Provider => "provider",
+    }
+}
+
+fn now_millis_u64() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn configure_background_process(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_cli() -> Cli {
+        Cli {
+            backend: CliBackend::Yunxi,
+            live: false,
+            cwd: None,
+            model: None,
+            provider: None,
+            provider_live: false,
+            offline: false,
+            codex_home: None,
+            context_window_tokens: None,
+            auto_compact_threshold_tokens: None,
+            memory_extraction: CliMemoryExtractionMode::Auto,
+            approval: CliApprovalMode::OnRequest,
+            sandbox: CliSandboxMode::WorkspaceWrite,
+            json: false,
+            jsonl: false,
+            tui: false,
+            no_tui: false,
+            companion: false,
+            no_weixin_autostart: false,
+            command: None,
+            prompt: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn autostart_env_parser_handles_common_truthy_and_falsey_values() {
+        assert!(weixin_autostart_env_value_enabled(None));
+        assert!(weixin_autostart_env_value_enabled(Some("1")));
+        assert!(weixin_autostart_env_value_enabled(Some(" yes ")));
+        assert!(!weixin_autostart_env_value_enabled(Some("0")));
+        assert!(!weixin_autostart_env_value_enabled(Some("false")));
+        assert!(!weixin_autostart_env_value_enabled(Some("off")));
+        assert!(!weixin_autostart_env_value_enabled(Some("no")));
+    }
+
+    #[test]
+    fn autostart_decision_requires_terminal_interactive_plain_cli() {
+        let cli = base_cli();
+        assert!(should_attempt_interactive_weixin_autostart(
+            &cli, true, true
+        ));
+        assert!(!should_attempt_interactive_weixin_autostart(
+            &cli, false, true
+        ));
+        assert!(!should_attempt_interactive_weixin_autostart(
+            &cli, true, false
+        ));
+
+        let mut cli = base_cli();
+        cli.no_weixin_autostart = true;
+        assert!(!should_attempt_interactive_weixin_autostart(
+            &cli, true, true
+        ));
+
+        let mut cli = base_cli();
+        cli.command = Some(CliCommand::Eval {
+            command: EvalCommand::Weixin,
+        });
+        assert!(!should_attempt_interactive_weixin_autostart(
+            &cli, true, true
+        ));
+
+        let mut cli = base_cli();
+        cli.prompt = vec![String::from("hello")];
+        assert!(!should_attempt_interactive_weixin_autostart(
+            &cli, true, true
+        ));
+
+        let mut cli = base_cli();
+        cli.json = true;
+        assert!(!should_attempt_interactive_weixin_autostart(
+            &cli, true, true
+        ));
+
+        let mut cli = base_cli();
+        cli.jsonl = true;
+        assert!(!should_attempt_interactive_weixin_autostart(
+            &cli, true, true
+        ));
+    }
+
+    #[test]
+    fn autostart_runtime_args_preserve_explicit_companion() {
+        let config = AgentConfig::new("D:\\workspace");
+        let mut command = Command::new("yunxi");
+        append_runtime_cli_args(
+            &mut command,
+            &config,
+            BackendKind::Yunxi,
+            provider_mode::ProviderMode::Auto,
+            true,
+        );
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(args.windows(1).any(|part| part == ["--companion"]));
+        assert!(
+            args.windows(2)
+                .any(|part| part == ["--approval", "on-request"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|part| part == ["--sandbox", "workspace-write"])
+        );
+    }
+
+    #[test]
+    fn autostart_ready_timeout_is_bounded() {
+        assert_eq!(
+            parse_weixin_autostart_ready_timeout(None),
+            DEFAULT_WEIXIN_AUTOSTART_READY_TIMEOUT_MS
+        );
+        assert_eq!(parse_weixin_autostart_ready_timeout(Some("0")), 100);
+        assert_eq!(
+            parse_weixin_autostart_ready_timeout(Some("999999")),
+            MAX_WEIXIN_AUTOSTART_READY_TIMEOUT_MS
+        );
+        assert_eq!(
+            parse_weixin_autostart_ready_timeout(Some("not-a-number")),
+            DEFAULT_WEIXIN_AUTOSTART_READY_TIMEOUT_MS
+        );
+    }
 }
 
 fn build_agent_config(cli: &Cli) -> Result<AgentConfig> {
@@ -1700,6 +2193,56 @@ async fn run_command(
         CliCommand::Weixin { command } => {
             weixin::run(command, config, backend, provider_mode, json).await
         }
+        CliCommand::Bot { command } => {
+            run_bot_command(command, config, backend, provider_mode, json).await
+        }
+    }
+}
+
+async fn run_bot_command(
+    command: BotCommand,
+    config: AgentConfig,
+    backend: BackendKind,
+    provider_mode: provider_mode::ProviderMode,
+    json: bool,
+) -> Result<()> {
+    match command {
+        BotCommand::Start {
+            channels,
+            dir,
+            account,
+        } => {
+            let channels = channels
+                .split(',')
+                .map(str::trim)
+                .filter(|channel| !channel.is_empty())
+                .collect::<Vec<_>>();
+            if channels.is_empty() {
+                bail!("bot start requires at least one channel");
+            }
+            let unsupported = channels
+                .iter()
+                .copied()
+                .filter(|channel| !channel.eq_ignore_ascii_case("weixin"))
+                .collect::<Vec<_>>();
+            if !unsupported.is_empty() {
+                bail!(
+                    "bot start currently supports only the weixin channel; unsupported channels: {}",
+                    unsupported.join(", ")
+                );
+            }
+            weixin::run(
+                weixin::WeixinCommand::Serve {
+                    account,
+                    workspace: dir,
+                },
+                config,
+                backend,
+                provider_mode,
+                json,
+            )
+            .await
+        }
     }
 }
 
@@ -1728,11 +2271,14 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
             "--jsonl is only supported for agent execution commands in v2.1.5; use --json for companion management commands"
         ),
         CliCommand::Controls { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.5; use --json for control commands"
+            "--jsonl is only supported for agent execution commands; use --json for control commands"
         ),
         CliCommand::Eval { .. } => Ok(()),
         CliCommand::Weixin { .. } => bail!(
-            "--jsonl is only supported for agent execution commands in v2.1.5; use --json for weixin metadata commands"
+            "--jsonl is only supported for agent execution commands; use --json for weixin metadata commands"
+        ),
+        CliCommand::Bot { .. } => bail!(
+            "--jsonl is not supported for bot gateway commands; use the normal terminal output or --json"
         ),
     }
 }
@@ -1752,6 +2298,24 @@ async fn run_eval_command(command: EvalCommand, json: bool, jsonl: bool) -> Resu
             if report.metrics.failed_scenarios > 0 || !report.golden_passed {
                 bail!(
                     "companion evaluation failed: {} scenarios failed, golden_failures={}",
+                    report.metrics.failed_scenarios,
+                    report.golden_failures.len()
+                );
+            }
+        }
+        EvalCommand::Weixin => {
+            let report = yunxi_agent_eval::run_default_weixin_suite()
+                .map_err(|error| anyhow::anyhow!("weixin evaluation failed to load: {error}"))?;
+            if jsonl {
+                println!("{}", serde_json::to_string(&report)?);
+            } else if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{}", yunxi_agent_eval::render_weixin_text(&report));
+            }
+            if report.metrics.failed_scenarios > 0 || !report.golden_passed {
+                bail!(
+                    "weixin evaluation failed: {} scenarios failed, golden_failures={}",
                     report.metrics.failed_scenarios,
                     report.golden_failures.len()
                 );

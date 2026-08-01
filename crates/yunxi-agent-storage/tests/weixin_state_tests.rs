@@ -84,6 +84,10 @@ fn pending_item(encrypted_payload: Option<WeixinEncryptedPayload>) -> WeixinPend
         dispatch_retry_count: 0,
         next_retry_at_millis: None,
         last_dispatch_error: None,
+        lease_owner: None,
+        lease_token: None,
+        lease_started_at_millis: None,
+        lease_expires_at_millis: None,
         state: WeixinPendingInboundState::Ready,
         terminal_reason: None,
         created_at_millis: 1000,
@@ -277,6 +281,10 @@ fn pending_inbound_state_machine_is_strict_and_terminal_states_are_not_recovered
         dispatch_retry_count: 0,
         next_retry_at_millis: None,
         last_dispatch_error: None,
+        lease_owner: None,
+        lease_token: None,
+        lease_started_at_millis: None,
+        lease_expires_at_millis: None,
         state: WeixinPendingInboundState::Accepted,
         terminal_reason: None,
         created_at_millis: 1000,
@@ -300,6 +308,136 @@ fn pending_inbound_state_machine_is_strict_and_terminal_states_are_not_recovered
     store.save(&snapshot).expect("save state");
     let loaded = store.load(ACCOUNT).expect("load").expect("state");
     assert_eq!(loaded.pending_inbound_count(), 0);
+}
+
+#[test]
+fn runtime_dispatch_lease_claim_and_stale_recovery_are_deterministic() {
+    let (_temp, store) = store_fixture();
+    let mut snapshot = snapshot(1000);
+    snapshot
+        .pending_inbound
+        .push(pending_item(Some(encrypted_payload())));
+    store.save(&snapshot).expect("save state");
+
+    let claimed = store
+        .claim_pending_runtime_dispatch(
+            ACCOUNT,
+            "item#00000001",
+            "lease#proc-1",
+            "attempt#1",
+            2000,
+            1100,
+        )
+        .expect("claim lease");
+    assert_eq!(claimed.lease_owner.as_deref(), Some("lease#proc-1"));
+    assert_eq!(claimed.lease_token.as_deref(), Some("attempt#1"));
+    assert_eq!(claimed.lease_expires_at_millis, Some(2000));
+
+    store
+        .begin_pending_runtime_turn(WeixinRuntimeTurnBeginRequest {
+            account_id: ACCOUNT.to_string(),
+            peer_id_hash: "peer#00000001".to_string(),
+            message_id_hash: "message#00000001".to_string(),
+            item_id: "item#00000001".to_string(),
+            direct_message_key: "dm#00000001".to_string(),
+            workspace_id: WORKSPACE.to_string(),
+            candidate_session_id: "yunxi-weixin-turn-test".to_string(),
+            source_label: "weixin-private-chat".to_string(),
+            now_millis: 1200,
+        })
+        .expect("begin turn");
+
+    let recovered = store
+        .recover_stale_pending_runtime_turns(ACCOUNT, "lease#proc-2", 3000)
+        .expect("recover");
+    assert_eq!(recovered, 1);
+    let state = store.load(ACCOUNT).expect("load").expect("state");
+    let pending = state
+        .pending_inbound
+        .iter()
+        .find(|item| item.item_id == "item#00000001")
+        .expect("pending");
+    assert_eq!(pending.state, WeixinPendingInboundState::Ready);
+    assert_eq!(pending.dispatch_retry_count, 1);
+    assert_eq!(pending.lease_owner, None);
+    assert_eq!(pending.lease_token, None);
+    assert_eq!(pending.lease_expires_at_millis, None);
+    assert_eq!(
+        pending.last_dispatch_error.as_deref(),
+        Some("runtime_lease_expired")
+    );
+}
+
+#[test]
+fn runtime_dispatch_shutdown_recovery_only_releases_matching_active_owner() {
+    let (_temp, store) = store_fixture();
+    let mut snapshot = snapshot(1000);
+    snapshot
+        .pending_inbound
+        .push(pending_item(Some(encrypted_payload())));
+    store.save(&snapshot).expect("save state");
+
+    store
+        .claim_pending_runtime_dispatch(
+            ACCOUNT,
+            "item#00000001",
+            "lease#proc-1",
+            "attempt#1",
+            5000,
+            1100,
+        )
+        .expect("claim lease");
+    store
+        .begin_pending_runtime_turn(WeixinRuntimeTurnBeginRequest {
+            account_id: ACCOUNT.to_string(),
+            peer_id_hash: "peer#00000001".to_string(),
+            message_id_hash: "message#00000001".to_string(),
+            item_id: "item#00000001".to_string(),
+            direct_message_key: "dm#00000001".to_string(),
+            workspace_id: WORKSPACE.to_string(),
+            candidate_session_id: "yunxi-weixin-turn-test".to_string(),
+            source_label: "weixin-private-chat".to_string(),
+            now_millis: 1200,
+        })
+        .expect("begin turn");
+
+    let skipped = store
+        .recover_pending_runtime_dispatch_for_owner(
+            ACCOUNT,
+            "item#00000001",
+            "lease#proc-2",
+            "runtime_dispatch_shutdown",
+            1300,
+        )
+        .expect("skip mismatched owner");
+    assert_eq!(skipped, None);
+    let still_running = store
+        .load(ACCOUNT)
+        .expect("load")
+        .expect("state")
+        .pending_inbound[0]
+        .clone();
+    assert_eq!(still_running.state, WeixinPendingInboundState::Running);
+    assert_eq!(still_running.lease_owner.as_deref(), Some("lease#proc-1"));
+
+    let recovered = store
+        .recover_pending_runtime_dispatch_for_owner(
+            ACCOUNT,
+            "item#00000001",
+            "lease#proc-1",
+            "runtime_dispatch_shutdown",
+            1400,
+        )
+        .expect("recover active owner")
+        .expect("recovered pending");
+    assert_eq!(recovered.state, WeixinPendingInboundState::Ready);
+    assert_eq!(recovered.dispatch_retry_count, 1);
+    assert_eq!(
+        recovered.last_dispatch_error.as_deref(),
+        Some("runtime_dispatch_shutdown")
+    );
+    assert_eq!(recovered.lease_owner, None);
+    assert_eq!(recovered.lease_token, None);
 }
 
 #[test]

@@ -9,5 +9,6 @@ pub use models::{
     BaseInfo, GetBotQrCodeRequest, GetBotQrCodeResponse, GetQrCodeStatusResponse,
     GetUpdatesRequest, GetUpdatesResponse, GetUploadUrlRequest, GetUploadUrlResponse, MessageItem,
     QrCodeStatus, SendMessageRequest, SendMessageResponse, SendTypingRequest, TextItem,
-    TypingStatus, UploadMediaType, WeixinMessage,
+    TypingStatus, UploadMediaType, WeixinMessage, WeixinUpdate, WeixinUpdateMessage,
+    WeixinUpdateSender,
 };

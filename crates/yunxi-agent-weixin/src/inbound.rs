@@ -112,6 +112,8 @@ impl WeixinInboundEnvelope {
             direct_message_key: self.direct_message_key.clone(),
             created_at_millis: self.created_at_millis,
             context_reference_id: self.context_reference_id.clone(),
+            reply_to_user_id: Some(message.reply_target_id()),
+            reply_context_token: message.context_token.clone(),
             text: Some(text),
         })
     }
@@ -129,6 +131,10 @@ pub struct WeixinPendingInboundPayload {
     pub created_at_millis: u64,
     pub context_reference_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_user_id: Option<SecretString>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_context_token: Option<SecretString>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<SecretString>,
 }
 
@@ -145,6 +151,14 @@ impl fmt::Debug for WeixinPendingInboundPayload {
             .field("direct_message_key", &self.direct_message_key)
             .field("created_at_millis", &self.created_at_millis)
             .field("context_reference_id", &self.context_reference_id)
+            .field(
+                "reply_to_user_id",
+                &self.reply_to_user_id.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "reply_context_token",
+                &self.reply_context_token.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("text", &self.text.as_ref().map(|_| "[REDACTED]"))
             .finish()
     }
@@ -187,8 +201,7 @@ fn classify_message(
     }
     if self_user_id.is_some_and(|self_user_id| {
         !self_user_id.is_empty() && self_user_id.expose() == message.from_user_id.expose()
-    }) || message.message_state == Some(2)
-    {
+    }) {
         return WeixinInboundKind::SelfMessage;
     }
     if message.item_list.is_empty() {
@@ -312,6 +325,7 @@ mod tests {
 
         let mut self_message = message();
         self_message.from_user_id = SecretString::new("bot-user-id");
+        self_message.message_state = Some(2);
         assert_eq!(
             WeixinInboundEnvelope::from_message(
                 "account#933b5bde",
@@ -321,6 +335,14 @@ mod tests {
             )
             .kind,
             WeixinInboundKind::SelfMessage
+        );
+
+        let mut state_two_peer_text = message();
+        state_two_peer_text.message_state = Some(2);
+        assert_eq!(
+            WeixinInboundEnvelope::from_message("account#933b5bde", None, &state_two_peer_text, 7)
+                .kind,
+            WeixinInboundKind::Text
         );
 
         let mut attachment = message();

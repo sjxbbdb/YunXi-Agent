@@ -1,6 +1,6 @@
-# YunXi Agent v2.1.6
+# YunXi Agent v2.2.0
 
-YunXi Agent v2.1.6 is a terminal-first Rust general companion Agent CLI and reusable core library.
+YunXi Agent v2.2.0 is a terminal-first Rust general companion Agent CLI and reusable core library.
 The default runtime is YunXi-owned and does not depend on the upstream Codex
 runtime.
 
@@ -11,28 +11,22 @@ with `[offline]` and `/cost` reports that no model call was made.
 
 ## Development Track
 
-The `v2.1.6` release keeps the v2.1.4/hotfix Weixin state store, atomic local
-state writes, account-granular lock diagnostics, local pair-request lifecycle
-records, pending inbound/delivery counters, safer logout checks, and safe,
-idempotent initialization from legacy v2.1.3/v2.1.4 non-secret Weixin account
-metadata when a state-store record is missing. It adds a foreground
-`yunxi weixin serve` private-chat long-polling acceptance layer: iLink
-`getupdates`, approved peer text messages into authenticated-encrypted pending
-inbound records with persisted algorithm metadata, AAD version, random nonce,
-ciphertext, and restart recovery entry points,
-stranger private text messages into local pair requests, cursor/receipt/pending
-inbound/health updates in one state-store commit, and duplicate message-id
-idempotency. The hotfix.2 release also fixes Windows stale account-lock recovery
-after a crashed or killed foreground serve process and adds independent-process
-pending payload decrypt evidence. v2.1.6 binds each approved private-chat
-`account + peer + dm` conversation to an existing YunXi `SessionId`, dispatches
-decrypted text through the existing `Agent::run_with_backend_stream` Runtime
-entry, reuses the same provider/model/cwd/sandbox/approval/context-window
-configuration path as `yunxi run`, serializes same-conversation turns with a
-bounded queue, and writes only the final Runtime text to a test sink. It still
-does not send Weixin replies, stream token-by-token Weixin output, run remote
-approval through Weixin text commands, support group chat, parse attachments or
-media, or proactively push messages.
+The current `v2.2.0` development workspace is the merged Weixin integration
+line. It keeps the v2.1.x QR login, Windows Credential Manager secret boundary,
+atomic `WeixinStateStore`, stale account-lock recovery, pair lifecycle,
+authenticated encrypted pending inbound, and existing Runtime session binding.
+The merged line now adds stable parent/history recovery for Weixin turns,
+QueueFull Ready-pending drain and restart recovery, foreground slash-command
+`AgentRunControl` bridging for `/status`, `/stop`, `/approve`, `/deny`, and
+`/answer`, safe outbound prompts/outcomes, `final_text_only` AgentEvent
+observation for Weixin output, encrypted final-text delivery manifest/spool with
+iLink `sendmessage`, background runtime-dispatch lease/shutdown/panic recovery,
+and `yunxi weixin session reset --account ... --peer ... --confirm` archive
+semantics. The work remains in development until unified review, full regression,
+real iLink/Provider validation, ConPTY verification, evidence sanitization, and
+the final annotated `v2.2.0` release gate pass. Group chat, public callbacks,
+background daemons, contact scraping, auto-add, group send, and unverified
+proactive Weixin push remain outside the completed scope.
 See the [documentation index](docs/README.md) for the canonical roadmap,
 governance baseline, reports, evidence, and engineering entry points.
 
@@ -45,12 +39,12 @@ governance baseline, reports, evidence, and engineering entry points.
 - `crates/yunxi-agent-persona`: YunXi-owned persona, transparent memory schema,
   recall, extraction, and write policy boundary
 - `crates/yunxi-agent-tools`: YunXi-owned tool execution boundary
-- `crates/yunxi-agent-storage`: YunXi-owned session, control-audit, companion-history, and v2.1.6 Weixin state storage/conversation-binding boundary
+- `crates/yunxi-agent-storage`: YunXi-owned session, control-audit, companion-history, and v2.2.0 Weixin state storage/conversation-binding/delivery/remote-control boundary
 - `crates/yunxi-agent-runtime`: YunXi-owned Agent runtime boundary
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
-- `crates/yunxi-agent-weixin`: v2.1.6 QR login state machine, system credential boundary, non-secret account metadata, legacy metadata initialization boundary, iLink model/fixed-endpoint client, foreground getupdates serve loop, inbound envelope normalization, authenticated pending payload encryption/recovery, pairing admission, idempotency, Runtime session binding supervisor, bounded per-conversation dispatch queue, and deterministic mock boundary
-- `crates/yunxi-agent-cli`: v2.1.6 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-weixin`: v2.2.0 QR login state machine, system credential boundary, non-secret account metadata, legacy metadata initialization boundary, iLink model/fixed-endpoint client, foreground getupdates serve loop, inbound envelope normalization, authenticated pending payload encryption/recovery, pairing admission, idempotency, Runtime session binding supervisor, bounded per-conversation dispatch queue, delivery spool, slash-command control, and deterministic mock boundary
+- `crates/yunxi-agent-cli`: v2.2.0 terminal CLI package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/README.md`: stable documentation index, report archive policy, and current roadmap/audit entry points
@@ -444,6 +438,9 @@ Run the complete offline companion quality gate with one command:
 yunxi eval companion
 yunxi --json eval companion
 yunxi --jsonl eval companion
+yunxi eval weixin
+yunxi --json eval weixin
+yunxi --jsonl eval weixin
 ```
 
 The 31 versioned scenarios live under `evals/companion`. They cover persona
@@ -453,6 +450,12 @@ tool confirmation, and CLI/control semantics. The default evaluator uses Rust
 rules and fixed fixtures only; it does not read provider credentials or call a
 live model, Python runtime, cloud service, or external judge.
 
+The Weixin evaluation suite lives under `evals/weixin`. Its default run is
+offline and covers protocol mocks, state migration boundaries, pairing, slash
+control, final-text delivery segmentation, restart-recovery gates, safety
+diagnostics, and the explicit real iLink/Provider manual checklist. It does not
+read credentials or perform network requests.
+
 The command exits unsuccessfully when any scenario fails. Structured output
 contains per-scenario checks plus aggregate metrics, including
 `memory_precision`, `relationship_continuity_rate`,
@@ -460,7 +463,7 @@ contains per-scenario checks plus aggregate metrics, including
 
 ## Install On Windows
 
-Build and install the v2.1.6 CLI into a user-local bin directory:
+Build and install the v2.2.0 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

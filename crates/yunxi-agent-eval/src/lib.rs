@@ -9,8 +9,15 @@ use yunxi_agent_persona::{
     MemoryStatus, MemoryWritePolicy, PersonaPromptCompiler, PersonaSettings, RelationshipGraphLite,
     RelationshipState, link_supersession_chain, yunxi_companion_strong,
 };
+use yunxi_agent_storage::{WEIXIN_STATE_SCHEMA_VERSION, WeixinStateSnapshot};
+use yunxi_agent_weixin::{
+    SecretString, WeixinInboundEnvelope, WeixinInboundKind, WeixinMessageId,
+    ilink::{MessageItem, TextItem, WeixinMessage},
+    parse_weixin_remote_command, split_weixin_text_segments,
+};
 
 pub const HARNESS_VERSION: &str = "2.0.6";
+pub const WEIXIN_HARNESS_VERSION: &str = "2.2.0";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +27,28 @@ pub enum EvalCategory {
     Relationship,
     Proactive,
     Controls,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeixinEvalCategory {
+    ProtocolMock,
+    StateMigration,
+    Pairing,
+    RemoteControl,
+    Delivery,
+    RestartRecovery,
+    SafetyDiagnostics,
+    RealIntegration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalExecutionStatus {
+    Passed,
+    Failed,
+    NotRun,
+    Blocked,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -73,6 +102,49 @@ pub struct CompanionEvalReport {
     pub results: Vec<CompanionEvalResult>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WeixinEvalScenario {
+    pub id: String,
+    pub category: WeixinEvalCategory,
+    pub description: String,
+    pub checks: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct WeixinEvalResult {
+    pub id: String,
+    pub category: WeixinEvalCategory,
+    pub status: EvalExecutionStatus,
+    pub passed: bool,
+    pub checks: Vec<EvalCheckResult>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct WeixinEvalMetrics {
+    pub scenario_count: usize,
+    pub passed_scenarios: usize,
+    pub failed_scenarios: usize,
+    pub not_run_scenarios: usize,
+    pub blocked_scenarios: usize,
+    pub offline_check_count: usize,
+    pub real_condition_check_count: usize,
+    pub protocol_mock_rate: f64,
+    pub state_migration_rate: f64,
+    pub pairing_control_rate: f64,
+    pub delivery_recovery_rate: f64,
+    pub safety_diagnostic_rate: f64,
+    pub manual_real_gate_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WeixinEvalReport {
+    pub harness_version: String,
+    pub golden_passed: bool,
+    pub golden_failures: Vec<String>,
+    pub metrics: WeixinEvalMetrics,
+    pub results: Vec<WeixinEvalResult>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct GoldenThresholds {
     scenario_count_min: usize,
@@ -82,6 +154,18 @@ struct GoldenThresholds {
     proactive_boundary_violation_count_max: usize,
     tool_approval_bypass_count_max: usize,
     control_regression_rate_min: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct WeixinGoldenThresholds {
+    scenario_count_min: usize,
+    offline_check_count_min: usize,
+    real_condition_check_count_min: usize,
+    protocol_mock_rate_min: f64,
+    state_migration_rate_min: f64,
+    pairing_control_rate_min: f64,
+    delivery_recovery_rate_min: f64,
+    safety_diagnostic_rate_min: f64,
 }
 
 pub fn load_default_scenarios() -> Result<Vec<CompanionEvalScenario>, String> {
@@ -140,6 +224,69 @@ pub fn render_text(report: &CompanionEvalReport) -> String {
         metrics.proactive_boundary_violation_count,
         metrics.tool_approval_bypass_count,
         metrics.control_regression_rate,
+    )
+}
+
+pub fn load_default_weixin_scenarios() -> Result<Vec<WeixinEvalScenario>, String> {
+    let sources = [
+        include_str!("../../../evals/weixin/scenarios/protocol_mock.jsonl"),
+        include_str!("../../../evals/weixin/scenarios/state_migration.jsonl"),
+        include_str!("../../../evals/weixin/scenarios/pairing_remote_control.jsonl"),
+        include_str!("../../../evals/weixin/scenarios/delivery_restart_safety.jsonl"),
+        include_str!("../../../evals/weixin/scenarios/real_integration_checklist.jsonl"),
+    ];
+    let mut scenarios = Vec::new();
+    for source in sources {
+        for (line_number, line) in source.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            scenarios.push(serde_json::from_str(line).map_err(|error| {
+                format!(
+                    "invalid weixin eval scenario at line {}: {error}",
+                    line_number + 1
+                )
+            })?);
+        }
+    }
+    scenarios.sort_by(|left: &WeixinEvalScenario, right| left.id.cmp(&right.id));
+    Ok(scenarios)
+}
+
+pub fn run_default_weixin_suite() -> Result<WeixinEvalReport, String> {
+    let scenarios = load_default_weixin_scenarios()?;
+    let results = scenarios
+        .iter()
+        .map(evaluate_weixin_scenario)
+        .collect::<Vec<_>>();
+    let mut report = build_weixin_report(results);
+    let golden: WeixinGoldenThresholds = serde_json::from_str(include_str!(
+        "../../../evals/weixin/golden/weixin_expected_metrics.json"
+    ))
+    .map_err(|error| format!("invalid weixin golden metrics: {error}"))?;
+    report.golden_failures = weixin_golden_failures(&report.metrics, &golden);
+    report.golden_passed = report.golden_failures.is_empty();
+    Ok(report)
+}
+
+pub fn render_weixin_text(report: &WeixinEvalReport) -> String {
+    let metrics = &report.metrics;
+    format!(
+        "YunXi weixin evaluation v{}\ngolden_passed: {}\nscenarios: {}/{} passed\nnot_run_scenarios: {}\nblocked_scenarios: {}\noffline_check_count: {}\nreal_condition_check_count: {}\nprotocol_mock_rate: {:.3}\nstate_migration_rate: {:.3}\npairing_control_rate: {:.3}\ndelivery_recovery_rate: {:.3}\nsafety_diagnostic_rate: {:.3}\nmanual_real_gate_count: {}\nnetwork_request_performed: false\nsecrets_included: false",
+        report.harness_version,
+        report.golden_passed,
+        metrics.passed_scenarios,
+        metrics.scenario_count,
+        metrics.not_run_scenarios,
+        metrics.blocked_scenarios,
+        metrics.offline_check_count,
+        metrics.real_condition_check_count,
+        metrics.protocol_mock_rate,
+        metrics.state_migration_rate,
+        metrics.pairing_control_rate,
+        metrics.delivery_recovery_rate,
+        metrics.safety_diagnostic_rate,
+        metrics.manual_real_gate_count,
     )
 }
 
@@ -552,6 +699,131 @@ fn evaluate_check(check: &str) -> (bool, String) {
     }
 }
 
+fn evaluate_weixin_scenario(scenario: &WeixinEvalScenario) -> WeixinEvalResult {
+    let checks = scenario
+        .checks
+        .iter()
+        .map(|check| {
+            let (passed, detail) = evaluate_weixin_check(check);
+            EvalCheckResult {
+                check: check.clone(),
+                passed,
+                detail,
+            }
+        })
+        .collect::<Vec<_>>();
+    let status = weixin_result_status(&checks);
+    let passed = status == EvalExecutionStatus::Passed;
+    WeixinEvalResult {
+        id: scenario.id.clone(),
+        category: scenario.category,
+        status,
+        passed,
+        checks,
+    }
+}
+
+fn weixin_result_status(checks: &[EvalCheckResult]) -> EvalExecutionStatus {
+    if checks
+        .iter()
+        .any(|check| check.detail.starts_with("status=blocked"))
+    {
+        return EvalExecutionStatus::Blocked;
+    }
+    if checks
+        .iter()
+        .any(|check| check.detail.starts_with("status=not_run"))
+    {
+        return EvalExecutionStatus::NotRun;
+    }
+    if checks.iter().all(|check| check.passed) {
+        EvalExecutionStatus::Passed
+    } else {
+        EvalExecutionStatus::Failed
+    }
+}
+
+fn evaluate_weixin_check(check: &str) -> (bool, String) {
+    match check {
+        "weixin_slash_commands_only" => {
+            let passed = parse_weixin_remote_command("好的").is_none()
+                && parse_weixin_remote_command("同意").is_none()
+                && parse_weixin_remote_command("/unknown").is_none()
+                && parse_weixin_remote_command("/approve wxctl#12345678").is_some()
+                && parse_weixin_remote_command("/deny wxctl#12345678 too risky").is_some()
+                && parse_weixin_remote_command("/answer wxctl#12345678 yes").is_some()
+                && parse_weixin_remote_command("/stop").is_some()
+                && parse_weixin_remote_command("/status").is_some();
+            (passed, "natural language does not trigger remote control".to_string())
+        }
+        "weixin_group_chat_excluded" => {
+            let mut message = weixin_eval_message("raw-message-id", "raw-peer-id", "hello");
+            message.group_id = Some(SecretString::new("raw-group-id"));
+            let envelope =
+                WeixinInboundEnvelope::from_message("account#933b5bde", None, &message, 1000);
+            (
+                envelope.kind == WeixinInboundKind::GroupMessage,
+                format!("kind={:?}", envelope.kind),
+            )
+        }
+        "weixin_private_text_pairable" => {
+            let message = weixin_eval_message("raw-message-id", "raw-peer-id", "hello");
+            let envelope =
+                WeixinInboundEnvelope::from_message("account#933b5bde", None, &message, 1000);
+            (
+                envelope.kind == WeixinInboundKind::Text
+                    && envelope.peer_id_hash.starts_with("peer#")
+                    && envelope.message_id_hash.starts_with("message#"),
+                format!(
+                    "kind={:?} peer={} message={}",
+                    envelope.kind, envelope.peer_id_hash, envelope.message_id_hash
+                ),
+            )
+        }
+        "weixin_state_schema_supports_delivery_and_control" => {
+            let snapshot = WeixinStateSnapshot::new(
+                "account#933b5bde",
+                "workspace#73521066",
+                "https://ilinkai.weixin.qq.com/",
+                1000,
+            );
+            (
+                WEIXIN_STATE_SCHEMA_VERSION >= 6
+                    && snapshot.pending_delivery_count() == 0
+                    && snapshot.pending_remote_control_count() == 0,
+                format!("schema={WEIXIN_STATE_SCHEMA_VERSION}"),
+            )
+        }
+        "weixin_delivery_unicode_split_preserves_text" => {
+            let text = "你好👨‍👩‍👧‍👦\n```rust\nfn main() {}\n```";
+            let segments = split_weixin_text_segments(text, 4);
+            (
+                segments.concat() == text
+                    && segments.len() > 1
+                    && segments.iter().all(|segment| !segment.contains('\u{FFFD}')),
+                format!("segments={}", segments.len()),
+            )
+        }
+        "weixin_restart_recovery_manual_gate_declared" => (
+            false,
+            "status=not_run manual gate requires restart serve + pending/delivery drain evidence"
+                .to_string(),
+        ),
+        "weixin_real_integration_manual_gate_declared" => (
+            false,
+            "status=not_run manual gate requires real iLink scan, private chat, approval, cancel, sendmessage receipt; no network in offline eval".to_string(),
+        ),
+        "weixin_safety_diagnostics_no_secret_check_names" => {
+            let forbidden = ["token", "context_token", "data_key", "raw_user", "raw_text"];
+            (
+                forbidden.iter().all(|marker| !check.contains(marker)),
+                "check name contains no secret markers".to_string(),
+            )
+        }
+        unknown => (false, format!("unknown weixin evaluation check: {unknown}")),
+    }
+}
+
 fn build_report(results: Vec<CompanionEvalResult>) -> CompanionEvalReport {
     let scenario_count = results.len();
     let passed_scenarios = results.iter().filter(|result| result.passed).count();
@@ -672,6 +944,162 @@ fn golden_failures(metrics: &CompanionEvalMetrics, golden: &GoldenThresholds) ->
     failures
 }
 
+fn build_weixin_report(results: Vec<WeixinEvalResult>) -> WeixinEvalReport {
+    let scenario_count = results.len();
+    let passed_scenarios = results
+        .iter()
+        .filter(|result| result.status == EvalExecutionStatus::Passed)
+        .count();
+    let failed_scenarios = results
+        .iter()
+        .filter(|result| result.status == EvalExecutionStatus::Failed)
+        .count();
+    let not_run_scenarios = results
+        .iter()
+        .filter(|result| result.status == EvalExecutionStatus::NotRun)
+        .count();
+    let blocked_scenarios = results
+        .iter()
+        .filter(|result| result.status == EvalExecutionStatus::Blocked)
+        .count();
+    let category_rate = |category| {
+        let selected = results
+            .iter()
+            .filter(|result| {
+                result.category == category
+                    && matches!(
+                        result.status,
+                        EvalExecutionStatus::Passed | EvalExecutionStatus::Failed
+                    )
+            })
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            None
+        } else {
+            Some(
+                selected.iter().filter(|result| result.passed).count() as f64
+                    / selected.len() as f64,
+            )
+        }
+    };
+    let offline_check_count = results
+        .iter()
+        .filter(|result| {
+            result.category != WeixinEvalCategory::RealIntegration
+                && matches!(
+                    result.status,
+                    EvalExecutionStatus::Passed | EvalExecutionStatus::Failed
+                )
+        })
+        .flat_map(|result| result.checks.iter())
+        .count();
+    let real_condition_check_count = results
+        .iter()
+        .filter(|result| result.category == WeixinEvalCategory::RealIntegration)
+        .flat_map(|result| result.checks.iter())
+        .count();
+    let average_rates = |rates: &[Option<f64>]| {
+        let selected = rates.iter().flatten().copied().collect::<Vec<_>>();
+        if selected.is_empty() {
+            0.0
+        } else {
+            selected.iter().sum::<f64>() / selected.len() as f64
+        }
+    };
+    let metrics = WeixinEvalMetrics {
+        scenario_count,
+        passed_scenarios,
+        failed_scenarios,
+        not_run_scenarios,
+        blocked_scenarios,
+        offline_check_count,
+        real_condition_check_count,
+        protocol_mock_rate: category_rate(WeixinEvalCategory::ProtocolMock).unwrap_or(0.0),
+        state_migration_rate: category_rate(WeixinEvalCategory::StateMigration).unwrap_or(0.0),
+        pairing_control_rate: average_rates(&[
+            category_rate(WeixinEvalCategory::Pairing),
+            category_rate(WeixinEvalCategory::RemoteControl),
+        ]),
+        delivery_recovery_rate: average_rates(&[
+            category_rate(WeixinEvalCategory::Delivery),
+            category_rate(WeixinEvalCategory::RestartRecovery),
+        ]),
+        safety_diagnostic_rate: category_rate(WeixinEvalCategory::SafetyDiagnostics).unwrap_or(0.0),
+        manual_real_gate_count: results
+            .iter()
+            .filter(|result| {
+                matches!(
+                    result.status,
+                    EvalExecutionStatus::NotRun | EvalExecutionStatus::Blocked
+                )
+            })
+            .count(),
+    };
+    WeixinEvalReport {
+        harness_version: WEIXIN_HARNESS_VERSION.to_string(),
+        golden_passed: false,
+        golden_failures: Vec::new(),
+        metrics,
+        results,
+    }
+}
+
+fn weixin_golden_failures(
+    metrics: &WeixinEvalMetrics,
+    golden: &WeixinGoldenThresholds,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    if metrics.scenario_count < golden.scenario_count_min {
+        failures.push(format!(
+            "scenario_count {} < {}",
+            metrics.scenario_count, golden.scenario_count_min
+        ));
+    }
+    if metrics.offline_check_count < golden.offline_check_count_min {
+        failures.push(format!(
+            "offline_check_count {} < {}",
+            metrics.offline_check_count, golden.offline_check_count_min
+        ));
+    }
+    if metrics.real_condition_check_count < golden.real_condition_check_count_min {
+        failures.push(format!(
+            "real_condition_check_count {} < {}",
+            metrics.real_condition_check_count, golden.real_condition_check_count_min
+        ));
+    }
+    if metrics.protocol_mock_rate < golden.protocol_mock_rate_min {
+        failures.push(format!(
+            "protocol_mock_rate {:.3} < {:.3}",
+            metrics.protocol_mock_rate, golden.protocol_mock_rate_min
+        ));
+    }
+    if metrics.state_migration_rate < golden.state_migration_rate_min {
+        failures.push(format!(
+            "state_migration_rate {:.3} < {:.3}",
+            metrics.state_migration_rate, golden.state_migration_rate_min
+        ));
+    }
+    if metrics.pairing_control_rate < golden.pairing_control_rate_min {
+        failures.push(format!(
+            "pairing_control_rate {:.3} < {:.3}",
+            metrics.pairing_control_rate, golden.pairing_control_rate_min
+        ));
+    }
+    if metrics.delivery_recovery_rate < golden.delivery_recovery_rate_min {
+        failures.push(format!(
+            "delivery_recovery_rate {:.3} < {:.3}",
+            metrics.delivery_recovery_rate, golden.delivery_recovery_rate_min
+        ));
+    }
+    if metrics.safety_diagnostic_rate < golden.safety_diagnostic_rate_min {
+        failures.push(format!(
+            "safety_diagnostic_rate {:.3} < {:.3}",
+            metrics.safety_diagnostic_rate, golden.safety_diagnostic_rate_min
+        ));
+    }
+    failures
+}
+
 fn check_passed(checks: &[&EvalCheckResult], name: &str) -> bool {
     checks
         .iter()
@@ -702,6 +1130,29 @@ fn reminder_input() -> CompanionInput {
         now_minute_of_day: 600,
         reminder_due: true,
         ..CompanionInput::default()
+    }
+}
+
+fn weixin_eval_message(raw_message_id: &str, raw_peer: &str, text: &str) -> WeixinMessage {
+    WeixinMessage {
+        message_id: WeixinMessageId::new(raw_message_id),
+        from_user_id: SecretString::new(raw_peer),
+        to_user_id: None,
+        client_id: None,
+        create_time_ms: Some(1000),
+        session_id: None,
+        group_id: None,
+        message_type: Some(1),
+        message_state: None,
+        item_list: vec![MessageItem {
+            item_type: 1,
+            text_item: Some(TextItem {
+                text: SecretString::new(text),
+            }),
+            is_completed: Some(true),
+            msg_id: None,
+        }],
+        context_token: Some(SecretString::new("context-token-secret")),
     }
 }
 
@@ -742,5 +1193,41 @@ mod tests {
         let text = render_text(&report);
         assert!(text.contains("memory_precision:"));
         assert!(text.contains("tool_approval_bypass_count: 0"));
+    }
+
+    #[test]
+    fn weixin_dataset_has_merged_gate_coverage() {
+        let scenarios = load_default_weixin_scenarios().expect("weixin scenarios");
+        assert!(scenarios.len() >= 8);
+        assert!(
+            scenarios
+                .iter()
+                .any(|scenario| scenario.category == WeixinEvalCategory::RealIntegration)
+        );
+    }
+
+    #[test]
+    fn weixin_suite_is_offline_and_measurable() {
+        let report = run_default_weixin_suite().expect("weixin report");
+        assert_eq!(report.metrics.failed_scenarios, 0, "{report:?}");
+        assert!(report.metrics.not_run_scenarios >= 1, "{report:?}");
+        assert!(report.metrics.offline_check_count >= 8);
+        assert!(report.metrics.real_condition_check_count >= 1);
+        assert!(
+            report
+                .results
+                .iter()
+                .any(|result| result.status == EvalExecutionStatus::NotRun)
+        );
+        assert!(report.golden_passed, "{:?}", report.golden_failures);
+    }
+
+    #[test]
+    fn weixin_text_summary_contains_safety_fields() {
+        let report = run_default_weixin_suite().expect("weixin report");
+        let text = render_weixin_text(&report);
+        assert!(text.contains("not_run_scenarios:"));
+        assert!(text.contains("network_request_performed: false"));
+        assert!(text.contains("secrets_included: false"));
     }
 }

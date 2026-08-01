@@ -300,6 +300,8 @@ mod tests {
             direct_message_key: "dm#00000001".to_string(),
             created_at_millis: 42,
             context_reference_id: Some("context#00000001".to_string()),
+            reply_to_user_id: Some(SecretString::new("raw-user")),
+            reply_context_token: Some(SecretString::new("raw-context")),
             text: Some(SecretString::new("raw message body")),
         }
     }

@@ -1,0 +1,1 @@
+{"id":"weixin_real_001_manual_release_gate","category":"real_integration","description":"Manual gate marker for real iLink scan, paired private chat, Provider run, deny/approve/answer/stop, restart recovery and sendmessage receipt evidence.","checks":["weixin_real_integration_manual_gate_declared"]}

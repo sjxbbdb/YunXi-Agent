@@ -4,7 +4,9 @@
 
 ## 当前入口
 
-- [v2.2.0 微信接入合并版本开发报告](development/2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md)：把原 v2.1.7、v2.1.8、v2.1.9 和 v2.2.0 合并为一个 v2.2.0 开发线；先关闭 v2.1.6 session history 与 QueueFull 两个 P1，再逐项完成远程控制、可靠回信、陪伴记忆、真实联调和发布收口门禁；补强前台长轮询、不开放入站端口、`/stop` 作用域、审批超时、onboarding、扫码恢复、iLink Bot 身份和群聊排除要求。
+- [v2.2.0 微信接入合并线代码整改开发报告](development/2026-07-31-174027-yunxi-agent-v2-2-0-merged-weixin-code-remediation-development-report.md)：依据 2026-07-31 17:27 代码审核结果，整改远程控制 outbound、注册失败静默、AgentEvent 丢弃、delivery 结果不明重试、分段原子性、后台 Running 恢复、companion 连续性、真实 eval 和文档基线九项 P1；当前代码侧已补入远程控制 outbound、注册失败显式终态、final-text-only 事件观察过滤、delivery 分类/manifest 和后台 dispatch lease/退出/panic 恢复测试，但仍需统一验证、真实 iLink/Provider/ConPTY 脱敏证据和重新审核；当前不得创建 v2.2.0 tag。
+- [v2.2.0 微信接入合并线代码审核报告](audits/2026-07-31-172719-yunxi-agent-v2-2-0-merged-weixin-code-audit-report.md)：当前源码审核不通过；远程控制回执、审批提示、流式事件合并、delivery 结果不明重试、后台 Running 恢复、真实联调和文档状态仍是阻塞点，禁止创建 v2.2.0 tag。
+- [v2.2.0 微信接入合并版本开发报告](development/2026-07-31-090149-yunxi-agent-v2-2-0-merged-weixin-development-report.md)：把原 v2.1.7、v2.1.8、v2.1.9 和 v2.2.0 合并为一个 v2.2.0 开发线；要求关闭 v2.1.6 session history 与 QueueFull 两个 P1，并完成远程控制、可靠最终文本回信、会话 reset、evals/weixin、真实联调和发布收口门禁；补强前台长轮询、不开放入站端口、`/stop` 作用域、审批超时、onboarding、扫码恢复、iLink Bot 身份和群聊排除要求。
 - [v2.1.0 至 v2.2.0 微信接入合并开发范围复审报告](audits/2026-07-31-002150-yunxi-agent-v2-1-0-to-v2-2-0-merged-development-reaudit-report.md)：按新要求重新审核全范围；既有能力保持，后续小版本内容合并为 v2.2.0 内部强制门禁；当前 v2.1.6 的 session history 和 QueueFull 恢复仍有 P1，禁止宣称 v2.2.0 完成。
 - [v2.1.6 微信会话绑定与既有 Runtime 审核报告](audits/2026-07-31-000843-yunxi-agent-v2-1-6-weixin-runtime-session-binding-audit-report.md)：审核不通过；同 session_id 未恢复连续历史，QueueFull 后 Ready pending 没有恢复路径，禁止进入 v2.1.7。
 - [v2.1.6 微信会话绑定既有 Runtime 开发报告](development/2026-07-28-200713-yunxi-agent-v2-1-6-weixin-runtime-session-binding-development-report.md)：实现 `WeixinConversationBinding`、`WeixinTurnSupervisor`、共享 Runtime 配置、会话串行队列和 fake backend 集成的开发依据。

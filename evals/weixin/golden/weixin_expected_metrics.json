@@ -1,0 +1,10 @@
+{
+  "scenario_count_min": 8,
+  "offline_check_count_min": 8,
+  "real_condition_check_count_min": 1,
+  "protocol_mock_rate_min": 1.0,
+  "state_migration_rate_min": 1.0,
+  "pairing_control_rate_min": 1.0,
+  "delivery_recovery_rate_min": 1.0,
+  "safety_diagnostic_rate_min": 1.0
+}

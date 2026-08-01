@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use thiserror::Error;
 use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 use yunxi_agent_core::{
-    Agent, AgentBackend, AgentConfig, AgentInput, AgentRunControl, AgentRunStatus,
+    Agent, AgentBackend, AgentConfig, AgentEvent, AgentInput, AgentMessageStream,
+    AgentMessageStreamPhase, AgentRunControl, AgentRunStatus, AgentRunStreamReceiver,
 };
 use yunxi_agent_storage::{
     FileWeixinStateStore, WeixinPendingInboundState, WeixinRuntimeTurnBeginRequest,
@@ -17,11 +18,17 @@ use yunxi_agent_storage::{
 use crate::inbound::{WeixinInboundKind, WeixinPendingInboundPayload};
 use crate::payload_cipher::{WeixinPayloadCipher, WeixinPayloadCipherError};
 use crate::redaction::SecretString;
+use crate::remote_control::{
+    WeixinRemoteControlHub, WeixinRemoteControlScope, render_remote_control_error,
+    render_remote_control_prompt,
+};
 
 const DEFAULT_MAX_QUEUE_PER_CONVERSATION: usize = 8;
 const DEFAULT_MAX_GLOBAL_QUEUE: usize = 64;
 const DEFAULT_SOURCE_LABEL: &str = "weixin-private-chat";
 const DEFAULT_SESSION_TITLE: &str = "Weixin private chat";
+const DEFAULT_REMOTE_CONTROL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const WEIXIN_STREAM_OUTPUT_POLICY: &str = "final_text_only";
 
 #[derive(Clone)]
 pub struct WeixinTurnSupervisor {
@@ -139,13 +146,86 @@ impl WeixinTurnSupervisor {
         if let Some(parent_session_id) = parent_session_id.clone() {
             runtime_config = runtime_config.with_parent_session_id(parent_session_id);
         }
-        let result = Agent::new(runtime_config)
-            .run_with_backend_stream(
+        let (result, stream_observation) = if let Some(remote_control_hub) =
+            self.options.remote_control_hub.clone()
+        {
+            let (control, stream) = AgentRunControl::streaming();
+            let scope = WeixinRemoteControlScope {
+                account_id: payload.account_id.clone(),
+                peer_id_hash: payload.peer_id_hash.clone(),
+                direct_message_key: payload.direct_message_key.clone(),
+                item_id: payload.item_id.clone(),
+                session_id: runtime_session_id.clone(),
+            };
+            let cancellation_prompt = match remote_control_hub.register_cancellation(
+                scope.clone(),
+                control.cancellation_token(),
+                now_millis_u64()
+                    .saturating_add(self.options.remote_control_timeout.as_millis() as u64),
+            ) {
+                Ok(prompt) => prompt,
+                Err(_error) => {
+                    let _ = self.sink.write_outbound_text(WeixinRuntimeSinkRecord {
+                        account_id: payload.account_id.clone(),
+                        peer_id_hash: payload.peer_id_hash.clone(),
+                        direct_message_key: payload.direct_message_key.clone(),
+                        item_id: payload.item_id.clone(),
+                        session_id: runtime_session_id.clone(),
+                        reply_to_user_id: payload.reply_to_user_id.clone(),
+                        reply_context_token: payload.reply_context_token.clone(),
+                        final_response: "远程控制暂不可用，本轮未启动；请稍后重试。".to_string(),
+                    });
+                    self.state_store.complete_pending_runtime_turn(
+                        &payload.account_id,
+                        &payload.item_id,
+                        WeixinPendingInboundState::Failed,
+                        Some("remote_control_register_failed".to_string()),
+                        now_millis_u64(),
+                    )?;
+                    return Err(WeixinTurnSupervisorError::RemoteControlRegistrationFailed);
+                }
+            };
+            let timeout = self.options.remote_control_timeout;
+            let monitor = supervise_remote_control_stream(
+                remote_control_hub.clone(),
+                scope.clone(),
+                stream,
+                timeout,
+                Arc::clone(&self.sink),
+                payload.reply_to_user_id.clone(),
+                payload.reply_context_token.clone(),
+            );
+            let _ = self.sink.write_outbound_text(WeixinRuntimeSinkRecord {
+                account_id: payload.account_id.clone(),
+                peer_id_hash: payload.peer_id_hash.clone(),
+                direct_message_key: payload.direct_message_key.clone(),
+                item_id: payload.item_id.clone(),
+                session_id: runtime_session_id.clone(),
+                reply_to_user_id: payload.reply_to_user_id.clone(),
+                reply_context_token: payload.reply_context_token.clone(),
+                final_response: render_remote_control_prompt(&cancellation_prompt),
+            });
+            let agent = Agent::new(runtime_config);
+            let run = agent.run_with_backend_stream(
                 backend,
                 AgentInput::text(text.expose().to_string()),
-                AgentRunControl::detached(),
+                control,
+            );
+            let (result, observation) = tokio::join!(run, monitor);
+            let _ = remote_control_hub.close_scope(&scope);
+            (result, Some(observation))
+        } else {
+            (
+                Agent::new(runtime_config)
+                    .run_with_backend_stream(
+                        backend,
+                        AgentInput::text(text.expose().to_string()),
+                        AgentRunControl::detached(),
+                    )
+                    .await,
+                None,
             )
-            .await;
+        };
 
         let report = match result {
             Ok(result) => {
@@ -165,6 +245,8 @@ impl WeixinTurnSupervisor {
                         direct_message_key: payload.direct_message_key.clone(),
                         item_id: payload.item_id.clone(),
                         session_id: runtime_session_id.clone(),
+                        reply_to_user_id: payload.reply_to_user_id.clone(),
+                        reply_context_token: payload.reply_context_token.clone(),
                         final_response: final_response.clone(),
                     })?;
                     final_response_present = true;
@@ -185,6 +267,7 @@ impl WeixinTurnSupervisor {
                     parent_session_id,
                     status: result.status,
                     final_response_present,
+                    stream_observation,
                 }
             }
             Err(_error) => {
@@ -204,6 +287,7 @@ impl WeixinTurnSupervisor {
                     parent_session_id,
                     status: AgentRunStatus::Failed,
                     final_response_present: false,
+                    stream_observation,
                 }
             }
         };
@@ -222,13 +306,15 @@ impl WeixinTurnSupervisor {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct WeixinTurnSupervisorOptions {
     pub config: AgentConfig,
     pub workspace_id: String,
     pub max_queue_per_conversation: usize,
     pub max_global_queue: usize,
     pub source_label: String,
+    pub remote_control_hub: Option<WeixinRemoteControlHub>,
+    pub remote_control_timeout: Duration,
 }
 
 impl WeixinTurnSupervisorOptions {
@@ -239,7 +325,19 @@ impl WeixinTurnSupervisorOptions {
             max_queue_per_conversation: DEFAULT_MAX_QUEUE_PER_CONVERSATION,
             max_global_queue: DEFAULT_MAX_GLOBAL_QUEUE,
             source_label: DEFAULT_SOURCE_LABEL.to_string(),
+            remote_control_hub: None,
+            remote_control_timeout: DEFAULT_REMOTE_CONTROL_TIMEOUT,
         }
+    }
+
+    pub fn with_remote_control_hub(mut self, hub: WeixinRemoteControlHub) -> Self {
+        self.remote_control_hub = Some(hub);
+        self
+    }
+
+    pub fn with_remote_control_timeout(mut self, timeout: Duration) -> Self {
+        self.remote_control_timeout = timeout.max(Duration::from_millis(1));
+        self
     }
 }
 
@@ -253,6 +351,20 @@ pub struct WeixinTurnReport {
     pub parent_session_id: Option<String>,
     pub status: AgentRunStatus,
     pub final_response_present: bool,
+    pub stream_observation: Option<WeixinStreamObservationReport>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinStreamObservationReport {
+    pub policy: &'static str,
+    pub observed_event_count: usize,
+    pub public_message_count: usize,
+    pub duplicate_public_message_count: usize,
+    pub filtered_non_public_count: usize,
+    pub unsafe_public_message_count: usize,
+    pub final_message_count: usize,
+    pub terminal_status: Option<AgentRunStatus>,
+    pub merged_public_text: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -262,6 +374,8 @@ pub struct WeixinRuntimeSinkRecord {
     pub direct_message_key: String,
     pub item_id: String,
     pub session_id: String,
+    pub reply_to_user_id: Option<crate::SecretString>,
+    pub reply_context_token: Option<crate::SecretString>,
     pub final_response: String,
 }
 
@@ -270,6 +384,13 @@ pub trait WeixinRuntimeSink: Send + Sync {
         &self,
         record: WeixinRuntimeSinkRecord,
     ) -> Result<(), WeixinTurnSupervisorError>;
+
+    fn write_outbound_text(
+        &self,
+        record: WeixinRuntimeSinkRecord,
+    ) -> Result<(), WeixinTurnSupervisorError> {
+        self.write_final_response(record)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -309,6 +430,232 @@ impl WeixinRuntimeSink for WeixinRuntimeTestSink {
             .push(record);
         Ok(())
     }
+}
+
+async fn supervise_remote_control_stream(
+    hub: WeixinRemoteControlHub,
+    scope: WeixinRemoteControlScope,
+    mut stream: AgentRunStreamReceiver,
+    timeout: Duration,
+    sink: Arc<dyn WeixinRuntimeSink>,
+    reply_to_user_id: Option<crate::SecretString>,
+    reply_context_token: Option<crate::SecretString>,
+) -> WeixinStreamObservationReport {
+    let mut public_events = PublicTextAccumulator::default();
+    loop {
+        tokio::select! {
+            Some(event) = stream.events.recv() => {
+                public_events.observe(&event);
+            }
+            Some(request) = stream.approvals.recv() => {
+                let expires_at_millis = now_millis_u64().saturating_add(timeout.as_millis() as u64);
+                match hub.register_approval(scope.clone(), request, expires_at_millis) {
+                    Ok(prompt) => {
+                        let request_id = prompt.request_id.clone();
+                        if sink.write_outbound_text(WeixinRuntimeSinkRecord {
+                            account_id: prompt.scope.account_id.clone(),
+                            peer_id_hash: prompt.scope.peer_id_hash.clone(),
+                            direct_message_key: prompt.scope.direct_message_key.clone(),
+                            item_id: prompt.scope.item_id.clone(),
+                            session_id: prompt.scope.session_id.clone(),
+                            reply_to_user_id: reply_to_user_id.clone(),
+                            reply_context_token: reply_context_token.clone(),
+                            final_response: render_remote_control_prompt(&prompt),
+                        }).is_err() {
+                            let _ = hub.reject_request(&request_id, "prompt_delivery_failed", now_millis_u64());
+                        } else {
+                            spawn_remote_control_timeout(hub.clone(), request_id, timeout);
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sink.write_outbound_text(WeixinRuntimeSinkRecord {
+                            account_id: scope.account_id.clone(),
+                            peer_id_hash: scope.peer_id_hash.clone(),
+                            direct_message_key: scope.direct_message_key.clone(),
+                            item_id: scope.item_id.clone(),
+                            session_id: scope.session_id.clone(),
+                            reply_to_user_id: reply_to_user_id.clone(),
+                            reply_context_token: reply_context_token.clone(),
+                            final_response: render_remote_control_error(&scope, &error),
+                        });
+                    }
+                }
+            }
+            Some(request) = stream.user_inputs.recv() => {
+                let expires_at_millis = now_millis_u64().saturating_add(timeout.as_millis() as u64);
+                match hub.register_user_input(scope.clone(), request, expires_at_millis) {
+                    Ok(prompt) => {
+                        let request_id = prompt.request_id.clone();
+                        if sink.write_outbound_text(WeixinRuntimeSinkRecord {
+                            account_id: prompt.scope.account_id.clone(),
+                            peer_id_hash: prompt.scope.peer_id_hash.clone(),
+                            direct_message_key: prompt.scope.direct_message_key.clone(),
+                            item_id: prompt.scope.item_id.clone(),
+                            session_id: prompt.scope.session_id.clone(),
+                            reply_to_user_id: reply_to_user_id.clone(),
+                            reply_context_token: reply_context_token.clone(),
+                            final_response: render_remote_control_prompt(&prompt),
+                        }).is_err() {
+                            let _ = hub.reject_request(&request_id, "prompt_delivery_failed", now_millis_u64());
+                        } else {
+                            spawn_remote_control_timeout(hub.clone(), request_id, timeout);
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sink.write_outbound_text(WeixinRuntimeSinkRecord {
+                            account_id: scope.account_id.clone(),
+                            peer_id_hash: scope.peer_id_hash.clone(),
+                            direct_message_key: scope.direct_message_key.clone(),
+                            item_id: scope.item_id.clone(),
+                            session_id: scope.session_id.clone(),
+                            reply_to_user_id: reply_to_user_id.clone(),
+                            reply_context_token: reply_context_token.clone(),
+                            final_response: render_remote_control_error(&scope, &error),
+                        });
+                    }
+                }
+            }
+            else => break,
+        }
+    }
+    public_events.finish()
+}
+
+#[derive(Default)]
+struct PublicTextAccumulator {
+    seen: HashSet<String>,
+    chunks: Vec<String>,
+    observed_event_count: usize,
+    public_message_count: usize,
+    duplicate_public_message_count: usize,
+    filtered_non_public_count: usize,
+    unsafe_public_message_count: usize,
+    final_message_count: usize,
+    terminal_status: Option<AgentRunStatus>,
+}
+
+impl PublicTextAccumulator {
+    fn observe(&mut self, event: &AgentEvent) {
+        self.observed_event_count = self.observed_event_count.saturating_add(1);
+        match event {
+            AgentEvent::Message { content, stream } => {
+                self.observe_message(content, stream.as_ref())
+            }
+            AgentEvent::Completed { status, .. } => {
+                self.terminal_status = Some(*status);
+                self.filtered_non_public_count = self.filtered_non_public_count.saturating_add(1);
+            }
+            _ => {
+                self.filtered_non_public_count = self.filtered_non_public_count.saturating_add(1);
+            }
+        }
+    }
+
+    fn observe_message(&mut self, content: &str, stream: Option<&AgentMessageStream>) {
+        if content.trim().is_empty() {
+            self.filtered_non_public_count = self.filtered_non_public_count.saturating_add(1);
+            return;
+        }
+        if !is_safe_public_agent_text(content) {
+            self.unsafe_public_message_count = self.unsafe_public_message_count.saturating_add(1);
+            self.filtered_non_public_count = self.filtered_non_public_count.saturating_add(1);
+            return;
+        }
+
+        let key = public_message_key(content, stream);
+        if !self.seen.insert(key) {
+            self.duplicate_public_message_count =
+                self.duplicate_public_message_count.saturating_add(1);
+            return;
+        }
+
+        if stream.is_some_and(|stream| stream.phase == AgentMessageStreamPhase::Final) {
+            self.final_message_count = self.final_message_count.saturating_add(1);
+        }
+        self.public_message_count = self.public_message_count.saturating_add(1);
+        self.chunks.push(content.to_string());
+    }
+
+    fn finish(self) -> WeixinStreamObservationReport {
+        WeixinStreamObservationReport {
+            policy: WEIXIN_STREAM_OUTPUT_POLICY,
+            observed_event_count: self.observed_event_count,
+            public_message_count: self.public_message_count,
+            duplicate_public_message_count: self.duplicate_public_message_count,
+            filtered_non_public_count: self.filtered_non_public_count,
+            unsafe_public_message_count: self.unsafe_public_message_count,
+            final_message_count: self.final_message_count,
+            terminal_status: self.terminal_status,
+            merged_public_text: merge_public_chunks(self.chunks),
+        }
+    }
+}
+
+fn public_message_key(content: &str, stream: Option<&AgentMessageStream>) -> String {
+    match stream {
+        Some(stream) => format!(
+            "{}:{}:{}:{}:{}",
+            stream.thread_id,
+            stream.turn_id,
+            stream.stream_id,
+            stream.source_sequence.value(),
+            content
+        ),
+        None => content.to_string(),
+    }
+}
+
+fn merge_public_chunks(chunks: Vec<String>) -> Option<String> {
+    let merged = chunks
+        .into_iter()
+        .map(|chunk| chunk.trim().to_string())
+        .filter(|chunk| !chunk.is_empty())
+        .collect::<Vec<_>>()
+        .join("");
+    (!merged.is_empty()).then_some(merged)
+}
+
+fn is_safe_public_agent_text(content: &str) -> bool {
+    !contains_sensitive_agent_marker(content) && !contains_absolute_path_marker(content)
+}
+
+fn contains_sensitive_agent_marker(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    [
+        "api_key",
+        "apikey",
+        "authorization",
+        "bearer ",
+        "context_token",
+        "cookie",
+        "password",
+        "secret",
+        "sk-",
+        "token",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+fn contains_absolute_path_marker(content: &str) -> bool {
+    content.as_bytes().windows(3).any(|window| {
+        window[0].is_ascii_alphabetic()
+            && window[1] == b':'
+            && (window[2] == b'\\' || window[2] == b'/')
+    }) || content.contains("\\Users\\")
+        || content.contains("/Users/")
+        || content.contains("/home/")
+}
+
+fn spawn_remote_control_timeout(
+    hub: WeixinRemoteControlHub,
+    request_id: String,
+    timeout: Duration,
+) {
+    tokio::spawn(async move {
+        tokio::time::sleep(timeout).await;
+        let _ = hub.expire_request(&request_id, now_millis_u64());
+    });
 }
 
 #[async_trait]
@@ -367,6 +714,8 @@ pub enum WeixinTurnSupervisorError {
     QueueFull { scope: &'static str, limit: usize },
     #[error("weixin runtime supervisor sink failed")]
     SinkFailed,
+    #[error("weixin runtime supervisor remote control registration failed")]
+    RemoteControlRegistrationFailed,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -499,6 +848,74 @@ fn terminal_reason_for_status(status: AgentRunStatus) -> Option<String> {
         AgentRunStatus::Completed => None,
         AgentRunStatus::Failed => Some("runtime_failed".to_string()),
         AgentRunStatus::Cancelled => Some("runtime_cancelled".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::remote_control::WeixinRemoteControlHub;
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    fn scope() -> WeixinRemoteControlScope {
+        WeixinRemoteControlScope {
+            account_id: "account#11111111".to_string(),
+            peer_id_hash: "peer#22222222".to_string(),
+            direct_message_key: "dm#33333333".to_string(),
+            item_id: "item#44444444".to_string(),
+            session_id: "session#55555555".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_control_stream_emits_approval_prompt_to_outbound_sink() {
+        let hub = WeixinRemoteControlHub::default();
+        let (control, stream) = AgentRunControl::streaming();
+        let sink = WeixinRuntimeTestSink::default();
+        let sink_handle: Arc<dyn WeixinRuntimeSink> = Arc::new(sink.clone());
+        let supervise = tokio::spawn(supervise_remote_control_stream(
+            hub.clone(),
+            scope(),
+            stream,
+            Duration::from_millis(200),
+            sink_handle,
+            Some(crate::SecretString::new("raw-user")),
+            Some(crate::SecretString::new("raw-context")),
+        ));
+        let request_task = tokio::spawn(async move {
+            let _ = control
+                .request_approval(
+                    Some("approval-1".to_string()),
+                    "shell",
+                    "safe test",
+                    Some("echo ok".to_string()),
+                    "D:/YunXi Agent",
+                )
+                .await;
+        });
+
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if !sink.records().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("approval prompt to be recorded");
+        let record = sink.records().pop().expect("sink record");
+        assert!(record.final_response.contains("[YunXi 微信控制]"));
+        assert!(record.final_response.contains("purpose=approval"));
+        assert!(record.final_response.contains("account=account#11111111"));
+        assert!(record.final_response.contains("peer=peer#22222222"));
+        assert!(record.final_response.contains("dm=dm#33333333"));
+        assert!(record.final_response.contains("item=item#44444444"));
+        assert!(record.final_response.contains("session=session#55555555"));
+        request_task.abort();
+        let _ = request_task.await;
+        let _ = supervise.await;
     }
 }
 

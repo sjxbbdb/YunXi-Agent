@@ -98,6 +98,7 @@ pub(crate) fn classify_error(message: &str) -> ErrorCategory {
     } else if lowered.contains("tool")
         || lowered.contains("command")
         || lowered.contains("exit code")
+        || lowered.contains("execution failed")
     {
         ErrorCategory::Tool
     } else {
@@ -153,6 +154,10 @@ mod tests {
         assert_eq!(
             classify_error("terminal resize failed"),
             ErrorCategory::Terminal
+        );
+        assert_eq!(
+            classify_error("agent execution failed: failed to read tool output"),
+            ErrorCategory::Tool
         );
         assert_eq!(
             classify_error("unexpected condition"),

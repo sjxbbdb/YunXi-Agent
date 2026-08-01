@@ -1933,6 +1933,11 @@ impl YunXiRuntimeBackend {
         if !instructions.is_empty() {
             messages.push(ProviderMessage::system(instructions));
         }
+        if is_memory_intent_prompt(prompt) {
+            messages.push(ProviderMessage::system(
+                "The user is asking YunXi to remember, save, or note a preference. Do not route this to tool_search or any workspace file scan. Respond naturally and let YunXi's memory pipeline handle persistence after the turn.",
+            ));
+        }
 
         let restored_history = self.restore_parent_history(config).await?;
         let recall_query = memory_recall_query(prompt, restored_history.as_ref());
@@ -2127,6 +2132,30 @@ fn memory_recall_query(prompt: &str, restored_history: Option<&RestoredHistory>)
     recent.join("\n")
 }
 
+fn is_memory_intent_prompt(prompt: &str) -> bool {
+    let lower = prompt.to_ascii_lowercase();
+    if prompt.contains("请记住")
+        || prompt.contains("记住")
+        || prompt.contains("偏好")
+        || lower.contains("remember")
+        || lower.contains("save preference")
+        || lower.contains("record preference")
+        || lower.contains("store preference")
+        || lower.contains("persist preference")
+        || lower.contains("memorize")
+    {
+        return true;
+    }
+    let has_memory = lower.contains("memory") || lower.contains("memor");
+    let has_write_intent = lower.contains("remember")
+        || lower.contains("save")
+        || lower.contains("store")
+        || lower.contains("persist")
+        || lower.contains("record")
+        || lower.contains("preference");
+    has_memory && has_write_intent
+}
+
 #[cfg(test)]
 mod memory_recall_query_tests {
     use super::*;
@@ -2149,6 +2178,19 @@ mod memory_recall_query_tests {
         assert!(query.ends_with("continue"));
         assert!(!query.contains("system text must stay out"));
         assert!(query.chars().count() <= 600 + "continue".chars().count() + 1);
+    }
+
+    #[test]
+    fn memory_intent_prompt_detection_catches_remember_requests() {
+        assert!(is_memory_intent_prompt(
+            "请记住一个测试偏好：YUNXI_MEMORY_TEST"
+        ));
+        assert!(is_memory_intent_prompt(
+            "remember this preference for later"
+        ));
+        assert!(!is_memory_intent_prompt(
+            "search the workspace for memory.rs"
+        ));
     }
 }
 

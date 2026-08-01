@@ -15,6 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+unicode-segmentation.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
 yunxi-agent-storage = { path = "../yunxi-agent-storage" }
 

@@ -23,6 +23,42 @@ fn rule_extractor_routes_language_preference_to_global_user_scope() {
 }
 
 #[test]
+fn rule_extractor_extracts_explicit_chinese_remembered_preference() {
+    let candidates = MemoryRuleExtractor::new().extract(
+        "请记住一个测试偏好：YUNXI_MEMORY_TEST_RULESEQ_20260801。我希望以后测试报告标题包含‘规则顺序测试’。请只回复“已记录测试偏好”。",
+        None,
+        Some("session-remember"),
+        Some("workspace-a"),
+        true,
+    );
+
+    let preference = candidates
+        .iter()
+        .find(|candidate| candidate.reason == "rule:explicit-remember-preference")
+        .expect("explicit remembered preference candidate");
+
+    assert_eq!(preference.proposed_record.kind, MemoryKind::Preference);
+    assert_eq!(preference.proposed_record.scope, MemoryScope::GlobalUser);
+    assert_eq!(preference.proposed_record.status, MemoryStatus::Active);
+    assert!(
+        preference
+            .proposed_record
+            .content
+            .contains("YUNXI_MEMORY_TEST_RULESEQ_20260801")
+    );
+    assert!(
+        preference.proposed_record.content.contains("规则顺序测试"),
+        "content should retain the remembered preference: {:?}",
+        preference.proposed_record.content
+    );
+    assert!(
+        !preference.proposed_record.content.contains("请只回复"),
+        "response-format instruction must not be persisted: {:?}",
+        preference.proposed_record.content
+    );
+}
+
+#[test]
 fn rule_extractor_routes_project_hard_constraints_to_workspace_scope() {
     let candidates = MemoryRuleExtractor::new().extract(
         "当前项目的硬性要求是推送必须走 GitHub API",

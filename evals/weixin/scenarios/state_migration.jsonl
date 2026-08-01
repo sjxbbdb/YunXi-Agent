@@ -1,0 +1,2 @@
+{"id":"weixin_state_001_schema_delivery_control","category":"state_migration","description":"Weixin state schema carries delivery spool and remote-control request counters without secrets.","checks":["weixin_state_schema_supports_delivery_and_control"]}
+{"id":"weixin_state_002_restart_recovery_gate","category":"restart_recovery","description":"Restart recovery requires explicit pending inbound and delivery drain evidence before release.","checks":["weixin_restart_recovery_manual_gate_declared"]}

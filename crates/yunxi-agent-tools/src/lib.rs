@@ -502,7 +502,7 @@ fn multi_agent_tool_spec() -> ToolSpec {
 fn tool_search_tool_spec() -> ToolSpec {
     ToolSpec::new(
         ToolName::ToolSearch,
-        "Search available YunXi tools and workspace file metadata.",
+        "Search available YunXi tools and workspace file metadata. Do not use this to save or recall persona memory; explicit remember/preference requests are handled by YunXi memory.",
         json!({
             "type": "object",
             "properties": {
@@ -1330,7 +1330,23 @@ fn run_patch(id: Option<String>, cwd: PathBuf, patch: String) -> AgentResult<Too
 fn run_tool_search(id: Option<String>, cwd: PathBuf, query: String) -> AgentResult<ToolResponse> {
     let query = query.trim().to_string();
     let mut matches = Vec::new();
-    if !query.is_empty() && cwd.is_dir() {
+    let mut warnings = Vec::new();
+    let skip_file_search = if is_memory_write_intent_query(&query) {
+        warnings.push(
+            "workspace file scan skipped: memory write intent belongs to YunXi memory, not tool_search"
+                .to_string(),
+        );
+        true
+    } else if is_user_profile_root(&cwd) {
+        warnings.push(format!(
+            "workspace file scan skipped: cwd is the user profile root {}; launch YunXi with --cwd <project> to search project files",
+            cwd.display()
+        ));
+        true
+    } else {
+        false
+    };
+    if !skip_file_search && !query.is_empty() && cwd.is_dir() {
         collect_file_matches(&cwd, &cwd, &query, 50, &mut matches)?;
     }
     let query_lower = query.to_ascii_lowercase();
@@ -1368,6 +1384,7 @@ fn run_tool_search(id: Option<String>, cwd: PathBuf, query: String) -> AgentResu
         .collect::<Vec<_>>();
     let output = serde_json::to_string(&json!({
         "query": query,
+        "warnings": warnings,
         "matches": matches
             .into_iter()
             .map(|path| path.display().to_string())
@@ -1795,26 +1812,45 @@ fn collect_file_matches(
     if matches.len() >= limit {
         return Ok(());
     }
-    for entry in std::fs::read_dir(dir).map_err(|error| AgentError::Execution {
-        message: format!(
-            "failed to read tool_search directory {}: {error}",
-            dir.display()
-        ),
-    })? {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if is_non_fatal_scan_error(&error) => return Ok(()),
+        Err(error) => {
+            return Err(AgentError::Execution {
+                message: format!(
+                    "failed to read tool_search directory {}: {error}",
+                    dir.display()
+                ),
+            });
+        }
+    };
+    for entry in entries {
         if matches.len() >= limit {
             break;
         }
-        let entry = entry.map_err(|error| AgentError::Execution {
-            message: format!("failed to read tool_search entry: {error}"),
-        })?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if is_non_fatal_scan_error(&error) => continue,
+            Err(error) => {
+                return Err(AgentError::Execution {
+                    message: format!("failed to read tool_search entry: {error}"),
+                });
+            }
+        };
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if should_skip_entry(&name) {
             continue;
         }
-        let metadata = entry.metadata().map_err(|error| AgentError::Execution {
-            message: format!("failed to read metadata for {}: {error}", path.display()),
-        })?;
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if is_non_fatal_scan_error(&error) => continue,
+            Err(error) => {
+                return Err(AgentError::Execution {
+                    message: format!("failed to read metadata for {}: {error}", path.display()),
+                });
+            }
+        };
         if metadata.is_dir() {
             collect_file_matches(root, &path, query, limit, matches)?;
         } else if metadata.is_file() && name.contains(query) {
@@ -1840,23 +1876,42 @@ impl WorkspaceSnapshot {
     }
 
     fn capture_dir(&mut self, root: &Path, dir: &Path) -> AgentResult<()> {
-        for entry in std::fs::read_dir(dir).map_err(|error| AgentError::Execution {
-            message: format!(
-                "failed to read workspace directory {}: {error}",
-                dir.display()
-            ),
-        })? {
-            let entry = entry.map_err(|error| AgentError::Execution {
-                message: format!("failed to read workspace entry: {error}"),
-            })?;
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if is_non_fatal_scan_error(&error) => return Ok(()),
+            Err(error) => {
+                return Err(AgentError::Execution {
+                    message: format!(
+                        "failed to read workspace directory {}: {error}",
+                        dir.display()
+                    ),
+                });
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if is_non_fatal_scan_error(&error) => continue,
+                Err(error) => {
+                    return Err(AgentError::Execution {
+                        message: format!("failed to read workspace entry: {error}"),
+                    });
+                }
+            };
             let path = entry.path();
             let name = entry.file_name();
             if should_skip_entry(&name.to_string_lossy()) {
                 continue;
             }
-            let metadata = entry.metadata().map_err(|error| AgentError::Execution {
-                message: format!("failed to read metadata for {}: {error}", path.display()),
-            })?;
+            let metadata = match entry.metadata() {
+                Ok(metadata) => metadata,
+                Err(error) if is_non_fatal_scan_error(&error) => continue,
+                Err(error) => {
+                    return Err(AgentError::Execution {
+                        message: format!("failed to read metadata for {}: {error}", path.display()),
+                    });
+                }
+            };
             if metadata.is_dir() {
                 self.capture_dir(root, &path)?;
             } else if metadata.is_file() {
@@ -1921,5 +1976,68 @@ impl FileState {
 }
 
 fn should_skip_entry(name: &str) -> bool {
-    matches!(name, ".git" | ".yunxi" | "target" | "vendor")
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        ".git"
+            | ".yunxi"
+            | ".codegraph"
+            | ".codex"
+            | "target"
+            | "vendor"
+            | "node_modules"
+            | "appdata"
+            | "$recycle.bin"
+            | "system volume information"
+    )
+}
+
+fn is_memory_write_intent_query(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    if query.contains("请记住") || query.contains("记住") {
+        return true;
+    }
+    let has_memory = lower.contains("memory") || lower.contains("memor");
+    let has_write_intent = lower.contains("remember")
+        || lower.contains("save")
+        || lower.contains("store")
+        || lower.contains("persist")
+        || lower.contains("record")
+        || lower.contains("preference")
+        || query.contains("偏好")
+        || query.contains("保存")
+        || query.contains("记忆");
+    has_memory && has_write_intent
+}
+
+fn is_user_profile_root(path: &Path) -> bool {
+    ["USERPROFILE", "HOME"].into_iter().any(|name| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .is_some_and(|home| same_existing_dir(path, &home))
+    })
+}
+
+fn same_existing_dir(left: &Path, right: &Path) -> bool {
+    let Ok(left) = std::fs::canonicalize(left) else {
+        return false;
+    };
+    let Ok(right) = std::fs::canonicalize(right) else {
+        return false;
+    };
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
+}
+
+fn is_non_fatal_scan_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::NotFound
+            | std::io::ErrorKind::InvalidData
+    )
 }

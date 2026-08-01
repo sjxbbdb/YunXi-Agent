@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use tempfile::TempDir;
 use tokio::sync::Notify;
 use yunxi_agent_core::{
-    AgentBackend, AgentConfig, AgentInput, AgentResult, AgentRunControl, AgentRunResult,
-    AgentRunStatus, ApprovalMode, MemoryExtractionMode, SandboxMode,
+    AgentBackend, AgentConfig, AgentEvent, AgentInput, AgentMessageSequence, AgentMessageStream,
+    AgentMessageStreamPhase, AgentResult, AgentRunControl, AgentRunResult, AgentRunStatus,
+    ApprovalMode, CommandStatus, MemoryExtractionMode, SandboxMode,
 };
 use yunxi_agent_provider::{AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse};
 use yunxi_agent_runtime::YunXiRuntimeBackend;
@@ -19,7 +20,7 @@ use yunxi_agent_tools::NoopToolRuntime;
 use yunxi_agent_weixin::ilink::{MessageItem, TextItem, WeixinMessage};
 use yunxi_agent_weixin::{
     SecretString, WeixinInboundEnvelope, WeixinMessageId, WeixinPayloadAad, WeixinPayloadCipher,
-    WeixinRuntimeTestSink, WeixinTurnSupervisor, WeixinTurnSupervisorError,
+    WeixinRemoteControlHub, WeixinRuntimeTestSink, WeixinTurnSupervisor, WeixinTurnSupervisorError,
     WeixinTurnSupervisorOptions,
 };
 
@@ -478,4 +479,128 @@ async fn supervisor_queue_full_does_not_advance_second_pending() {
         .await
         .expect("queued turn completes after capacity is released");
     assert_eq!(completed.session_id, queued_turn_session_id);
+}
+
+#[derive(Clone, Default)]
+struct StreamingEventBackend;
+
+#[async_trait]
+impl AgentBackend for StreamingEventBackend {
+    async fn run(&self, config: AgentConfig, input: AgentInput) -> AgentResult<AgentRunResult> {
+        self.run_stream(config, input, AgentRunControl::detached())
+            .await
+    }
+
+    async fn run_stream(
+        &self,
+        _config: AgentConfig,
+        _input: AgentInput,
+        control: AgentRunControl,
+    ) -> AgentResult<AgentRunResult> {
+        control.emit_event(AgentEvent::Reasoning {
+            content: "hidden reasoning token sk-secret".to_string(),
+        });
+        let stream = AgentMessageStream {
+            thread_id: "thread#test".to_string(),
+            turn_id: "turn#test".to_string(),
+            stream_id: "assistant".to_string(),
+            event_id: "event#1".to_string(),
+            source_sequence: AgentMessageSequence::ProviderReliable(1),
+            phase: AgentMessageStreamPhase::Delta,
+        };
+        control.emit_event(AgentEvent::Message {
+            content: "partial visible text".to_string(),
+            stream: Some(stream.clone()),
+        });
+        control.emit_event(AgentEvent::Message {
+            content: "partial visible text".to_string(),
+            stream: Some(stream),
+        });
+        control.emit_event(AgentEvent::Message {
+            content: "C:\\Users\\24763\\Desktop\\api_key.txt".to_string(),
+            stream: None,
+        });
+        control.emit_event(AgentEvent::ToolCallCompleted {
+            id: Some("tool#1".to_string()),
+            name: "shell".to_string(),
+            output: "provider wire bearer token".to_string(),
+            status: CommandStatus::Completed,
+        });
+        control.emit_event(AgentEvent::Completed {
+            status: AgentRunStatus::Completed,
+            usage: None,
+        });
+        Ok(AgentRunResult {
+            status: AgentRunStatus::Completed,
+            final_response: Some("final safe answer".to_string()),
+            events: Vec::new(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn supervisor_observes_agent_events_but_weixin_uses_final_text_only() {
+    let (temp, store) = store_fixture();
+    let item_id = seed_pending(
+        &store,
+        ACCOUNT,
+        "raw-message-stream-policy",
+        "raw-peer-stream-policy",
+        "stream safety",
+        1100,
+    );
+    let mut options = supervisor_options(temp.path())
+        .with_remote_control_hub(WeixinRemoteControlHub::with_state_store(store.clone()));
+    options = options.with_remote_control_timeout(Duration::from_millis(100));
+    let sink = WeixinRuntimeTestSink::default();
+    let supervisor =
+        WeixinTurnSupervisor::with_test_sink(store, test_data_key(), options, sink.clone());
+
+    let report = supervisor
+        .run_pending_turn(&StreamingEventBackend, ACCOUNT, &item_id)
+        .await
+        .expect("streaming event turn");
+    assert_eq!(report.status, AgentRunStatus::Completed);
+    let observation = report
+        .stream_observation
+        .as_ref()
+        .expect("stream observation report");
+    assert_eq!(observation.policy, "final_text_only");
+    assert_eq!(observation.observed_event_count, 6);
+    assert_eq!(observation.public_message_count, 1);
+    assert_eq!(observation.duplicate_public_message_count, 1);
+    assert_eq!(observation.unsafe_public_message_count, 1);
+    assert_eq!(observation.terminal_status, Some(AgentRunStatus::Completed));
+    assert_eq!(
+        observation.merged_public_text.as_deref(),
+        Some("partial visible text")
+    );
+
+    let records = sink.records();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().any(|record| {
+        record
+            .final_response
+            .contains("[YunXi 微信控制]\npurpose=cancellation")
+    }));
+    assert!(
+        records
+            .iter()
+            .any(|record| record.final_response == "final safe answer")
+    );
+    let outbound_text = records
+        .iter()
+        .map(|record| record.final_response.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for forbidden in [
+        "partial visible text",
+        "hidden reasoning",
+        "provider wire",
+        "C:\\Users\\24763",
+        "sk-secret",
+        "bearer token",
+    ] {
+        assert!(!outbound_text.contains(forbidden));
+    }
 }

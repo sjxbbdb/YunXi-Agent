@@ -504,13 +504,21 @@ impl TuiPresentation {
             AgentEvent::MemoryWarning { warning, .. } => {
                 self.debug_only("memory warning", warning.clone(), "memory-warning")
             }
-            AgentEvent::Error { message } => self.present_error_event(
-                classify_error(message),
-                "agent operation failed",
-                "agent error",
-                message.clone(),
-                "error",
-            ),
+            AgentEvent::Error { message } => {
+                let category = classify_error(message);
+                let context = if matches!(category, ErrorCategory::Tool) {
+                    tool_error_context(message)
+                } else {
+                    "agent operation failed".to_string()
+                };
+                self.present_error_event(
+                    category,
+                    context,
+                    "agent error",
+                    message.clone(),
+                    "error",
+                )
+            }
             AgentEvent::ProviderError {
                 provider,
                 classification,
@@ -1037,6 +1045,21 @@ fn safe_message_summary(label: &str, message: &str) -> String {
     )
 }
 
+fn tool_error_context(message: &str) -> String {
+    let first_line = message.lines().next().unwrap_or_default().trim();
+    let stripped = first_line
+        .strip_prefix("agent execution failed: ")
+        .or_else(|| first_line.strip_prefix("tool execution failed: "))
+        .or_else(|| first_line.strip_prefix("execution failed: "))
+        .unwrap_or(first_line)
+        .trim();
+    if stripped.is_empty() {
+        "agent operation failed".to_string()
+    } else {
+        truncate_chars(&redact_secrets(stripped), 160)
+    }
+}
+
 fn stable_hash(value: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in value.as_bytes() {
@@ -1291,6 +1314,16 @@ mod tests {
             message: "opaque internal failure".to_string(),
         });
         assert_error_summary(&unknown, "YX-UNKNOWN-001", true);
+
+        let execution_failed = presentation.present_agent_event(&AgentEvent::Error {
+            message: "agent execution failed: failed to read tool_search directory C:\\Users\\24763\\AppData\\Local\\Temp\\WinSAT: 拒绝访问。 (os error 5)".to_string(),
+        });
+        assert_error_summary(&execution_failed, "YX-TOOL-001", true);
+        assert!(
+            execution_failed
+                .visible_text
+                .contains("failed to read tool_search directory")
+        );
 
         assert!(!terminal.visible_text.contains("internal stack"));
         assert!(

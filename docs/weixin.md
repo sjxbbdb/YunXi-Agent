@@ -2,16 +2,19 @@
 
 ## v2.2.0 合并开发线当前状态
 
-当前代码只完成 `v2.2.0` 合并开发线的 P1 整改批次，用于关闭 2026-07-31 复审点名的两个阻塞点：
+当前代码正在执行 `v2.2.0` 合并开发线。2026-07-31 17:40 代码整改报告点名的 P1 项已进入代码侧整改收口：远程控制 outbound、注册失败显式终态、delivery 结果分类、分段 manifest、AgentEvent `final_text_only` 观察策略，以及后台 runtime dispatch lease/退出等待/异常恢复均已补入实现和测试。该状态仍是开发整改结果，等待统一验证、真实 iLink/Provider/ConPTY 脱敏证据和重新审核；不得提前创建 `v2.2.0` tag 或写成已发布、已审核通过。
 
 - 会话连续性：`WeixinConversationBinding` 现在保留 `root_session_id`、`active_session_id`、`last_completed_session_id` 和兼容镜像 `session_id`；每条 pending runtime turn 持久化稳定 `turn_session_id` 与 `parent_session_id`。第一轮没有 parent，后续轮使用上一轮成功完成的 session 作为 parent，并通过既有 `Agent::run_with_backend_stream` 与 `AgentInput::text` 恢复历史。
-- QueueFull 恢复：`yunxi weixin serve` 在启动/轮询前后 drain Ready pending；同一 pending 的 QueueFull 不标失败，只记录脱敏诊断、重试次数和下次重试时间。容量释放或进程重启后，Ready pending 继续进入同一稳定 `turn_session_id`，避免重复推进或丢失。
+- QueueFull 与后台恢复：`yunxi weixin serve` 在启动/轮询前后 drain Ready pending；同一 pending 的 QueueFull 不标失败，只记录脱敏诊断、重试次数和下次重试时间。后台 dispatch 使用 `lease_owner`、attempt token、started/expires 时间、退出等待和异常恢复；服务退出超时或后台 task panic 只恢复当前进程 lease owner 的 pending，不抢占其他进程任务。
+- 远程文字控制：已配对私聊中的 `/status`、`/stop`、`/approve <id>`、`/deny <id> [reason]`、`/answer <id> <text>` 只桥接既有 `AgentRunControl`；request ID 不透明并绑定 account、peer、dm、turn 和用途，状态写入 `WeixinStateStore`，自然语言不会触发审批。
+- 可靠最终文本回信：微信路径采用 `final_text_only` 策略。`AgentEvent` 流会被消费并记录公开 Message 白名单、重复事件、非公开事件和不安全文本计数，但 reasoning、tool event、provider wire、路径、环境变量和秘密不会进入微信 outbound；只有 Runtime `final_response` 进入认证加密 delivery spool。delivery 按 Unicode grapheme 安全分段，使用 manifest/batch 提交，`weixin serve` 通过 iLink `sendmessage` drain 待投递分段，并区分确定失败、结果不明和已验证幂等重试。
+- 会话 reset：`yunxi weixin session reset --account ... --peer peer#... --confirm` 只归档指定 account/peer 的微信绑定 session，不静默删除长期记忆或其他会话。
 
-该批次仍不是完整 `v2.2.0`。远程审批、微信文字控制、生产 `sendmessage`、可靠流式回信、陪伴记忆、真实 iLink 回信闭环、最终联调和 `v2.2.0` tag 仍受后续内部门禁约束；P1 复审通过前不得进入这些实现。
+完整 `v2.2.0` 仍必须等待全量回归、真实 iLink/Provider 联调、ConPTY 验证、证据脱敏、文档同步和统一审核。逐 token 微信流式输出、群聊、公网回调、后台守护进程、联系人抓取、自动加好友、群发和未验证主动推送不属于当前完成能力。
 
-## v2.1.6 能力
+## v2.2.0 开发实现范围
 
-v2.1.6 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命周期和旧登录账户 metadata 到 `WeixinStateStore` 安全初始化基础上，保留前台私聊长轮询接纳层、认证加密 pending inbound 和 stale lock 恢复，并把已准入私聊文本绑定到既有 YunXi Runtime session：
+v2.2.0 在 v2.1.x 状态持久化、诊断、安全账户生命周期和旧登录账户 metadata 到 `WeixinStateStore` 安全初始化基础上，保留前台私聊长轮询接纳层、认证加密 pending inbound、stale lock 恢复和既有 YunXi Runtime session binding，并继续扩展可靠回信与远程控制：
 
 - yunxi weixin login --account <name> 获取二维码、显示安全终端文本、轮询等待/扫码/确认，并明确处理过期、取消、超时、redirect、验证码和验证码阻断。
 - 登录确认后，token 和数据加密密钥只写入 Windows Credential Manager；系统凭证不可用、权限失败或写入失败时登录失败，不降级到明文文件。
@@ -29,6 +32,7 @@ v2.1.6 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命周期和�
 - 已存在当前 state 时不会覆盖 pair、pending inbound、delivery、cursor、last error 等运行状态；遇到未来 schema 或损坏 state 时拒绝覆盖并返回脱敏诊断；遇到损坏 metadata 时 `doctor --json` 返回结构化安全错误且不创建错误 state。
 - 凭证引用存在但系统凭证不可用时，state 仍可由非机密 metadata 初始化；`doctor --json` 会标记凭证不可用或缺失，不写明文回退。
 - `yunxi weixin serve` 是前台服务入口，启动前复用 workspace/provider 解析、旧 metadata 初始化、系统凭证检查、数据密钥/加密 pending queue 检查和账户锁。
+- 直接运行交互式 `yunxi` 时，若默认账户已有微信登录 metadata，CLI 会在后台自动拉起同一 workspace 的微信 gateway；已有活动账户锁时不会重复启动，未登录时静默跳过。CLI 会等待本次子进程 PID 获取账户锁后再报告 `gateway ready`；提前退出或超时会显示明确诊断和日志路径，但不会阻止本地 CLI 继续启动。可用 `--no-weixin-autostart` 或 `YUNXI_WEIXIN_AUTOSTART=0` 关闭；等待上限可用 `YUNXI_WEIXIN_AUTOSTART_READY_TIMEOUT_MS` 配置（100–30000ms，默认 4000ms）。后台 stdout/stderr 写入 `.yunxi/weixin/logs/autostart-*.{stdout,stderr}.log`。显式 `--companion` 会透传给微信 gateway。
 - serve 循环调用 iLink `getupdates`，使用 `WeixinStateStore` 中的 `get_updates_buf` 游标，尊重服务端 timeout hint，并对空轮询、网络错误和服务端错误执行带 jitter 的有界退避。
 - 入站消息先归一化为只含 account hash、peer hash、message id hash、direct-message key、时间、secret reference 和 kind 的 `WeixinInboundEnvelope`；stdout、stderr、JSON、状态和日志不输出原始账号、peer、message id、context token、正文、附件 URL、本地绝对 workspace 或系统凭证 target。
 - 已准入 peer 的私聊文本在进入 state store 前用 `chacha20-poly1305` 认证加密；AAD 绑定 account hash、peer hash、message hash、item id 和 AAD 版本；陌生私聊文本只生成短时、不透明 pair request；群消息、自消息、附件和未知消息只进入脱敏跳过计数。
@@ -39,24 +43,23 @@ v2.1.6 在 v2.1.4/hotfix 状态持久化、诊断、安全账户生命周期和�
 - `WeixinTurnSupervisor` 只处理已配对、已解密、非终态私聊文本 pending inbound，把文本转换为 `AgentInput::text`，并通过唯一 Runtime 入口 `Agent::run_with_backend_stream` 执行。
 - `yunxi run` 与 `yunxi weixin serve` 复用同一 Provider、model、cwd、sandbox、approval、context window 和 companion 配置构造路径；微信自然语言不会隐式提高权限。
 - 同一 `account + peer + dm` 会话使用有界队列串行执行，避免交叉 turn 或交叉 session/memory 写入；不同已准入私聊可以独立调度。
-- 本版本只把 Runtime 最小最终文本写入测试 sink，用于验证会话绑定和配置一致性；生产路径仍不调用 Weixin sendmessage。
+- Runtime `final_response` 写入加密 delivery spool；生产 `weixin serve` 使用 iLink `sendmessage` 投递最终文本分段。AgentEvent 流只用于 final-only 策略下的安全观察和过滤计数，不投递 reasoning、tool event、provider wire、路径、环境变量、秘密或隐藏 trace，也不开放逐 token 微信流式回信。
 - token 过期或凭证失效时，serve 写入 `suspended`/`credential_expired` 等脱敏健康状态并停止轮询，不自动删除账户或凭证。
-- `pair list|approve|deny` 只处理本地状态 store 中的不透明 request ID、脱敏账户、peer hash、过期时间和状态，不执行远程审批。
+- `pair list|approve|deny` 只处理本地状态 store 中的不透明 pair request ID、脱敏账户、peer hash、过期时间和状态；Agent 远程审批/追问/取消只在前台 `weixin serve` 中通过已配对私聊 slash 命令桥接既有 `AgentRunControl`。
 - `logout --confirm` 遇到活动账户锁会拒绝；服务停止后只删除指定账户微信凭证引用、微信状态和微信 metadata，不删除 YunXi session、persona memory、工作区文件、其他账户或历史报告。
 
 二维码文本只在交互终端显示，且会先移除 ANSI 控制序列；不会写入普通日志、JSON/JSONL、错误链、Markdown 证据或账户 JSON。
 
 ## 当前不能做什么
 
-本版本仍不能：
+当前开发实现仍不能：
 
-- 把测试 sink 中的最终文本发送回微信；
 - 通过微信文字隐式提高权限、修改 cwd、Provider、模型、sandbox 或 approval mode；
-- 发送微信消息、调用 sendmessage、生成或流式合并微信回复；
-- 执行远程审批、微信文字命令控制、追问或取消命令桥接；
+- 逐 token 发送或流式合并微信回复；
 - 支持群聊、主动推送、附件解析、媒体上传、联系人抓取、Hook、逆向协议或第二套 Agent。
+- 在统一审核和真实验证前宣称 `v2.2.0` 已发布或创建 `v2.2.0` tag。
 
-weixin serve 已完成私聊长轮询、准入、认证加密 pending、Runtime session binding、同会话串行和测试 sink；真实微信回信闭环属于后续版本，不能把测试 sink 最终文本宣称为微信已回复。
+weixin serve 的开发路径已覆盖私聊长轮询、准入、认证加密 pending、Runtime session binding、同会话串行、slash control 和最终文本 delivery spool；最终发布仍取决于统一验证、真实 iLink/Provider 联调和审核结论。
 
 ## 真实登录验证门禁
 
@@ -69,7 +72,7 @@ weixin serve 已完成私聊长轮询、准入、认证加密 pending、Runtime 
 5. 运行 `target\release\yunxi.exe weixin doctor --account <test-name> --json`，确认系统凭证引用可读且 `secrets_included=false`。
 6. 重新打开 shell 或重新执行 release 二进制，再次读取 status/doctor，确认凭证引用仍可诊断。
 
-`v2.1.6` 保留上述真实扫码登录前置能力、v2.1.4 状态 store 诊断、旧账户 metadata 懒初始化、前台私聊长轮询接纳层、认证加密 pending inbound、重启恢复入口和 Windows stale account lock 回收，并新增既有 Runtime session binding 与测试 sink 验收。后续复审材料仍只能记录脱敏账户 hash、状态、计数、退出码和是否触发网络；不得保存二维码、token、原始账号、联系人、消息正文、context token、data key 或系统凭证明文。
+`v2.2.0` 复审材料仍只能记录脱敏账户 hash、状态、计数、退出码和是否触发网络；不得保存二维码、token、原始账号、联系人、消息正文、context token、data key 或系统凭证明文。真实回信、审批、取消和重启恢复证据必须先脱敏再归档。
 
 ## 命令
 
@@ -79,7 +82,11 @@ yunxi weixin status [--account default] [--json]
 yunxi weixin doctor [--account default] [--json]
 yunxi weixin serve [--account default] [--workspace <path>]
 yunxi weixin pair list|approve|deny ...
+yunxi weixin session reset --account default --peer peer#... --confirm
 yunxi weixin logout [--account default] --confirm
+yunxi [--no-weixin-autostart]
+yunxi bot start --channels weixin [--account default]
+yunxi eval weixin [--json|--jsonl]
 ~~~
 
 Provider、模型、sandbox、approval、context window、companion 和根 --cwd 继续由现有 YunXi CLI 配置路径解析，并被 `yunxi run` 与 `yunxi weixin serve` 共享。登录只使用固定官方 endpoint https://ilinkai.weixin.qq.com/；CLI 不接受任意 base URL。
@@ -99,4 +106,4 @@ Provider、模型、sandbox、approval、context window、companion 和根 --cwd
 
 实现只复刻协议行为和测试思路，没有复制 TypeScript 或 Go 源码。
 
-署名：开发者
+署名：开发报告撰写者

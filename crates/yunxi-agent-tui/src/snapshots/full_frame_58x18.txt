@@ -1,4 +1,4 @@
-00|YunXi v2.1.6 | deepseek live
+00|YunXi v2.2.0 | deepseek live
 01|new output below | cells=38 | provider=deepseek
 02|──────────────────────────────────────────────────────────
 03|┌Transcript 74-82 / 93 | new output below────────────────┐
@@ -8,8 +8,8 @@
 07|│    URL https://very-long.example.test/api/v1/items?    ║
 08|│    search=中文&sort=desc#results                       ║
 09|│    Windows C:\Users\24763\YunXi Agent\输出目录\very-   ║
-10|│    long-file-name.txt                                  █
-11|│    ```rust                                             ║
+10|│    long-file-name.txt                                  ║
+11|│    ```rust                                             █
 12|│        let greeting = "你好、世界"; // 日本語と中文    v
 13|└────────────────────────────────────────────────────────┘
 14|┌Composer────────────────────────────────────────────────┐

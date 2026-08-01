@@ -8,12 +8,15 @@ use std::{
     hash::{Hash, Hasher},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
-pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 4;
+pub const WEIXIN_STATE_SCHEMA_VERSION: u32 = 6;
 pub const WEIXIN_PAYLOAD_ALGORITHM: &str = "chacha20-poly1305";
 pub const WEIXIN_PAYLOAD_ALGORITHM_VERSION: u32 = 1;
 pub const WEIXIN_PAYLOAD_AAD_VERSION: u32 = 1;
@@ -23,6 +26,7 @@ const WEIXIN_LOCK_ENV: &str = "YUNXI_WEIXIN_LOCK_ROOT";
 const WEIXIN_PENDING_INBOUND_LIMIT: usize = 1024;
 const WEIXIN_TERMINAL_RECEIPT_LIMIT: usize = 2048;
 const WEIXIN_TERMINAL_RECEIPT_TTL_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
+static STATE_TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub trait WeixinStateStore: Send + Sync {
     fn root(&self) -> &Path;
@@ -221,9 +225,10 @@ impl FileWeixinStateStore {
             .and_then(|value| value.to_str())
             .unwrap_or("weixin-state.json");
         let temp_path = parent.join(format!(
-            ".{file_name}.tmp.{}.{}",
+            ".{file_name}.tmp.{}.{}.{}",
             std::process::id(),
-            now_millis()
+            now_millis(),
+            STATE_TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         let bytes =
             serde_json::to_vec_pretty(snapshot).map_err(|_| WeixinStateError::InvalidRecord {
@@ -341,6 +346,10 @@ impl FileWeixinStateStore {
                 dispatch_retry_count: 0,
                 next_retry_at_millis: None,
                 last_dispatch_error: None,
+                lease_owner: None,
+                lease_token: None,
+                lease_started_at_millis: None,
+                lease_expires_at_millis: None,
                 state: WeixinPendingInboundState::Ready,
                 terminal_reason: None,
                 created_at_millis: commit.now_millis,
@@ -593,6 +602,10 @@ impl FileWeixinStateStore {
         pending.dispatch_retry_count = pending.dispatch_retry_count.saturating_add(1);
         pending.next_retry_at_millis = Some(next_retry_at_millis);
         pending.last_dispatch_error = Some(error_label.to_string());
+        pending.lease_owner = None;
+        pending.lease_token = None;
+        pending.lease_started_at_millis = None;
+        pending.lease_expires_at_millis = None;
         pending.updated_at_millis = now_millis;
         pending.transitioned_at_millis = now_millis;
         let updated = pending.clone();
@@ -603,6 +616,556 @@ impl FileWeixinStateStore {
             receipt.state = WeixinReceiptState::Ready;
             receipt.updated_at_millis = now_millis;
         }
+        snapshot.updated_at_millis = now_millis;
+        snapshot.transitioned_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(updated)
+    }
+
+    pub fn record_pending_runtime_dispatch_inflight(
+        &self,
+        account_id: &str,
+        item_id: &str,
+        next_retry_at_millis: u64,
+        now_millis: u64,
+    ) -> Result<WeixinPendingInbound, WeixinStateError> {
+        self.claim_pending_runtime_dispatch(
+            account_id,
+            item_id,
+            "lease#legacy",
+            "attempt#legacy",
+            next_retry_at_millis,
+            now_millis,
+        )
+    }
+
+    pub fn claim_pending_runtime_dispatch(
+        &self,
+        account_id: &str,
+        item_id: &str,
+        lease_owner: &str,
+        lease_token: &str,
+        lease_expires_at_millis: u64,
+        now_millis: u64,
+    ) -> Result<WeixinPendingInbound, WeixinStateError> {
+        if !lease_owner.starts_with("lease#")
+            || contains_sensitive_marker(lease_owner)
+            || !lease_token.starts_with("attempt#")
+            || contains_sensitive_marker(lease_token)
+            || lease_expires_at_millis <= now_millis
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "runtime lease failed validation",
+            });
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        let pending = snapshot
+            .pending_inbound
+            .iter_mut()
+            .find(|item| item.item_id == item_id && !item.state.is_terminal())
+            .ok_or_else(|| WeixinStateError::PendingInboundNotFound {
+                item_id: item_id.to_string(),
+            })?;
+        if pending.state != WeixinPendingInboundState::Ready {
+            return Err(WeixinStateError::InvalidTransition {
+                from: pending.state.as_str(),
+                to: WeixinPendingInboundState::Ready.as_str(),
+            });
+        }
+        pending.next_retry_at_millis = Some(lease_expires_at_millis);
+        pending.last_dispatch_error = Some("runtime_dispatch_inflight".to_string());
+        pending.lease_owner = Some(lease_owner.to_string());
+        pending.lease_token = Some(lease_token.to_string());
+        pending.lease_started_at_millis = Some(now_millis);
+        pending.lease_expires_at_millis = Some(lease_expires_at_millis);
+        pending.updated_at_millis = now_millis;
+        let updated = pending.clone();
+        snapshot.updated_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(updated)
+    }
+
+    pub fn recover_stale_pending_runtime_turns(
+        &self,
+        account_id: &str,
+        active_lease_owner: &str,
+        now_millis: u64,
+    ) -> Result<usize, WeixinStateError> {
+        let mut snapshot = self.load_required(account_id)?;
+        let mut recovered = 0usize;
+        for pending in &mut snapshot.pending_inbound {
+            let stale = pending.state == WeixinPendingInboundState::Running
+                && pending
+                    .lease_expires_at_millis
+                    .is_some_and(|expires_at| expires_at <= now_millis)
+                && pending
+                    .lease_owner
+                    .as_deref()
+                    .is_some_and(|owner| owner != active_lease_owner);
+            if !stale {
+                continue;
+            }
+            pending.state = WeixinPendingInboundState::Ready;
+            pending.dispatch_retry_count = pending.dispatch_retry_count.saturating_add(1);
+            pending.next_retry_at_millis = Some(now_millis);
+            pending.last_dispatch_error = Some("runtime_lease_expired".to_string());
+            pending.lease_owner = None;
+            pending.lease_token = None;
+            pending.lease_started_at_millis = None;
+            pending.lease_expires_at_millis = None;
+            pending.updated_at_millis = now_millis;
+            pending.transitioned_at_millis = now_millis;
+            recovered += 1;
+        }
+        if recovered > 0 {
+            snapshot.updated_at_millis = now_millis;
+            snapshot.transitioned_at_millis = now_millis;
+            self.save(&snapshot)?;
+        }
+        Ok(recovered)
+    }
+
+    pub fn recover_pending_runtime_dispatch_for_owner(
+        &self,
+        account_id: &str,
+        item_id: &str,
+        lease_owner: &str,
+        error_label: &str,
+        now_millis: u64,
+    ) -> Result<Option<WeixinPendingInbound>, WeixinStateError> {
+        if !lease_owner.starts_with("lease#")
+            || contains_sensitive_marker(lease_owner)
+            || error_label.trim().is_empty()
+            || contains_sensitive_marker(error_label)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "runtime lease recovery failed validation",
+            });
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        let Some(pending) = snapshot
+            .pending_inbound
+            .iter_mut()
+            .find(|item| item.item_id == item_id && !item.state.is_terminal())
+        else {
+            return Ok(None);
+        };
+        if pending.account_id != account_id || pending.lease_owner.as_deref() != Some(lease_owner) {
+            return Ok(None);
+        }
+        if !matches!(
+            pending.state,
+            WeixinPendingInboundState::Ready | WeixinPendingInboundState::Running
+        ) {
+            return Ok(None);
+        }
+        let message_id_hash = pending.message_id_hash.clone();
+        let peer_id_hash = pending.peer_id_hash.clone();
+        pending.state = WeixinPendingInboundState::Ready;
+        pending.dispatch_retry_count = pending.dispatch_retry_count.saturating_add(1);
+        pending.next_retry_at_millis = Some(now_millis);
+        pending.last_dispatch_error = Some(error_label.to_string());
+        pending.lease_owner = None;
+        pending.lease_token = None;
+        pending.lease_started_at_millis = None;
+        pending.lease_expires_at_millis = None;
+        pending.updated_at_millis = now_millis;
+        pending.transitioned_at_millis = now_millis;
+        let updated = pending.clone();
+        if let Some(receipt) = snapshot.inbound_receipts.iter_mut().find(|receipt| {
+            receipt.message_id_hash == message_id_hash && receipt.peer_id_hash == peer_id_hash
+        }) {
+            receipt.state = WeixinReceiptState::Ready;
+            receipt.updated_at_millis = now_millis;
+            receipt.transitioned_at_millis = now_millis;
+        }
+        snapshot.updated_at_millis = now_millis;
+        snapshot.transitioned_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(Some(updated))
+    }
+
+    pub fn enqueue_pending_delivery(
+        &self,
+        account_id: &str,
+        item: WeixinPendingDeliveryCommitItem,
+        now_millis: u64,
+    ) -> Result<WeixinPendingDeliveryMetadata, WeixinStateError> {
+        validate_delivery_commit_item(account_id, &item)?;
+        let mut snapshot = self.load_required(account_id)?;
+        if let Some(existing) = snapshot
+            .pending_deliveries
+            .iter()
+            .find(|delivery| delivery.delivery_id == item.delivery_id)
+        {
+            return Ok(existing.clone());
+        }
+        if snapshot
+            .deliveries
+            .iter()
+            .any(|delivery| delivery.delivery_id == item.delivery_id)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "delivery id already reached terminal state",
+            });
+        }
+        let delivery = WeixinPendingDeliveryMetadata {
+            schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+            account_id: account_id.to_string(),
+            delivery_id: item.delivery_id,
+            peer_id_hash: item.peer_id_hash,
+            direct_message_key: item.direct_message_key,
+            item_id: item.item_id,
+            session_id: item.session_id,
+            message_hash: item.message_hash,
+            segment_index: item.segment_index,
+            total_segments: item.total_segments,
+            encrypted_payload: Some(item.encrypted_payload),
+            state: WeixinDeliveryState::Pending,
+            retry_count: 0,
+            last_status: None,
+            last_redacted_error: None,
+            next_retry_at_millis: None,
+            created_at_millis: now_millis,
+            updated_at_millis: now_millis,
+            transitioned_at_millis: now_millis,
+        };
+        snapshot.pending_deliveries.push(delivery.clone());
+        snapshot.updated_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(delivery)
+    }
+
+    pub fn enqueue_pending_delivery_batch(
+        &self,
+        account_id: &str,
+        manifest: WeixinDeliveryManifestCommitItem,
+        items: Vec<WeixinPendingDeliveryCommitItem>,
+        now_millis: u64,
+    ) -> Result<Vec<WeixinPendingDeliveryMetadata>, WeixinStateError> {
+        if items.is_empty()
+            || manifest.total_segments == 0
+            || manifest.delivery_ids.len() != items.len()
+            || manifest
+                .delivery_ids
+                .iter()
+                .any(|delivery_id| !delivery_id.starts_with("delivery#"))
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "delivery manifest failed validation",
+            });
+        }
+        for item in &items {
+            validate_delivery_commit_item(account_id, item)?;
+            if item.message_hash != manifest.message_hash
+                || item.item_id != manifest.item_id
+                || item.session_id != manifest.session_id
+                || item.total_segments != manifest.total_segments
+                || !manifest.delivery_ids.contains(&item.delivery_id)
+            {
+                return Err(WeixinStateError::InvalidRecord {
+                    reason: "delivery manifest item mismatch",
+                });
+            }
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        if let Some(existing) = snapshot
+            .delivery_manifests
+            .iter()
+            .find(|existing| existing.message_hash == manifest.message_hash)
+        {
+            let mut existing_items = Vec::new();
+            for delivery_id in &existing.delivery_ids {
+                if let Some(item) = snapshot
+                    .pending_deliveries
+                    .iter()
+                    .find(|item| &item.delivery_id == delivery_id)
+                {
+                    existing_items.push(item.clone());
+                }
+            }
+            return Ok(existing_items);
+        }
+        let mut pending = Vec::with_capacity(items.len());
+        for item in items {
+            if snapshot
+                .pending_deliveries
+                .iter()
+                .any(|delivery| delivery.delivery_id == item.delivery_id)
+                || snapshot
+                    .deliveries
+                    .iter()
+                    .any(|delivery| delivery.delivery_id == item.delivery_id)
+            {
+                return Err(WeixinStateError::InvalidRecord {
+                    reason: "delivery id already exists",
+                });
+            }
+            let delivery = WeixinPendingDeliveryMetadata {
+                schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+                account_id: account_id.to_string(),
+                delivery_id: item.delivery_id,
+                peer_id_hash: item.peer_id_hash,
+                direct_message_key: item.direct_message_key,
+                item_id: item.item_id,
+                session_id: item.session_id,
+                message_hash: item.message_hash,
+                segment_index: item.segment_index,
+                total_segments: item.total_segments,
+                encrypted_payload: Some(item.encrypted_payload),
+                state: WeixinDeliveryState::Pending,
+                retry_count: 0,
+                last_status: None,
+                last_redacted_error: None,
+                next_retry_at_millis: None,
+                created_at_millis: now_millis,
+                updated_at_millis: now_millis,
+                transitioned_at_millis: now_millis,
+            };
+            pending.push(delivery);
+        }
+        snapshot.delivery_manifests.push(WeixinDeliveryManifest {
+            schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+            message_hash: manifest.message_hash,
+            account_id: account_id.to_string(),
+            item_id: manifest.item_id,
+            session_id: manifest.session_id,
+            total_segments: manifest.total_segments,
+            delivery_ids: manifest.delivery_ids,
+            state: WeixinDeliveryManifestState::Pending,
+            created_at_millis: now_millis,
+            updated_at_millis: now_millis,
+        });
+        snapshot.pending_deliveries.extend(pending.iter().cloned());
+        snapshot.updated_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(pending)
+    }
+
+    pub fn load_ready_pending_deliveries(
+        &self,
+        account_id: &str,
+        now_millis: u64,
+        limit: usize,
+    ) -> Result<Vec<WeixinPendingDeliveryMetadata>, WeixinStateError> {
+        let snapshot = self.load_required(account_id)?;
+        Ok(snapshot
+            .pending_deliveries
+            .into_iter()
+            .filter(|delivery| {
+                delivery.state == WeixinDeliveryState::Pending
+                    && delivery
+                        .next_retry_at_millis
+                        .is_none_or(|next_retry| next_retry <= now_millis)
+            })
+            .take(limit)
+            .collect())
+    }
+
+    pub fn mark_pending_delivery_running(
+        &self,
+        account_id: &str,
+        delivery_id: &str,
+        now_millis: u64,
+    ) -> Result<WeixinPendingDeliveryMetadata, WeixinStateError> {
+        let mut snapshot = self.load_required(account_id)?;
+        let delivery = snapshot
+            .pending_deliveries
+            .iter_mut()
+            .find(|delivery| delivery.delivery_id == delivery_id && !delivery.state.is_terminal())
+            .ok_or_else(|| WeixinStateError::DeliveryNotFound {
+                delivery_id: delivery_id.to_string(),
+            })?;
+        if delivery.account_id != account_id || delivery.state != WeixinDeliveryState::Pending {
+            return Err(WeixinStateError::InvalidTransition {
+                from: delivery.state.as_str(),
+                to: WeixinDeliveryState::Running.as_str(),
+            });
+        }
+        delivery.state = WeixinDeliveryState::Running;
+        delivery.updated_at_millis = now_millis;
+        delivery.transitioned_at_millis = now_millis;
+        let updated = delivery.clone();
+        snapshot.updated_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(updated)
+    }
+
+    pub fn record_pending_delivery_deferred(
+        &self,
+        account_id: &str,
+        delivery_id: &str,
+        error_label: &str,
+        next_retry_at_millis: u64,
+        now_millis: u64,
+    ) -> Result<WeixinPendingDeliveryMetadata, WeixinStateError> {
+        if error_label.trim().is_empty() || contains_sensitive_marker(error_label) {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "delivery error failed validation",
+            });
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        let delivery = snapshot
+            .pending_deliveries
+            .iter_mut()
+            .find(|delivery| delivery.delivery_id == delivery_id && !delivery.state.is_terminal())
+            .ok_or_else(|| WeixinStateError::DeliveryNotFound {
+                delivery_id: delivery_id.to_string(),
+            })?;
+        delivery.state = WeixinDeliveryState::Pending;
+        delivery.retry_count = delivery.retry_count.saturating_add(1);
+        delivery.last_status = Some("deferred".to_string());
+        delivery.last_redacted_error = Some(error_label.to_string());
+        delivery.next_retry_at_millis = Some(next_retry_at_millis);
+        delivery.updated_at_millis = now_millis;
+        delivery.transitioned_at_millis = now_millis;
+        let updated = delivery.clone();
+        snapshot.updated_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(updated)
+    }
+
+    pub fn complete_pending_delivery(
+        &self,
+        account_id: &str,
+        delivery_id: &str,
+        target: WeixinDeliveryState,
+        last_status: Option<String>,
+        last_redacted_error: Option<String>,
+        now_millis: u64,
+    ) -> Result<WeixinDeliveryRecord, WeixinStateError> {
+        if !target.is_terminal() {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "delivery terminal state is required",
+            });
+        }
+        if last_status
+            .as_deref()
+            .is_some_and(contains_sensitive_marker)
+            || last_redacted_error
+                .as_deref()
+                .is_some_and(contains_sensitive_marker)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "delivery status failed validation",
+            });
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        let index = snapshot
+            .pending_deliveries
+            .iter()
+            .position(|delivery| {
+                delivery.delivery_id == delivery_id
+                    && delivery.account_id == account_id
+                    && !delivery.state.is_terminal()
+            })
+            .ok_or_else(|| WeixinStateError::DeliveryNotFound {
+                delivery_id: delivery_id.to_string(),
+            })?;
+        let mut pending = snapshot.pending_deliveries.remove(index);
+        pending.state = target;
+        pending.last_status = last_status;
+        pending.last_redacted_error = last_redacted_error.clone();
+        pending.updated_at_millis = now_millis;
+        pending.transitioned_at_millis = now_millis;
+        let record = WeixinDeliveryRecord {
+            schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+            delivery_id: pending.delivery_id,
+            state: target,
+            last_redacted_error,
+            created_at_millis: pending.created_at_millis,
+            updated_at_millis: now_millis,
+            transitioned_at_millis: now_millis,
+        };
+        snapshot.deliveries.push(record.clone());
+        refresh_delivery_manifest_states(&mut snapshot);
+        snapshot.updated_at_millis = now_millis;
+        snapshot.transitioned_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(record)
+    }
+
+    pub fn record_remote_control_request(
+        &self,
+        account_id: &str,
+        item: WeixinRemoteControlCommitItem,
+        now_millis: u64,
+    ) -> Result<WeixinRemoteControlRequestRecord, WeixinStateError> {
+        validate_remote_control_commit_item(account_id, &item)?;
+        let mut snapshot = self.load_required(account_id)?;
+        if let Some(existing) = snapshot
+            .remote_control_requests
+            .iter()
+            .find(|request| request.request_id == item.request_id)
+        {
+            return Ok(existing.clone());
+        }
+        let record = WeixinRemoteControlRequestRecord {
+            schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+            request_id: item.request_id,
+            account_id: account_id.to_string(),
+            peer_id_hash: item.peer_id_hash,
+            direct_message_key: item.direct_message_key,
+            item_id: item.item_id,
+            session_id: item.session_id,
+            purpose: item.purpose,
+            state: WeixinRemoteControlState::Pending,
+            action: item.action,
+            reason: item.reason,
+            cwd_label: item.cwd_label,
+            last_status: None,
+            expires_at_millis: item.expires_at_millis,
+            created_at_millis: now_millis,
+            updated_at_millis: now_millis,
+            transitioned_at_millis: now_millis,
+        };
+        snapshot.remote_control_requests.push(record.clone());
+        snapshot.updated_at_millis = now_millis;
+        self.save(&snapshot)?;
+        Ok(record)
+    }
+
+    pub fn transition_remote_control_request(
+        &self,
+        account_id: &str,
+        request_id: &str,
+        target: WeixinRemoteControlState,
+        last_status: Option<String>,
+        now_millis: u64,
+    ) -> Result<WeixinRemoteControlRequestRecord, WeixinStateError> {
+        if target == WeixinRemoteControlState::Pending {
+            return Err(WeixinStateError::InvalidTransition {
+                from: WeixinRemoteControlState::Pending.as_str(),
+                to: target.as_str(),
+            });
+        }
+        if last_status
+            .as_deref()
+            .is_some_and(contains_sensitive_marker)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "remote control status failed validation",
+            });
+        }
+        let mut snapshot = self.load_required(account_id)?;
+        let request = snapshot
+            .remote_control_requests
+            .iter_mut()
+            .find(|request| request.request_id == request_id && request.account_id == account_id)
+            .ok_or_else(|| WeixinStateError::RemoteControlRequestNotFound {
+                request_id: request_id.to_string(),
+            })?;
+        if request.state != WeixinRemoteControlState::Pending {
+            return Err(WeixinStateError::InvalidTransition {
+                from: request.state.as_str(),
+                to: target.as_str(),
+            });
+        }
+        request.state = target;
+        request.last_status = last_status;
+        request.updated_at_millis = now_millis;
+        request.transitioned_at_millis = now_millis;
+        let updated = request.clone();
         snapshot.updated_at_millis = now_millis;
         snapshot.transitioned_at_millis = now_millis;
         self.save(&snapshot)?;
@@ -727,6 +1290,10 @@ impl FileWeixinStateStore {
             })?;
         pending.transition(target, now_millis)?;
         pending.terminal_reason = terminal_reason;
+        pending.lease_owner = None;
+        pending.lease_token = None;
+        pending.lease_started_at_millis = None;
+        pending.lease_expires_at_millis = None;
         let updated = pending.clone();
         complete_conversation_binding_for_pending(&mut snapshot, &updated, target, now_millis)?;
         if let Some(receipt) = snapshot.inbound_receipts.iter_mut().find(|receipt| {
@@ -884,6 +1451,42 @@ pub struct WeixinPairRequestCommitItem {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinPendingDeliveryCommitItem {
+    pub delivery_id: String,
+    pub peer_id_hash: String,
+    pub direct_message_key: String,
+    pub item_id: String,
+    pub session_id: String,
+    pub message_hash: String,
+    pub segment_index: u32,
+    pub total_segments: u32,
+    pub encrypted_payload: WeixinEncryptedPayload,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinDeliveryManifestCommitItem {
+    pub message_hash: String,
+    pub item_id: String,
+    pub session_id: String,
+    pub total_segments: u32,
+    pub delivery_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WeixinRemoteControlCommitItem {
+    pub request_id: String,
+    pub peer_id_hash: String,
+    pub direct_message_key: String,
+    pub item_id: String,
+    pub session_id: String,
+    pub purpose: WeixinRemoteControlPurposeRecord,
+    pub action: String,
+    pub reason: String,
+    pub cwd_label: Option<String>,
+    pub expires_at_millis: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WeixinInboundBatchCommitResult {
     pub accepted_count: usize,
     pub accepted_item_ids: Vec<String>,
@@ -906,7 +1509,10 @@ pub struct WeixinStateSnapshot {
     pub deliveries: Vec<WeixinDeliveryRecord>,
     pub conversation_bindings: Vec<WeixinConversationBinding>,
     pub reply_contexts: Vec<WeixinReplyContextReference>,
+    #[serde(default)]
+    pub delivery_manifests: Vec<WeixinDeliveryManifest>,
     pub pending_deliveries: Vec<WeixinPendingDeliveryMetadata>,
+    pub remote_control_requests: Vec<WeixinRemoteControlRequestRecord>,
     pub pair_requests: Vec<WeixinPairRequest>,
     pub pending_inbound: Vec<WeixinPendingInbound>,
     pub last_redacted_error: Option<String>,
@@ -929,7 +1535,9 @@ impl WeixinStateSnapshot {
             deliveries: Vec::new(),
             conversation_bindings: Vec::new(),
             reply_contexts: Vec::new(),
+            delivery_manifests: Vec::new(),
             pending_deliveries: Vec::new(),
+            remote_control_requests: Vec::new(),
             pair_requests: Vec::new(),
             pending_inbound: Vec::new(),
             last_redacted_error: None,
@@ -950,6 +1558,13 @@ impl WeixinStateSnapshot {
         self.pending_deliveries
             .iter()
             .filter(|item| !item.state.is_terminal())
+            .count()
+    }
+
+    pub fn pending_remote_control_count(&self) -> usize {
+        self.remote_control_requests
+            .iter()
+            .filter(|request| request.state == WeixinRemoteControlState::Pending)
             .count()
     }
 
@@ -1002,6 +1617,29 @@ pub struct WeixinDeliveryRecord {
     pub transitioned_at_millis: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeixinDeliveryManifestState {
+    Pending,
+    Succeeded,
+    Failed,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WeixinDeliveryManifest {
+    pub schema_version: u32,
+    pub message_hash: String,
+    pub account_id: String,
+    pub item_id: String,
+    pub session_id: String,
+    pub total_segments: u32,
+    pub delivery_ids: Vec<String>,
+    pub state: WeixinDeliveryManifestState,
+    pub created_at_millis: u64,
+    pub updated_at_millis: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WeixinConversationBinding {
     pub schema_version: u32,
@@ -1050,9 +1688,56 @@ pub struct WeixinReplyContextReference {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WeixinPendingDeliveryMetadata {
     pub schema_version: u32,
+    #[serde(default)]
+    pub account_id: String,
     pub delivery_id: String,
+    #[serde(default)]
+    pub peer_id_hash: String,
+    #[serde(default)]
+    pub direct_message_key: String,
+    #[serde(default)]
+    pub item_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub message_hash: String,
+    #[serde(default)]
+    pub segment_index: u32,
+    #[serde(default)]
+    pub total_segments: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypted_payload: Option<WeixinEncryptedPayload>,
     pub state: WeixinDeliveryState,
     pub retry_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_redacted_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_retry_at_millis: Option<u64>,
+    pub created_at_millis: u64,
+    pub updated_at_millis: u64,
+    pub transitioned_at_millis: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WeixinRemoteControlRequestRecord {
+    pub schema_version: u32,
+    pub request_id: String,
+    pub account_id: String,
+    pub peer_id_hash: String,
+    pub direct_message_key: String,
+    pub item_id: String,
+    pub session_id: String,
+    pub purpose: WeixinRemoteControlPurposeRecord,
+    pub state: WeixinRemoteControlState,
+    pub action: String,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_status: Option<String>,
+    pub expires_at_millis: u64,
     pub created_at_millis: u64,
     pub updated_at_millis: u64,
     pub transitioned_at_millis: u64,
@@ -1104,6 +1789,14 @@ pub struct WeixinPendingInbound {
     pub next_retry_at_millis: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_dispatch_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_started_at_millis: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at_millis: Option<u64>,
     pub state: WeixinPendingInboundState,
     pub terminal_reason: Option<String>,
     pub created_at_millis: u64,
@@ -1127,6 +1820,36 @@ impl WeixinPendingInbound {
         self.updated_at_millis = now_millis;
         self.transitioned_at_millis = now_millis;
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeixinRemoteControlPurposeRecord {
+    Approval,
+    UserInput,
+    Cancellation,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeixinRemoteControlState {
+    Pending,
+    Consumed,
+    Expired,
+    Rejected,
+    Cancelled,
+}
+
+impl WeixinRemoteControlState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Consumed => "consumed",
+            Self::Expired => "expired",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
+        }
     }
 }
 
@@ -1174,6 +1897,18 @@ pub enum WeixinDeliveryState {
 }
 
 impl WeixinDeliveryState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Expired => "expired",
+            Self::Unknown => "unknown",
+        }
+    }
+
     fn is_terminal(self) -> bool {
         matches!(
             self,
@@ -1352,6 +2087,10 @@ pub enum WeixinStateError {
     PendingInboundQueueFull { limit: usize },
     #[error("weixin pending inbound was not found item={item_id}")]
     PendingInboundNotFound { item_id: String },
+    #[error("weixin pending delivery was not found delivery={delivery_id}")]
+    DeliveryNotFound { delivery_id: String },
+    #[error("weixin remote control request was not found request={request_id}")]
+    RemoteControlRequestNotFound { request_id: String },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1410,7 +2149,9 @@ impl WeixinStateMigration {
                     "deliveries",
                     "conversation_bindings",
                     "reply_contexts",
+                    "delivery_manifests",
                     "pending_deliveries",
+                    "remote_control_requests",
                     "pair_requests",
                     "pending_inbound",
                 ] {
@@ -1423,7 +2164,9 @@ impl WeixinStateMigration {
                     "deliveries",
                     "conversation_bindings",
                     "reply_contexts",
+                    "delivery_manifests",
                     "pending_deliveries",
+                    "remote_control_requests",
                     "pair_requests",
                     "pending_inbound",
                 ] {
@@ -1431,6 +2174,7 @@ impl WeixinStateMigration {
                 }
                 rewrite_conversation_binding_session_fields(object);
                 rewrite_pending_inbound_runtime_fields(object);
+                rewrite_pending_delivery_fields(object);
                 object
                     .entry("last_redacted_error".to_string())
                     .or_insert(Value::Null);
@@ -1509,6 +2253,96 @@ fn validate_snapshot(snapshot: &WeixinStateSnapshot) -> Result<(), WeixinStateEr
             });
         }
     }
+    for delivery in &snapshot.deliveries {
+        if delivery.schema_version != WEIXIN_STATE_SCHEMA_VERSION
+            || !delivery.delivery_id.starts_with("delivery#")
+            || delivery
+                .last_redacted_error
+                .as_deref()
+                .is_some_and(contains_sensitive_marker)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "delivery record failed validation",
+            });
+        }
+    }
+    for manifest in &snapshot.delivery_manifests {
+        if manifest.schema_version != WEIXIN_STATE_SCHEMA_VERSION
+            || manifest.account_id != snapshot.account_id
+            || !manifest.message_hash.starts_with("reply#")
+            || !manifest.item_id.starts_with("item#")
+            || manifest.session_id.trim().is_empty()
+            || contains_sensitive_marker(&manifest.session_id)
+            || manifest.total_segments == 0
+            || manifest.delivery_ids.len() != manifest.total_segments as usize
+            || manifest
+                .delivery_ids
+                .iter()
+                .any(|delivery_id| !delivery_id.starts_with("delivery#"))
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "delivery manifest failed validation",
+            });
+        }
+    }
+    for delivery in &snapshot.pending_deliveries {
+        if delivery.schema_version != WEIXIN_STATE_SCHEMA_VERSION
+            || delivery.account_id != snapshot.account_id
+            || !delivery.delivery_id.starts_with("delivery#")
+            || !delivery.peer_id_hash.starts_with("peer#")
+            || !delivery.direct_message_key.starts_with("dm#")
+            || !delivery.item_id.starts_with("item#")
+            || delivery.session_id.trim().is_empty()
+            || contains_sensitive_marker(&delivery.session_id)
+            || !delivery.message_hash.starts_with("reply#")
+            || delivery.total_segments == 0
+            || delivery.segment_index >= delivery.total_segments
+            || delivery
+                .last_status
+                .as_deref()
+                .is_some_and(contains_sensitive_marker)
+            || delivery
+                .last_redacted_error
+                .as_deref()
+                .is_some_and(contains_sensitive_marker)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending delivery failed validation",
+            });
+        }
+        let Some(payload) = &delivery.encrypted_payload else {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "pending delivery encrypted payload is missing",
+            });
+        };
+        validate_encrypted_payload(payload)?;
+    }
+    for request in &snapshot.remote_control_requests {
+        if request.schema_version != WEIXIN_STATE_SCHEMA_VERSION
+            || request.account_id != snapshot.account_id
+            || !request.request_id.starts_with("wxctl#")
+            || !request.peer_id_hash.starts_with("peer#")
+            || !request.direct_message_key.starts_with("dm#")
+            || !request.item_id.starts_with("item#")
+            || request.session_id.trim().is_empty()
+            || contains_sensitive_marker(&request.session_id)
+            || request.action.trim().is_empty()
+            || contains_sensitive_marker(&request.action)
+            || contains_sensitive_marker(&request.reason)
+            || request
+                .cwd_label
+                .as_deref()
+                .is_some_and(|cwd_label| !cwd_label.starts_with("cwd#"))
+            || request
+                .last_status
+                .as_deref()
+                .is_some_and(contains_sensitive_marker)
+        {
+            return Err(WeixinStateError::InvalidRecord {
+                reason: "remote control request failed validation",
+            });
+        }
+    }
     for binding in &snapshot.conversation_bindings {
         if binding.schema_version != WEIXIN_STATE_SCHEMA_VERSION
             || binding.account_id != snapshot.account_id
@@ -1566,6 +2400,12 @@ fn validate_snapshot(snapshot: &WeixinStateSnapshot) -> Result<(), WeixinStateEr
                 .last_dispatch_error
                 .as_deref()
                 .is_some_and(contains_sensitive_marker)
+            || item.lease_owner.as_deref().is_some_and(|owner| {
+                !owner.starts_with("lease#") || contains_sensitive_marker(owner)
+            })
+            || item.lease_token.as_deref().is_some_and(|token| {
+                !token.starts_with("attempt#") || contains_sensitive_marker(token)
+            })
         {
             return Err(WeixinStateError::InvalidRecord {
                 reason: "pending inbound failed validation",
@@ -1621,6 +2461,109 @@ fn validate_encrypted_payload(payload: &WeixinEncryptedPayload) -> Result<(), We
     if ciphertext.is_empty() {
         return Err(WeixinStateError::InvalidRecord {
             reason: "pending inbound encrypted payload ciphertext is empty",
+        });
+    }
+    Ok(())
+}
+
+fn validate_delivery_commit_item(
+    account_id: &str,
+    item: &WeixinPendingDeliveryCommitItem,
+) -> Result<(), WeixinStateError> {
+    if !looks_redacted("account", account_id)
+        || !item.delivery_id.starts_with("delivery#")
+        || !item.peer_id_hash.starts_with("peer#")
+        || !item.direct_message_key.starts_with("dm#")
+        || !item.item_id.starts_with("item#")
+        || item.session_id.trim().is_empty()
+        || contains_sensitive_marker(&item.session_id)
+        || !item.message_hash.starts_with("reply#")
+        || item.total_segments == 0
+        || item.segment_index >= item.total_segments
+    {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "pending delivery commit failed validation",
+        });
+    }
+    validate_encrypted_payload(&item.encrypted_payload)
+}
+
+fn refresh_delivery_manifest_states(snapshot: &mut WeixinStateSnapshot) {
+    let updated_at_millis = snapshot.updated_at_millis;
+    for manifest in &mut snapshot.delivery_manifests {
+        let mut has_pending = false;
+        let mut has_unknown = false;
+        let mut has_failed = false;
+        let mut all_succeeded = true;
+        for delivery_id in &manifest.delivery_ids {
+            if snapshot
+                .pending_deliveries
+                .iter()
+                .any(|delivery| &delivery.delivery_id == delivery_id)
+            {
+                has_pending = true;
+                all_succeeded = false;
+                continue;
+            }
+            match snapshot
+                .deliveries
+                .iter()
+                .find(|delivery| &delivery.delivery_id == delivery_id)
+                .map(|delivery| delivery.state)
+            {
+                Some(WeixinDeliveryState::Succeeded) => {}
+                Some(WeixinDeliveryState::Unknown) => {
+                    has_unknown = true;
+                    all_succeeded = false;
+                }
+                Some(WeixinDeliveryState::Failed)
+                | Some(WeixinDeliveryState::Cancelled)
+                | Some(WeixinDeliveryState::Expired) => {
+                    has_failed = true;
+                    all_succeeded = false;
+                }
+                Some(WeixinDeliveryState::Pending | WeixinDeliveryState::Running) | None => {
+                    has_pending = true;
+                    all_succeeded = false;
+                }
+            }
+        }
+        manifest.state = if has_pending {
+            WeixinDeliveryManifestState::Pending
+        } else if has_unknown {
+            WeixinDeliveryManifestState::Unknown
+        } else if has_failed {
+            WeixinDeliveryManifestState::Failed
+        } else if all_succeeded {
+            WeixinDeliveryManifestState::Succeeded
+        } else {
+            WeixinDeliveryManifestState::Pending
+        };
+        manifest.updated_at_millis = updated_at_millis;
+    }
+}
+
+fn validate_remote_control_commit_item(
+    account_id: &str,
+    item: &WeixinRemoteControlCommitItem,
+) -> Result<(), WeixinStateError> {
+    if !looks_redacted("account", account_id)
+        || !item.request_id.starts_with("wxctl#")
+        || !item.peer_id_hash.starts_with("peer#")
+        || !item.direct_message_key.starts_with("dm#")
+        || !item.item_id.starts_with("item#")
+        || item.session_id.trim().is_empty()
+        || contains_sensitive_marker(&item.session_id)
+        || item.action.trim().is_empty()
+        || contains_sensitive_marker(&item.action)
+        || contains_sensitive_marker(&item.reason)
+        || item
+            .cwd_label
+            .as_deref()
+            .is_some_and(|cwd_label| !cwd_label.starts_with("cwd#"))
+    {
+        return Err(WeixinStateError::InvalidRecord {
+            reason: "remote control commit failed validation",
         });
     }
     Ok(())
@@ -1700,6 +2643,54 @@ fn rewrite_pending_inbound_runtime_fields(object: &mut serde_json::Map<String, V
         item.entry("next_retry_at_millis".to_string())
             .or_insert(Value::Null);
         item.entry("last_dispatch_error".to_string())
+            .or_insert(Value::Null);
+        item.entry("lease_owner".to_string()).or_insert(Value::Null);
+        item.entry("lease_token".to_string()).or_insert(Value::Null);
+        item.entry("lease_started_at_millis".to_string())
+            .or_insert(Value::Null);
+        item.entry("lease_expires_at_millis".to_string())
+            .or_insert(Value::Null);
+    }
+}
+
+fn rewrite_pending_delivery_fields(object: &mut serde_json::Map<String, Value>) {
+    let account_id = object
+        .get("account_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let Some(items) = object
+        .get_mut("pending_deliveries")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for item in items {
+        let Some(item) = item.as_object_mut() else {
+            continue;
+        };
+        item.entry("account_id".to_string())
+            .or_insert_with(|| json!(account_id));
+        item.entry("peer_id_hash".to_string())
+            .or_insert_with(|| json!("peer#00000000"));
+        item.entry("direct_message_key".to_string())
+            .or_insert_with(|| json!("dm#00000000"));
+        item.entry("item_id".to_string())
+            .or_insert_with(|| json!("item#00000000"));
+        item.entry("session_id".to_string())
+            .or_insert_with(|| json!("migrated-delivery-session"));
+        item.entry("message_hash".to_string())
+            .or_insert_with(|| json!("reply#00000000"));
+        item.entry("segment_index".to_string())
+            .or_insert_with(|| json!(0));
+        item.entry("total_segments".to_string())
+            .or_insert_with(|| json!(1));
+        item.entry("encrypted_payload".to_string())
+            .or_insert(Value::Null);
+        item.entry("last_status".to_string()).or_insert(Value::Null);
+        item.entry("last_redacted_error".to_string())
+            .or_insert(Value::Null);
+        item.entry("next_retry_at_millis".to_string())
             .or_insert(Value::Null);
     }
 }

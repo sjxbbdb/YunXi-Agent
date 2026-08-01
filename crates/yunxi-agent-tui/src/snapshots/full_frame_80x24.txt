@@ -1,4 +1,4 @@
-00|YunXi v2.1.6 | deepseek live
+00|YunXi v2.2.0 | deepseek live
 01|new output below | cells=38 | provider=deepseek
 02|────────────────────────────────────────────────────────────────────────────────
 03|┌Transcript 29-43 / 51 | new output below──────────────────────────────────────┐
@@ -9,12 +9,12 @@
 08|│[notice] history 32: stable transcript row for viewport evidence              ║
 09|│[notice] history 33: stable transcript row for viewport evidence              ║
 10|│[notice] history 34: stable transcript row for viewport evidence              ║
-11|│[notice] history 35: stable transcript row for viewport evidence              █
+11|│[notice] history 35: stable transcript row for viewport evidence              ║
 12|│[user] Keep the current history position while the answer streams.            █
 13|│[assistant*] 国際化 layout 中文かな keeps one active cell with emoji 👩‍💻 and é.█
-14|│    URL https://very-long.example.test/api/v1/items?search=中文&sort=desc#    ║
-15|│    results                                                                   ║
-16|│    Windows C:\Users\24763\YunXi Agent\输出目录\very-long-file-name.txt       ║
+14|│    URL https://very-long.example.test/api/v1/items?search=中文&sort=desc#    █
+15|│    results                                                                   █
+16|│    Windows C:\Users\24763\YunXi Agent\输出目录\very-long-file-name.txt       █
 17|│    ```rust                                                                   ║
 18|│        let greeting = "你好、世界"; // 日本語と中文                          v
 19|└──────────────────────────────────────────────────────────────────────────────┘

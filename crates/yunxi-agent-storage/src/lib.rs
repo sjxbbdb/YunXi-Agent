@@ -28,13 +28,15 @@ pub use weixin_state::{
     WEIXIN_PAYLOAD_ALGORITHM_VERSION, WEIXIN_PAYLOAD_NONCE_LENGTH, WEIXIN_STATE_SCHEMA_VERSION,
     WeixinAccountLock, WeixinAccountLockInfo, WeixinAccountLockState, WeixinConnectionStateRecord,
     WeixinConversationBinding, WeixinCredentialReferenceRecord, WeixinCursorRecord,
+    WeixinDeliveryManifest, WeixinDeliveryManifestCommitItem, WeixinDeliveryManifestState,
     WeixinDeliveryRecord, WeixinDeliveryState, WeixinEncryptedPayload, WeixinInboundBatchCommit,
     WeixinInboundBatchCommitResult, WeixinInboundCommitItem, WeixinInboundReceiptRecord,
     WeixinPairRequest, WeixinPairRequestCommitItem, WeixinPairRequestState,
-    WeixinPendingDeliveryMetadata, WeixinPendingInbound, WeixinPendingInboundState,
-    WeixinReceiptState, WeixinReplyContextReference, WeixinRuntimeTurnBeginRequest,
-    WeixinStateError, WeixinStateMigration, WeixinStateSnapshot, WeixinStateStore,
-    WeixinStateWriteOptions,
+    WeixinPendingDeliveryCommitItem, WeixinPendingDeliveryMetadata, WeixinPendingInbound,
+    WeixinPendingInboundState, WeixinReceiptState, WeixinRemoteControlCommitItem,
+    WeixinRemoteControlPurposeRecord, WeixinRemoteControlRequestRecord, WeixinRemoteControlState,
+    WeixinReplyContextReference, WeixinRuntimeTurnBeginRequest, WeixinStateError,
+    WeixinStateMigration, WeixinStateSnapshot, WeixinStateStore, WeixinStateWriteOptions,
 };
 
 static NEXT_SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -1342,7 +1344,7 @@ fn supersession_target<'a>(
         .iter()
         .copied()
         .find(|record| shares_entity(record, incoming))
-        .or_else(|| (candidates.len() == 1).then_some(candidates[0]))
+        .or_else(|| (candidates.len() == 1).then(|| candidates[0]))
 }
 
 fn shares_entity(left: &MemoryRecord, right: &MemoryRecord) -> bool {
@@ -1619,6 +1621,7 @@ fn now_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yunxi_agent_persona::{MemoryEntityRef, MemoryEntityType};
     use yunxi_agent_protocol::{ResponseItem, RuntimeEvent, ThreadId, TurnId};
 
     #[test]
@@ -1747,5 +1750,77 @@ mod tests {
                 .expect("history after clear")
                 .is_empty()
         );
+    }
+
+    fn active_memory_record(id: &str, kind: MemoryKind, content: &str) -> MemoryRecord {
+        MemoryRecord::new(id, MemoryScope::GlobalUser, kind, content, 1)
+            .with_status(MemoryStatus::Active)
+    }
+
+    fn entity(id: &str) -> MemoryEntityRef {
+        MemoryEntityRef {
+            entity_type: MemoryEntityType::User,
+            id: id.to_string(),
+            label: None,
+        }
+    }
+
+    #[test]
+    fn supersession_target_empty_correction_candidates_returns_none() {
+        let incoming = active_memory_record(
+            "incoming",
+            MemoryKind::Correction,
+            "correction without target",
+        );
+
+        assert!(supersession_target(&[], &incoming).is_none());
+    }
+
+    #[test]
+    fn supersession_target_single_correction_candidate_returns_candidate() {
+        let existing =
+            active_memory_record("existing", MemoryKind::Preference, "existing preference");
+        let incoming = active_memory_record(
+            "incoming",
+            MemoryKind::Correction,
+            "correction without target",
+        );
+        let records = vec![existing];
+
+        let target = supersession_target(&records, &incoming).expect("single candidate");
+
+        assert_eq!(target.id, "existing");
+    }
+
+    #[test]
+    fn supersession_target_multiple_correction_candidates_without_entity_match_returns_none() {
+        let left = active_memory_record("left", MemoryKind::Preference, "left preference");
+        let right = active_memory_record("right", MemoryKind::Goal, "right goal");
+        let incoming = active_memory_record(
+            "incoming",
+            MemoryKind::Correction,
+            "correction without target",
+        );
+        let records = vec![left, right];
+
+        assert!(supersession_target(&records, &incoming).is_none());
+    }
+
+    #[test]
+    fn supersession_target_prefers_shared_entity_for_correction_candidate() {
+        let left = active_memory_record("left", MemoryKind::Preference, "left preference");
+        let mut right = active_memory_record("right", MemoryKind::Goal, "right goal");
+        right.entities.push(entity("entity:user-preference"));
+        let mut incoming = active_memory_record(
+            "incoming",
+            MemoryKind::Correction,
+            "correction without target",
+        );
+        incoming.entities.push(entity("entity:user-preference"));
+        let records = vec![left, right];
+
+        let target = supersession_target(&records, &incoming).expect("shared entity target");
+
+        assert_eq!(target.id, "right");
     }
 }

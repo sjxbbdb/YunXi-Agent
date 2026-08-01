@@ -4,6 +4,7 @@ use crate::bottom_pane::BottomPaneMode;
 use crate::edit_buffer::EditBuffer;
 use crate::input_map::FocusTarget;
 use crate::layout::compute_layout;
+use crate::scrollbar::TranscriptScrollbarGeometry;
 use crate::styles::{TuiSemanticStyle, TuiStyleSet};
 use crate::text_layout::{TextLayout, WrapPolicy};
 #[cfg(test)]
@@ -12,9 +13,7 @@ use crate::transcript_layout::build_wrapped_transcript_with_styles;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{
-    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
-};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 pub(crate) fn render_tui_frame(frame: &mut Frame<'_>, app: &YunxiTuiApp) {
     render_tui_frame_with_styles(frame, app, TuiStyleSet::detect());
@@ -216,14 +215,55 @@ fn render_transcript(
     frame.render_widget(transcript, area);
 
     if wrapped.rows.len() > visible {
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("^"))
-            .end_symbol(Some("v"));
-        let mut scrollbar_state = ScrollbarState::new(wrapped.rows.len())
-            .position(start)
-            .viewport_content_length(visible);
-        frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+        render_transcript_scrollbar(
+            frame,
+            scrollbar_area,
+            wrapped.rows.len(),
+            visible,
+            start,
+            app.focus_target(),
+            styles,
+        );
     }
+}
+
+fn render_transcript_scrollbar(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    content_height: usize,
+    visible_height: usize,
+    start: usize,
+    focus: FocusTarget,
+    styles: TuiStyleSet,
+) {
+    let Some(geometry) =
+        TranscriptScrollbarGeometry::new(area, content_height, visible_height, start)
+    else {
+        return;
+    };
+    let thumb_top = geometry.thumb_top.saturating_sub(area.y);
+    let thumb_bottom = thumb_top.saturating_add(geometry.thumb_height);
+    let thumb_style = styles.style(if focus == FocusTarget::History {
+        TuiSemanticStyle::Focus
+    } else {
+        TuiSemanticStyle::Subheader
+    });
+    let track_style = styles.style(TuiSemanticStyle::Border);
+    let rows = (0..area.height)
+        .map(|row| {
+            let (symbol, style) = if row >= thumb_top && row < thumb_bottom {
+                ("█", thumb_style)
+            } else if row == 0 {
+                ("^", track_style)
+            } else if row + 1 == area.height {
+                ("v", track_style)
+            } else {
+                ("║", track_style)
+            };
+            Line::from(Span::styled(symbol, style))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(rows), area);
 }
 
 fn render_bottom_pane(frame: &mut Frame<'_>, app: &YunxiTuiApp, area: Rect, styles: TuiStyleSet) {
@@ -995,6 +1035,35 @@ mod tests {
         assert!(rendered.contains("Transcript"));
         assert!(rendered.contains("tail"));
         assert!(rendered.contains("/"));
+    }
+
+    #[test]
+    fn transcript_tail_scrollbar_thumb_reaches_visual_bottom() {
+        let mut app = YunxiTuiApp::default();
+        for idx in 0..80 {
+            app.push_notice("event", &format!("line-{idx:02}"));
+        }
+        let width = 80;
+        let height = 24;
+        let layout = compute_layout(
+            Rect::new(0, 0, width, height),
+            app.bottom_pane().desired_height_for_width(width as usize),
+        );
+
+        let rendered = render_full_frame_snapshot(&app, width, height);
+        let bottom_scrollbar_row =
+            layout.transcript_scrollbar.y + layout.transcript_scrollbar.height - 1;
+        let prefix = format!("{bottom_scrollbar_row:02}|");
+        let row = rendered
+            .lines()
+            .find(|line| line.starts_with(&prefix))
+            .expect("bottom scrollbar row");
+
+        assert!(rendered.contains("tail"));
+        assert!(
+            row.ends_with("█"),
+            "tail scrollbar thumb should occupy bottom row: {row}"
+        );
     }
 
     #[test]

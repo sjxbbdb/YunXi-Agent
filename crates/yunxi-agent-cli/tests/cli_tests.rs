@@ -9,7 +9,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use yunxi_agent_storage::{
-    FileWeixinStateStore, WEIXIN_STATE_SCHEMA_VERSION, WeixinStateSnapshot, WeixinStateStore,
+    FileSessionStore, FileWeixinStateStore, SessionId, SessionRecord, SessionStore,
+    WEIXIN_STATE_SCHEMA_VERSION, WeixinConversationBinding, WeixinStateSnapshot, WeixinStateStore,
 };
 use yunxi_agent_weixin::{
     PRODUCTION_ILINK_ENDPOINT, WeixinAccountId, WeixinAccountRecord, WeixinAccountStore,
@@ -125,7 +126,7 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.6"));
+        .stdout(predicate::str::contains("yunxi 2.2.0"));
 }
 
 #[test]
@@ -135,7 +136,7 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.1.6"));
+        .stdout(predicate::str::contains("yunxi 2.2.0"));
 }
 
 #[test]
@@ -155,6 +156,25 @@ fn cli_weixin_help_covers_the_v216_weixin_command_surface() {
         let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
         cmd.args(args).assert().success();
     }
+}
+
+#[test]
+fn cli_bot_help_covers_the_local_weixin_gateway_entrypoint() {
+    let mut root = Command::cargo_bin("yunxi").expect("binary should build");
+    root.args(["--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--no-weixin-autostart"));
+
+    let mut bot = Command::cargo_bin("yunxi").expect("binary should build");
+    bot.args(["bot", "--help"]).assert().success();
+
+    let mut start = Command::cargo_bin("yunxi").expect("binary should build");
+    start
+        .args(["bot", "start", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("weixin"));
 }
 
 #[test]
@@ -525,6 +545,152 @@ fn cli_weixin_pair_lifecycle_uses_state_store_without_secret_output() {
     let deny_json: Value = serde_json::from_slice(&deny_output.stdout).expect("deny json");
     assert_eq!(deny_json["state"].as_str(), Some("denied"));
     assert_eq!(deny_json["secrets_included"].as_bool(), Some(false));
+}
+
+#[test]
+fn cli_weixin_session_reset_archives_only_selected_peer_sessions() {
+    let workspace = TempDir::new().expect("workspace");
+    let cwd = workspace.path().to_str().expect("workspace path");
+    let account_id = WeixinAccountId::new("private-account-name");
+    let account = account_id.to_string();
+    let mut state = WeixinStateSnapshot::new(
+        &account,
+        "workspace#22222222",
+        "https://ilinkai.weixin.qq.com/",
+        1000,
+    );
+    state.conversation_bindings.push(WeixinConversationBinding {
+        schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+        account_id: account.clone(),
+        peer_id_hash: "peer#33333333".to_string(),
+        direct_message_key: "dm#44444444".to_string(),
+        workspace_id: "workspace#22222222".to_string(),
+        root_session_id: Some("session-target-root".to_string()),
+        active_session_id: Some("session-target-active".to_string()),
+        last_completed_session_id: Some("session-target-active".to_string()),
+        session_id: "session-target-active".to_string(),
+        source_label: "weixin-private-chat".to_string(),
+        created_at_millis: 1000,
+        last_activity_millis: 1000,
+        updated_at_millis: 1000,
+        transitioned_at_millis: 1000,
+    });
+    state.conversation_bindings.push(WeixinConversationBinding {
+        schema_version: WEIXIN_STATE_SCHEMA_VERSION,
+        account_id: account.clone(),
+        peer_id_hash: "peer#99999999".to_string(),
+        direct_message_key: "dm#aaaaaaaa".to_string(),
+        workspace_id: "workspace#22222222".to_string(),
+        root_session_id: Some("session-other".to_string()),
+        active_session_id: Some("session-other".to_string()),
+        last_completed_session_id: Some("session-other".to_string()),
+        session_id: "session-other".to_string(),
+        source_label: "weixin-private-chat".to_string(),
+        created_at_millis: 1000,
+        last_activity_millis: 1000,
+        updated_at_millis: 1000,
+        transitioned_at_millis: 1000,
+    });
+    let weixin_store = FileWeixinStateStore::for_workspace(workspace.path());
+    weixin_store.save(&state).expect("save weixin state");
+    let session_store = FileSessionStore::for_workspace(workspace.path());
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    runtime.block_on(async {
+        let mut root = SessionRecord::new(cwd, "root", Some("root response".to_string()), vec![]);
+        root.id = SessionId::new("session-target-root");
+        session_store.save(root).await.expect("save root");
+        let mut active =
+            SessionRecord::new(cwd, "active", Some("active response".to_string()), vec![]);
+        active.id = SessionId::new("session-target-active");
+        session_store.save(active).await.expect("save active");
+        let mut other =
+            SessionRecord::new(cwd, "other", Some("other response".to_string()), vec![]);
+        other.id = SessionId::new("session-other");
+        session_store.save(other).await.expect("save other");
+    });
+
+    let mut missing_confirm = Command::cargo_bin("yunxi").expect("binary should build");
+    missing_confirm
+        .args([
+            "--cwd",
+            cwd,
+            "weixin",
+            "session",
+            "reset",
+            "--account",
+            "private-account-name",
+            "--peer",
+            "peer#33333333",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--confirm"));
+
+    let mut reset = Command::cargo_bin("yunxi").expect("binary should build");
+    let output = reset
+        .args([
+            "--cwd",
+            cwd,
+            "--json",
+            "weixin",
+            "session",
+            "reset",
+            "--account",
+            "private-account-name",
+            "--peer",
+            "peer#33333333",
+            "--confirm",
+        ])
+        .output()
+        .expect("session reset json");
+    assert!(output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).expect("reset json");
+    assert_eq!(value["removed_bindings"].as_u64(), Some(1));
+    assert_eq!(value["long_term_memory_deleted"].as_bool(), Some(false));
+    assert_eq!(value["secrets_included"].as_bool(), Some(false));
+
+    let updated = weixin_store
+        .load(&account)
+        .expect("load weixin state")
+        .expect("state");
+    assert!(
+        updated
+            .conversation_bindings
+            .iter()
+            .all(|binding| binding.peer_id_hash != "peer#33333333")
+    );
+    assert!(
+        updated
+            .conversation_bindings
+            .iter()
+            .any(|binding| binding.peer_id_hash == "peer#99999999")
+    );
+    runtime.block_on(async {
+        assert!(
+            session_store
+                .load(&SessionId::new("session-target-root"))
+                .await
+                .expect("load root")
+                .expect("root")
+                .archived
+        );
+        assert!(
+            session_store
+                .load(&SessionId::new("session-target-active"))
+                .await
+                .expect("load active")
+                .expect("active")
+                .archived
+        );
+        assert!(
+            !session_store
+                .load(&SessionId::new("session-other"))
+                .await
+                .expect("load other")
+                .expect("other")
+                .archived
+        );
+    });
 }
 
 #[test]
@@ -926,7 +1092,7 @@ fn cli_enters_interactive_mode_without_prompt() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.6 interactive CLI",
+            "YunXi Agent v2.2.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("provider_mode: offline"))
         .stdout(predicate::str::contains(
@@ -1085,7 +1251,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.6 interactive CLI",
+            "YunXi Agent v2.2.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("[offline]"))
         .stdout(predicate::str::contains(
@@ -1105,7 +1271,7 @@ fn yunxi_no_tui_keeps_plain_interactive_mode() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "YunXi Agent v2.1.6 interactive CLI",
+            "YunXi Agent v2.2.0 interactive CLI",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
 }

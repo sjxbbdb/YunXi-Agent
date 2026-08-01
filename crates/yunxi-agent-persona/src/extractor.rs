@@ -99,6 +99,9 @@ fn detect_prompt_memories(prompt: &str) -> Vec<(MemoryKind, String, String)> {
     let mut out = Vec::new();
     let lower = trimmed.to_ascii_lowercase();
 
+    if let Some(memory) = detect_explicit_remembered_memory(trimmed, &lower) {
+        out.push(memory);
+    }
     if is_future_chinese_language_preference(trimmed) {
         out.push((
             MemoryKind::Preference,
@@ -175,6 +178,154 @@ fn detect_prompt_memories(prompt: &str) -> Vec<(MemoryKind, String, String)> {
     }
 
     out
+}
+
+fn detect_explicit_remembered_memory(
+    value: &str,
+    lower: &str,
+) -> Option<(MemoryKind, String, String)> {
+    let payload = explicit_memory_payload(value, lower)?;
+    let payload = trim_followup_instruction(payload);
+    let payload = normalize_payload(payload);
+    if payload.is_empty() {
+        return None;
+    }
+
+    let kind = classify_explicit_memory_kind(payload);
+    Some((
+        kind,
+        normalize_explicit_memory_content(kind, payload),
+        explicit_memory_reason(kind).to_string(),
+    ))
+}
+
+fn explicit_memory_payload<'a>(value: &'a str, lower: &str) -> Option<&'a str> {
+    let markers = [
+        "我希望你记住",
+        "请你记住",
+        "请记住",
+        "帮我记住",
+        "你要记住",
+        "please remember that",
+        "please remember",
+        "remember that",
+        "keep in mind that",
+    ];
+    markers.iter().find_map(|marker| {
+        lower
+            .find(marker)
+            .map(|start| normalize_payload(&value[start + marker.len()..]))
+            .filter(|payload| !payload.is_empty())
+    })
+}
+
+fn normalize_payload(value: &str) -> &str {
+    let mut out = trim_memory_payload_punctuation(value);
+    loop {
+        let before = out;
+        for prefix in ["一个", "一下", "这点", "这件事", "this", "that"] {
+            if let Some(stripped) = out.strip_prefix(prefix) {
+                out = trim_memory_payload_punctuation(stripped);
+            }
+        }
+        if out == before {
+            return out;
+        }
+    }
+}
+
+fn trim_memory_payload_punctuation(value: &str) -> &str {
+    value
+        .trim()
+        .trim_start_matches(['：', ':', '，', ',', '。', '.', '；', ';', ' '])
+        .trim()
+        .trim_end_matches(['。', '.', '；', ';', '，', ',', ' '])
+        .trim()
+}
+
+fn trim_followup_instruction(value: &str) -> &str {
+    let lower = value.to_ascii_lowercase();
+    let mut end = value.len();
+    for marker in [
+        "请只回复",
+        "只回复",
+        "不用解释",
+        "不要解释",
+        "only reply",
+        "reply only",
+        "respond only",
+        "do not explain",
+        "don't explain",
+    ] {
+        if let Some(index) = lower.find(marker) {
+            end = end.min(index);
+        }
+    }
+    &value[..end]
+}
+
+fn classify_explicit_memory_kind(value: &str) -> MemoryKind {
+    let lower = value.to_ascii_lowercase();
+    if value.contains("偏好")
+        || value.contains("喜欢")
+        || value.contains("希望")
+        || value.contains("以后")
+        || lower.contains("prefer")
+        || lower.contains("preference")
+        || lower.contains("from now on")
+        || lower.contains("by default")
+    {
+        MemoryKind::Preference
+    } else if value.contains("目标") || lower.contains("goal") {
+        MemoryKind::Goal
+    } else if value.contains("项目")
+        || value.contains("硬性要求")
+        || value.contains("硬约束")
+        || lower.contains("project")
+    {
+        MemoryKind::ProjectContext
+    } else if value.contains("关系") || lower.contains("relationship") {
+        MemoryKind::RelationshipNote
+    } else if value.contains("情绪") || value.contains("感到") || lower.contains("emotion") {
+        MemoryKind::EmotionalState
+    } else {
+        MemoryKind::PersonalFact
+    }
+}
+
+fn normalize_explicit_memory_content(kind: MemoryKind, payload: &str) -> String {
+    let payload = compact(payload, 180);
+    match kind {
+        MemoryKind::Preference => {
+            if payload.starts_with("用户偏好") {
+                payload
+            } else {
+                format!("用户偏好：{payload}")
+            }
+        }
+        MemoryKind::Goal => format!("用户目标：{payload}"),
+        MemoryKind::ProjectContext => format!("项目上下文：{payload}"),
+        MemoryKind::RelationshipNote => format!("关系事件候选：{payload}"),
+        MemoryKind::EmotionalState => format!("情绪状态候选：{payload}"),
+        MemoryKind::PersonalFact => format!("用户自述事实候选：{payload}"),
+        MemoryKind::Correction => format!("用户纠正/限制：{payload}"),
+        MemoryKind::Event => format!("事件候选：{payload}"),
+        MemoryKind::ToolTraceSummary => format!("工具轨迹摘要：{payload}"),
+    }
+}
+
+fn explicit_memory_reason(kind: MemoryKind) -> &'static str {
+    match kind {
+        MemoryKind::Preference => "rule:explicit-remember-preference",
+        MemoryKind::Goal => "rule:explicit-remember-goal",
+        MemoryKind::ProjectContext => "rule:explicit-remember-project-context",
+        MemoryKind::RelationshipNote => "rule:explicit-remember-relationship-note",
+        MemoryKind::EmotionalState => "rule:explicit-remember-emotional-state",
+        MemoryKind::PersonalFact => "rule:explicit-remember-personal-fact",
+        MemoryKind::Correction => "rule:explicit-remember-correction",
+        MemoryKind::Event => "rule:explicit-remember-event",
+        MemoryKind::ToolTraceSummary => "rule:explicit-remember-tool-trace",
+    }
 }
 
 fn is_future_chinese_language_preference(value: &str) -> bool {

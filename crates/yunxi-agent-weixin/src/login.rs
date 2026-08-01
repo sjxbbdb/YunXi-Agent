@@ -198,10 +198,24 @@ impl WeixinLoginStateMachine {
                 return self.fail(WeixinLoginFailure::TimedOut, &mut on_event);
             }
 
-            let status = transport
+            let status = match transport
                 .poll_qr_status(&qr_response.qrcode, self.options.verify_code.as_ref())
                 .await
-                .map_err(WeixinLoginFailure::Api)?;
+            {
+                Ok(status) => status,
+                Err(WeixinApiError::Timeout { .. }) => {
+                    if started.elapsed() >= self.options.timeout {
+                        return self.fail(WeixinLoginFailure::TimedOut, &mut on_event);
+                    }
+                    on_event(WeixinLoginEvent::PollState {
+                        state: LoginPollState::Wait,
+                    });
+                    let remaining = self.options.timeout.saturating_sub(started.elapsed());
+                    sleep(self.options.poll_interval.min(remaining)).await;
+                    continue;
+                }
+                Err(error) => return Err(WeixinLoginFailure::Api(error)),
+            };
             let state = LoginPollState::from(status.status);
             on_event(WeixinLoginEvent::PollState { state });
 
@@ -304,4 +318,117 @@ fn sanitize_terminal_text(value: &str) -> String {
         }
     }
     sanitized
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::error::RequestContext;
+
+    enum PollStep {
+        Status(QrCodeStatus),
+        Timeout,
+    }
+
+    struct ScriptedTransport {
+        steps: VecDeque<PollStep>,
+        polls: usize,
+    }
+
+    impl ScriptedTransport {
+        fn new(steps: impl IntoIterator<Item = PollStep>) -> Self {
+            Self {
+                steps: steps.into_iter().collect(),
+                polls: 0,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl WeixinLoginTransport for ScriptedTransport {
+        async fn fetch_qr_code(&mut self) -> Result<GetBotQrCodeResponse, WeixinApiError> {
+            Ok(GetBotQrCodeResponse {
+                qrcode: SecretString::new("https://qr.example/secret-payload"),
+                qrcode_img_content: SecretString::new("QR"),
+            })
+        }
+
+        async fn poll_qr_status(
+            &mut self,
+            _qrcode: &SecretString,
+            _verify_code: Option<&SecretString>,
+        ) -> Result<GetQrCodeStatusResponse, WeixinApiError> {
+            self.polls += 1;
+            match self
+                .steps
+                .pop_front()
+                .unwrap_or(PollStep::Status(QrCodeStatus::Wait))
+            {
+                PollStep::Status(status) => Ok(GetQrCodeStatusResponse {
+                    status,
+                    bot_token: (status == QrCodeStatus::Confirmed)
+                        .then(|| SecretString::new("bot-token-secret")),
+                    ilink_bot_id: Some(SecretString::new("bot-id-secret")),
+                    baseurl: Some("https://ilinkai.weixin.qq.com/".to_string()),
+                    ilink_user_id: Some(SecretString::new("user-id-secret")),
+                    redirect_host: None,
+                }),
+                PollStep::Timeout => Err(WeixinApiError::Timeout {
+                    context: RequestContext::new("wx-test-timeout", "poll_qr_status", "account"),
+                }),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn qr_login_recovers_poll_timeout_before_confirmed() {
+        let mut transport = ScriptedTransport::new([
+            PollStep::Timeout,
+            PollStep::Status(QrCodeStatus::Scanned),
+            PollStep::Status(QrCodeStatus::Confirmed),
+        ]);
+        let options =
+            WeixinLoginOptions::bounded(Duration::from_millis(1), Duration::from_millis(200))
+                .expect("valid options");
+        let machine = WeixinLoginStateMachine::new(options);
+        let mut events = Vec::new();
+        let outcome = machine
+            .run(
+                &mut transport,
+                &WeixinLoginCancellation::default(),
+                |event| {
+                    events.push(event);
+                },
+            )
+            .await
+            .expect("poll timeout should be recoverable");
+
+        assert_eq!(transport.polls, 3);
+        assert!(!outcome.bot_token.is_empty());
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                WeixinLoginEvent::PollState {
+                    state: LoginPollState::Wait
+                }
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                WeixinLoginEvent::PollState {
+                    state: LoginPollState::Scanned
+                }
+            )
+        }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, WeixinLoginEvent::Failed { .. }))
+        );
+    }
 }

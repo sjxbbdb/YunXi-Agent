@@ -1,0 +1,2 @@
+{"id":"weixin_protocol_001_slash_command_parser","category":"protocol_mock","description":"Only explicit slash commands are routed as remote-control commands; natural language remains normal text.","checks":["weixin_slash_commands_only"]}
+{"id":"weixin_protocol_002_group_exclusion","category":"protocol_mock","description":"Mock iLink group messages classify as group and stay outside the private-chat Runtime path.","checks":["weixin_group_chat_excluded"]}

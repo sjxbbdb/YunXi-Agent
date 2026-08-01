@@ -1,5 +1,6 @@
 mod account_store;
 mod backoff;
+mod delivery;
 mod domain;
 mod error;
 pub mod ilink;
@@ -7,6 +8,7 @@ mod inbound;
 mod login;
 mod payload_cipher;
 mod redaction;
+mod remote_control;
 mod secret_store;
 mod serve;
 mod turn_supervisor;
@@ -15,6 +17,11 @@ pub use account_store::{
     WEIXIN_ACCOUNT_SCHEMA_VERSION, WeixinAccountRecord, WeixinAccountStore, WeixinAccountStoreError,
 };
 pub use backoff::WeixinBackoff;
+pub use delivery::{
+    WeixinDeliveryDispatcher, WeixinDeliveryDrainReport, WeixinDeliveryError,
+    WeixinDeliveryOutcomeClass, WeixinDeliverySpoolSink, WeixinMessageTransport,
+    split_weixin_text_segments,
+};
 pub use domain::{
     WeixinAccountId, WeixinAccountMetadata, WeixinConnectionState, WeixinConversationKey,
     WeixinMessageId, WeixinPeerId,
@@ -29,6 +36,11 @@ pub use login::{
 };
 pub use payload_cipher::{WeixinPayloadAad, WeixinPayloadCipher, WeixinPayloadCipherError};
 pub use redaction::{SecretString, redacted_json_snapshot};
+pub use remote_control::{
+    WeixinRemoteCommand, WeixinRemoteControlError, WeixinRemoteControlHub,
+    WeixinRemoteControlOutcome, WeixinRemoteControlPrompt, WeixinRemoteControlPurpose,
+    WeixinRemoteControlScope, parse_weixin_remote_command,
+};
 pub use secret_store::{
     FakeWeixinSecretStore, SystemWeixinSecretStore, WeixinCredentialReference, WeixinSecretStore,
     WeixinSecretStoreError, generate_data_key,
@@ -39,6 +51,7 @@ pub use serve::{
 };
 pub use turn_supervisor::{
     NoopWeixinRuntimeSink, WeixinRuntimeDispatcher, WeixinRuntimeDispatcherAdapter,
-    WeixinRuntimeSink, WeixinRuntimeSinkRecord, WeixinRuntimeTestSink, WeixinTurnReport,
-    WeixinTurnSupervisor, WeixinTurnSupervisorError, WeixinTurnSupervisorOptions,
+    WeixinRuntimeSink, WeixinRuntimeSinkRecord, WeixinRuntimeTestSink,
+    WeixinStreamObservationReport, WeixinTurnReport, WeixinTurnSupervisor,
+    WeixinTurnSupervisorError, WeixinTurnSupervisorOptions,
 };

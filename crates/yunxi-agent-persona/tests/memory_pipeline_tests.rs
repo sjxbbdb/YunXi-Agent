@@ -34,6 +34,34 @@ fn pipeline_generates_l1_candidate_from_language_preference() {
 }
 
 #[test]
+fn pipeline_auto_saves_explicit_chinese_remembered_preference_without_provider() {
+    let output = MemoryPipeline::new().run(input(
+        "请记住一个测试偏好：YUNXI_MEMORY_TEST_AUTOSEQ_20260801。我希望以后测试报告标题包含‘自动顺序测试’。请只回复“已记录测试偏好”。",
+    ));
+
+    let preference = output
+        .candidates
+        .iter()
+        .find(|candidate| {
+            candidate
+                .reason
+                .contains("rule:explicit-remember-preference")
+        })
+        .expect("explicit remembered preference");
+
+    assert_eq!(preference.proposed_record.kind, MemoryKind::Preference);
+    assert_eq!(preference.write_policy, MemoryWritePolicy::Auto);
+    assert_eq!(preference.proposed_record.status, MemoryStatus::Active);
+    assert!(
+        preference
+            .proposed_record
+            .content
+            .contains("YUNXI_MEMORY_TEST_AUTOSEQ_20260801")
+    );
+    assert!(!preference.proposed_record.content.contains("请只回复"));
+}
+
+#[test]
 fn pipeline_generates_l2_relationship_candidate_as_pending() {
     let output = MemoryPipeline::new().run(input("My relationship with Alex is strained."));
 

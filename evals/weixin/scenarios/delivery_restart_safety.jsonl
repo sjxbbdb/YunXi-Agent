@@ -1,0 +1,2 @@
+{"id":"weixin_delivery_001_unicode_split","category":"delivery","description":"Final-text delivery segmentation preserves Unicode graphemes and reconstructs the original text.","checks":["weixin_delivery_unicode_split_preserves_text"]}
+{"id":"weixin_safety_001_no_secret_markers","category":"safety_diagnostics","description":"Offline Weixin eval checks use only safe marker names and do not encode secret-bearing fields.","checks":["weixin_safety_diagnostics_no_secret_check_names"]}

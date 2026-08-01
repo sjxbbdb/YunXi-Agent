@@ -99,7 +99,7 @@ pub(crate) fn redact_secrets(input: &str) -> String {
     ] {
         output = redact_marker_tokens(&output, marker);
     }
-    output
+    normalize_replacement_chars(&output)
 }
 
 pub(crate) fn truncate_chars(value: &str, max_chars: usize) -> String {
@@ -162,6 +162,26 @@ fn is_secret_token_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.')
 }
 
+fn normalize_replacement_chars(input: &str) -> String {
+    let replacement_count = input.chars().filter(|ch| *ch == '\u{fffd}').count();
+    if replacement_count == 0 {
+        return input.to_string();
+    }
+
+    let cleaned = input
+        .chars()
+        .filter(|ch| *ch != '\u{fffd}')
+        .collect::<String>();
+    let notice = format!(
+        "[invalid encoding: {replacement_count} replacement character(s) removed; original output may not be UTF-8]"
+    );
+    if cleaned.trim().is_empty() {
+        notice
+    } else {
+        format!("{}{notice}", cleaned.trim_end())
+    }
+}
+
 #[cfg(test)]
 fn is_document_like(tool_name: &str, detail: &str) -> bool {
     let tool_name = tool_name.to_ascii_lowercase();
@@ -209,6 +229,15 @@ mod tests {
         assert!(redacted.contains("sk-[redacted]"));
         assert!(redacted.contains("github_pat_[redacted]"));
         assert!(!redacted.contains("abc123"));
+    }
+
+    #[test]
+    fn redaction_normalizes_invalid_encoding_markers() {
+        let redacted = redact_secrets("runtime warning: \u{fffd}\u{fffd}\u{fffd}");
+
+        assert!(!redacted.contains('\u{fffd}'));
+        assert!(redacted.contains("invalid encoding"));
+        assert!(redacted.contains("3 replacement character"));
     }
 
     #[test]

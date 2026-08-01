@@ -606,6 +606,76 @@ async fn tool_search_returns_workspace_matches() {
 }
 
 #[tokio::test]
+async fn tool_search_skips_user_profile_cache_directories() {
+    let runtime = ShellToolRuntime;
+    let temp = TempDir::new().expect("temp dir");
+    std::fs::create_dir_all(temp.path().join("src")).expect("src dir");
+    std::fs::create_dir_all(temp.path().join("AppData/Local/Temp/WinSAT")).expect("appdata dir");
+    std::fs::write(temp.path().join("src/yunxi-visible-needle.txt"), "").expect("visible file");
+    std::fs::write(
+        temp.path()
+            .join("AppData/Local/Temp/WinSAT/yunxi-hidden-needle.txt"),
+        "",
+    )
+    .expect("hidden file");
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: Some("search".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: yunxi_agent_tools::ToolRequestKind::ToolSearch {
+                query: "needle".to_string(),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("tool search");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    let output = response.output.as_deref().expect("output");
+    assert!(output.contains("yunxi-visible-needle.txt"));
+    assert!(!output.contains("yunxi-hidden-needle.txt"));
+    assert!(!output.contains("AppData"));
+}
+
+#[tokio::test]
+async fn tool_search_does_not_scan_workspace_for_memory_write_intents() {
+    let runtime = ShellToolRuntime;
+    let temp = TempDir::new().expect("temp dir");
+    std::fs::create_dir_all(temp.path().join("src")).expect("src dir");
+    std::fs::write(
+        temp.path()
+            .join("src/memory record save preference-needle.txt"),
+        "",
+    )
+    .expect("file");
+
+    let response = runtime
+        .execute(ToolRequest {
+            id: Some("search".to_string()),
+            cwd: temp.path().to_path_buf(),
+            kind: yunxi_agent_tools::ToolRequestKind::ToolSearch {
+                query: "memory record save preference".to_string(),
+            },
+            policy: ToolPolicy::trusted(),
+        })
+        .await
+        .expect("tool search");
+
+    assert_eq!(response.status, ToolStatus::Completed);
+    let output: serde_json::Value =
+        serde_json::from_str(response.output.as_deref().expect("output")).expect("json");
+    assert!(output["matches"].as_array().is_some_and(Vec::is_empty));
+    assert!(output["warnings"].as_array().is_some_and(|warnings| {
+        warnings.iter().any(|warning| {
+            warning
+                .as_str()
+                .is_some_and(|text| text.contains("YunXi memory"))
+        })
+    }));
+}
+
+#[tokio::test]
 async fn tool_search_returns_dynamic_tool_metadata() {
     let runtime = ShellToolRuntime;
     let temp = TempDir::new().expect("temp dir");

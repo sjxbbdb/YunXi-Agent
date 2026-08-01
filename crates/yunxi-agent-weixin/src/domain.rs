@@ -47,6 +47,10 @@ impl WeixinMessageId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 impl fmt::Debug for WeixinMessageId {

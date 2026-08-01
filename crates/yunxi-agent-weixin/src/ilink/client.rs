@@ -20,7 +20,7 @@ use super::{poll, qr, send};
 
 pub const PRODUCTION_ILINK_ENDPOINT: &str = "https://ilinkai.weixin.qq.com/";
 
-const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const ILINK_APP_ID: &str = "bot";
 const ILINK_APP_CLIENT_VERSION: &str = "131330";

@@ -1,4 +1,4 @@
-00|YunXi Agent v2.1.6 | deepseek live | model=deepseek-chat-ultra-long-model-name
+00|YunXi Agent v2.2.0 | deepseek live | model=deepseek-chat-ultra-long-model-name
 01|new output below | cells=38 | backend=yunxi | source=auto_live | debug off
 02|────────────────────────────────────────────────────────────────────────────────────────────────────
 03|┌Transcript 22-42 / 49 | new output below──────────────────────────────────────────────────────────┐
@@ -9,17 +9,17 @@
 08|│[notice] history 25: stable transcript row for viewport evidence                                  ║
 09|│[notice] history 26: stable transcript row for viewport evidence                                  ║
 10|│[notice] history 27: stable transcript row for viewport evidence                                  ║
-11|│[notice] history 28: stable transcript row for viewport evidence                                  █
-12|│[notice] history 29: stable transcript row for viewport evidence                                  █
+11|│[notice] history 28: stable transcript row for viewport evidence                                  ║
+12|│[notice] history 29: stable transcript row for viewport evidence                                  ║
 13|│[notice] history 30: stable transcript row for viewport evidence                                  █
 14|│[notice] history 31: stable transcript row for viewport evidence                                  █
 15|│[notice] history 32: stable transcript row for viewport evidence                                  █
 16|│[notice] history 33: stable transcript row for viewport evidence                                  █
-17|│[notice] history 34: stable transcript row for viewport evidence                                  ║
-18|│[notice] history 35: stable transcript row for viewport evidence                                  ║
-19|│[user] Keep the current history position while the answer streams.                                ║
-20|│[assistant*] 国際化 layout 中文かな keeps one active cell with emoji 👩‍💻 and é.                    ║
-21|│    URL https://very-long.example.test/api/v1/items?search=中文&sort=desc#results                 ║
+17|│[notice] history 34: stable transcript row for viewport evidence                                  █
+18|│[notice] history 35: stable transcript row for viewport evidence                                  █
+19|│[user] Keep the current history position while the answer streams.                                █
+20|│[assistant*] 国際化 layout 中文かな keeps one active cell with emoji 👩‍💻 and é.                    █
+21|│    URL https://very-long.example.test/api/v1/items?search=中文&sort=desc#results                 █
 22|│    Windows C:\Users\24763\YunXi Agent\输出目录\very-long-file-name.txt                           ║
 23|│    ```rust                                                                                       ║
 24|│        let greeting = "你好、世界"; // 日本語と中文                                              v

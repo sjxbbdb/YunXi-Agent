@@ -709,7 +709,7 @@ mod tests {
             cloud_control_enabled: false,
             quiet_hours: Some("23:00-07:00".to_string()),
             persona_summary: "profile=yunxi_companion_strong".to_string(),
-            memory_summary: "records=2 active=1 pending=1".to_string(),
+            memory_summary: "records=2 active=1 recallable=1 pending=1".to_string(),
             relationship_summary: "nodes=2 edges=1 active_edges=1".to_string(),
             scopes: vec![
                 ControlScopeSnapshot {

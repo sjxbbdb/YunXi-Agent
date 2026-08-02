@@ -142,7 +142,8 @@ async fn run_general_companion_scenario(workspace: &Path) -> AgentResult<()> {
     assert!(!snapshot.companion_enabled);
     assert!(snapshot.proactive_default_off);
     assert!(!snapshot.cloud_control_enabled);
-    assert!(snapshot.controls.memory_summary.contains("active=2"));
+    assert!(snapshot.controls.memory_summary.contains("active=3"));
+    assert!(snapshot.controls.memory_summary.contains("recallable=2"));
     assert!(
         snapshot
             .controls

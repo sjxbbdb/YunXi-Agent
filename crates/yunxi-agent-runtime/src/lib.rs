@@ -80,6 +80,11 @@ pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
     let active_memory = memory_load
         .records
         .iter()
+        .filter(|record| record.status == MemoryStatus::Active)
+        .count();
+    let recallable_memory = memory_load
+        .records
+        .iter()
         .filter(|record| record.is_recallable_at(snapshot_at_millis))
         .count();
     let pending_memory = memory_load
@@ -115,9 +120,10 @@ pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
         profile.id, profile.display_name, profile.version
     );
     let memory_summary = format!(
-        "records={} active={} pending={} warnings={}",
+        "records={} active={} recallable={} pending={} warnings={}",
         memory_load.records.len(),
         active_memory,
+        recallable_memory,
         pending_memory,
         memory_load.warnings.len()
     );

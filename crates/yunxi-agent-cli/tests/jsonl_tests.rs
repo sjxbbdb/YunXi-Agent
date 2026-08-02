@@ -154,10 +154,11 @@ fn yunxi_jsonl_redacts_secret_like_prompt_from_transcript_items() {
                 saw_user = true;
                 assert!(content.contains("[redacted]"));
             }
-            if role == Some("assistant") {
+            if role == Some("assistant")
+                && content.contains("YunXi autonomous runtime accepted prompt")
+            {
                 saw_assistant = true;
                 assert!(content.contains("[redacted]"));
-                assert!(content.contains("YunXi autonomous runtime accepted prompt"));
             }
         }
     }

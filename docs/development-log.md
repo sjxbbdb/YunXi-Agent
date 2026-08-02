@@ -4929,6 +4929,46 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 
 署名：开发者
 
+## 2026-08-02 10:10:53 +08:00
+
+工作目标：全量启用陪伴能力并修复控制面板记忆计数不一致的小问题，完成 hotfix.6 安装验收。
+
+执行内容：
+1. 将陪伴开关保持为启用状态，并确认记忆、人格能力均已启用。
+2. 修复 `controls status` 的 `memory_summary`：`active` 现在按记忆记录的 `status=active` 统计，与 `memory status` 的 active 口径一致；新增 `recallable` 字段保留可召回记录诊断。
+3. 修复 JSONL 脱敏回归测试的判定条件：仅对包含原始提示回显的助手消息检查 `[redacted]`，同时继续保证原始密钥不出现在任何输出中。
+4. 更新版本号及 TUI 快照到 `2.2.0-hotfix.6`。
+
+修改文件与路径：
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\general_companion_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\tests\jsonl_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\render.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_100x30.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_200x50.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+
+验证结果：
+- `cargo fmt --all -- --check`：通过。
+- `git diff --check`：通过，无 whitespace error。
+- `cargo test --workspace`：通过。
+- 安装入口：`D:\Apps\YunXi Agent\bin\yunxi.exe`。
+- 安装版本：`yunxi 2.2.0-hotfix.6`。
+- `controls status`：`companion_enabled=true`，`memory_summary=records=3 active=3 recallable=2 pending=0 warnings=0`。
+- `memory status`：`memory_enabled=true`、`persona_enabled=true`，`counts.active=3`。
+- `persona status`：`persona_enabled=true`，profile=`yunxi_companion_strong`。
+- 本轮安装前仅停止了明确路径 `D:\Apps\YunXi Agent\bin\yunxi.exe` 的旧进程；未操作其他进程。
+
+发布状态：准备创建本地提交、`v2.2.0-hotfix.6` tag，并通过 GitHub CLI/API 发布；不删除、不移动、不覆盖历史 tag，不使用 force。
+
+清理状态：未执行删除、递归清理、移动目录、git clean、系统配置修改或用户目录清理；仅写入本项目日志和用户指定的开发日志文件。
+
+署名：开发者
+
 ## 2026-08-02 09:19:24 +08:00
 
 工作目标：让启动默认 TUI 时同步触发本地微信 gateway 自启，避免 TUI 入口与微信端服务脱节，发布为 v2.2.0-hotfix.5。

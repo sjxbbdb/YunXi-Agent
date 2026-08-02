@@ -43,6 +43,24 @@
 
 署名：开发者
 
+## 2026-08-02 16:40:41 +08:00 — v2.3.3-hotfix.1 微信最终实机门禁
+
+实机验证结果：
+
+- 用户发送的新微信私聊已被 `2.3.3-hotfix.1` 接收并完成回复。
+- latency trace 从 9 增至 10；最新 trace `terminal_status=succeeded`、`error_label=null`。
+- 分段耗时：poll `3800ms`、queue `23ms`、runtime `6956ms`、spool `10ms`、delivery `407ms`、total `11464ms`。
+- `pending_inbound_count=0`、`pending_delivery_count=0`、`pending_remote_control_count=0`，证明本轮入站、处理、发送队列均已排空。
+- 测试期间发现旧服务进程退出后账户锁显示 `stale`；第一次重启因 PowerShell 对带空格工作区路径的参数拆分而失败，未产生数据写入或删除。
+- 使用完整引号参数重新启动后，服务 PID `20020` 恢复运行，状态为 `ready`，`account_lock_state=active`，凭据状态为 `present`。
+
+安全边界：
+
+- 未删除、递归清理、移动或覆盖用户目录。
+- 未使用 `git reset`、`git clean`、force push，未移动或覆盖历史 tag。
+
+署名：开发者
+
 ## 2026-08-02 16:00:11 +08:00 — YunXi Agent v2.3.3-hotfix.1 微信实机队列恢复修复
 
 工作目标：在 v2.3.3 陪伴层发布后，按用户要求安装替换并进行微信实机测试；修复实机测试暴露出的微信远程控制审批超时卡住入站队列、状态 pending 口径不准确、成功 trace 保留历史错误标签的问题。

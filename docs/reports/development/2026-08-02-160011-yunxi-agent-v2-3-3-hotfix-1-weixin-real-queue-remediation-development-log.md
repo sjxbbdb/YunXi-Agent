@@ -72,3 +72,22 @@
 未执行删除用户目录、递归清理用户目录、移动用户目录、git reset、git clean、force push 或历史 tag 覆盖。安装替换仅限两个明确 YunXi 安装目录下的 `yunxi.exe` 与 `yunxi-agent-cli.exe`，并在替换前创建备份。
 
 署名：开发者
+
+## 最终实机门禁（2026-08-02 16:40:41 +08:00）
+
+1. 用户发送的新微信私聊已由安装版 `yunxi 2.3.3-hotfix.1` 接收并完成回复。
+2. 最新 latency trace：
+   - `terminal_status=succeeded`
+   - `error_label=null`
+   - `poll=3800ms`
+   - `queue=23ms`
+   - `runtime=6956ms`
+   - `spool=10ms`
+   - `delivery=407ms`
+   - `total=11464ms`
+3. 队列收敛：`pending_inbound_count=0`、`pending_delivery_count=0`、`pending_remote_control_count=0`。
+4. 实机过程中旧服务进程退出并留下 `stale` 锁；第一次重启命令因 PowerShell 拆分含空格路径而失败，未执行任何破坏性操作。修正为完整引号参数后，PID `20020` 正常常驻，状态 `ready`、锁状态 `active`、凭据 `present`。
+
+本次最终门禁结论：安装替换、真实微信入站、runtime 处理、最终文本回传和服务恢复均通过。
+
+署名：开发者

@@ -41,8 +41,9 @@ pub use policy::{
     MemoryWritePolicyEngine,
 };
 pub use profile::{
-    CompanionStrength, HumanProfile, PersonaConstraint, PersonaLayers, PersonaProfile,
-    RelationshipFamiliarity, RelationshipState, validate_profile_id, yunxi_companion_strong,
+    CompanionStrength, HumanProfile, PersonaCompanionRules, PersonaConstraint, PersonaLayers,
+    PersonaProfile, PersonaRuleLevel, RelationshipFamiliarity, RelationshipState,
+    validate_profile_id, yunxi_companion_strong,
 };
 pub use provider_extractor::ProviderMemoryExtractor;
 pub use recall::MemoryRecallEngine;

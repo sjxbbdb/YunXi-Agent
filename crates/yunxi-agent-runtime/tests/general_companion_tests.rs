@@ -180,7 +180,8 @@ async fn run_general_companion_scenario(workspace: &Path) -> AgentResult<()> {
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(system_context.contains("yunxi_persona_context version=\"2.0.6\""));
+    assert!(system_context.contains("yunxi_persona_context version=\"2.3.3\""));
+    assert!(system_context.contains("reply_style_guidance"));
     assert!(system_context.contains("Alex relationship is trusting"));
     assert!(!system_context.contains("Alex relationship is strained"));
 

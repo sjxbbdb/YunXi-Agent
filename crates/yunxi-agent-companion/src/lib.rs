@@ -19,6 +19,123 @@ impl CompanionMemorySummary {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum CompanionRelationshipStage {
+    #[default]
+    New,
+    Familiar,
+    Established,
+}
+
+impl CompanionRelationshipStage {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Familiar => "familiar",
+            Self::Established => "established",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompanionEmotionKind {
+    #[default]
+    None,
+    Anxiety,
+    Sadness,
+    Fatigue,
+    Frustration,
+    Joy,
+    Uncertainty,
+    Loneliness,
+}
+
+impl CompanionEmotionKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Anxiety => "anxiety",
+            Self::Sadness => "sadness",
+            Self::Fatigue => "fatigue",
+            Self::Frustration => "frustration",
+            Self::Joy => "joy",
+            Self::Uncertainty => "uncertainty",
+            Self::Loneliness => "loneliness",
+        }
+    }
+
+    fn needs_supportive_tone(self) -> bool {
+        matches!(
+            self,
+            Self::Anxiety | Self::Sadness | Self::Fatigue | Self::Loneliness
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompanionEmotion {
+    pub kind: CompanionEmotionKind,
+    pub intensity: u8,
+    pub confidence: u8,
+}
+
+impl CompanionEmotion {
+    pub fn is_detected(self) -> bool {
+        self.kind != CompanionEmotionKind::None
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompanionPersonaStyle {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soul_signature: Option<String>,
+    #[serde(default = "default_style_level")]
+    pub warmth: u8,
+    #[serde(default = "default_style_level")]
+    pub directness: u8,
+    #[serde(default = "default_style_level")]
+    pub initiative: u8,
+    #[serde(default)]
+    pub humor: u8,
+    #[serde(default = "default_style_level")]
+    pub emotional_attunement: u8,
+    #[serde(default)]
+    pub reply_rules: Vec<String>,
+    #[serde(default)]
+    pub forbidden_styles: Vec<String>,
+}
+
+impl Default for CompanionPersonaStyle {
+    fn default() -> Self {
+        Self {
+            soul_signature: None,
+            warmth: default_style_level(),
+            directness: default_style_level(),
+            initiative: default_style_level(),
+            humor: 0,
+            emotional_attunement: default_style_level(),
+            reply_rules: Vec::new(),
+            forbidden_styles: Vec::new(),
+        }
+    }
+}
+
+impl CompanionPersonaStyle {
+    pub fn has_rules(&self) -> bool {
+        self.soul_signature
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || !self.reply_rules.is_empty()
+            || !self.forbidden_styles.is_empty()
+    }
+}
+
+fn default_style_level() -> u8 {
+    50
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CompanionTone {
     #[default]
     Neutral,
@@ -38,8 +155,16 @@ pub struct CompanionContext {
     pub persona_id: Option<String>,
     pub display_name: Option<String>,
     pub relationship_state: Option<String>,
+    #[serde(default)]
+    pub relationship_stage: CompanionRelationshipStage,
     pub memory_summary: CompanionMemorySummary,
     pub emotional_clues: Vec<String>,
+    #[serde(default)]
+    pub emotion: CompanionEmotion,
+    #[serde(default)]
+    pub persona_style: CompanionPersonaStyle,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consistency_key: Option<String>,
     pub available: bool,
 }
 
@@ -56,13 +181,18 @@ impl CompanionContext {
             && (self.persona_id.is_some()
                 || self.relationship_state.is_some()
                 || !self.memory_summary.is_empty()
-                || !self.emotional_clues.is_empty())
+                || !self.emotional_clues.is_empty()
+                || self.emotion.is_detected()
+                || self.persona_style.has_rules())
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CompanionPolicyDecision {
     pub tone: CompanionTone,
+    pub emotion: CompanionEmotion,
+    pub relationship_stage: CompanionRelationshipStage,
+    pub consistency_key: Option<String>,
     pub proactive_care: bool,
     pub follow_up: Option<CompanionFollowUp>,
     pub use_persona_context: bool,
@@ -98,18 +228,25 @@ impl CompanionPolicy for DeterministicCompanionPolicy {
     ) -> CompanionPolicyDecision {
         let context_available = context.has_context();
         let use_memory_context = context_available && !context.memory_summary.is_empty();
-        let use_persona_context =
-            context_available && (context.persona_id.is_some() || context.display_name.is_some());
-        let supportive = context
-            .emotional_clues
-            .iter()
-            .any(|clue| contains_emotional_signal(clue));
-        let tone = if supportive {
-            CompanionTone::Supportive
-        } else if use_persona_context || use_memory_context {
-            CompanionTone::Warm
-        } else if input.tool_request.is_some() {
+        let use_persona_context = context_available
+            && (context.persona_id.is_some()
+                || context.display_name.is_some()
+                || context.persona_style.has_rules());
+        let emotion = if context.emotion.is_detected() {
+            context.emotion
+        } else {
+            classify_companion_emotion(context.emotional_clues.iter().map(String::as_str))
+        };
+        let tone = if input.tool_request.is_some() {
             CompanionTone::Direct
+        } else if emotion.kind.needs_supportive_tone() {
+            CompanionTone::Supportive
+        } else if emotion.kind == CompanionEmotionKind::Frustration
+            && context.persona_style.directness >= 50
+        {
+            CompanionTone::Direct
+        } else if use_persona_context || use_memory_context || emotion.is_detected() {
+            CompanionTone::Warm
         } else {
             CompanionTone::Neutral
         };
@@ -117,10 +254,12 @@ impl CompanionPolicy for DeterministicCompanionPolicy {
         let follow_up = if proactive_care
             && context_available
             && input.tool_request.is_none()
-            && (input.unfinished_task.is_some() || input.topic_continuation.is_some())
+            && (emotion.is_detected()
+                || input.unfinished_task.is_some()
+                || input.topic_continuation.is_some())
         {
             Some(CompanionFollowUp {
-                prompt: "你希望我继续跟进这件事吗？".to_string(),
+                prompt: follow_up_prompt_for_emotion(emotion.kind).to_string(),
                 required: false,
             })
         } else {
@@ -128,6 +267,9 @@ impl CompanionPolicy for DeterministicCompanionPolicy {
         };
         CompanionPolicyDecision {
             tone,
+            emotion,
+            relationship_stage: context.relationship_stage,
+            consistency_key: context.consistency_key.clone(),
             proactive_care,
             follow_up,
             use_persona_context,
@@ -137,13 +279,193 @@ impl CompanionPolicy for DeterministicCompanionPolicy {
     }
 }
 
-fn contains_emotional_signal(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    [
-        "焦虑", "难过", "疲惫", "压力", "担心", "sad", "anxious", "tired", "stress", "worried",
+pub fn classify_companion_emotion<I, S>(values: I) -> CompanionEmotion
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut best = CompanionEmotion::default();
+    for value in values {
+        let value = value.as_ref();
+        let lower = value.to_ascii_lowercase();
+        for (kind, needles) in EMOTION_PATTERNS {
+            let matches = needles
+                .iter()
+                .filter(|needle| lower.contains(*needle) || value.contains(*needle))
+                .count();
+            if matches == 0 {
+                continue;
+            }
+            let intensity = emotional_intensity(value, &lower, *kind, matches);
+            let confidence = (55usize + matches * 10).min(95) as u8;
+            let score = intensity.saturating_add(confidence / 2);
+            let best_score = best.intensity.saturating_add(best.confidence / 2);
+            if score > best_score {
+                best = CompanionEmotion {
+                    kind: *kind,
+                    intensity,
+                    confidence,
+                };
+            }
+        }
+    }
+    best
+}
+
+const EMOTION_PATTERNS: &[(CompanionEmotionKind, &[&str])] = &[
+    (
+        CompanionEmotionKind::Anxiety,
+        &[
+            "焦虑", "紧张", "压力", "担心", "慌", "害怕", "怕", "anxious", "anxiety", "stress",
+            "stressed", "worried", "panic",
+        ],
+    ),
+    (
+        CompanionEmotionKind::Sadness,
+        &[
+            "难过",
+            "伤心",
+            "低落",
+            "委屈",
+            "沮丧",
+            "sad",
+            "depressed",
+            "down",
+            "upset",
+        ],
+    ),
+    (
+        CompanionEmotionKind::Fatigue,
+        &[
+            "疲惫",
+            "很累",
+            "太累",
+            "累了",
+            "困",
+            "熬不住",
+            "撑不住",
+            "tired",
+            "exhausted",
+            "burnout",
+            "burned out",
+        ],
+    ),
+    (
+        CompanionEmotionKind::Frustration,
+        &[
+            "烦",
+            "生气",
+            "火大",
+            "无语",
+            "崩溃",
+            "卡住",
+            "恼火",
+            "angry",
+            "frustrated",
+            "annoyed",
+            "stuck",
+        ],
+    ),
+    (
+        CompanionEmotionKind::Joy,
+        &[
+            "开心",
+            "高兴",
+            "太好了",
+            "有起色",
+            "顺了",
+            "完成了",
+            "happy",
+            "great",
+            "nice",
+            "progress",
+            "done",
+        ],
+    ),
+    (
+        CompanionEmotionKind::Uncertainty,
+        &[
+            "不知道",
+            "不确定",
+            "困惑",
+            "疑惑",
+            "迷茫",
+            "怎么做",
+            "没思路",
+            "confused",
+            "uncertain",
+            "not sure",
+            "lost",
+        ],
+    ),
+    (
+        CompanionEmotionKind::Loneliness,
+        &[
+            "孤独",
+            "孤单",
+            "没人",
+            "陪我",
+            "想有人",
+            "lonely",
+            "alone",
+            "companionship",
+        ],
+    ),
+];
+
+fn emotional_intensity(value: &str, lower: &str, kind: CompanionEmotionKind, matches: usize) -> u8 {
+    let mut intensity = match kind {
+        CompanionEmotionKind::Joy => 45,
+        CompanionEmotionKind::Uncertainty => 50,
+        CompanionEmotionKind::Frustration => 55,
+        CompanionEmotionKind::Anxiety
+        | CompanionEmotionKind::Sadness
+        | CompanionEmotionKind::Fatigue
+        | CompanionEmotionKind::Loneliness => 60,
+        CompanionEmotionKind::None => 0,
+    };
+    intensity += matches.saturating_sub(1).min(3) as u8 * 8;
+    if [
+        "很",
+        "特别",
+        "非常",
+        "太",
+        "真的",
+        "崩溃",
+        "撑不住",
+        "受不了",
+        "extremely",
+        "very",
+        "really",
+        "so ",
     ]
     .iter()
-    .any(|needle| lower.contains(needle))
+    .any(|marker| lower.contains(marker) || value.contains(marker))
+    {
+        intensity = intensity.saturating_add(25);
+    }
+    if [
+        "有点", "一点", "稍微", "somewhat", "a little", "kind of", "kinda",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker) || value.contains(marker))
+    {
+        intensity = intensity.saturating_sub(15);
+    }
+    intensity.min(100)
+}
+
+fn follow_up_prompt_for_emotion(kind: CompanionEmotionKind) -> &'static str {
+    match kind {
+        CompanionEmotionKind::Anxiety => "要不要先把最压着你的点拆成一小步？",
+        CompanionEmotionKind::Sadness => "你希望我先听你说完，还是一起整理下一步？",
+        CompanionEmotionKind::Fatigue => "要不要先把当前任务收束成一个最小可做步骤？",
+        CompanionEmotionKind::Frustration => "要不要我先帮你定位最卡住的具体点？",
+        CompanionEmotionKind::Joy => "要不要顺手把这次有效的做法记录下来？",
+        CompanionEmotionKind::Uncertainty => "要不要我给你两个可选方向，再一起取舍？",
+        CompanionEmotionKind::Loneliness => "你希望我先陪你聊一会儿，还是一起做点轻量的事？",
+        CompanionEmotionKind::None => "你希望我继续跟进这件事吗？",
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -567,5 +889,59 @@ mod tests {
             },
         );
         assert_eq!(decision.tone, CompanionTone::Supportive);
+        assert_eq!(decision.emotion.kind, CompanionEmotionKind::Anxiety);
+    }
+
+    #[test]
+    fn emotion_classifier_handles_nuanced_companion_signals() {
+        let emotion = classify_companion_emotion([
+            "我今天真的有点撑不住，压力特别大",
+            "但是项目终于有起色了",
+        ]);
+
+        assert_eq!(emotion.kind, CompanionEmotionKind::Anxiety);
+        assert!(emotion.intensity >= 70);
+        assert!(emotion.confidence >= 60);
+    }
+
+    #[test]
+    fn policy_keeps_stable_persona_and_relationship_metadata() {
+        let policy = DeterministicCompanionPolicy::new(CompanionSettings {
+            enabled: true,
+            ..CompanionSettings::default()
+        });
+        let decision = policy.decide(
+            &CompanionContext {
+                available: true,
+                persona_id: Some("subjective_soul".to_string()),
+                relationship_stage: CompanionRelationshipStage::Established,
+                persona_style: CompanionPersonaStyle {
+                    soul_signature: Some("sharp-warm-local".to_string()),
+                    warmth: 80,
+                    directness: 65,
+                    initiative: 70,
+                    emotional_attunement: 85,
+                    reply_rules: vec!["先接住情绪，再给行动建议".to_string()],
+                    ..CompanionPersonaStyle::default()
+                },
+                consistency_key: Some("subjective_soul:sharp-warm-local".to_string()),
+                ..CompanionContext::default()
+            },
+            &CompanionInput {
+                topic_continuation: Some("长期陪伴测试".to_string()),
+                ..CompanionInput::default()
+            },
+        );
+
+        assert_eq!(
+            decision.relationship_stage,
+            CompanionRelationshipStage::Established
+        );
+        assert_eq!(
+            decision.consistency_key.as_deref(),
+            Some("subjective_soul:sharp-warm-local")
+        );
+        assert!(decision.use_persona_context);
+        assert_eq!(decision.tone, CompanionTone::Warm);
     }
 }

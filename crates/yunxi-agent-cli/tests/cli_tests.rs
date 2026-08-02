@@ -938,9 +938,9 @@ fn cli_v2_general_companion_release_gate_is_local_safe_and_auditable() {
         .stdout(predicate::str::contains("general companion release smoke"));
 
     let evaluation = run_json_command_with_env(&home, &["--json", "eval", "companion"]);
-    assert_eq!(evaluation["harness_version"].as_str(), Some("2.0.6"));
+    assert_eq!(evaluation["harness_version"].as_str(), Some("2.3.3"));
     assert_eq!(evaluation["golden_passed"].as_bool(), Some(true));
-    assert_eq!(evaluation["metrics"]["scenario_count"].as_u64(), Some(31));
+    assert_eq!(evaluation["metrics"]["scenario_count"].as_u64(), Some(33));
     assert_eq!(
         evaluation["metrics"]["tool_approval_bypass_count"].as_u64(),
         Some(0)
@@ -1382,6 +1382,21 @@ fn cli_jsonl_preserves_reply_and_exposes_companion_metrics() {
     assert_eq!(
         companion_metadata["metadata"]["extra"]["companion_plan_count"],
         "1"
+    );
+    assert!(
+        companion_metadata["metadata"]["extra"]["companion_policy_emotion_kind"]
+            .as_str()
+            .is_some()
+    );
+    assert!(
+        companion_metadata["metadata"]["extra"]["companion_policy_relationship_stage"]
+            .as_str()
+            .is_some()
+    );
+    assert!(
+        companion_metadata["metadata"]["extra"]["companion_policy_consistency_key"]
+            .as_str()
+            .is_some()
     );
 }
 

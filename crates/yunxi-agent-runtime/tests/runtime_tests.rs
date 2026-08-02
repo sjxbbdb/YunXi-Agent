@@ -194,6 +194,27 @@ async fn companion_policy_emits_deterministic_metrics_without_extra_provider_cal
             .data
             .contains_key("companion_policy_use_memory_context")
     );
+    assert!(metadata.data.contains_key("companion_policy_emotion_kind"));
+    assert!(
+        metadata
+            .data
+            .contains_key("companion_policy_emotion_intensity")
+    );
+    assert!(
+        metadata
+            .data
+            .contains_key("companion_policy_emotion_confidence")
+    );
+    assert!(
+        metadata
+            .data
+            .contains_key("companion_policy_relationship_stage")
+    );
+    assert!(
+        metadata
+            .data
+            .contains_key("companion_policy_consistency_key")
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -232,6 +253,109 @@ async fn companion_plan_is_recorded_and_visible_in_control_snapshot() {
         snapshot
             .scope(yunxi_agent_core::ControlScope::Companion)
             .is_some_and(|state| state.summary == "history_records=1")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn companion_policy_covers_plain_long_term_chat_without_extra_public_plan() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    let result = with_memory_enabled_home(home.path(), async move {
+        let store = FilePersonaMemoryStore::for_workspace(&workspace_path);
+        let records = [
+            MemoryRecord::new(
+                "relationship-direct",
+                MemoryScope::Relationship,
+                MemoryKind::RelationshipNote,
+                "用户希望 YunXi 在陪伴层测试中先稳定情绪，再直接定位问题。",
+                10,
+            )
+            .with_status(MemoryStatus::Active),
+            MemoryRecord::new(
+                "emotion-pressure",
+                MemoryScope::Relationship,
+                MemoryKind::EmotionalState,
+                "用户最近对陪伴层测试压力很大。",
+                20,
+            )
+            .with_status(MemoryStatus::Active),
+            MemoryRecord::new(
+                "goal-companion",
+                MemoryScope::GlobalUser,
+                MemoryKind::Goal,
+                "用户长期目标是把 YunXi 做成稳定、有个性、长期一致的陪伴 Agent。",
+                30,
+            )
+            .with_status(MemoryStatus::Active),
+        ];
+        for record in records {
+            store.append(&record).expect("append memory");
+        }
+        let backend = YunXiRuntimeBackend::with_parts(
+            StaticProvider::default(),
+            NoopToolRuntime,
+            InMemorySessionStore::default(),
+        );
+        let config = AgentConfig {
+            companion: CompanionSettings {
+                enabled: true,
+                ..CompanionSettings::default()
+            },
+            ..AgentConfig::new(&workspace_path)
+        };
+        Agent::new(config)
+            .run_with_backend(
+                &backend,
+                AgentInput::text("我今天压力特别大，不知道陪伴层下一步怎么测"),
+            )
+            .await
+    })
+    .await
+    .expect("runtime should complete");
+
+    assert_eq!(
+        result.final_response.as_deref(),
+        Some(
+            "YunXi autonomous runtime accepted prompt: 我今天压力特别大，不知道陪伴层下一步怎么测"
+        )
+    );
+    assert!(!result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Message { content, .. }
+            if content.contains("[关心]")
+                || content.contains("[下一步建议]")
+                || content.contains("[阶段总结]")
+    )));
+    let metadata = result
+        .events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::TurnMetadata { metadata }
+                if metadata.context_phase.as_deref() == Some("companion_policy") =>
+            {
+                Some(metadata)
+            }
+            _ => None,
+        })
+        .expect("companion metrics metadata");
+    assert_eq!(
+        metadata.data.get("companion_plan_count"),
+        Some(&"0".to_string())
+    );
+    assert_eq!(
+        metadata.data.get("companion_policy_emotion_kind"),
+        Some(&"anxiety".to_string())
+    );
+    assert_eq!(
+        metadata.data.get("companion_policy_relationship_stage"),
+        Some(&"established".to_string())
+    );
+    assert!(
+        metadata
+            .data
+            .get("companion_policy_consistency_key")
+            .is_some_and(|value| value.starts_with("yunxi_companion_strong:"))
     );
 }
 

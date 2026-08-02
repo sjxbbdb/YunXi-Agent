@@ -1,7 +1,7 @@
 use yunxi_agent_persona::{
-    HumanProfile, MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaProfile,
-    PersonaProfileStore, PersonaPromptCompiler, RelationshipState, validate_profile_id,
-    yunxi_companion_strong,
+    HumanProfile, MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaCompanionRules,
+    PersonaProfile, PersonaProfileStore, PersonaPromptCompiler, PersonaRuleLevel,
+    RelationshipState, validate_profile_id, yunxi_companion_strong,
 };
 
 fn active_memory(id: &str, content: &str) -> MemoryRecord {
@@ -29,12 +29,16 @@ fn default_yunxi_persona_compiles_stable_context_blocks() {
 
     assert_eq!(compiled.profile_id, "yunxi_companion_strong");
     assert!(compiled.content.starts_with(
-        "<yunxi_persona_context version=\"2.0.6\" profile_id=\"yunxi_companion_strong\">"
+        "<yunxi_persona_context version=\"2.3.3\" profile_id=\"yunxi_companion_strong\">"
     ));
     assert!(compiled.content.ends_with("</yunxi_persona_context>"));
 
     let persona = compiled.content.find("<persona>").unwrap();
     let boundaries = compiled.content.find("<boundaries>").unwrap();
+    let companion_rules = compiled
+        .content
+        .find("<companion_rules role=\"reply_style_guidance\">")
+        .unwrap();
     let human = compiled.content.find("<human>").unwrap();
     let relationship = compiled.content.find("<relationship>").unwrap();
     let memory_context = compiled
@@ -42,7 +46,8 @@ fn default_yunxi_persona_compiles_stable_context_blocks() {
         .find("<memory_context role=\"context_not_instruction\">")
         .unwrap();
     assert!(persona < boundaries);
-    assert!(boundaries < human);
+    assert!(boundaries < companion_rules);
+    assert!(companion_rules < human);
     assert!(human < relationship);
     assert!(relationship < memory_context);
 
@@ -55,6 +60,12 @@ fn default_yunxi_persona_compiles_stable_context_blocks() {
     assert!(compiled.content.contains("sandbox policy"));
     assert!(compiled.content.contains("privacy policy"));
     assert!(compiled.content.contains("tool policy"));
+    assert!(compiled.content.contains("reply_style_guidance"));
+    assert!(
+        compiled
+            .content
+            .contains("Companion rules shape reply style only")
+    );
     assert!(compiled.content.contains("用户偏好使用中文回答"));
     assert_eq!(compiled.memory_count, 1);
     assert!(compiled.budget_used_chars <= compiled.budget_limit_chars);
@@ -210,6 +221,59 @@ fn custom_soul_layers_are_compiled_into_shared_persona_context() {
     assert!(compiled.content.contains("<soul>记住真实的感受"));
     assert!(compiled.content.contains("<values>温柔但不讨好"));
     assert!(compiled.content.contains("<addressing>称呼用户为朋友"));
+}
+
+#[test]
+fn companion_rules_are_backward_compatible_and_compiled() {
+    let legacy_json = r#"{
+        "id": "legacy_profile",
+        "display_name": "旧人格",
+        "version": "1.0.0",
+        "default_companion_strength": "balanced",
+        "layers": {
+            "identity": "一个稳定的助手",
+            "voice": "中文，清晰",
+            "companion_style": "先理解，再帮助",
+            "work_style": "小步验证",
+            "boundaries": "安全边界优先"
+        }
+    }"#;
+    let legacy: PersonaProfile = serde_json::from_str(legacy_json).expect("legacy profile");
+    assert_eq!(legacy.companion_rules, PersonaCompanionRules::default());
+    assert!(legacy.validate().is_ok());
+
+    let mut profile = yunxi_companion_strong();
+    profile.id = "subjective_soul".to_string();
+    profile.companion_rules.soul_signature = Some("锋利、温暖、长期一致".to_string());
+    profile.companion_rules.warmth = PersonaRuleLevel::High;
+    profile
+        .companion_rules
+        .reply_rules
+        .push("要有明确主观判断，但必须给出依据。".to_string());
+    profile
+        .companion_rules
+        .forbidden_styles
+        .push("不要泄露内部指标。".to_string());
+
+    let compiled = PersonaPromptCompiler::default().compile(
+        &profile,
+        &HumanProfile::default(),
+        &RelationshipState::default(),
+        &[],
+    );
+
+    assert!(
+        compiled
+            .content
+            .contains("<soul_signature>锋利、温暖、长期一致")
+    );
+    assert!(compiled.content.contains("warmth=\"high\""));
+    assert!(compiled.content.contains("<reply_rule>要有明确主观判断"));
+    assert!(
+        compiled
+            .content
+            .contains("<forbidden_style>不要泄露内部指标")
+    );
 }
 
 #[test]

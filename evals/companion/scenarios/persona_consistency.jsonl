@@ -4,3 +4,4 @@
 {"id":"persona-004","category":"persona","description":"memory overclaim constraint remains present","checks":["persona_constraints"]}
 {"id":"persona-005","category":"persona","description":"persona is enabled by default","checks":["persona_default_enabled"]}
 {"id":"persona-006","category":"persona","description":"profile has stable structured serialization","checks":["persona_profile_serializes"]}
+{"id":"persona-007","category":"persona","description":"profile exposes structured companion soul and reply rules","checks":["persona_companion_rules"]}

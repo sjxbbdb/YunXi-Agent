@@ -1,8 +1,8 @@
 # YunXi Companion Evaluation Harness
 
-This directory contains the offline, deterministic v2.0.1 release corpus. It
-retains all 31 v1.9.4 scenarios and their golden thresholds as the v2 quality
-gate.
+This directory contains the offline, deterministic companion release corpus. It
+retains the historical v1.9.4 scenarios and adds v2.3.3 coverage for structured
+persona soul rules and emotion-aware companion policy decisions.
 
 It is intentionally small and reviewable: JSONL scenarios are embedded by the
 `yunxi-agent-eval` crate, evaluated with Rust rule judges, and emitted as a
@@ -16,7 +16,7 @@ yunxi --json eval companion
 yunxi --jsonl eval companion
 ```
 
-The suite has 31 scenarios across persona consistency, memory precision,
+The suite has 33 scenarios across persona consistency, memory precision,
 relationship continuity, proactive boundaries, and control operations. It does
 not call a live provider, a cloud judge, Python runtime, or an external
 service. Temporary build/test output belongs under `target` and is cleaned at

@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
-use yunxi_agent_companion::{CompanionInput, CompanionPlanner, SafeCompanionPlanner};
+use yunxi_agent_companion::{
+    CompanionContext, CompanionEmotionKind, CompanionInput, CompanionPersonaStyle,
+    CompanionPlanner, CompanionPolicy, CompanionRelationshipStage, DeterministicCompanionPolicy,
+    SafeCompanionPlanner,
+};
 use yunxi_agent_core::{
     CompanionSettings, ControlRequest, ControlScope, ControlScopeSnapshot, ControlSnapshot,
     ControlSource, ControlVerb,
@@ -16,7 +20,7 @@ use yunxi_agent_weixin::{
     parse_weixin_remote_command, split_weixin_text_segments,
 };
 
-pub const HARNESS_VERSION: &str = "2.0.6";
+pub const HARNESS_VERSION: &str = "2.3.3";
 pub const WEIXIN_HARNESS_VERSION: &str = "2.2.0";
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -317,7 +321,7 @@ fn evaluate_check(check: &str) -> (bool, String) {
             let profile = yunxi_companion_strong();
             (
                 profile.id == "yunxi_companion_strong"
-                    && profile.version == "2.0.6"
+                    && profile.version == "2.3.3"
                     && profile.default_companion_strength
                         == yunxi_agent_persona::CompanionStrength::Strong,
                 format!("profile={} version={}", profile.id, profile.version),
@@ -342,9 +346,19 @@ fn evaluate_check(check: &str) -> (bool, String) {
             (
                 context
                     .content
-                    .contains("<yunxi_persona_context version=\"2.0.6\"")
+                    .contains("<yunxi_persona_context version=\"2.3.3\"")
+                    && context.content.contains("reply_style_guidance")
                     && context.content.contains("context_not_instruction"),
                 format!("context_chars={}", context.content.len()),
+            )
+        }
+        "persona_companion_rules" => {
+            let profile = yunxi_companion_strong();
+            (
+                profile.companion_rules.soul_signature.is_some()
+                    && !profile.companion_rules.reply_rules.is_empty()
+                    && !profile.companion_rules.forbidden_styles.is_empty(),
+                "built-in companion rules are explicit and structured".to_string(),
             )
         }
         "persona_constraints" => {
@@ -631,6 +645,42 @@ fn evaluate_check(check: &str) -> (bool, String) {
             (
                 plans.iter().all(|plan| !plan.reason.trim().is_empty()),
                 "every proactive plan has a reason".to_string(),
+            )
+        }
+        "proactive_emotion_policy" => {
+            let policy = DeterministicCompanionPolicy::new(CompanionSettings {
+                enabled: true,
+                ..CompanionSettings::default()
+            });
+            let decision = policy.decide(
+                &CompanionContext {
+                    available: true,
+                    relationship_stage: CompanionRelationshipStage::Established,
+                    emotional_clues: vec!["用户最近压力特别大，有些焦虑".to_string()],
+                    persona_style: CompanionPersonaStyle {
+                        soul_signature: Some("eval-stable".to_string()),
+                        warmth: 80,
+                        emotional_attunement: 80,
+                        reply_rules: vec!["先稳定情绪，再给行动建议".to_string()],
+                        ..CompanionPersonaStyle::default()
+                    },
+                    consistency_key: Some("eval:stable".to_string()),
+                    ..CompanionContext::default()
+                },
+                &CompanionInput {
+                    reminder_due: true,
+                    ..CompanionInput::default()
+                },
+            );
+            (
+                decision.emotion.kind == CompanionEmotionKind::Anxiety
+                    && decision.relationship_stage == CompanionRelationshipStage::Established
+                    && decision.consistency_key.as_deref() == Some("eval:stable"),
+                format!(
+                    "emotion={} stage={}",
+                    decision.emotion.kind.label(),
+                    decision.relationship_stage.label()
+                ),
             )
         }
         "control_clear_confirmation" => {

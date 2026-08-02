@@ -4,3 +4,4 @@
 {"id":"proactive-004","category":"proactive","description":"session frequency limit suppresses plans","checks":["proactive_session_limit"]}
 {"id":"proactive-005","category":"proactive","description":"daily frequency limit suppresses plans","checks":["proactive_day_limit"]}
 {"id":"proactive-006","category":"proactive","description":"tool suggestions require confirmation and a reason","checks":["proactive_tool_confirmation","proactive_reason_required"]}
+{"id":"proactive-007","category":"proactive","description":"emotion-aware companion policy remains deterministic and bounded","checks":["proactive_emotion_policy"]}

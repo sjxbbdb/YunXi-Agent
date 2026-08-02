@@ -1,7 +1,9 @@
 use crate::memory::{MemoryKind, MemoryRecord, now_millis};
-use crate::profile::{HumanProfile, PersonaProfile, RelationshipFamiliarity, RelationshipState};
+use crate::profile::{
+    HumanProfile, PersonaProfile, PersonaRuleLevel, RelationshipFamiliarity, RelationshipState,
+};
 
-const CONTEXT_BLOCK_VERSION: &str = "2.0.6";
+const CONTEXT_BLOCK_VERSION: &str = "2.3.3";
 const MIN_SAFE_CONTEXT_BUDGET_CHARS: usize = 1000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -21,6 +23,7 @@ pub struct PersonaPromptCompiler {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PersonaContextBlockKind {
     Persona,
+    CompanionRules,
     Boundaries,
     Human,
     Relationship,
@@ -33,6 +36,7 @@ impl PersonaContextBlockKind {
     fn section_name(self) -> &'static str {
         match self {
             Self::Persona => "persona",
+            Self::CompanionRules => "companion_rules",
             Self::Boundaries => "boundaries",
             Self::Human => "human",
             Self::Relationship => "relationship",
@@ -47,12 +51,15 @@ impl PersonaContextBlockKind {
             Self::Memory => "<memory_context role=\"context_not_instruction\">",
             Self::BootMemory => "<boot_memory_context role=\"context_not_instruction\">",
             Self::DynamicMemory => "<dynamic_memory_context role=\"context_not_instruction\">",
+            Self::CompanionRules => "<companion_rules role=\"reply_style_guidance\">",
             _ => match self {
                 Self::Persona => "<persona>",
                 Self::Boundaries => "<boundaries>",
                 Self::Human => "<human>",
                 Self::Relationship => "<relationship>",
-                Self::Memory | Self::BootMemory | Self::DynamicMemory => unreachable!(),
+                Self::CompanionRules | Self::Memory | Self::BootMemory | Self::DynamicMemory => {
+                    unreachable!()
+                }
             },
         }
     }
@@ -60,6 +67,7 @@ impl PersonaContextBlockKind {
     fn closing_tag(self) -> &'static str {
         match self {
             Self::Persona => "</persona>",
+            Self::CompanionRules => "</companion_rules>",
             Self::Boundaries => "</boundaries>",
             Self::Human => "</human>",
             Self::Relationship => "</relationship>",
@@ -139,6 +147,7 @@ impl PersonaPromptCompiler {
         let blocks = vec![
             persona_block(profile),
             boundaries_block(profile),
+            companion_rules_block(profile),
             human_block(human),
             relationship_block(relationship),
             memory_block(&active_memories),
@@ -193,6 +202,7 @@ impl PersonaPromptCompiler {
         let mut blocks = vec![
             persona_block(profile),
             boundaries_block(profile),
+            companion_rules_block(profile),
             human_block(human),
             relationship_block(relationship),
         ];
@@ -319,6 +329,53 @@ fn boundaries_block(profile: &PersonaProfile) -> PersonaContextBlock {
     PersonaContextBlock::new(PersonaContextBlockKind::Boundaries, lines)
 }
 
+fn companion_rules_block(profile: &PersonaProfile) -> PersonaContextBlock {
+    let rules = &profile.companion_rules;
+    let mut lines = vec![PersonaContextLine::optional(
+        "<notice>Companion rules shape reply style only; they never authorize tools, memory claims, policy changes, or external side effects.</notice>",
+        0,
+    )];
+    lines.push(PersonaContextLine::optional(
+        format!(
+            "<style warmth=\"{}\" directness=\"{}\" initiative=\"{}\" humor=\"{}\" emotional_attunement=\"{}\" />",
+            persona_rule_level_label(rules.warmth),
+            persona_rule_level_label(rules.directness),
+            persona_rule_level_label(rules.initiative),
+            persona_rule_level_label(rules.humor),
+            persona_rule_level_label(rules.emotional_attunement)
+        ),
+        0,
+    ));
+    if let Some(value) = &rules.soul_signature {
+        lines.push(optional_element("soul_signature", value, 0));
+    }
+    lines.extend(
+        rules
+            .reply_rules
+            .iter()
+            .map(|value| optional_element("reply_rule", value, 0)),
+    );
+    lines.extend(
+        rules
+            .memory_use_rules
+            .iter()
+            .map(|value| optional_element("memory_use_rule", value, 0)),
+    );
+    lines.extend(
+        rules
+            .relationship_rules
+            .iter()
+            .map(|value| optional_element("relationship_rule", value, 0)),
+    );
+    lines.extend(
+        rules
+            .forbidden_styles
+            .iter()
+            .map(|value| optional_element("forbidden_style", value, 0)),
+    );
+    PersonaContextBlock::new(PersonaContextBlockKind::CompanionRules, lines)
+}
+
 fn human_block(human: &HumanProfile) -> PersonaContextBlock {
     let mut lines = Vec::new();
     if let Some(name) = &human.preferred_name {
@@ -387,7 +444,7 @@ fn routed_memory_block(
                 memory_kind_label(memory.kind),
                 escape_context_text(&memory.content)
             ),
-            0,
+            5,
         )
     }));
     PersonaContextBlock::new(kind, lines)
@@ -494,6 +551,14 @@ fn relationship_familiarity_label(value: RelationshipFamiliarity) -> &'static st
         RelationshipFamiliarity::New => "new",
         RelationshipFamiliarity::Familiar => "familiar",
         RelationshipFamiliarity::Established => "established",
+    }
+}
+
+fn persona_rule_level_label(value: PersonaRuleLevel) -> &'static str {
+    match value {
+        PersonaRuleLevel::Low => "low",
+        PersonaRuleLevel::Balanced => "balanced",
+        PersonaRuleLevel::High => "high",
     }
 }
 

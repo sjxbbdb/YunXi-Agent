@@ -608,7 +608,9 @@ fn merge_public_chunks(chunks: Vec<String>) -> Option<String> {
 }
 
 fn is_safe_public_agent_text(content: &str) -> bool {
-    !contains_sensitive_agent_marker(content) && !contains_absolute_path_marker(content)
+    !contains_sensitive_agent_marker(content)
+        && !contains_absolute_path_marker(content)
+        && !contains_internal_agent_marker(content)
 }
 
 fn sanitize_public_final_response(content: &str) -> Option<String> {
@@ -619,6 +621,9 @@ fn sanitize_public_final_response(content: &str) -> Option<String> {
         let trimmed = line.trim();
         if is_internal_companion_heading(trimmed) {
             awaiting_reason = true;
+            continue;
+        }
+        if contains_internal_agent_marker(trimmed) {
             continue;
         }
         if awaiting_reason {
@@ -676,6 +681,23 @@ fn contains_absolute_path_marker(content: &str) -> bool {
     }) || content.contains("\\Users\\")
         || content.contains("/Users/")
         || content.contains("/home/")
+}
+
+fn contains_internal_agent_marker(content: &str) -> bool {
+    let lower = content.to_ascii_lowercase();
+    [
+        "companion_policy_",
+        "context_phase",
+        "yunxi_persona_context",
+        "<persona>",
+        "<companion_rules",
+        "<memory_context",
+        "<boot_memory_context",
+        "<dynamic_memory_context",
+        "context_not_instruction",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
 }
 
 fn spawn_remote_control_timeout(
@@ -981,6 +1003,17 @@ mod tests {
         let content = "[阶段总结] 当前阶段已完成。\n原因：a bounded stage summary is due";
 
         assert_eq!(sanitize_public_final_response(content), None);
+    }
+
+    #[test]
+    fn public_final_response_drops_internal_companion_policy_metadata() {
+        let content = "正常回复。\ncompanion_policy_emotion_kind=anxiety\n<yunxi_persona_context version=\"2.3.3\">";
+
+        assert_eq!(
+            sanitize_public_final_response(content).as_deref(),
+            Some("正常回复。")
+        );
+        assert!(!is_safe_public_agent_text("context_phase=companion_policy"));
     }
 }
 

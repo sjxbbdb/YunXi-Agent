@@ -3030,10 +3030,55 @@ fn print_persona_profile(settings: &PersonaSettings, json: bool) -> Result<()> {
         println!("display_name: {}", profile.display_name);
         println!("version: {}", profile.version);
         println!("identity: {}", profile.layers.identity);
+        println!("soul: {}", profile.layers.soul);
+        println!("values: {}", profile.layers.values);
         println!("voice: {}", profile.layers.voice);
         println!("companion_style: {}", profile.layers.companion_style);
         println!("work_style: {}", profile.layers.work_style);
         println!("boundaries: {}", profile.layers.boundaries);
+        println!("addressing: {}", profile.layers.addressing);
+        println!(
+            "companion_rules.soul_signature: {}",
+            profile
+                .companion_rules
+                .soul_signature
+                .as_deref()
+                .unwrap_or("")
+        );
+        println!(
+            "companion_rules.warmth: {:?}",
+            profile.companion_rules.warmth
+        );
+        println!(
+            "companion_rules.directness: {:?}",
+            profile.companion_rules.directness
+        );
+        println!(
+            "companion_rules.initiative: {:?}",
+            profile.companion_rules.initiative
+        );
+        println!("companion_rules.humor: {:?}", profile.companion_rules.humor);
+        println!(
+            "companion_rules.emotional_attunement: {:?}",
+            profile.companion_rules.emotional_attunement
+        );
+        for (index, rule) in profile.companion_rules.reply_rules.iter().enumerate() {
+            println!("companion_rules.reply_rules[{index}]: {rule}");
+        }
+        for (index, rule) in profile.companion_rules.memory_use_rules.iter().enumerate() {
+            println!("companion_rules.memory_use_rules[{index}]: {rule}");
+        }
+        for (index, rule) in profile
+            .companion_rules
+            .relationship_rules
+            .iter()
+            .enumerate()
+        {
+            println!("companion_rules.relationship_rules[{index}]: {rule}");
+        }
+        for (index, rule) in profile.companion_rules.forbidden_styles.iter().enumerate() {
+            println!("companion_rules.forbidden_styles[{index}]: {rule}");
+        }
         for constraint in profile.constraints {
             println!("constraint.{}: {}", constraint.id, constraint.content);
         }

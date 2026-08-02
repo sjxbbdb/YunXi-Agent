@@ -5535,3 +5535,33 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 清理状态：未执行删除、递归清理、移动目录、git clean、force 操作、系统配置修改或用户目录清理。
 
 署名：开发者
+## 2026-08-02 14:48:35 +08:00 — YunXi Agent v2.3.3 陪伴层长期稳定体验开发
+
+工作目标：在不破坏既有 CLI、TUI、微信、工具调用、记忆写入和回复行为的前提下，完成更细人格/灵魂文件规则、长期关系状态演化、自然情绪识别、三端长期陪伴回归和稳定一致的陪伴策略。
+
+执行记录：
+
+1. 在 `crates/yunxi-agent-persona/src/profile.rs` 新增 `PersonaCompanionRules` 与 `PersonaRuleLevel`，内置 `yunxi_companion_strong` 升级到 `2.3.3` 并补入结构化 soul/rules。
+2. 在 `crates/yunxi-agent-persona/src/compiler.rs` 新增 `<companion_rules role="reply_style_guidance">`，并调整预算裁剪优先级，保证风格规则可裁剪、记忆上下文优先保留。
+3. 在 `crates/yunxi-agent-companion/src/lib.rs` 新增关系阶段、情绪类型/强度/置信度、人格风格和一致性 key，并实现确定性情绪识别与语气决策。
+4. 在 `crates/yunxi-agent-runtime/src/lib.rs` 从 active 长期记忆派生关系状态，每轮输出 companion policy metadata；普通聊天不再因关系召回额外弹 `[关心]` 消息。
+5. 在 `crates/yunxi-agent-weixin/src/turn_supervisor.rs` 加固微信公开回复过滤，防止内部 companion policy/persona context 泄露到微信回复。
+6. 在 CLI/TUI/eval/测试与 snapshot 中同步 v2.3.3 版本口径和新增覆盖。
+
+验证结果：
+
+- `cargo fmt --all`：通过。
+- `cargo test -p yunxi-agent-companion -p yunxi-agent-persona -p yunxi-agent-runtime`：通过。
+- `cargo test -p yunxi-agent-cli -p yunxi-agent-tui -p yunxi-agent-weixin -p yunxi-agent-tools`：通过。
+- `cargo run -q -p yunxi-agent-cli --bin yunxi -- --json eval companion`：通过，33/33。
+- `cargo run -q -p yunxi-agent-cli --bin yunxi -- --json eval weixin`：通过，离线门禁通过；真实扫码项仍为人工 not_run 门禁。
+- `cargo test --workspace`：通过。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- `target\release\yunxi.exe --version` 与 `target\release\yunxi-agent-cli.exe --version` 均输出 `yunxi 2.3.3`。
+- `target\release\yunxi.exe --json eval companion`：通过，33/33。
+
+报告路径：`D:\YunXi Agent\docs\reports\development\2026-08-02-144835-yunxi-agent-v2-3-3-companion-stable-long-term-development-log.md`
+
+提交、推送和 Git tag 状态：截至本条写入时，v2.3.3 实现、测试、release 构建和日志已完成；待创建 release commit、annotated `v2.3.3` tag，并使用 GitHub CLI/API key non-force 推送。历史 tag 不删除、不移动、不覆盖。
+
+署名：开发者

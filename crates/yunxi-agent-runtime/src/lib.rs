@@ -13,9 +13,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use yunxi_agent_companion::{
-    CompanionAction, CompanionContext, CompanionInput, CompanionMemorySummary, CompanionPlan,
-    CompanionPlanner, CompanionPolicy, CompanionTrigger, DeterministicCompanionPolicy,
-    SafeCompanionPlanner,
+    CompanionAction, CompanionContext, CompanionInput, CompanionMemorySummary,
+    CompanionPersonaStyle, CompanionPlan, CompanionPlanner, CompanionPolicy,
+    CompanionPolicyDecision, CompanionRelationshipStage, CompanionTrigger,
+    DeterministicCompanionPolicy, SafeCompanionPlanner, classify_companion_emotion,
 };
 use yunxi_agent_context::{
     ContextManagerState, ContextWindowBudget, ConversationMessage, ConversationRole,
@@ -39,9 +40,9 @@ use yunxi_agent_multi_agent::{
 use yunxi_agent_persona::{
     CompiledPersonaContext, HumanProfile, MemoryKind, MemoryPipeline, MemoryPipelineInput,
     MemoryRecallExplanation, MemoryRecallResult, MemoryRecallRouter, MemoryRecallRouterRequest,
-    MemorySensitivity, MemoryStatus, MemoryWritePolicy, PersonaProfileStore, PersonaPromptCompiler,
-    PersonaSettings, RelationshipGraphLite, RelationshipState, SCHEMA_VERSION,
-    now_millis as persona_now_millis,
+    MemorySensitivity, MemoryStatus, MemoryWritePolicy, PersonaProfile, PersonaProfileStore,
+    PersonaPromptCompiler, PersonaSettings, RelationshipFamiliarity, RelationshipGraphLite,
+    RelationshipState, SCHEMA_VERSION, now_millis as persona_now_millis,
 };
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent,
@@ -96,6 +97,7 @@ pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
         .count();
     let graph = RelationshipGraphLite::from_records(&memory_load.records);
     let active_relationships = graph.active_edges_at(snapshot_at_millis).len();
+    let relationship_state = derive_relationship_state(&memory_load.records);
     let profile = PersonaProfileStore::load_active(&settings);
     let control_store = FileControlStore::for_workspace(&config.cwd);
     let companion_history_count = control_store.companion_history()?.len();
@@ -130,10 +132,11 @@ pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
         memory_load.warnings.len()
     );
     let relationship_summary = format!(
-        "nodes={} edges={} active_edges={}",
+        "nodes={} edges={} active_edges={} stage={}",
         graph.nodes.len(),
         graph.edges.len(),
-        active_relationships
+        active_relationships,
+        relationship_familiarity_metric_label(relationship_state.familiarity)
     );
     Ok(ControlSnapshot {
         companion_enabled: config.companion.enabled,
@@ -286,6 +289,11 @@ struct CompanionRunMetrics {
     policy_follow_up: bool,
     policy_use_persona_context: bool,
     policy_use_memory_context: bool,
+    policy_emotion_kind: Option<String>,
+    policy_emotion_intensity: u8,
+    policy_emotion_confidence: u8,
+    policy_relationship_stage: Option<String>,
+    policy_consistency_key: Option<String>,
 }
 
 impl CompanionRunMetrics {
@@ -328,6 +336,26 @@ impl CompanionRunMetrics {
             (
                 "companion_policy_use_memory_context",
                 self.policy_use_memory_context.to_string(),
+            ),
+            (
+                "companion_policy_emotion_kind",
+                self.policy_emotion_kind.clone().unwrap_or_default(),
+            ),
+            (
+                "companion_policy_emotion_intensity",
+                self.policy_emotion_intensity.to_string(),
+            ),
+            (
+                "companion_policy_emotion_confidence",
+                self.policy_emotion_confidence.to_string(),
+            ),
+            (
+                "companion_policy_relationship_stage",
+                self.policy_relationship_stage.clone().unwrap_or_default(),
+            ),
+            (
+                "companion_policy_consistency_key",
+                self.policy_consistency_key.clone().unwrap_or_default(),
             ),
         ]
     }
@@ -1410,18 +1438,14 @@ impl YunXiRuntimeBackend {
         let total_started = Instant::now();
         let mut metrics = CompanionRunMetrics::default();
         let signal = companion_input_from_prompt(prompt, persona);
-        if !config.companion.enabled || !signal.has_signal() {
+        if !config.companion.enabled {
             metrics.total_elapsed_millis = total_started.elapsed().as_millis();
-            metrics.fallback_reason = Some(if !config.companion.enabled {
-                "disabled".to_string()
-            } else {
-                "no_signal".to_string()
-            });
+            metrics.fallback_reason = Some("disabled".to_string());
             return (Vec::new(), metrics);
         }
 
         let context_started = Instant::now();
-        let context = build_companion_context(persona);
+        let context = build_companion_context(persona, prompt);
         metrics.context_elapsed_millis = context_started.elapsed().as_millis();
 
         let policy_started = Instant::now();
@@ -1430,6 +1454,14 @@ impl YunXiRuntimeBackend {
             policy.decide(&context, &signal)
         }));
         metrics.policy_elapsed_millis = policy_started.elapsed().as_millis();
+        if let Ok(decision) = &policy_decision {
+            apply_companion_policy_metrics(&mut metrics, decision);
+        }
+        if !signal.has_signal() {
+            metrics.fallback_reason = Some("no_signal".to_string());
+            metrics.total_elapsed_millis = total_started.elapsed().as_millis();
+            return (Vec::new(), metrics);
+        }
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1460,23 +1492,15 @@ impl YunXiRuntimeBackend {
                 if policy_started.elapsed() <= COMPANION_POLICY_BUDGET
                     && decision.proactive_care =>
             {
-                metrics.policy_tone = Some(companion_tone_label(decision.tone).to_string());
-                metrics.policy_follow_up = decision.follow_up.is_some();
-                metrics.policy_use_persona_context = decision.use_persona_context;
-                metrics.policy_use_memory_context = decision.use_memory_context;
                 metrics.fallback = decision.fallback_to_existing_reply;
                 if decision.fallback_to_existing_reply {
                     metrics.fallback_reason = Some("context_unavailable".to_string());
                 }
                 SafeCompanionPlanner::new(config.companion.clone()).plan(input)
             }
-            Ok(decision) if policy_started.elapsed() > COMPANION_POLICY_BUDGET => {
+            Ok(_decision) if policy_started.elapsed() > COMPANION_POLICY_BUDGET => {
                 metrics.fallback = true;
                 metrics.fallback_reason = Some("policy_timeout".to_string());
-                metrics.policy_tone = Some(companion_tone_label(decision.tone).to_string());
-                metrics.policy_follow_up = decision.follow_up.is_some();
-                metrics.policy_use_persona_context = decision.use_persona_context;
-                metrics.policy_use_memory_context = decision.use_memory_context;
                 SafeCompanionPlanner::new(config.companion.clone()).plan(input)
             }
             Ok(_) => {
@@ -1508,10 +1532,26 @@ fn companion_tone_label(tone: yunxi_agent_companion::CompanionTone) -> &'static 
     }
 }
 
-fn build_companion_context(persona: &PersonaTurnContext) -> CompanionContext {
+fn apply_companion_policy_metrics(
+    metrics: &mut CompanionRunMetrics,
+    decision: &CompanionPolicyDecision,
+) {
+    metrics.policy_tone = Some(companion_tone_label(decision.tone).to_string());
+    metrics.policy_follow_up = decision.follow_up.is_some();
+    metrics.policy_use_persona_context = decision.use_persona_context;
+    metrics.policy_use_memory_context = decision.use_memory_context;
+    metrics.policy_emotion_kind = Some(decision.emotion.kind.label().to_string());
+    metrics.policy_emotion_intensity = decision.emotion.intensity;
+    metrics.policy_emotion_confidence = decision.emotion.confidence;
+    metrics.policy_relationship_stage = Some(decision.relationship_stage.label().to_string());
+    metrics.policy_consistency_key = decision.consistency_key.clone();
+}
+
+fn build_companion_context(persona: &PersonaTurnContext, prompt: &str) -> CompanionContext {
     let mut boot_summary = None;
     let mut dynamic_summary = None;
     let mut emotional_clues = Vec::new();
+    let mut emotion_sources = vec![prompt];
     let mut stable_fact_count = 0;
 
     if !persona.boot_context.records.is_empty() {
@@ -1531,6 +1571,7 @@ fn build_companion_context(persona: &PersonaTurnContext) -> CompanionContext {
             MemoryKind::EmotionalState | MemoryKind::RelationshipNote
         ) {
             emotional_clues.push(compact_text(&record.content, 120));
+            emotion_sources.push(record.content.as_str());
         }
         if matches!(
             record.kind,
@@ -1543,20 +1584,29 @@ fn build_companion_context(persona: &PersonaTurnContext) -> CompanionContext {
         }
     }
 
-    let relationship_state = persona
-        .recall_explanations
-        .iter()
-        .find(|explanation| explanation.selected && explanation.relation.is_some())
-        .map(|_| "recent relationship/context signal available".to_string());
+    let relationship_state = relationship_state_summary(&persona.relationship).or_else(|| {
+        persona
+            .recall_explanations
+            .iter()
+            .find(|explanation| explanation.selected && explanation.relation.is_some())
+            .map(|_| "recent relationship/context signal available".to_string())
+    });
     let record_count = persona.boot_context.records.len() + persona.dynamic_recall.records.len();
-    let available =
-        persona.compiled_context.is_some() || record_count > 0 || relationship_state.is_some();
+    let emotion = classify_companion_emotion(emotion_sources);
+    let available = persona.compiled_context.is_some()
+        || record_count > 0
+        || relationship_state.is_some()
+        || emotion.is_detected()
+        || persona.companion_persona_style.has_rules();
 
     CompanionContext {
         persona_id: (!persona.profile_id.trim().is_empty()).then(|| persona.profile_id.clone()),
         display_name: (!persona.display_name.trim().is_empty())
             .then(|| persona.display_name.clone()),
         relationship_state,
+        relationship_stage: companion_relationship_stage_from_familiarity(
+            persona.relationship.familiarity,
+        ),
         memory_summary: CompanionMemorySummary {
             boot_summary,
             dynamic_summary,
@@ -1564,6 +1614,9 @@ fn build_companion_context(persona: &PersonaTurnContext) -> CompanionContext {
             stable_fact_count,
         },
         emotional_clues,
+        emotion,
+        persona_style: persona.companion_persona_style.clone(),
+        consistency_key: persona.companion_consistency_key.clone(),
         available,
     }
 }
@@ -1575,6 +1628,199 @@ fn compact_memory_summary(records: &[yunxi_agent_persona::MemoryRecord]) -> Stri
         .map(|record| compact_text(&record.content, 180))
         .collect::<Vec<_>>()
         .join("；")
+}
+
+fn derive_relationship_state(records: &[yunxi_agent_persona::MemoryRecord]) -> RelationshipState {
+    let now = persona_now_millis();
+    let mut active = records
+        .iter()
+        .filter(|record| record.is_recallable_at(now))
+        .collect::<Vec<_>>();
+    active.sort_by(|left, right| {
+        relationship_record_time(right).cmp(&relationship_record_time(left))
+    });
+
+    let relationship_count = active
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.kind,
+                MemoryKind::RelationshipNote | MemoryKind::EmotionalState | MemoryKind::Event
+            )
+        })
+        .count();
+    let stable_context_count = active
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.kind,
+                MemoryKind::Preference | MemoryKind::PersonalFact | MemoryKind::Goal
+            )
+        })
+        .count();
+    let familiarity_score = relationship_count.saturating_mul(2) + stable_context_count;
+    let familiarity = if familiarity_score >= 5 {
+        RelationshipFamiliarity::Established
+    } else if familiarity_score >= 2 {
+        RelationshipFamiliarity::Familiar
+    } else {
+        RelationshipFamiliarity::New
+    };
+
+    let trust_notes = active
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.kind,
+                MemoryKind::RelationshipNote
+                    | MemoryKind::Preference
+                    | MemoryKind::PersonalFact
+                    | MemoryKind::Goal
+            )
+        })
+        .take(4)
+        .map(|record| compact_text(&record.content, 140))
+        .collect::<Vec<_>>();
+    let recent_emotional_context = active
+        .iter()
+        .filter(|record| record.kind == MemoryKind::EmotionalState)
+        .chain(
+            active
+                .iter()
+                .filter(|record| record.kind == MemoryKind::RelationshipNote),
+        )
+        .next()
+        .map(|record| compact_text(&record.content, 160));
+    let last_meaningful_check_in_millis = active
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.kind,
+                MemoryKind::RelationshipNote
+                    | MemoryKind::EmotionalState
+                    | MemoryKind::Event
+                    | MemoryKind::Goal
+            )
+        })
+        .map(|record| relationship_record_time(record))
+        .max();
+
+    RelationshipState {
+        familiarity,
+        trust_notes,
+        recent_emotional_context,
+        last_meaningful_check_in_millis,
+    }
+}
+
+fn relationship_record_time(record: &yunxi_agent_persona::MemoryRecord) -> u128 {
+    record
+        .temporal
+        .event_at_millis
+        .or(record.temporal.valid_from_millis)
+        .unwrap_or(record.updated_at_millis)
+        .max(record.updated_at_millis)
+        .max(record.created_at_millis)
+}
+
+fn relationship_state_summary(relationship: &RelationshipState) -> Option<String> {
+    if relationship.familiarity == RelationshipFamiliarity::New
+        && relationship.trust_notes.is_empty()
+        && relationship.recent_emotional_context.is_none()
+    {
+        return None;
+    }
+    let mut parts = vec![format!(
+        "stage={}",
+        relationship_familiarity_metric_label(relationship.familiarity)
+    )];
+    if let Some(value) = &relationship.recent_emotional_context {
+        parts.push(format!("recent_emotion={}", compact_text(value, 96)));
+    }
+    if !relationship.trust_notes.is_empty() {
+        parts.push(format!(
+            "trust_notes={}",
+            relationship
+                .trust_notes
+                .iter()
+                .take(2)
+                .map(|value| compact_text(value, 80))
+                .collect::<Vec<_>>()
+                .join("；")
+        ));
+    }
+    Some(parts.join(" "))
+}
+
+fn companion_relationship_stage_from_familiarity(
+    familiarity: RelationshipFamiliarity,
+) -> CompanionRelationshipStage {
+    match familiarity {
+        RelationshipFamiliarity::New => CompanionRelationshipStage::New,
+        RelationshipFamiliarity::Familiar => CompanionRelationshipStage::Familiar,
+        RelationshipFamiliarity::Established => CompanionRelationshipStage::Established,
+    }
+}
+
+fn relationship_familiarity_metric_label(value: RelationshipFamiliarity) -> &'static str {
+    match value {
+        RelationshipFamiliarity::New => "new",
+        RelationshipFamiliarity::Familiar => "familiar",
+        RelationshipFamiliarity::Established => "established",
+    }
+}
+
+fn companion_persona_style_from_profile(profile: &PersonaProfile) -> CompanionPersonaStyle {
+    let rules = &profile.companion_rules;
+    CompanionPersonaStyle {
+        soul_signature: rules
+            .soul_signature
+            .as_ref()
+            .map(|value| compact_text(value, 120)),
+        warmth: rules.warmth.score(),
+        directness: rules.directness.score(),
+        initiative: rules.initiative.score(),
+        humor: rules.humor.score(),
+        emotional_attunement: rules.emotional_attunement.score(),
+        reply_rules: rules
+            .reply_rules
+            .iter()
+            .chain(rules.memory_use_rules.iter())
+            .chain(rules.relationship_rules.iter())
+            .take(12)
+            .map(|value| compact_text(value, 140))
+            .collect(),
+        forbidden_styles: rules
+            .forbidden_styles
+            .iter()
+            .take(8)
+            .map(|value| compact_text(value, 140))
+            .collect(),
+    }
+}
+
+fn companion_consistency_key(profile: &PersonaProfile, style: &CompanionPersonaStyle) -> String {
+    let seed = format!(
+        "{}|{}|{}|{}|{}|{}|{}|{}",
+        profile.id,
+        style.soul_signature.as_deref().unwrap_or("default"),
+        style.warmth,
+        style.directness,
+        style.initiative,
+        style.humor,
+        style.emotional_attunement,
+        style.reply_rules.join("|"),
+    );
+    format!("{}:{:016x}", profile.id, stable_hash64(seed.as_bytes()))
+}
+
+fn stable_hash64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn compact_text(value: &str, max_chars: usize) -> String {
@@ -1591,11 +1837,22 @@ fn compact_text(value: &str, max_chars: usize) -> String {
 }
 
 fn companion_input_from_prompt(prompt: &str, persona: &PersonaTurnContext) -> CompanionInput {
-    let relationship_milestone = persona
-        .recall_explanations
-        .iter()
-        .find(|explanation| explanation.selected && explanation.relation.is_some())
-        .map(|_| "最近的关系或上下文记录发生了变化".to_string());
+    let normalized = prompt.trim();
+    let lower = normalized.to_ascii_lowercase();
+    let explicit_companion_check = lower.starts_with("companion check:")
+        || normalized.contains("主动检查")
+        || normalized.contains("关系变化")
+        || normalized.contains("关系里程碑")
+        || lower.contains("relationship milestone");
+    let relationship_milestone = explicit_companion_check
+        .then(|| {
+            persona
+                .recall_explanations
+                .iter()
+                .find(|explanation| explanation.selected && explanation.relation.is_some())
+                .map(|_| "最近的关系或上下文记录发生了变化".to_string())
+        })
+        .flatten();
     CompanionInput::from_prompt(prompt, relationship_milestone)
 }
 
@@ -1642,6 +1899,9 @@ struct PersonaTurnContext {
     profile_id: String,
     display_name: String,
     workspace_fingerprint: String,
+    relationship: RelationshipState,
+    companion_persona_style: CompanionPersonaStyle,
+    companion_consistency_key: Option<String>,
     compiled_context: Option<CompiledPersonaContext>,
     boot_context: MemoryRecallResult,
     dynamic_recall: MemoryRecallResult,
@@ -2226,27 +2486,39 @@ fn build_persona_turn_context(
     let mut boot_context = MemoryRecallResult::default();
     let mut dynamic_recall = MemoryRecallResult::default();
     let mut recall_explanations = Vec::new();
+    let mut memory_records = Vec::new();
 
     if settings.memory_enabled {
         let loaded = store.list(PersonaMemoryScope::All);
         memory_warnings = loaded.warnings;
+        memory_records = loaded.records;
         let mut request = MemoryRecallRouterRequest::new(recall_query);
         request.workspace_fingerprint = Some(store.workspace_fingerprint().to_string());
         if !include_boot_context {
             request.boot_max_records = 0;
             request.boot_budget_chars = 0;
         }
-        let routed = MemoryRecallRouter::default().route(&loaded.records, &request);
+        let routed = MemoryRecallRouter::default().route(&memory_records, &request);
         boot_context = routed.boot_context;
         dynamic_recall = routed.dynamic_recall;
         recall_explanations = routed.explanations;
     }
 
+    let relationship = derive_relationship_state(&memory_records);
+    let companion_persona_style = if settings.persona_enabled {
+        companion_persona_style_from_profile(&profile)
+    } else {
+        CompanionPersonaStyle::default()
+    };
+    let companion_consistency_key = settings
+        .persona_enabled
+        .then(|| companion_consistency_key(&profile, &companion_persona_style));
+
     let compiled_context = if settings.persona_enabled {
         Some(PersonaPromptCompiler::default().compile_routed_for_turn(
             &profile,
             &HumanProfile::default(),
-            &RelationshipState::default(),
+            &relationship,
             &boot_context.records,
             &dynamic_recall.records,
             include_boot_context,
@@ -2271,6 +2543,9 @@ fn build_persona_turn_context(
         profile_id: profile.id,
         display_name: profile.display_name,
         workspace_fingerprint: store.workspace_fingerprint().to_string(),
+        relationship,
+        companion_persona_style,
+        companion_consistency_key,
         compiled_context,
         boot_context,
         dynamic_recall,
@@ -5072,7 +5347,9 @@ impl AgentBackend for YunXiRuntimeBackend {
 #[cfg(test)]
 mod companion_input_tests {
     use super::*;
-    use yunxi_agent_persona::{MemoryGraphRelation, MemoryKind, MemoryLayer, MemoryRecallRoute};
+    use yunxi_agent_persona::{
+        MemoryGraphRelation, MemoryKind, MemoryLayer, MemoryRecallRoute, MemoryRecord,
+    };
 
     fn persona_with_relationship_explanation(selected: bool) -> PersonaTurnContext {
         PersonaTurnContext {
@@ -5080,6 +5357,9 @@ mod companion_input_tests {
             profile_id: "test".to_string(),
             display_name: "Test".to_string(),
             workspace_fingerprint: "workspace".to_string(),
+            relationship: RelationshipState::default(),
+            companion_persona_style: CompanionPersonaStyle::default(),
+            companion_consistency_key: None,
             compiled_context: None,
             boot_context: MemoryRecallResult::default(),
             dynamic_recall: MemoryRecallResult::default(),
@@ -5112,12 +5392,100 @@ mod companion_input_tests {
     }
 
     #[test]
-    fn selected_relationship_explanations_trigger_milestones() {
-        let input =
+    fn selected_relationship_explanations_trigger_milestones_only_for_explicit_checks() {
+        let normal =
             companion_input_from_prompt("hello", &persona_with_relationship_explanation(true));
+        assert!(normal.relationship_milestone.is_none());
+
+        let input = companion_input_from_prompt(
+            "companion check: 主动检查关系变化",
+            &persona_with_relationship_explanation(true),
+        );
         assert_eq!(
             input.relationship_milestone.as_deref(),
             Some("最近的关系或上下文记录发生了变化")
         );
+    }
+
+    #[test]
+    fn relationship_state_evolves_from_active_long_term_memory() {
+        let records = vec![
+            MemoryRecord::new(
+                "relationship-1",
+                yunxi_agent_persona::MemoryScope::Relationship,
+                MemoryKind::RelationshipNote,
+                "用户希望 YunXi 更直接地指出问题。",
+                10,
+            )
+            .with_status(MemoryStatus::Active),
+            MemoryRecord::new(
+                "emotion-1",
+                yunxi_agent_persona::MemoryScope::Relationship,
+                MemoryKind::EmotionalState,
+                "用户最近对微信回复延迟感到焦虑。",
+                20,
+            )
+            .with_status(MemoryStatus::Active),
+            MemoryRecord::new(
+                "goal-1",
+                yunxi_agent_persona::MemoryScope::GlobalUser,
+                MemoryKind::Goal,
+                "用户长期目标是完善陪伴层。",
+                30,
+            )
+            .with_status(MemoryStatus::Active),
+        ];
+
+        let relationship = derive_relationship_state(&records);
+
+        assert_eq!(
+            relationship.familiarity,
+            RelationshipFamiliarity::Established
+        );
+        assert!(
+            relationship
+                .recent_emotional_context
+                .as_deref()
+                .is_some_and(|value| value.contains("焦虑"))
+        );
+        assert!(
+            relationship
+                .trust_notes
+                .iter()
+                .any(|note| note.contains("更直接"))
+        );
+    }
+
+    #[test]
+    fn companion_context_uses_prompt_emotion_and_persona_style_without_extra_signal() {
+        let mut persona = persona_with_relationship_explanation(false);
+        persona.relationship = RelationshipState {
+            familiarity: RelationshipFamiliarity::Familiar,
+            trust_notes: vec!["用户偏好先定位问题再行动。".to_string()],
+            recent_emotional_context: Some("用户最近有些焦虑。".to_string()),
+            last_meaningful_check_in_millis: Some(42),
+        };
+        persona.companion_persona_style = CompanionPersonaStyle {
+            soul_signature: Some("stable-subjective".to_string()),
+            warmth: 80,
+            emotional_attunement: 80,
+            reply_rules: vec!["先接住情绪".to_string()],
+            ..CompanionPersonaStyle::default()
+        };
+        persona.companion_consistency_key = Some("test:stable".to_string());
+
+        let context = build_companion_context(&persona, "我今天压力特别大，不知道怎么继续");
+
+        assert_eq!(
+            context.relationship_stage,
+            CompanionRelationshipStage::Familiar
+        );
+        assert_eq!(
+            context.emotion.kind,
+            yunxi_agent_companion::CompanionEmotionKind::Anxiety
+        );
+        assert_eq!(context.consistency_key.as_deref(), Some("test:stable"));
+        assert!(context.persona_style.has_rules());
+        assert!(context.has_context());
     }
 }

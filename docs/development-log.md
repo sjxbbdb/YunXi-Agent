@@ -1,3 +1,31 @@
+## 2026-08-02 12:30:11 +08:00
+
+工作目标：在不破坏现有 Runtime、Persona、Memory、CLI、TUI 和微信逻辑的前提下，完善陪伴层的信号识别、关系触发和消息呈现。
+
+执行内容：
+1. 修复陪伴计划重复显示问题：陪伴提示继续作为独立 Runtime 消息记录和发送，不再拼接进 `final_response`，避免 CLI/微信重复展示，也避免陪伴元数据进入长期记忆抽取。
+2. 将陪伴信号解析从 Runtime 收回 `yunxi-agent-companion` crate，新增 `CompanionInput::from_prompt` 和 `CompanionInput::has_signal`，统一中英文提醒、未完成任务、话题延续、阶段总结、工具请求和长时间空闲识别。
+3. 限制关系里程碑触发条件：只有被记忆路由实际选中的关系解释才允许触发陪伴提示，被过滤、失效或未选中的关系记录不再误触发。
+4. 增加回归测试，覆盖陪伴提示独立投递、最终回复保持不变、普通对话静默、输入信号解析以及关系解释选中/过滤行为。
+
+修改文件与路径：
+- `D:\YunXi Agent\crates\yunxi-agent-companion\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\runtime_tests.rs`
+- `D:\YunXi Agent\docs\development-log.md`
+
+验证结果：
+- `cargo fmt --all -- --check`：通过。
+- `cargo test -p yunxi-agent-companion -p yunxi-agent-runtime`：通过。
+- `cargo test --workspace`：通过。
+- Git 工作区仅包含上述三处代码/测试修改及本日志修改；未触碰用户目录、微信状态或其他运行数据。
+
+提交、推送和 tag 状态：准备按固定流程发布为 `v2.3.1`；不删除、移动或覆盖历史 tag，不使用 `force`。
+
+清理状态：未执行删除、递归清理、移动目录、`git clean`、`force` 操作；测试产生的 `target` 为正常 Rust 构建缓存。
+
+署名：开发者
+
 ## 2026-08-02 11:46:05 +08:00
 
 发布收口：自定义人格与灵魂档案功能已完成验证并发布为 `v2.3.0`。

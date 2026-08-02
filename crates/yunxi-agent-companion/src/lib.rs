@@ -44,6 +44,57 @@ pub struct CompanionInput {
     pub tool_request: Option<String>,
 }
 
+impl CompanionInput {
+    pub fn from_prompt(prompt: &str, relationship_milestone: Option<String>) -> Self {
+        let normalized = prompt
+            .trim()
+            .strip_prefix("companion check:")
+            .map(str::trim)
+            .unwrap_or_else(|| prompt.trim());
+        let lower = normalized.to_ascii_lowercase();
+        Self {
+            reminder_due: lower.contains("reminder due") || normalized.contains("提醒到期"),
+            unfinished_task: normalized
+                .strip_prefix("unfinished task:")
+                .or_else(|| normalized.strip_prefix("未完成任务："))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            topic_continuation: normalized
+                .strip_prefix("continue topic:")
+                .or_else(|| normalized.strip_prefix("继续话题："))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            periodic_summary_due: lower.contains("periodic summary")
+                || normalized.contains("阶段总结"),
+            relationship_milestone,
+            tool_request: normalized
+                .strip_prefix("tool request:")
+                .or_else(|| normalized.strip_prefix("工具请求："))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            idle_minutes: if lower.contains("long idle") || normalized.contains("长时间空闲") {
+                120
+            } else {
+                0
+            },
+            ..Self::default()
+        }
+    }
+
+    pub fn has_signal(&self) -> bool {
+        self.reminder_due
+            || self.unfinished_task.is_some()
+            || self.topic_continuation.is_some()
+            || self.periodic_summary_due
+            || self.relationship_milestone.is_some()
+            || self.tool_request.is_some()
+            || self.idle_minutes >= 120
+    }
+}
+
 pub trait CompanionPlanner {
     fn plan(&self, input: CompanionInput) -> Vec<CompanionPlan>;
 }
@@ -97,7 +148,7 @@ impl SafeCompanionPlanner {
 
 impl CompanionPlanner for SafeCompanionPlanner {
     fn plan(&self, input: CompanionInput) -> Vec<CompanionPlan> {
-        if !self.allowed(&input) {
+        if !self.allowed(&input) || !input.has_signal() {
             return Vec::new();
         }
         let mut plans = Vec::new();
@@ -277,5 +328,26 @@ mod tests {
         });
         assert!(plans[0].reason.contains("milestone"));
         assert!(plans[0].message.chars().count() < 120);
+    }
+
+    #[test]
+    fn prompt_parser_extracts_shared_companion_signals() {
+        let input = CompanionInput::from_prompt(
+            "companion check: 未完成任务：整理陪伴层",
+            Some("relationship changed".to_string()),
+        );
+        assert_eq!(input.unfinished_task.as_deref(), Some("整理陪伴层"));
+        assert_eq!(
+            input.relationship_milestone.as_deref(),
+            Some("relationship changed")
+        );
+        assert!(input.has_signal());
+    }
+
+    #[test]
+    fn prompt_parser_keeps_unrelated_prompts_inert() {
+        let input = CompanionInput::from_prompt("你好，今天怎么样？", None);
+        assert!(!input.has_signal());
+        assert!(enabled().plan(input).is_empty());
     }
 }

@@ -88,6 +88,45 @@ async fn companion_check_emits_reasoned_plan_without_tool_execution() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn companion_plan_is_delivered_separately_without_mutating_final_response() {
+    let workspace = TempDir::new().expect("workspace");
+    let backend = YunXiRuntimeBackend::with_parts(
+        StaticProvider::default(),
+        NoopToolRuntime,
+        InMemorySessionStore::default(),
+    );
+    let config = AgentConfig {
+        companion: CompanionSettings {
+            enabled: true,
+            ..CompanionSettings::default()
+        },
+        ..AgentConfig::new(workspace.path())
+    };
+
+    let result = Agent::new(config)
+        .run_with_backend(&backend, AgentInput::text("reminder due"))
+        .await
+        .expect("runtime should complete");
+
+    assert_eq!(
+        result.final_response.as_deref(),
+        Some("YunXi autonomous runtime accepted prompt: reminder due")
+    );
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::Message { content, .. }
+            if content.contains("[关心]") && content.contains("提醒：有一项到期事项需要你留意。")
+    )));
+    assert!(
+        !result
+            .final_response
+            .as_deref()
+            .unwrap_or_default()
+            .contains("[关心]")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn companion_plan_is_recorded_and_visible_in_control_snapshot() {
     let home = TempDir::new().expect("yunxi home");
     let workspace = TempDir::new().expect("workspace");

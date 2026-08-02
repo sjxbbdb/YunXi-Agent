@@ -1237,19 +1237,10 @@ impl YunXiRuntimeBackend {
             })
             .await?;
         }
-        let final_response = if companion_plans.is_empty() {
-            final_response
-        } else {
-            format!(
-                "{}\n\n{}",
-                final_response,
-                companion_plans
-                    .iter()
-                    .map(render_companion_plan)
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            )
-        };
+        // Companion plans are delivered as separate runtime messages above.
+        // Keep the provider response intact so callers do not render the same
+        // proactive content twice, and so companion metadata is not fed back
+        // into the memory extraction pipeline as if it were assistant prose.
         emit_memory_extraction_events(
             &sink,
             self.provider.as_ref(),
@@ -1335,16 +1326,7 @@ impl YunXiRuntimeBackend {
         session_key: &str,
     ) -> Vec<CompanionPlan> {
         let signal = companion_input_from_prompt(prompt, persona);
-        if !config.companion.enabled
-            || (signal.reminder_due
-                || signal.unfinished_task.is_some()
-                || signal.topic_continuation.is_some()
-                || signal.periodic_summary_due
-                || signal.relationship_milestone.is_some()
-                || signal.tool_request.is_some()
-                || signal.idle_minutes >= 120)
-                == false
-        {
+        if !config.companion.enabled || !signal.has_signal() {
             return Vec::new();
         }
         let now = SystemTime::now()
@@ -1381,46 +1363,12 @@ impl YunXiRuntimeBackend {
 }
 
 fn companion_input_from_prompt(prompt: &str, persona: &PersonaTurnContext) -> CompanionInput {
-    let normalized = prompt
-        .trim()
-        .strip_prefix("companion check:")
-        .map(str::trim)
-        .unwrap_or_else(|| prompt.trim());
-    let lower = normalized.to_ascii_lowercase();
     let relationship_milestone = persona
         .recall_explanations
         .iter()
-        .find(|explanation| explanation.relation.is_some())
+        .find(|explanation| explanation.selected && explanation.relation.is_some())
         .map(|_| "最近的关系或上下文记录发生了变化".to_string());
-    CompanionInput {
-        reminder_due: lower.contains("reminder due") || normalized.contains("提醒到期"),
-        unfinished_task: normalized
-            .strip_prefix("unfinished task:")
-            .or_else(|| normalized.strip_prefix("未完成任务："))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string),
-        topic_continuation: normalized
-            .strip_prefix("continue topic:")
-            .or_else(|| normalized.strip_prefix("继续话题："))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string),
-        periodic_summary_due: lower.contains("periodic summary") || normalized.contains("阶段总结"),
-        relationship_milestone,
-        tool_request: normalized
-            .strip_prefix("tool request:")
-            .or_else(|| normalized.strip_prefix("工具请求："))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string),
-        idle_minutes: if lower.contains("long idle") || normalized.contains("长时间空闲") {
-            120
-        } else {
-            0
-        },
-        ..CompanionInput::default()
-    }
+    CompanionInput::from_prompt(prompt, relationship_milestone)
 }
 
 fn render_companion_plan(plan: &CompanionPlan) -> String {
@@ -4890,5 +4838,58 @@ impl AgentBackend for YunXiRuntimeBackend {
     ) -> AgentResult<AgentRunResult> {
         self.run_turn_with_control(AgentTurn::new(config, input), control)
             .await
+    }
+}
+
+#[cfg(test)]
+mod companion_input_tests {
+    use super::*;
+    use yunxi_agent_persona::{MemoryGraphRelation, MemoryKind, MemoryLayer, MemoryRecallRoute};
+
+    fn persona_with_relationship_explanation(selected: bool) -> PersonaTurnContext {
+        PersonaTurnContext {
+            settings: PersonaSettings::default(),
+            profile_id: "test".to_string(),
+            display_name: "Test".to_string(),
+            workspace_fingerprint: "workspace".to_string(),
+            compiled_context: None,
+            boot_context: MemoryRecallResult::default(),
+            dynamic_recall: MemoryRecallResult::default(),
+            recall_explanations: vec![MemoryRecallExplanation {
+                memory_id: "relationship-1".to_string(),
+                route: if selected {
+                    MemoryRecallRoute::Dynamic
+                } else {
+                    MemoryRecallRoute::DroppedInvalid
+                },
+                score: 1.0,
+                selected,
+                reason: "test".to_string(),
+                source: "test".to_string(),
+                layer: MemoryLayer::Relationship,
+                scope: "relationship".to_string(),
+                kind: MemoryKind::RelationshipNote,
+                relation: Some(MemoryGraphRelation::RelationshipNote),
+                temporal_reason: None,
+            }],
+            memory_warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn dropped_relationship_explanations_do_not_trigger_milestones() {
+        let input =
+            companion_input_from_prompt("hello", &persona_with_relationship_explanation(false));
+        assert!(input.relationship_milestone.is_none());
+    }
+
+    #[test]
+    fn selected_relationship_explanations_trigger_milestones() {
+        let input =
+            companion_input_from_prompt("hello", &persona_with_relationship_explanation(true));
+        assert_eq!(
+            input.relationship_milestone.as_deref(),
+            Some("最近的关系或上下文记录发生了变化")
+        );
     }
 }

@@ -5562,6 +5562,6 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 
 报告路径：`D:\YunXi Agent\docs\reports\development\2026-08-02-144835-yunxi-agent-v2-3-3-companion-stable-long-term-development-log.md`
 
-提交、推送和 Git tag 状态：截至本条写入时，v2.3.3 实现、测试、release 构建和日志已完成；待创建 release commit、annotated `v2.3.3` tag，并使用 GitHub CLI/API key non-force 推送。历史 tag 不删除、不移动、不覆盖。
+提交、推送和 Git tag 状态：v2.3.3 release commit 已完成，本地 commit 为 `3bcc89b5cd353f10d2ab0eda8a9d9845a94874fa`；本地 annotated tag `v2.3.3` 为 `4000c3f3ec9d3131f06acd3ebe4f0b8f8c050ae5`，target 为本地 release commit。由于本机 Git smart HTTP 无法连接 GitHub，远端发布采用 GitHub CLI + Git Data API：以远端 master `d3e0b58496241a49f72c7937b5e77b0195b85f23` 为父提交创建远端 release commit `db5a955b5f478452b94cc48c34a087ab26c8afa4`，创建远端 annotated tag object `8abc284e65062774be2b33a6ae3e7b756e529624`，tag target 为远端 release commit；远端核验 `master_matches=true`、`tag_object_matches=true`、`tag_target_matches=true`，历史 `v2.3.2` tag 仍存在。API key 仅在当前 PowerShell 进程环境中使用，未打印、未写入仓库、Git 配置或 remote URL。未使用 force，未删除、移动或覆盖历史 tag。本条发布结果将作为 tag 后 docs-only 收口提交推进 `master`，不移动 `v2.3.3` tag。
 
 署名：开发者

@@ -115,6 +115,18 @@
 
 ## 提交与发布状态
 
-截至本日志写入时，v2.3.3 实现、测试、release 构建和日志已完成；下一步将创建 release commit、annotated `v2.3.3` tag，并使用 GitHub CLI/API key non-force 推送到 `https://github.com/sjxbbdb/YunXi-Agent`。历史 tag 不删除、不移动、不覆盖。
+发布结果：
+
+- 本地 release commit：`3bcc89b5cd353f10d2ab0eda8a9d9845a94874fa`。
+- 本地 annotated tag：`v2.3.3`，tag object `4000c3f3ec9d3131f06acd3ebe4f0b8f8c050ae5`，target `3bcc89b5cd353f10d2ab0eda8a9d9845a94874fa`。
+- GitHub API 发布基线：远端 `master` 从 `d3e0b58496241a49f72c7937b5e77b0195b85f23` 快进。
+- 远端 release commit：`db5a955b5f478452b94cc48c34a087ab26c8afa4`。
+- 远端 annotated tag：`v2.3.3`，tag object `8abc284e65062774be2b33a6ae3e7b756e529624`，target `db5a955b5f478452b94cc48c34a087ab26c8afa4`。
+- 远端 release tree：`ac54bbc87656c2becc5041eeff8469cd013c9416`。
+- 远端核验：`master_matches=true`、`tag_object_matches=true`、`tag_target_matches=true`，历史 `v2.3.2` tag 仍存在。
+
+说明：本机 Git smart HTTP 连续无法连接 GitHub，发布采用 GitHub CLI + Git Data API，以远端 master 为父提交创建 release commit 和 annotated tag；未使用 force，未删除、移动或覆盖历史 tag。API key 仅放入当前 PowerShell 进程环境变量，未打印、未写入仓库、未写入 Git 配置或 remote URL。
+
+本条发布结果日志作为 tag 后 docs-only 收口提交推进 `master`；不会移动 `v2.3.3` tag。
 
 署名：开发者

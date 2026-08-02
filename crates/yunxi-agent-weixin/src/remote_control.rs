@@ -33,7 +33,7 @@ pub enum WeixinRemoteCommand {
 pub fn parse_weixin_remote_command(input: &str) -> Option<WeixinRemoteCommand> {
     let trimmed = input.trim();
     if !trimmed.starts_with('/') {
-        return None;
+        return parse_natural_remote_command(trimmed);
     }
     let (command, arguments) = split_remote_command(trimmed);
     match command.as_str() {
@@ -60,6 +60,39 @@ pub fn parse_weixin_remote_command(input: &str) -> Option<WeixinRemoteCommand> {
         }
         _ => None,
     }
+}
+
+fn parse_natural_remote_command(trimmed: &str) -> Option<WeixinRemoteCommand> {
+    let (command, arguments) = split_remote_command(trimmed);
+    let command = command.as_str();
+    if natural_approve_command(command) {
+        let request_id = parse_natural_approval_request_id(arguments)?;
+        return Some(WeixinRemoteCommand::Approve { request_id });
+    }
+    if natural_deny_command(command) {
+        let (request_id, reason) = split_optional_remote_request_id(arguments);
+        return Some(WeixinRemoteCommand::Deny {
+            request_id: request_id.map(str::to_string),
+            reason: reason.map(safe_remote_text),
+        });
+    }
+    None
+}
+
+fn parse_natural_approval_request_id(arguments: Option<&str>) -> Option<Option<String>> {
+    match arguments {
+        None => Some(None),
+        Some(value) if is_remote_request_id(value) => Some(Some(value.to_string())),
+        Some(_) => None,
+    }
+}
+
+fn natural_approve_command(command: &str) -> bool {
+    matches!(command, "允许" | "同意" | "批准" | "确认" | "准许" | "通过")
+}
+
+fn natural_deny_command(command: &str) -> bool {
+    matches!(command, "拒绝" | "不同意" | "不允许" | "否决" | "驳回")
 }
 
 fn split_remote_command(trimmed: &str) -> (String, Option<&str>) {
@@ -921,7 +954,7 @@ fn outcome(
 pub fn render_remote_control_prompt(prompt: &WeixinRemoteControlPrompt) -> String {
     match prompt.purpose {
         WeixinRemoteControlPurpose::Approval => format!(
-            "[YunXi]\n需要你确认一次操作：{}\n原因：{}\n回复 /approve 允许，或回复 /deny 拒绝。\n如同时有多个待确认请求，请带控制码重试：{}",
+            "[YunXi]\n需要你确认一次操作：{}\n原因：{}\n回复 /approve 或“允许”允许，回复 /deny 或“拒绝”拒绝。\n如同时有多个待确认请求，请带控制码重试：{}",
             safe_remote_text(&prompt.action),
             safe_remote_text(&prompt.reason),
             prompt.request_id,
@@ -1017,8 +1050,9 @@ mod tests {
     }
 
     #[test]
-    fn parser_accepts_only_explicit_slash_commands() {
+    fn parser_accepts_slash_and_natural_control_commands() {
         assert_eq!(parse_weixin_remote_command("好的"), None);
+        assert_eq!(parse_weixin_remote_command("批准一下"), None);
         assert_eq!(
             parse_weixin_remote_command("/status"),
             Some(WeixinRemoteCommand::Status)
@@ -1034,6 +1068,21 @@ mod tests {
             })
         );
         assert_eq!(
+            parse_weixin_remote_command("允许"),
+            Some(WeixinRemoteCommand::Approve { request_id: None })
+        );
+        assert_eq!(
+            parse_weixin_remote_command("同意 wxctl#12345678"),
+            Some(WeixinRemoteCommand::Approve {
+                request_id: Some("wxctl#12345678".to_string())
+            })
+        );
+        assert_eq!(
+            parse_weixin_remote_command("允许 这个操作"),
+            None,
+            "natural approve must stay exact to avoid accidental approvals"
+        );
+        assert_eq!(
             parse_weixin_remote_command("/deny 这次先不要执行"),
             Some(WeixinRemoteCommand::Deny {
                 request_id: None,
@@ -1045,6 +1094,20 @@ mod tests {
             Some(WeixinRemoteCommand::Deny {
                 request_id: Some("wxctl#12345678".to_string()),
                 reason: Some("too risky".to_string())
+            })
+        );
+        assert_eq!(
+            parse_weixin_remote_command("拒绝 wxctl#12345678 太危险"),
+            Some(WeixinRemoteCommand::Deny {
+                request_id: Some("wxctl#12345678".to_string()),
+                reason: Some("太危险".to_string())
+            })
+        );
+        assert_eq!(
+            parse_weixin_remote_command("不允许"),
+            Some(WeixinRemoteCommand::Deny {
+                request_id: None,
+                reason: None
             })
         );
         assert_eq!(

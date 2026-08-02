@@ -795,16 +795,24 @@ fn weixin_result_status(checks: &[EvalCheckResult]) -> EvalExecutionStatus {
 
 fn evaluate_weixin_check(check: &str) -> (bool, String) {
     match check {
-        "weixin_slash_commands_only" => {
+        "weixin_limited_natural_control_commands" => {
             let passed = parse_weixin_remote_command("好的").is_none()
-                && parse_weixin_remote_command("同意").is_none()
+                && parse_weixin_remote_command("批准一下").is_none()
+                && parse_weixin_remote_command("允许 这个操作").is_none()
+                && parse_weixin_remote_command("同意").is_some()
+                && parse_weixin_remote_command("允许 wxctl#12345678").is_some()
+                && parse_weixin_remote_command("拒绝 wxctl#12345678 too risky").is_some()
                 && parse_weixin_remote_command("/unknown").is_none()
                 && parse_weixin_remote_command("/approve wxctl#12345678").is_some()
                 && parse_weixin_remote_command("/deny wxctl#12345678 too risky").is_some()
                 && parse_weixin_remote_command("/answer wxctl#12345678 yes").is_some()
                 && parse_weixin_remote_command("/stop").is_some()
                 && parse_weixin_remote_command("/status").is_some();
-            (passed, "natural language does not trigger remote control".to_string())
+            (
+                passed,
+                "only slash commands and exact approval or denial words trigger remote control"
+                    .to_string(),
+            )
         }
         "weixin_group_chat_excluded" => {
             let mut message = weixin_eval_message("raw-message-id", "raw-peer-id", "hello");

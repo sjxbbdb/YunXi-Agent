@@ -8,7 +8,8 @@ use thiserror::Error;
 use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 use yunxi_agent_core::{
     Agent, AgentBackend, AgentConfig, AgentEvent, AgentInput, AgentMessageStream,
-    AgentMessageStreamPhase, AgentRunControl, AgentRunStatus, AgentRunStreamReceiver,
+    AgentMessageStreamPhase, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunControl,
+    AgentRunStatus, AgentRunStreamReceiver,
 };
 use yunxi_agent_storage::{
     FileWeixinStateStore, WeixinPendingInboundState, WeixinRuntimeTurnBeginRequest,
@@ -434,12 +435,20 @@ async fn supervise_remote_control_stream(
     reply_context_token: Option<crate::SecretString>,
 ) -> WeixinStreamObservationReport {
     let mut public_events = PublicTextAccumulator::default();
+    let approval_grants = Arc::new(Mutex::new(WeixinTurnApprovalGrants::default()));
     loop {
         tokio::select! {
             Some(event) = stream.events.recv() => {
                 public_events.observe(&event);
             }
             Some(request) = stream.approvals.recv() => {
+                let request = match prepare_weixin_turn_approval_request(
+                    request,
+                    approval_grants.clone(),
+                ) {
+                    PreparedWeixinApprovalRequest::AutoApproved => continue,
+                    PreparedWeixinApprovalRequest::NeedsRemoteApproval(request) => request,
+                };
                 let expires_at_millis = now_millis_u64().saturating_add(timeout.as_millis() as u64);
                 match hub.register_approval(scope.clone(), request, expires_at_millis) {
                     Ok(prompt) => {
@@ -511,6 +520,136 @@ async fn supervise_remote_control_stream(
         }
     }
     public_events.finish()
+}
+
+#[derive(Default)]
+struct WeixinTurnApprovalGrants {
+    read_only_shell_after_user_approval: bool,
+}
+
+enum PreparedWeixinApprovalRequest {
+    AutoApproved,
+    NeedsRemoteApproval(AgentRunApprovalRequest),
+}
+
+fn prepare_weixin_turn_approval_request(
+    request: AgentRunApprovalRequest,
+    approval_grants: Arc<Mutex<WeixinTurnApprovalGrants>>,
+) -> PreparedWeixinApprovalRequest {
+    let AgentRunApprovalRequest {
+        id,
+        tool_name,
+        reason,
+        command,
+        cwd,
+        respond_to,
+    } = request;
+
+    if should_auto_approve_weixin_turn_shell(&approval_grants, &tool_name, command.as_deref()) {
+        let _ = respond_to.send(AgentRunApprovalDecision {
+            approved: true,
+            reason: Some("approved_by_weixin_turn_read_only_grant".to_string()),
+        });
+        return PreparedWeixinApprovalRequest::AutoApproved;
+    }
+
+    let batchable = is_weixin_turn_batchable_shell_approval(&tool_name, command.as_deref());
+    let (proxy_tx, proxy_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(forward_observed_weixin_approval_decision(
+        proxy_rx,
+        respond_to,
+        approval_grants,
+        batchable,
+    ));
+
+    PreparedWeixinApprovalRequest::NeedsRemoteApproval(AgentRunApprovalRequest {
+        id,
+        tool_name,
+        reason,
+        command,
+        cwd,
+        respond_to: proxy_tx,
+    })
+}
+
+async fn forward_observed_weixin_approval_decision(
+    proxy_rx: tokio::sync::oneshot::Receiver<AgentRunApprovalDecision>,
+    respond_to: tokio::sync::oneshot::Sender<AgentRunApprovalDecision>,
+    approval_grants: Arc<Mutex<WeixinTurnApprovalGrants>>,
+    batchable: bool,
+) {
+    let Ok(decision) = proxy_rx.await else {
+        return;
+    };
+    if decision.approved
+        && batchable
+        && let Ok(mut grants) = approval_grants.lock()
+    {
+        grants.read_only_shell_after_user_approval = true;
+    }
+    let _ = respond_to.send(decision);
+}
+
+fn should_auto_approve_weixin_turn_shell(
+    approval_grants: &Arc<Mutex<WeixinTurnApprovalGrants>>,
+    tool_name: &str,
+    command: Option<&str>,
+) -> bool {
+    if !is_weixin_turn_batchable_shell_approval(tool_name, command) {
+        return false;
+    }
+    approval_grants
+        .lock()
+        .map(|grants| grants.read_only_shell_after_user_approval)
+        .unwrap_or(false)
+}
+
+fn is_weixin_turn_batchable_shell_approval(tool_name: &str, command: Option<&str>) -> bool {
+    tool_name.eq_ignore_ascii_case("shell")
+        && command.is_some_and(is_low_risk_read_only_shell_command)
+}
+
+fn is_low_risk_read_only_shell_command(command: &str) -> bool {
+    let trimmed = command.trim();
+    if trimmed.is_empty() || contains_shell_control_operator(trimmed) {
+        return false;
+    }
+    let Some(first_token) = trimmed.split_whitespace().next() else {
+        return false;
+    };
+    let first_token = first_token.to_ascii_lowercase();
+    matches!(
+        first_token.as_str(),
+        "cat"
+            | "dir"
+            | "echo"
+            | "gci"
+            | "get-childitem"
+            | "get-command"
+            | "get-content"
+            | "get-date"
+            | "get-location"
+            | "get-process"
+            | "hostname"
+            | "ls"
+            | "pwd"
+            | "select-string"
+            | "test-path"
+            | "type"
+            | "whoami"
+            | "write-output"
+    )
+}
+
+fn contains_shell_control_operator(command: &str) -> bool {
+    command.contains('\n')
+        || command.contains('\r')
+        || command.contains(';')
+        || command.contains('|')
+        || command.contains('>')
+        || command.contains('<')
+        || command.contains('&')
+        || command.contains("$(")
 }
 
 #[derive(Default)]
@@ -986,6 +1125,107 @@ mod tests {
         request_task.abort();
         let _ = request_task.await;
         let _ = supervise.await;
+    }
+
+    #[tokio::test]
+    async fn remote_control_stream_auto_approves_later_read_only_shell_after_approval() {
+        let hub = WeixinRemoteControlHub::default();
+        let control_scope = scope();
+        let (control, stream) = AgentRunControl::streaming();
+        let sink = WeixinRuntimeTestSink::default();
+        let sink_handle: Arc<dyn WeixinRuntimeSink> = Arc::new(sink.clone());
+        let supervise = tokio::spawn(supervise_remote_control_stream(
+            hub.clone(),
+            control_scope.clone(),
+            stream,
+            Duration::from_secs(2),
+            sink_handle,
+            Some(crate::SecretString::new("raw-user")),
+            Some(crate::SecretString::new("raw-context")),
+        ));
+
+        let first_control = control.clone();
+        let first_request = tokio::spawn(async move {
+            first_control
+                .request_approval(
+                    Some("approval-1".to_string()),
+                    "shell",
+                    "safe test",
+                    Some("Get-Date".to_string()),
+                    "D:/YunXi Agent",
+                )
+                .await
+                .expect("first approval request")
+                .expect("first decision")
+        });
+
+        timeout(Duration::from_secs(2), async {
+            loop {
+                if !sink.records().is_empty() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("first approval prompt to be recorded");
+        assert_eq!(sink.records().len(), 1);
+
+        hub.handle_command(
+            &control_scope,
+            crate::remote_control::WeixinRemoteCommand::Approve { request_id: None },
+            now_millis_u64(),
+        )
+        .expect("approve first request");
+        assert!(
+            timeout(Duration::from_secs(2), first_request)
+                .await
+                .expect("first request timeout")
+                .expect("first request task")
+                .approved
+        );
+
+        let second_decision = timeout(
+            Duration::from_secs(2),
+            control.request_approval(
+                Some("approval-2".to_string()),
+                "shell",
+                "safe test",
+                Some("Get-Location".to_string()),
+                "D:/YunXi Agent",
+            ),
+        )
+        .await
+        .expect("second request timeout")
+        .expect("second approval request")
+        .expect("second decision");
+
+        assert!(second_decision.approved);
+        assert_eq!(
+            second_decision.reason.as_deref(),
+            Some("approved_by_weixin_turn_read_only_grant")
+        );
+        assert_eq!(
+            sink.records().len(),
+            1,
+            "auto-approved read-only shell requests should not emit another prompt"
+        );
+
+        drop(control);
+        let _ = supervise.await;
+    }
+
+    #[test]
+    fn weixin_turn_batchable_shell_approval_stays_read_only() {
+        assert!(is_low_risk_read_only_shell_command("Get-Date"));
+        assert!(is_low_risk_read_only_shell_command("echo ok"));
+        assert!(is_low_risk_read_only_shell_command("Test-Path Cargo.toml"));
+        assert!(!is_low_risk_read_only_shell_command("Remove-Item target"));
+        assert!(!is_low_risk_read_only_shell_command("echo ok > out.txt"));
+        assert!(!is_low_risk_read_only_shell_command(
+            "Get-ChildItem | Remove-Item"
+        ));
+        assert!(!is_low_risk_read_only_shell_command("cargo test"));
     }
 
     #[test]

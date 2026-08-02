@@ -239,6 +239,7 @@ async fn run_serve(
     let mut options = WeixinServeOptions::new(record.account_id.clone());
     options.max_polls = serve_max_polls_from_env()?;
     options.background_runtime_dispatch = true;
+    options.background_delivery_dispatch = true;
     let remote_control_hub =
         yunxi_agent_weixin::WeixinRemoteControlHub::with_state_store(state_store.clone());
     let supervisor_options =
@@ -285,7 +286,7 @@ async fn run_serve(
         println!("provider mode: {}", selection.source.as_str());
         println!("state store schema: {}", state.schema_version);
         println!(
-            "private chat long polling, runtime dispatch, final-text sendmessage spool, and slash-command control enabled; group chat remains disabled"
+            "private chat long polling, runtime dispatch, background delivery drain, final-text sendmessage spool, and slash-command control enabled; group chat remains disabled"
         );
     }
     let serve_result = tokio::select! {
@@ -368,7 +369,7 @@ where
     .context("weixin login output failed")?;
     writeln!(
         output,
-        "foreground private-chat polling, runtime dispatch, and final-text sendmessage spool are available after starting weixin serve"
+        "foreground private-chat polling, runtime dispatch, background delivery drain, and final-text sendmessage spool are available after starting weixin serve"
     )
     .context("weixin login output failed")?;
     Ok(credential)
@@ -532,6 +533,7 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
             "receive_messages": true,
             "send_messages": true,
             "send_message_mode": "final_text_spool",
+            "background_delivery_dispatch": true,
             "foreground_long_polling": true,
             "runtime_dispatch": true,
             "persistent_service": false,
@@ -556,7 +558,7 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
         println!("account lock state: {}", lock_state.state.as_str());
         print_latency_summary(&state);
         println!(
-            "QR login, foreground private-chat polling, runtime dispatch, final-text sendmessage spool, and slash-command AgentRunControl are available"
+            "QR login, foreground private-chat polling, runtime dispatch, background delivery drain, final-text sendmessage spool, and slash-command AgentRunControl are available"
         );
     }
     Ok(())
@@ -595,6 +597,7 @@ fn print_unconfigured_status(
                     "receive_messages": false,
                     "send_messages": false,
                     "send_message_mode": "requires_configured_account",
+                    "background_delivery_dispatch": false,
                     "foreground_long_polling": true,
                     "runtime_dispatch": false,
                     "persistent_service": false,
@@ -803,6 +806,7 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
             "runtime_dispatch_enabled": record.is_some() && credential_state == "present",
             "message_send_enabled": record.is_some() && credential_state == "present",
             "message_send_mode": "final_text_spool",
+            "background_delivery_dispatch": record.is_some() && credential_state == "present",
             "remote_approval_enabled": record.is_some() && credential_state == "present",
             "remote_user_input_enabled": record.is_some() && credential_state == "present",
             "remote_cancellation_enabled": record.is_some() && credential_state == "present",
@@ -875,6 +879,7 @@ fn print_doctor_metadata_error(
             "runtime_dispatch_enabled": false,
             "message_send_enabled": false,
             "message_send_mode": "requires_valid_metadata",
+            "background_delivery_dispatch": false,
             "remote_approval_enabled": false,
             "remote_user_input_enabled": false,
             "remote_cancellation_enabled": false,
@@ -1181,6 +1186,7 @@ fn print_serve_report(account: &str, report: &WeixinServeReport, json_output: bo
                 "runtime_recovered_count": report.runtime_recovered_count,
                 "send_message_enabled": true,
                 "send_message_mode": "final_text_spool",
+                "background_delivery_dispatch": true,
                 "delivery_attempt_count": report.delivery_attempt_count,
                 "delivery_success_count": report.delivery_success_count,
                 "delivery_error_count": report.delivery_error_count,
@@ -1221,7 +1227,7 @@ fn print_serve_report(account: &str, report: &WeixinServeReport, json_output: bo
         println!("pair prompt errors: {}", report.pair_prompt_error_count);
         println!("duplicates skipped: {}", report.duplicate_count);
         println!(
-            "final-text sendmessage spool and slash-command AgentRunControl enabled; group chat remains disabled"
+            "background delivery drain, final-text sendmessage spool, and slash-command AgentRunControl enabled; group chat remains disabled"
         );
     }
     Ok(())

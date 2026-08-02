@@ -5,6 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::Mutex;
 use unicode_segmentation::UnicodeSegmentation;
 use yunxi_agent_storage::{
     FileWeixinStateStore, WeixinDeliveryManifestCommitItem, WeixinDeliveryState,
@@ -260,6 +261,7 @@ pub struct WeixinDeliveryDispatcher {
     transport: Arc<dyn WeixinMessageTransport>,
     payload_cipher: WeixinPayloadCipher,
     verified_idempotency: bool,
+    drain_lock: Arc<Mutex<()>>,
 }
 
 impl WeixinDeliveryDispatcher {
@@ -274,6 +276,7 @@ impl WeixinDeliveryDispatcher {
             transport,
             payload_cipher: WeixinPayloadCipher::new(),
             verified_idempotency: false,
+            drain_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -287,6 +290,7 @@ impl WeixinDeliveryDispatcher {
         account_id: &str,
         now_millis: u64,
     ) -> Result<WeixinDeliveryDrainReport, WeixinDeliveryError> {
+        let _drain_guard = self.drain_lock.lock().await;
         let mut report = WeixinDeliveryDrainReport::default();
         let deliveries = self.state_store.load_ready_pending_deliveries(
             account_id,

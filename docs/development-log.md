@@ -5183,6 +5183,42 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 
 署名：开发者
 
+## 2026-08-02 08:29:20 +08:00
+
+工作目标：修复微信端回复慢的问题，将最终回复发送从主长轮询链路中拆出为后台发送循环，发布为 v2.2.0-hotfix.4。
+
+执行流程：
+1. 使用 CodeGraph 复核 `run_weixin_serve_loop`、`WeixinDeliveryDispatcher::drain_ready`、后台 runtime 调度和发送链路。
+2. 在 `D:\YunXi Agent\crates\yunxi-agent-weixin\src\serve.rs` 增加后台 delivery drain loop、取消/关闭等待、错误归并和统计归并。
+3. 在 `D:\YunXi Agent\crates\yunxi-agent-weixin\src\delivery.rs` 增加发送 drain 锁，避免主循环和后台循环并发重复发送。
+4. 在 `D:\YunXi Agent\crates\yunxi-agent-cli\src\weixin.rs` 默认启用 `background_delivery_dispatch`，并同步 status/doctor/report 能力输出。
+5. 在 `D:\YunXi Agent\Cargo.toml` 和 `D:\YunXi Agent\Cargo.lock` 升级版本到 `2.2.0-hotfix.4`。
+6. 同步 `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\*.txt` 中的版本快照。
+
+验证结果：
+- `cargo fmt`：通过。
+- `cargo test -p yunxi-agent-weixin serve_loop_background_delivery_drains_while_poll_is_waiting -- --test-threads=1`：通过。
+- `cargo test -p yunxi-agent-weixin`：51 项通过。
+- `cargo test -p yunxi-agent-cli`：通过。
+- `cargo test -p yunxi-agent-tui --lib`：163 项通过。
+- `cargo test --workspace`：通过。
+- `git diff --check`：无 whitespace error，仅 Windows LF/CRLF 提示。
+
+安装和运行状态：
+- 安装脚本：`D:\YunXi Agent\scripts\install\install-yunxi.ps1 -InstallDir D:\Apps\YunXi Agent\bin -Configuration release`
+- 安装入口：`D:\Apps\YunXi Agent\bin\yunxi.exe`
+- 安装版本：`yunxi 2.2.0-hotfix.4`
+- 安装前仅停止精确路径 `D:\Apps\YunXi Agent\bin\yunxi.exe` 的 PID 24116 和 PID 36436。
+- 新微信 bot：PID 30800，`account_lock_state=active`，`state=ready`，`background_delivery_dispatch=true`。
+- 启动日志：`D:\YunXi Agent\.tmp\weixin-bot\bot-20260802-082553.out.log`
+- 60 秒观测窗口内未收到新的微信入站 latency trace；本轮代码回归测试已覆盖“第二轮长轮询等待时后台发送不被阻塞”。
+
+提交、推送和 tag 状态：准备以 `v2.2.0-hotfix.4` 发布；发布过程中不删除、不移动、不覆盖历史 tag，不使用 force。
+
+清理状态：未执行删除、递归清理、移动目录、git clean、force 操作或用户目录清理。
+
+署名：开发者
+
 ## 2026-08-01 18:26:29 +08:00
 
 工作目标：修复 TUI 中执行失败事件被压成 `YX-UNKNOWN-001` 的问题，让工具/执行类失败能显示更可读的诊断摘要。

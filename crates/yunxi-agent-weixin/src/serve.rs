@@ -15,7 +15,7 @@ use yunxi_agent_storage::{
 };
 
 use crate::backoff::WeixinBackoff;
-use crate::delivery::{WeixinDeliveryDispatcher, WeixinDeliveryError};
+use crate::delivery::{WeixinDeliveryDispatcher, WeixinDeliveryDrainReport, WeixinDeliveryError};
 use crate::ilink::{GetUpdatesRequest, GetUpdatesResponse, IlinkHttpClient, WeixinMessage};
 use crate::inbound::{WeixinInboundEnvelope, WeixinInboundKind};
 use crate::payload_cipher::{WeixinPayloadAad, WeixinPayloadCipher, WeixinPayloadCipherError};
@@ -34,6 +34,8 @@ const MIN_READY_PENDING_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_READY_PENDING_RETRY_DELAY: Duration = Duration::from_secs(30);
 const DEFAULT_RUNTIME_DISPATCH_LEASE: Duration = Duration::from_secs(60);
 const DEFAULT_RUNTIME_DISPATCH_SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
+const DEFAULT_BACKGROUND_DELIVERY_INTERVAL: Duration = Duration::from_millis(250);
+const DEFAULT_BACKGROUND_DELIVERY_SHUTDOWN_WAIT: Duration = Duration::from_secs(3);
 
 #[derive(Clone)]
 pub struct WeixinServeOptions {
@@ -51,6 +53,9 @@ pub struct WeixinServeOptions {
     pub background_runtime_dispatch: bool,
     pub runtime_dispatch_lease: Duration,
     pub runtime_dispatch_shutdown_wait: Duration,
+    pub background_delivery_dispatch: bool,
+    pub background_delivery_interval: Duration,
+    pub background_delivery_shutdown_wait: Duration,
 }
 
 impl WeixinServeOptions {
@@ -70,6 +75,9 @@ impl WeixinServeOptions {
             background_runtime_dispatch: false,
             runtime_dispatch_lease: DEFAULT_RUNTIME_DISPATCH_LEASE,
             runtime_dispatch_shutdown_wait: DEFAULT_RUNTIME_DISPATCH_SHUTDOWN_WAIT,
+            background_delivery_dispatch: false,
+            background_delivery_interval: DEFAULT_BACKGROUND_DELIVERY_INTERVAL,
+            background_delivery_shutdown_wait: DEFAULT_BACKGROUND_DELIVERY_SHUTDOWN_WAIT,
         }
     }
 }
@@ -131,6 +139,8 @@ pub enum WeixinServeError {
     PayloadCipher(#[from] WeixinPayloadCipherError),
     #[error("weixin serve delivery failed: {0}")]
     Delivery(#[from] WeixinDeliveryError),
+    #[error("weixin serve background delivery task failed")]
+    BackgroundDeliveryTask,
     #[error("weixin serve paused because the credential is expired or invalid")]
     CredentialExpired,
 }
@@ -169,6 +179,7 @@ where
     payload_cipher.validate_data_key(data_key)?;
     let runtime_lease_owner = runtime_lease_owner_label();
     let mut background_runtime_tasks = BackgroundRuntimeTasks::default();
+    let mut background_delivery_loop = BackgroundDeliveryLoop::spawn(&options);
     let work_result: Result<(), WeixinServeError> = async {
         loop {
             if cancellation.is_cancelled() {
@@ -186,6 +197,7 @@ where
             background_runtime_tasks
                 .reap_finished(state_store, &mut report)
                 .await?;
+            background_delivery_loop.reap_finished(&mut report).await?;
             drain_ready_deliveries(&options, &mut report).await?;
             report.runtime_recovered_count += state_store.recover_stale_pending_runtime_turns(
                 &options.account_id,
@@ -457,8 +469,12 @@ where
             &mut report,
         )
         .await;
+    let delivery_shutdown_result = background_delivery_loop
+        .shutdown(options.background_delivery_shutdown_wait, &mut report)
+        .await;
     if work_result.is_ok() {
         shutdown_result?;
+        delivery_shutdown_result?;
     }
     work_result?;
     Ok(report)
@@ -474,12 +490,123 @@ async fn drain_ready_deliveries(
     let delivery_report = dispatcher
         .drain_ready(&options.account_id, now_millis_u64())
         .await?;
+    merge_delivery_report(report, &delivery_report);
+    Ok(())
+}
+
+fn merge_delivery_report(
+    report: &mut WeixinServeReport,
+    delivery_report: &WeixinDeliveryDrainReport,
+) {
     report.delivery_attempt_count += delivery_report.attempted_count;
     report.delivery_success_count += delivery_report.succeeded_count;
     report.delivery_error_count += delivery_report.failed_count;
     report.delivery_deferred_count += delivery_report.deferred_count;
     report.delivery_unknown_outcome_count += delivery_report.unknown_outcome_count;
-    Ok(())
+}
+
+#[derive(Default)]
+struct BackgroundDeliveryLoop {
+    cancellation: Option<WeixinServeCancellation>,
+    handle: Option<JoinHandle<Result<WeixinDeliveryDrainReport, WeixinDeliveryError>>>,
+}
+
+impl BackgroundDeliveryLoop {
+    fn spawn(options: &WeixinServeOptions) -> Self {
+        if !options.background_delivery_dispatch {
+            return Self::default();
+        }
+        let Some(dispatcher) = options.delivery_dispatcher.clone() else {
+            return Self::default();
+        };
+        let account_id = options.account_id.clone();
+        let interval = options
+            .background_delivery_interval
+            .max(Duration::from_millis(25));
+        let cancellation = WeixinServeCancellation::default();
+        let loop_cancellation = cancellation.clone();
+        let handle = tokio::spawn(async move {
+            let mut report = WeixinDeliveryDrainReport::default();
+            while !loop_cancellation.is_cancelled() {
+                let drain_report = dispatcher
+                    .drain_ready(&account_id, now_millis_u64())
+                    .await?;
+                accumulate_delivery_drain_report(&mut report, &drain_report);
+                sleep_cancelable(interval, &loop_cancellation).await;
+            }
+            let drain_report = dispatcher
+                .drain_ready(&account_id, now_millis_u64())
+                .await?;
+            accumulate_delivery_drain_report(&mut report, &drain_report);
+            Ok(report)
+        });
+        Self {
+            cancellation: Some(cancellation),
+            handle: Some(handle),
+        }
+    }
+
+    async fn reap_finished(
+        &mut self,
+        report: &mut WeixinServeReport,
+    ) -> Result<(), WeixinServeError> {
+        let Some(handle) = self.handle.as_ref() else {
+            return Ok(());
+        };
+        if !handle.is_finished() {
+            return Ok(());
+        }
+        let handle = self.handle.take().expect("delivery handle exists");
+        self.cancellation = None;
+        let delivery_report = join_background_delivery(handle).await?;
+        merge_delivery_report(report, &delivery_report);
+        Ok(())
+    }
+
+    async fn shutdown(
+        &mut self,
+        wait: Duration,
+        report: &mut WeixinServeReport,
+    ) -> Result<(), WeixinServeError> {
+        let Some(handle) = self.handle.take() else {
+            return Ok(());
+        };
+        if let Some(cancellation) = self.cancellation.take() {
+            cancellation.cancel();
+        }
+        let deadline = Instant::now() + wait;
+        while !handle.is_finished() && Instant::now() < deadline {
+            sleep(Duration::from_millis(25)).await;
+        }
+        if handle.is_finished() {
+            let delivery_report = join_background_delivery(handle).await?;
+            merge_delivery_report(report, &delivery_report);
+        } else {
+            handle.abort();
+        }
+        Ok(())
+    }
+}
+
+async fn join_background_delivery(
+    handle: JoinHandle<Result<WeixinDeliveryDrainReport, WeixinDeliveryError>>,
+) -> Result<WeixinDeliveryDrainReport, WeixinServeError> {
+    match handle.await {
+        Ok(result) => Ok(result?),
+        Err(error) if error.is_cancelled() => Ok(WeixinDeliveryDrainReport::default()),
+        Err(_error) => Err(WeixinServeError::BackgroundDeliveryTask),
+    }
+}
+
+fn accumulate_delivery_drain_report(
+    total: &mut WeixinDeliveryDrainReport,
+    next: &WeixinDeliveryDrainReport,
+) {
+    total.attempted_count += next.attempted_count;
+    total.succeeded_count += next.succeeded_count;
+    total.deferred_count += next.deferred_count;
+    total.failed_count += next.failed_count;
+    total.unknown_outcome_count += next.unknown_outcome_count;
 }
 
 #[derive(Clone)]
@@ -1045,8 +1172,12 @@ mod tests {
     use super::*;
     use crate::WeixinMessageId;
     use crate::WeixinRemoteControlHub;
+    use crate::delivery::{
+        WeixinDeliveryDispatcher, WeixinDeliverySpoolSink, WeixinMessageTransport,
+    };
     use crate::ilink::{
-        MessageItem, TextItem, WeixinMessage, WeixinUpdate, WeixinUpdateMessage, WeixinUpdateSender,
+        MessageItem, SendMessageRequest, SendMessageResponse, TextItem, WeixinMessage,
+        WeixinUpdate, WeixinUpdateMessage, WeixinUpdateSender,
     };
     use crate::turn_supervisor::{
         WeixinRuntimeSink, WeixinRuntimeTestSink, WeixinTurnReport, WeixinTurnSupervisorError,
@@ -1072,6 +1203,60 @@ mod tests {
             self.responses
                 .pop_front()
                 .unwrap_or_else(|| Ok(GetUpdatesResponse::default()))
+        }
+    }
+
+    struct SlowSecondPollTransport {
+        first_response: Option<GetUpdatesResponse>,
+        second_delay: Duration,
+        calls: usize,
+    }
+
+    #[async_trait]
+    impl WeixinUpdatesTransport for SlowSecondPollTransport {
+        async fn get_updates(
+            &mut self,
+            _request: GetUpdatesRequest,
+        ) -> Result<GetUpdatesResponse, WeixinApiError> {
+            self.calls += 1;
+            if self.calls == 1 {
+                return Ok(self.first_response.take().expect("first response"));
+            }
+            sleep(self.second_delay).await;
+            Ok(GetUpdatesResponse {
+                ret: 0,
+                msgs: Vec::new(),
+                get_updates_buf: Some(SecretString::new("cursor-after-slow-poll")),
+                ..GetUpdatesResponse::default()
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct NotifyingMessageTransport {
+        requests: Mutex<Vec<SendMessageRequest>>,
+        sent: Arc<tokio::sync::Notify>,
+    }
+
+    impl NotifyingMessageTransport {
+        fn sent_notify(&self) -> Arc<tokio::sync::Notify> {
+            Arc::clone(&self.sent)
+        }
+
+        fn request_count(&self) -> usize {
+            self.requests.lock().expect("requests").len()
+        }
+    }
+
+    #[async_trait]
+    impl WeixinMessageTransport for NotifyingMessageTransport {
+        async fn send_message(
+            &self,
+            request: SendMessageRequest,
+        ) -> Result<SendMessageResponse, WeixinApiError> {
+            self.requests.lock().expect("requests").push(request);
+            self.sent.notify_waiters();
+            Ok(SendMessageResponse::default())
         }
     }
 
@@ -1161,6 +1346,81 @@ mod tests {
                 account_id: account_id.to_string(),
                 peer_id_hash: "peer#00000000".to_string(),
                 direct_message_key: "dm#00000000".to_string(),
+                item_id: item_id.to_string(),
+                session_id,
+                parent_session_id: None,
+                status: AgentRunStatus::Completed,
+                final_response_present: true,
+                stream_observation: None,
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct SpoolingDelayedDispatcher {
+        store: FileWeixinStateStore,
+        sink: Arc<dyn WeixinRuntimeSink>,
+        delay: Duration,
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl SpoolingDelayedDispatcher {
+        fn new(
+            store: FileWeixinStateStore,
+            sink: Arc<dyn WeixinRuntimeSink>,
+            delay: Duration,
+        ) -> Self {
+            Self {
+                store,
+                sink,
+                delay,
+                calls: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls").clone()
+        }
+    }
+
+    #[async_trait]
+    impl WeixinRuntimeDispatcher for SpoolingDelayedDispatcher {
+        async fn dispatch_pending_turn(
+            &self,
+            account_id: &str,
+            item_id: &str,
+        ) -> Result<WeixinTurnReport, WeixinTurnSupervisorError> {
+            self.calls.lock().expect("calls").push(item_id.to_string());
+            sleep(self.delay).await;
+            let state = self.store.load(account_id)?.expect("state should exist");
+            let pending = state
+                .pending_inbound
+                .iter()
+                .find(|pending| pending.item_id == item_id)
+                .expect("pending should exist")
+                .clone();
+            let session_id = begin_pending_for_test(&self.store, account_id, item_id);
+            self.sink.write_final_response(WeixinRuntimeSinkRecord {
+                account_id: account_id.to_string(),
+                peer_id_hash: pending.peer_id_hash.clone(),
+                direct_message_key: pending.direct_message_key.clone(),
+                item_id: item_id.to_string(),
+                session_id: session_id.clone(),
+                reply_to_user_id: Some(SecretString::new("raw-reply-user")),
+                reply_context_token: None,
+                final_response: "background delivery pong".to_string(),
+            })?;
+            self.store.complete_pending_runtime_turn(
+                account_id,
+                item_id,
+                yunxi_agent_storage::WeixinPendingInboundState::Succeeded,
+                None,
+                now_millis_u64(),
+            )?;
+            Ok(WeixinTurnReport {
+                account_id: account_id.to_string(),
+                peer_id_hash: pending.peer_id_hash,
+                direct_message_key: pending.direct_message_key,
                 item_id: item_id.to_string(),
                 session_id,
                 parent_session_id: None,
@@ -2096,6 +2356,94 @@ mod tests {
         );
         assert_eq!(pending.lease_owner, None);
         assert_eq!(pending.lease_token, None);
+    }
+
+    #[tokio::test]
+    async fn serve_loop_background_delivery_drains_while_poll_is_waiting() {
+        let (_temp, store, account) = store_fixture();
+        let message = text_message(
+            "raw-message-background-delivery",
+            "raw-peer-background-delivery",
+        );
+        approve_peer_for_message(&store, &account, &message);
+        let transport = SlowSecondPollTransport {
+            first_response: Some(GetUpdatesResponse {
+                ret: 0,
+                msgs: vec![message],
+                get_updates_buf: Some(SecretString::new("cursor-background-delivery")),
+                ..GetUpdatesResponse::default()
+            }),
+            second_delay: Duration::from_millis(500),
+            calls: 0,
+        };
+        let data_key = test_data_key();
+        let sink: Arc<dyn WeixinRuntimeSink> = Arc::new(WeixinDeliverySpoolSink::new(
+            store.clone(),
+            data_key.clone(),
+        ));
+        let runtime_dispatcher = SpoolingDelayedDispatcher::new(
+            store.clone(),
+            Arc::clone(&sink),
+            Duration::from_millis(25),
+        );
+        let message_transport = Arc::new(NotifyingMessageTransport::default());
+        let sent_notify = message_transport.sent_notify();
+        let delivery_transport: Arc<dyn WeixinMessageTransport> = message_transport.clone();
+        let delivery_dispatcher = Arc::new(WeixinDeliveryDispatcher::new(
+            store.clone(),
+            data_key.clone(),
+            delivery_transport,
+        ));
+        let mut options = WeixinServeOptions::new(account.clone());
+        options.max_polls = Some(2);
+        options.background_runtime_dispatch = true;
+        options.runtime_dispatch_shutdown_wait = Duration::from_millis(500);
+        options.background_delivery_dispatch = true;
+        options.background_delivery_interval = Duration::from_millis(10);
+        options.background_delivery_shutdown_wait = Duration::from_millis(500);
+        options.runtime_dispatcher = Some(Arc::new(runtime_dispatcher.clone()));
+        options.delivery_dispatcher = Some(delivery_dispatcher);
+        options.outbound_sink = Some(sink);
+
+        let store_for_run = store.clone();
+        let account_for_assert = account.clone();
+        let handle = tokio::spawn(async move {
+            let mut transport = transport;
+            run_weixin_serve_loop(
+                &mut transport,
+                &store_for_run,
+                options,
+                &data_key,
+                &WeixinServeCancellation::default(),
+            )
+            .await
+        });
+
+        tokio::time::timeout(Duration::from_millis(250), sent_notify.notified())
+            .await
+            .expect("background delivery should send before the slow poll returns");
+
+        let report = handle.await.expect("serve loop join").expect("serve loop");
+        assert_eq!(runtime_dispatcher.calls().len(), 1);
+        assert_eq!(message_transport.request_count(), 1);
+        assert_eq!(report.delivery_success_count, 1);
+        let state = store
+            .load(&account_for_assert)
+            .expect("load")
+            .expect("state");
+        let trace = state
+            .recent_latency_traces(1)
+            .into_iter()
+            .next()
+            .expect("latency trace");
+        assert_eq!(trace.delivery_success_count, 1);
+        assert!(
+            trace
+                .delivery_wait_millis()
+                .is_some_and(|millis| millis < 350),
+            "delivery wait should not be pinned behind the slow poll: {:?}",
+            trace.delivery_wait_millis()
+        );
     }
 
     #[tokio::test]

@@ -567,6 +567,7 @@ mod tests {
         }
 
         let mut app = YunxiTuiApp::default();
+        app.set_version_for_snapshot("v2.3.3");
         app.set_banner(banner());
         app.start_prompt("yunxi> ");
         app.bottom_pane_mut().paste("入力 中文かな 👩‍💻 e\u{301}");

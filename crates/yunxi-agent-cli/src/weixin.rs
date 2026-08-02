@@ -499,8 +499,9 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
     let store = SystemWeixinSecretStore::new();
     let credential_state = credential_state(&store, &account_id);
     let account = record.account_id.clone();
+    let now = now_millis_u64();
     let (state, state_store_migration) =
-        ensure_weixin_state_initialized_from_metadata(&record, &state_store, now_millis_u64())
+        ensure_weixin_state_initialized_from_metadata(&record, &state_store, now)
             .context("weixin legacy metadata state initialization failed")?;
     let lock_state = state_store.lock_state(&account)?;
     let state_connection = format!("{:?}", state.connection_state).to_ascii_lowercase();
@@ -521,7 +522,7 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
         "account_lock_state": lock_state.state.as_str(),
         "pending_inbound_count": state.pending_inbound_count(),
         "pending_delivery_count": state.pending_delivery_count(),
-        "pending_remote_control_count": state.pending_remote_control_count(),
+        "pending_remote_control_count": state.pending_remote_control_count_at(now),
         "pair_request_count": state.pair_request_count(),
         "latency_trace_count": state.latency_traces.len(),
         "recent_latency_traces": latency_trace_reports(&state, 5),
@@ -587,7 +588,7 @@ fn print_unconfigured_status(
                 "account_lock_state": lock_state.state.as_str(),
                 "pending_inbound_count": state.map(|state| state.pending_inbound_count()).unwrap_or(0),
                 "pending_delivery_count": state.map(|state| state.pending_delivery_count()).unwrap_or(0),
-                "pending_remote_control_count": state.map(|state| state.pending_remote_control_count()).unwrap_or(0),
+                "pending_remote_control_count": state.map(|state| state.pending_remote_control_count_at(now_millis_u64())).unwrap_or(0),
                 "pair_request_count": state.map(|state| state.pair_request_count()).unwrap_or(0),
                 "latency_trace_count": state.map(|state| state.latency_traces.len()).unwrap_or(0),
                 "recent_latency_traces": state.map(|state| latency_trace_reports(state, 5)).unwrap_or_default(),
@@ -816,7 +817,7 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
         "state_store_schema_version": state.map(|state| state.schema_version),
         "pending_inbound_count": state.map(|state| state.pending_inbound_count()).unwrap_or(0),
         "pending_delivery_count": state.map(|state| state.pending_delivery_count()).unwrap_or(0),
-        "pending_remote_control_count": state.map(|state| state.pending_remote_control_count()).unwrap_or(0),
+        "pending_remote_control_count": state.map(|state| state.pending_remote_control_count_at(now_millis_u64())).unwrap_or(0),
         "pair_request_count": state.map(|state| state.pair_request_count()).unwrap_or(0),
         "latency_trace_count": state.map(|state| state.latency_traces.len()).unwrap_or(0),
         "recent_latency_traces": state.map(|state| latency_trace_reports(state, 5)).unwrap_or_default(),

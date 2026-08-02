@@ -43,6 +43,38 @@
 
 署名：开发者
 
+## 2026-08-02 16:00:11 +08:00 — YunXi Agent v2.3.3-hotfix.1 微信实机队列恢复修复
+
+工作目标：在 v2.3.3 陪伴层发布后，按用户要求安装替换并进行微信实机测试；修复实机测试暴露出的微信远程控制审批超时卡住入站队列、状态 pending 口径不准确、成功 trace 保留历史错误标签的问题。
+
+执行记录：
+
+1. 将安装目录 `D:\Apps\YunXi Agent\bin` 与 `C:\Users\24763\AppData\Local\YunXi Agent\bin` 的 `yunxi.exe` / `yunxi-agent-cli.exe` 替换到 `2.3.3` 后拉起真实 `weixin serve`。
+2. 实机测试发现微信入站可收到，但触发 shell 工具审批后 pending inbound 卡在 running / runtime_dispatch_inflight，后续消息被队列阻塞。
+3. 在 `crates/yunxi-agent-weixin/src/remote_control.rs` 新增 `expire_due`，在 `crates/yunxi-agent-weixin/src/serve.rs` 主循环主动过期 due 远程控制请求，避免后台 timeout task 失效时阻塞队列。
+4. 在 `crates/yunxi-agent-storage/src/weixin_state.rs` 成功完成 pending runtime turn 时清除旧 `error_label`，并新增 `pending_remote_control_count_at(now_millis)`。
+5. 在 `crates/yunxi-agent-cli/src/weixin.rs` 修正 `weixin status` / `doctor` 的 pending remote control 当前时间口径。
+6. 在 `crates/yunxi-agent-tui/src/render.rs` 固定测试 snapshot 版本，避免 hotfix 版本号导致布局快照误报。
+7. 将 workspace 版本升级为 `2.3.3-hotfix.1`，不移动、不覆盖已发布的 `v2.3.3` tag。
+
+验证结果：
+
+- `cargo fmt --all`：通过。
+- `cargo test -p yunxi-agent-storage -p yunxi-agent-weixin -p yunxi-agent-cli`：通过。
+- `cargo test -p yunxi-agent-tui --lib`：通过。
+- `cargo test --workspace`：通过。
+- `cargo run -q -p yunxi-agent-cli --bin yunxi -- --json eval companion`：通过，33/33。
+- `cargo run -q -p yunxi-agent-cli --bin yunxi -- --json eval weixin`：通过，离线门禁通过；真实微信人工门禁仍需继续发送新私聊消息验证。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- 安装版 `D:\Apps\YunXi Agent\bin\yunxi.exe --version`：`yunxi 2.3.3-hotfix.1`。
+- 当前微信服务 PID `18260`，状态 `ready`，pending inbound/delivery/remote control 均为 0。
+
+报告路径：`D:\YunXi Agent\docs\reports\development\2026-08-02-160011-yunxi-agent-v2-3-3-hotfix-1-weixin-real-queue-remediation-development-log.md`
+
+提交、推送和 Git tag 状态：截至本条写入时，v2.3.3-hotfix.1 修复、测试、release 构建、安装替换和日志已完成；待创建 release commit、annotated `v2.3.3-hotfix.1` tag，并使用 GitHub CLI/API key non-force 推送。历史 `v2.3.3` tag 不删除、不移动、不覆盖。
+
+署名：开发者
+
 ## 2026-08-02 11:46:05 +08:00
 
 发布收口：自定义人格与灵魂档案功能已完成验证并发布为 `v2.3.0`。

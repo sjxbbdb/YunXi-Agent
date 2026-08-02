@@ -364,6 +364,28 @@ impl WeixinRemoteControlHub {
         Ok(true)
     }
 
+    pub fn expire_due(&self, now_millis: u64) -> Result<usize, WeixinRemoteControlError> {
+        let request_ids = {
+            let inner = self
+                .inner
+                .lock()
+                .map_err(|_| WeixinRemoteControlError::Poisoned)?;
+            inner
+                .iter()
+                .filter_map(|(request_id, request)| {
+                    (request.expires_at_millis <= now_millis).then(|| request_id.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut expired = 0usize;
+        for request_id in request_ids {
+            if self.expire_request(&request_id, now_millis)? {
+                expired += 1;
+            }
+        }
+        Ok(expired)
+    }
+
     pub fn close_scope(
         &self,
         scope: &WeixinRemoteControlScope,
@@ -1155,6 +1177,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hub_expire_due_denies_registered_approval() {
+        let hub = WeixinRemoteControlHub::default();
+        let (tx, rx) = oneshot::channel();
+        let prompt = hub
+            .register_approval(
+                scope("item#11111111"),
+                AgentRunApprovalRequest {
+                    id: Some("approval-1".to_string()),
+                    tool_name: "shell".to_string(),
+                    reason: "safe test".to_string(),
+                    command: Some("echo ok".to_string()),
+                    cwd: "D:/YunXi Agent".to_string(),
+                    respond_to: tx,
+                },
+                2000,
+            )
+            .expect("register");
+
+        assert_eq!(hub.expire_due(1999).expect("not due"), 0);
+        assert_eq!(hub.expire_due(2000).expect("expired"), 1);
+        assert_eq!(
+            rx.await.expect("approval timeout response"),
+            AgentRunApprovalDecision {
+                approved: false,
+                reason: Some("weixin_remote_control_timeout".to_string())
+            }
+        );
+        assert_eq!(hub.expire_due(2001).expect("already expired"), 0);
+        assert!(matches!(
+            hub.handle_command(
+                &scope("item#11111111"),
+                WeixinRemoteCommand::Approve {
+                    request_id: Some(prompt.request_id)
+                },
+                2001,
+            ),
+            Err(WeixinRemoteControlError::RequestNotFound)
+        ));
+    }
+
+    #[tokio::test]
     async fn hub_routes_single_approval_without_request_id() {
         let hub = WeixinRemoteControlHub::default();
         let (tx, rx) = oneshot::channel();
@@ -1259,7 +1322,8 @@ mod tests {
             .load(&control_scope.account_id)
             .expect("load")
             .expect("state");
-        assert_eq!(state.pending_remote_control_count(), 1);
+        assert_eq!(state.pending_remote_control_count_at(1000), 1);
+        assert_eq!(state.pending_remote_control_count_at(2000), 0);
         assert_eq!(
             state.remote_control_requests[0].state,
             WeixinRemoteControlState::Pending
@@ -1291,7 +1355,7 @@ mod tests {
             .load(&control_scope.account_id)
             .expect("load")
             .expect("state");
-        assert_eq!(state.pending_remote_control_count(), 0);
+        assert_eq!(state.pending_remote_control_count_at(1500), 0);
         assert_eq!(
             state.remote_control_requests[0].state,
             WeixinRemoteControlState::Consumed

@@ -20,8 +20,8 @@ use crate::ilink::{GetUpdatesRequest, GetUpdatesResponse, IlinkHttpClient, Weixi
 use crate::inbound::{WeixinInboundEnvelope, WeixinInboundKind};
 use crate::payload_cipher::{WeixinPayloadAad, WeixinPayloadCipher, WeixinPayloadCipherError};
 use crate::remote_control::{
-    WeixinRemoteControlHub, WeixinRemoteControlScope, parse_weixin_remote_command,
-    render_remote_control_error, render_remote_control_outcome,
+    WeixinRemoteControlError, WeixinRemoteControlHub, WeixinRemoteControlScope,
+    parse_weixin_remote_command, render_remote_control_error, render_remote_control_outcome,
 };
 use crate::turn_supervisor::{WeixinRuntimeDispatcher, WeixinRuntimeSink, WeixinRuntimeSinkRecord};
 use crate::{SecretString, WeixinApiError};
@@ -112,6 +112,7 @@ pub struct WeixinServeReport {
     pub delivery_unknown_outcome_count: usize,
     pub remote_control_count: usize,
     pub remote_control_error_count: usize,
+    pub remote_control_expired_count: usize,
     pub runtime_recovered_count: usize,
     pub stopped_reason: Option<WeixinServeStoppedReason>,
 }
@@ -141,6 +142,8 @@ pub enum WeixinServeError {
     Delivery(#[from] WeixinDeliveryError),
     #[error("weixin serve background delivery task failed")]
     BackgroundDeliveryTask,
+    #[error("weixin serve remote control failed: {0}")]
+    RemoteControl(#[from] WeixinRemoteControlError),
     #[error("weixin serve paused because the credential is expired or invalid")]
     CredentialExpired,
 }
@@ -198,6 +201,7 @@ where
                 .reap_finished(state_store, &mut report)
                 .await?;
             background_delivery_loop.reap_finished(&mut report).await?;
+            report.remote_control_expired_count += expire_due_remote_controls(&options)?;
             drain_ready_deliveries(&options, &mut report).await?;
             report.runtime_recovered_count += state_store.recover_stale_pending_runtime_turns(
                 &options.account_id,
@@ -431,6 +435,7 @@ where
             report.pair_prompt_count += pair_prompt_report.sent_count;
             report.pair_prompt_error_count += pair_prompt_report.error_count;
 
+            report.remote_control_expired_count += expire_due_remote_controls(&options)?;
             drain_ready_pending(
                 state_store,
                 &options,
@@ -478,6 +483,13 @@ where
     }
     work_result?;
     Ok(report)
+}
+
+fn expire_due_remote_controls(options: &WeixinServeOptions) -> Result<usize, WeixinServeError> {
+    let Some(hub) = options.remote_control_hub.as_ref() else {
+        return Ok(0);
+    };
+    Ok(hub.expire_due(now_millis_u64())?)
 }
 
 async fn drain_ready_deliveries(

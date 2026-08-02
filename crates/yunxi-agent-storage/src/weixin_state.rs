@@ -1417,9 +1417,9 @@ impl FileWeixinStateStore {
             trace.turn_completed_at_millis = Some(now_millis);
             trace.terminal_status = Some(target.as_str().to_string());
             trace.terminal_reason = terminal_reason_for_trace.clone();
-            if target != WeixinPendingInboundState::Succeeded
-                && let Some(reason) = terminal_reason_for_trace.clone()
-            {
+            if target == WeixinPendingInboundState::Succeeded {
+                trace.error_label = None;
+            } else if let Some(reason) = terminal_reason_for_trace.clone() {
                 trace.error_label = Some(reason);
             }
         });
@@ -1679,9 +1679,16 @@ impl WeixinStateSnapshot {
     }
 
     pub fn pending_remote_control_count(&self) -> usize {
+        self.pending_remote_control_count_at(u64::MAX)
+    }
+
+    pub fn pending_remote_control_count_at(&self, now_millis: u64) -> usize {
         self.remote_control_requests
             .iter()
-            .filter(|request| request.state == WeixinRemoteControlState::Pending)
+            .filter(|request| {
+                request.state == WeixinRemoteControlState::Pending
+                    && request.expires_at_millis > now_millis
+            })
             .count()
     }
 

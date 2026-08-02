@@ -1,4 +1,4 @@
-00|YunXi Agent v2.3.1 | deepseek live | model=deepseek-chat-ultra-long-model-name
+00|YunXi Agent v2.3.2 | deepseek live | model=deepseek-chat-ultra-long-model-name
 01|new output below | cells=38 | backend=yunxi | source=auto_live | debug off
 02|────────────────────────────────────────────────────────────────────────────────────────────────────
 03|┌Transcript 22-42 / 49 | new output below──────────────────────────────────────────────────────────┐

@@ -127,6 +127,76 @@ async fn companion_plan_is_delivered_separately_without_mutating_final_response(
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn companion_policy_emits_deterministic_metrics_without_extra_provider_call() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = CapturingProvider::default();
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let config = AgentConfig {
+        companion: CompanionSettings {
+            enabled: true,
+            ..CompanionSettings::default()
+        },
+        ..AgentConfig::new(workspace.path())
+    };
+
+    let result = with_yunxi_home(home.path(), async {
+        Agent::new(config)
+            .run_with_backend(&backend, AgentInput::text("reminder due"))
+            .await
+            .expect("runtime should complete")
+    })
+    .await;
+
+    let metadata = result
+        .events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::TurnMetadata { metadata }
+                if metadata.context_phase.as_deref() == Some("companion_policy") =>
+            {
+                Some(metadata)
+            }
+            _ => None,
+        })
+        .expect("companion metrics metadata");
+    assert!(
+        metadata
+            .data
+            .contains_key("companion_context_elapsed_millis")
+    );
+    assert!(
+        metadata
+            .data
+            .contains_key("companion_policy_elapsed_millis")
+    );
+    assert!(metadata.data.contains_key("companion_total_elapsed_millis"));
+    assert_eq!(
+        metadata.data.get("companion_plan_count"),
+        Some(&"1".to_string())
+    );
+    assert!(metadata.data.contains_key("companion_fallback"));
+    assert!(metadata.data.contains_key("companion_fallback_reason"));
+    assert_eq!(
+        metadata.data.get("companion_memory_write_deferred"),
+        Some(&"false".to_string())
+    );
+    assert!(metadata.data.contains_key("companion_policy_tone"));
+    assert!(metadata.data.contains_key("companion_policy_follow_up"));
+    assert!(
+        metadata
+            .data
+            .contains_key("companion_policy_use_persona_context")
+    );
+    assert!(
+        metadata
+            .data
+            .contains_key("companion_policy_use_memory_context")
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn companion_plan_is_recorded_and_visible_in_control_snapshot() {
     let home = TempDir::new().expect("yunxi home");
     let workspace = TempDir::new().expect("workspace");
@@ -335,6 +405,7 @@ struct MemoryExtractionFixtureProvider {
     memory_response: &'static str,
     memory_delay: Duration,
     memory_calls: Arc<AtomicUsize>,
+    empty_main_response: bool,
 }
 
 impl MemoryExtractionFixtureProvider {
@@ -343,6 +414,7 @@ impl MemoryExtractionFixtureProvider {
             memory_response,
             memory_delay: Duration::ZERO,
             memory_calls: Arc::new(AtomicUsize::new(0)),
+            empty_main_response: false,
         }
     }
 
@@ -353,6 +425,11 @@ impl MemoryExtractionFixtureProvider {
 
     fn memory_calls(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.memory_calls)
+    }
+
+    fn with_empty_main_response(mut self) -> Self {
+        self.empty_main_response = true;
+        self
     }
 }
 
@@ -369,7 +446,15 @@ impl AgentProvider for MemoryExtractionFixtureProvider {
             }
             return Ok(ProviderResponse::assistant(self.memory_response));
         }
-        Ok(ProviderResponse::assistant("fixture main response"))
+        if self.empty_main_response {
+            Ok(ProviderResponse {
+                message: Some(ProviderMessage::assistant("")),
+                tool_calls: Vec::new(),
+                usage: None,
+            })
+        } else {
+            Ok(ProviderResponse::assistant("fixture main response"))
+        }
     }
 }
 
@@ -2587,4 +2672,53 @@ async fn provider_memory_extraction_timeout_warns_and_does_not_block_main_respon
         AgentEvent::MemoryWarning { warning, .. }
             if warning.contains("timed out")
     )));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn empty_final_response_defers_memory_write_and_records_gate() {
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let provider = MemoryExtractionFixtureProvider::new(
+        r#"{"candidates":[{"kind":"preference","content":"不应写入"}]}"#,
+    )
+    .with_empty_main_response();
+    let memory_calls = provider.memory_calls();
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default())
+            .with_inherited_child_provider();
+    let config = AgentConfig::new(workspace.path())
+        .with_provider("fixture")
+        .with_model("fixture-model")
+        .with_memory_extraction_mode(MemoryExtractionMode::Provider);
+
+    let (result, loaded_records) = with_memory_enabled_home(home.path(), async {
+        let result = Agent::new(config)
+            .run_with_backend(&backend, AgentInput::text("以后请用中文回答"))
+            .await
+            .expect("runtime should complete");
+        let store = FilePersonaMemoryStore::for_workspace(workspace.path());
+        (result, store.list(PersonaMemoryScope::All).records)
+    })
+    .await;
+
+    assert_eq!(result.status, AgentRunStatus::Completed);
+    assert_eq!(memory_calls.load(Ordering::SeqCst), 0);
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::MemoryWarning { warning, .. }
+            if warning.contains("memory write deferred")
+    )));
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TurnMetadata { metadata }
+            if metadata
+                .data
+                .get("companion_memory_write_deferred")
+                .is_some_and(|value| value == "true")
+    )));
+    assert!(
+        loaded_records.is_empty(),
+        "unexpected memory: {:?}",
+        loaded_records
+    );
 }

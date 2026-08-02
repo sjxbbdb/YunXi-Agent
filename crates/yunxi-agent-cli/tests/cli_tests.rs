@@ -1340,6 +1340,52 @@ fn cli_plain_pipe_ci_json_and_jsonl_paths_never_emit_tui_bytes() {
 }
 
 #[test]
+fn cli_jsonl_preserves_reply_and_exposes_companion_metrics() {
+    let temp = TempDir::new().expect("temp dir");
+    let cwd = temp.path().to_str().expect("temp path");
+    let output = Command::cargo_bin("yunxi")
+        .expect("binary should build")
+        .args([
+            "--offline",
+            "--companion",
+            "--cwd",
+            cwd,
+            "--jsonl",
+            "reminder due",
+        ])
+        .output()
+        .expect("jsonl output");
+
+    assert!(output.status.success());
+    let values = String::from_utf8(output.stdout)
+        .expect("stdout utf8")
+        .split_terminator('\n')
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<Value>(line).expect("valid JSONL line"))
+        .collect::<Vec<_>>();
+    assert!(values.iter().any(|value| {
+        value["type"] == "item"
+            && value["item"]["content"]
+                .as_str()
+                .is_some_and(|content| content.contains("YunXi autonomous runtime accepted prompt"))
+    }));
+    let companion_metadata = values.iter().find(|value| {
+        value["type"] == "turn_metadata"
+            && value["metadata"]["extra"]["context_phase"] == "companion_policy"
+    });
+    let companion_metadata = companion_metadata.expect("companion metrics event");
+    assert!(
+        companion_metadata["metadata"]["extra"]["companion_total_elapsed_millis"]
+            .as_str()
+            .is_some()
+    );
+    assert_eq!(
+        companion_metadata["metadata"]["extra"]["companion_plan_count"],
+        "1"
+    );
+}
+
+#[test]
 fn cli_rejects_json_and_jsonl_together() {
     let mut cmd = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
 

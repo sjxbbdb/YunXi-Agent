@@ -1,6 +1,151 @@
 use serde::{Deserialize, Serialize};
 use yunxi_agent_core::{CompanionSettings, QuietHours};
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompanionMemorySummary {
+    pub boot_summary: Option<String>,
+    pub dynamic_summary: Option<String>,
+    pub record_count: usize,
+    pub stable_fact_count: usize,
+}
+
+impl CompanionMemorySummary {
+    pub fn is_empty(&self) -> bool {
+        self.record_count == 0
+            && self.boot_summary.as_deref().is_none_or(str::is_empty)
+            && self.dynamic_summary.as_deref().is_none_or(str::is_empty)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompanionTone {
+    #[default]
+    Neutral,
+    Warm,
+    Direct,
+    Supportive,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompanionFollowUp {
+    pub prompt: String,
+    pub required: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompanionContext {
+    pub persona_id: Option<String>,
+    pub display_name: Option<String>,
+    pub relationship_state: Option<String>,
+    pub memory_summary: CompanionMemorySummary,
+    pub emotional_clues: Vec<String>,
+    pub available: bool,
+}
+
+impl CompanionContext {
+    pub fn unavailable() -> Self {
+        Self {
+            available: false,
+            ..Self::default()
+        }
+    }
+
+    pub fn has_context(&self) -> bool {
+        self.available
+            && (self.persona_id.is_some()
+                || self.relationship_state.is_some()
+                || !self.memory_summary.is_empty()
+                || !self.emotional_clues.is_empty())
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompanionPolicyDecision {
+    pub tone: CompanionTone,
+    pub proactive_care: bool,
+    pub follow_up: Option<CompanionFollowUp>,
+    pub use_persona_context: bool,
+    pub use_memory_context: bool,
+    pub fallback_to_existing_reply: bool,
+}
+
+pub trait CompanionPolicy {
+    fn decide(&self, context: &CompanionContext, input: &CompanionInput)
+    -> CompanionPolicyDecision;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeterministicCompanionPolicy {
+    settings: CompanionSettings,
+}
+
+impl DeterministicCompanionPolicy {
+    pub fn new(settings: CompanionSettings) -> Self {
+        Self { settings }
+    }
+
+    pub fn settings(&self) -> &CompanionSettings {
+        &self.settings
+    }
+}
+
+impl CompanionPolicy for DeterministicCompanionPolicy {
+    fn decide(
+        &self,
+        context: &CompanionContext,
+        input: &CompanionInput,
+    ) -> CompanionPolicyDecision {
+        let context_available = context.has_context();
+        let use_memory_context = context_available && !context.memory_summary.is_empty();
+        let use_persona_context =
+            context_available && (context.persona_id.is_some() || context.display_name.is_some());
+        let supportive = context
+            .emotional_clues
+            .iter()
+            .any(|clue| contains_emotional_signal(clue));
+        let tone = if supportive {
+            CompanionTone::Supportive
+        } else if use_persona_context || use_memory_context {
+            CompanionTone::Warm
+        } else if input.tool_request.is_some() {
+            CompanionTone::Direct
+        } else {
+            CompanionTone::Neutral
+        };
+        let proactive_care = self.settings.enabled && input.has_signal();
+        let follow_up = if proactive_care
+            && context_available
+            && input.tool_request.is_none()
+            && (input.unfinished_task.is_some() || input.topic_continuation.is_some())
+        {
+            Some(CompanionFollowUp {
+                prompt: "你希望我继续跟进这件事吗？".to_string(),
+                required: false,
+            })
+        } else {
+            None
+        };
+        CompanionPolicyDecision {
+            tone,
+            proactive_care,
+            follow_up,
+            use_persona_context,
+            use_memory_context,
+            fallback_to_existing_reply: !context_available,
+        }
+    }
+}
+
+fn contains_emotional_signal(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    [
+        "焦虑", "难过", "疲惫", "压力", "担心", "sad", "anxious", "tired", "stress", "worried",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompanionTrigger {
@@ -349,5 +494,78 @@ mod tests {
         let input = CompanionInput::from_prompt("你好，今天怎么样？", None);
         assert!(!input.has_signal());
         assert!(enabled().plan(input).is_empty());
+    }
+
+    #[test]
+    fn deterministic_policy_uses_context_without_model_calls() {
+        let policy = DeterministicCompanionPolicy::new(CompanionSettings {
+            enabled: true,
+            ..CompanionSettings::default()
+        });
+        let decision = policy.decide(
+            &CompanionContext {
+                persona_id: Some("default".to_string()),
+                display_name: Some("YunXi".to_string()),
+                relationship_state: Some("steady".to_string()),
+                memory_summary: CompanionMemorySummary {
+                    boot_summary: Some("用户偏好中文".to_string()),
+                    record_count: 1,
+                    stable_fact_count: 1,
+                    ..CompanionMemorySummary::default()
+                },
+                available: true,
+                ..CompanionContext::default()
+            },
+            &CompanionInput {
+                unfinished_task: Some("测试陪伴层".to_string()),
+                ..CompanionInput::default()
+            },
+        );
+        assert!(decision.proactive_care);
+        assert!(decision.use_persona_context);
+        assert!(decision.use_memory_context);
+        assert_eq!(decision.tone, CompanionTone::Warm);
+        assert!(decision.follow_up.is_some());
+        assert!(!decision.fallback_to_existing_reply);
+    }
+
+    #[test]
+    fn missing_context_falls_back_without_proactive_follow_up() {
+        let policy = DeterministicCompanionPolicy::new(CompanionSettings {
+            enabled: true,
+            ..CompanionSettings::default()
+        });
+        let decision = policy.decide(
+            &CompanionContext::unavailable(),
+            &CompanionInput {
+                topic_continuation: Some("旧话题".to_string()),
+                ..CompanionInput::default()
+            },
+        );
+        assert!(decision.proactive_care);
+        assert!(decision.fallback_to_existing_reply);
+        assert!(decision.follow_up.is_none());
+        assert!(!decision.use_memory_context);
+        assert_eq!(decision.tone, CompanionTone::Neutral);
+    }
+
+    #[test]
+    fn emotional_clue_selects_supportive_tone() {
+        let policy = DeterministicCompanionPolicy::new(CompanionSettings {
+            enabled: true,
+            ..CompanionSettings::default()
+        });
+        let decision = policy.decide(
+            &CompanionContext {
+                available: true,
+                emotional_clues: vec!["用户最近有些焦虑".to_string()],
+                ..CompanionContext::default()
+            },
+            &CompanionInput {
+                reminder_due: true,
+                ..CompanionInput::default()
+            },
+        );
+        assert_eq!(decision.tone, CompanionTone::Supportive);
     }
 }

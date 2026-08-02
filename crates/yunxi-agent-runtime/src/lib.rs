@@ -11,9 +11,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use yunxi_agent_companion::{
-    CompanionAction, CompanionInput, CompanionPlan, CompanionPlanner, CompanionTrigger,
+    CompanionAction, CompanionContext, CompanionInput, CompanionMemorySummary, CompanionPlan,
+    CompanionPlanner, CompanionPolicy, CompanionTrigger, DeterministicCompanionPolicy,
     SafeCompanionPlanner,
 };
 use yunxi_agent_context::{
@@ -69,6 +70,7 @@ use crate::turn_driver::RuntimeTurnDriver;
 
 const DEFAULT_MAX_TURNS: usize = 8;
 const DEFAULT_MAX_CHILD_DEPTH: usize = 2;
+const COMPANION_POLICY_BUDGET: Duration = Duration::from_millis(50);
 const MAX_MENTIONED_FILE_CONTEXT_FILES: usize = 8;
 const MAX_MENTIONED_FILE_CONTEXT_BYTES: u64 = 32 * 1024;
 
@@ -269,6 +271,66 @@ struct CompanionUsage {
     session_count: u32,
     day_number: u64,
     day_count: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct CompanionRunMetrics {
+    context_elapsed_millis: u128,
+    policy_elapsed_millis: u128,
+    total_elapsed_millis: u128,
+    plan_count: usize,
+    fallback: bool,
+    fallback_reason: Option<String>,
+    memory_write_deferred: bool,
+    policy_tone: Option<String>,
+    policy_follow_up: bool,
+    policy_use_persona_context: bool,
+    policy_use_memory_context: bool,
+}
+
+impl CompanionRunMetrics {
+    fn data(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "companion_context_elapsed_millis",
+                self.context_elapsed_millis.to_string(),
+            ),
+            (
+                "companion_policy_elapsed_millis",
+                self.policy_elapsed_millis.to_string(),
+            ),
+            (
+                "companion_total_elapsed_millis",
+                self.total_elapsed_millis.to_string(),
+            ),
+            ("companion_plan_count", self.plan_count.to_string()),
+            ("companion_fallback", self.fallback.to_string()),
+            (
+                "companion_fallback_reason",
+                self.fallback_reason.clone().unwrap_or_default(),
+            ),
+            (
+                "companion_memory_write_deferred",
+                self.memory_write_deferred.to_string(),
+            ),
+            (
+                "companion_policy_tone",
+                self.policy_tone.clone().unwrap_or_default(),
+            ),
+            (
+                "companion_policy_follow_up",
+                self.policy_follow_up.to_string(),
+            ),
+            (
+                "companion_policy_use_persona_context",
+                self.policy_use_persona_context.to_string(),
+            ),
+            (
+                "companion_policy_use_memory_context",
+                self.policy_use_memory_context.to_string(),
+            ),
+        ]
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1209,12 +1271,23 @@ impl YunXiRuntimeBackend {
             })
             .await?;
         }
-        let companion_plans = self.plan_companion(
+        let (companion_plans, mut companion_metrics) = self.plan_companion(
             &runtime_config,
             prompt,
             &initial_messages.persona,
             &companion_session_key,
         );
+        companion_metrics.memory_write_deferred = final_response.trim().is_empty();
+        sink.emit(AgentEvent::TurnMetadata {
+            metadata: crate::runtime_state::turn_metadata(
+                &runtime_config,
+                &session_id,
+                "companion_policy",
+                self.child_depth,
+                runtime_data(companion_metrics.data()),
+            ),
+        })
+        .await?;
         for plan in &companion_plans {
             let message = render_companion_plan(plan);
             let history = CompanionHistoryRecord::new(
@@ -1241,17 +1314,26 @@ impl YunXiRuntimeBackend {
         // Keep the provider response intact so callers do not render the same
         // proactive content twice, and so companion metadata is not fed back
         // into the memory extraction pipeline as if it were assistant prose.
-        emit_memory_extraction_events(
-            &sink,
-            self.provider.as_ref(),
-            matches!(self.child_provider_mode, ChildProviderMode::InheritParent),
-            prompt,
-            &final_response,
-            &session_id,
-            &runtime_config,
-            &initial_messages.persona,
-        )
-        .await?;
+        if final_response.trim().is_empty() {
+            sink.emit(AgentEvent::MemoryWarning {
+                schema_version: SCHEMA_VERSION,
+                warning: "memory write deferred: final response was empty or unsuccessful"
+                    .to_string(),
+            })
+            .await?;
+        } else {
+            emit_memory_extraction_events(
+                &sink,
+                self.provider.as_ref(),
+                matches!(self.child_provider_mode, ChildProviderMode::InheritParent),
+                prompt,
+                &final_response,
+                &session_id,
+                &runtime_config,
+                &initial_messages.persona,
+            )
+            .await?;
+        }
         sink.emit(AgentEvent::Completed {
             status: AgentRunStatus::Completed,
             usage,
@@ -1324,11 +1406,31 @@ impl YunXiRuntimeBackend {
         prompt: &str,
         persona: &PersonaTurnContext,
         session_key: &str,
-    ) -> Vec<CompanionPlan> {
+    ) -> (Vec<CompanionPlan>, CompanionRunMetrics) {
+        let total_started = Instant::now();
+        let mut metrics = CompanionRunMetrics::default();
         let signal = companion_input_from_prompt(prompt, persona);
         if !config.companion.enabled || !signal.has_signal() {
-            return Vec::new();
+            metrics.total_elapsed_millis = total_started.elapsed().as_millis();
+            metrics.fallback_reason = Some(if !config.companion.enabled {
+                "disabled".to_string()
+            } else {
+                "no_signal".to_string()
+            });
+            return (Vec::new(), metrics);
         }
+
+        let context_started = Instant::now();
+        let context = build_companion_context(persona);
+        metrics.context_elapsed_millis = context_started.elapsed().as_millis();
+
+        let policy_started = Instant::now();
+        let policy = DeterministicCompanionPolicy::new(config.companion.clone());
+        let policy_decision = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            policy.decide(&context, &signal)
+        }));
+        metrics.policy_elapsed_millis = policy_started.elapsed().as_millis();
+
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|duration| duration.as_secs())
@@ -1353,13 +1455,139 @@ impl YunXiRuntimeBackend {
             proactive_today: usage.day_count,
             ..signal
         };
-        let plans = SafeCompanionPlanner::new(config.companion.clone()).plan(input);
+        let plans = match policy_decision {
+            Ok(decision)
+                if policy_started.elapsed() <= COMPANION_POLICY_BUDGET
+                    && decision.proactive_care =>
+            {
+                metrics.policy_tone = Some(companion_tone_label(decision.tone).to_string());
+                metrics.policy_follow_up = decision.follow_up.is_some();
+                metrics.policy_use_persona_context = decision.use_persona_context;
+                metrics.policy_use_memory_context = decision.use_memory_context;
+                metrics.fallback = decision.fallback_to_existing_reply;
+                if decision.fallback_to_existing_reply {
+                    metrics.fallback_reason = Some("context_unavailable".to_string());
+                }
+                SafeCompanionPlanner::new(config.companion.clone()).plan(input)
+            }
+            Ok(decision) if policy_started.elapsed() > COMPANION_POLICY_BUDGET => {
+                metrics.fallback = true;
+                metrics.fallback_reason = Some("policy_timeout".to_string());
+                metrics.policy_tone = Some(companion_tone_label(decision.tone).to_string());
+                metrics.policy_follow_up = decision.follow_up.is_some();
+                metrics.policy_use_persona_context = decision.use_persona_context;
+                metrics.policy_use_memory_context = decision.use_memory_context;
+                SafeCompanionPlanner::new(config.companion.clone()).plan(input)
+            }
+            Ok(_) => {
+                metrics.fallback_reason = Some("policy_suppressed".to_string());
+                Vec::new()
+            }
+            Err(_) => {
+                metrics.fallback = true;
+                metrics.fallback_reason = Some("policy_panic".to_string());
+                SafeCompanionPlanner::new(config.companion.clone()).plan(input)
+            }
+        };
         if !plans.is_empty() {
             usage.session_count = usage.session_count.saturating_add(plans.len() as u32);
             usage.day_count = usage.day_count.saturating_add(plans.len() as u32);
         }
-        plans
+        metrics.plan_count = plans.len();
+        metrics.total_elapsed_millis = total_started.elapsed().as_millis();
+        (plans, metrics)
     }
+}
+
+fn companion_tone_label(tone: yunxi_agent_companion::CompanionTone) -> &'static str {
+    match tone {
+        yunxi_agent_companion::CompanionTone::Neutral => "neutral",
+        yunxi_agent_companion::CompanionTone::Warm => "warm",
+        yunxi_agent_companion::CompanionTone::Direct => "direct",
+        yunxi_agent_companion::CompanionTone::Supportive => "supportive",
+    }
+}
+
+fn build_companion_context(persona: &PersonaTurnContext) -> CompanionContext {
+    let mut boot_summary = None;
+    let mut dynamic_summary = None;
+    let mut emotional_clues = Vec::new();
+    let mut stable_fact_count = 0;
+
+    if !persona.boot_context.records.is_empty() {
+        boot_summary = Some(compact_memory_summary(&persona.boot_context.records));
+    }
+    if !persona.dynamic_recall.records.is_empty() {
+        dynamic_summary = Some(compact_memory_summary(&persona.dynamic_recall.records));
+    }
+    for record in persona
+        .boot_context
+        .records
+        .iter()
+        .chain(persona.dynamic_recall.records.iter())
+    {
+        if matches!(
+            record.kind,
+            MemoryKind::EmotionalState | MemoryKind::RelationshipNote
+        ) {
+            emotional_clues.push(compact_text(&record.content, 120));
+        }
+        if matches!(
+            record.kind,
+            MemoryKind::Preference
+                | MemoryKind::PersonalFact
+                | MemoryKind::ProjectContext
+                | MemoryKind::Goal
+        ) {
+            stable_fact_count += 1;
+        }
+    }
+
+    let relationship_state = persona
+        .recall_explanations
+        .iter()
+        .find(|explanation| explanation.selected && explanation.relation.is_some())
+        .map(|_| "recent relationship/context signal available".to_string());
+    let record_count = persona.boot_context.records.len() + persona.dynamic_recall.records.len();
+    let available =
+        persona.compiled_context.is_some() || record_count > 0 || relationship_state.is_some();
+
+    CompanionContext {
+        persona_id: (!persona.profile_id.trim().is_empty()).then(|| persona.profile_id.clone()),
+        display_name: (!persona.display_name.trim().is_empty())
+            .then(|| persona.display_name.clone()),
+        relationship_state,
+        memory_summary: CompanionMemorySummary {
+            boot_summary,
+            dynamic_summary,
+            record_count,
+            stable_fact_count,
+        },
+        emotional_clues,
+        available,
+    }
+}
+
+fn compact_memory_summary(records: &[yunxi_agent_persona::MemoryRecord]) -> String {
+    records
+        .iter()
+        .take(3)
+        .map(|record| compact_text(&record.content, 180))
+        .collect::<Vec<_>>()
+        .join("；")
+}
+
+fn compact_text(value: &str, max_chars: usize) -> String {
+    let value = value.trim();
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let mut output = value
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
+    output.push_str("...");
+    output
 }
 
 fn companion_input_from_prompt(prompt: &str, persona: &PersonaTurnContext) -> CompanionInput {
@@ -2219,7 +2447,7 @@ async fn emit_memory_extraction_events(
     config: &AgentConfig,
     persona: &PersonaTurnContext,
 ) -> AgentResult<()> {
-    if !persona.settings.memory_enabled {
+    if !persona.settings.memory_enabled || final_response.trim().is_empty() {
         return Ok(());
     }
 

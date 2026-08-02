@@ -4929,6 +4929,43 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 
 署名：开发者
 
+## 2026-08-02 09:19:24 +08:00
+
+工作目标：让启动默认 TUI 时同步触发本地微信 gateway 自启，避免 TUI 入口与微信端服务脱节，发布为 v2.2.0-hotfix.5。
+
+执行流程：
+1. 使用 CodeGraph 复核 `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs` 中的 `run_cli`、`should_attempt_interactive_weixin_autostart`、`maybe_autostart_weixin_gateway` 与终端模式解析链路。
+2. 修改 `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`，将微信自启门禁从单纯 stdin/stdout 判断改为基于 `TerminalModeResolution`：
+   - 默认交互式 TUI：允许自启微信 gateway。
+   - 显式 `--no-tui` plain CLI：允许自启微信 gateway。
+   - CI、stdin/stdout 非终端、JSON、JSONL、子命令、one-shot prompt、`--no-weixin-autostart`：不自启。
+3. 更新 `--no-weixin-autostart` 帮助文案，明确覆盖 interactive TUI 和 plain CLI。
+4. 补充自启门禁单测，固定 TUI 与 plain CLI 两种交互式入口行为。
+5. 在 `D:\YunXi Agent\Cargo.toml` 和 `D:\YunXi Agent\Cargo.lock` 升级版本到 `2.2.0-hotfix.5`。
+6. 同步 `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\*.txt` 版本快照。
+
+验证结果：
+- `cargo fmt`：通过。
+- `cargo test -p yunxi-agent-cli autostart -- --test-threads=1`：4 项通过。
+- `cargo test -p yunxi-agent-cli`：通过。
+- `cargo test -p yunxi-agent-tui --lib`：163 项通过。
+- `cargo test --workspace`：通过。
+
+安装和运行状态：
+- 安装前仅停止精确路径 `D:\Apps\YunXi Agent\bin\yunxi.exe` 的微信 bot PID 30800。
+- 安装脚本：`D:\YunXi Agent\scripts\install\install-yunxi.ps1 -InstallDir D:\Apps\YunXi Agent\bin -Configuration release`
+- 安装入口：`D:\Apps\YunXi Agent\bin\yunxi.exe`
+- 安装版本：`yunxi 2.2.0-hotfix.5`
+- 新微信 bot：PID 25004，`account_lock_state=active`，`state=ready`，`background_delivery_dispatch=true`。
+- 启动日志：`D:\YunXi Agent\.tmp\weixin-bot\bot-20260802-091840.out.log`
+- 当前自动化 shell 不提供真实 TTY，无法直接在工具内启动 TUI 进行视觉验证；TUI 自启行为已由 CLI 终端模式单元测试覆盖。
+
+提交、推送和 tag 状态：准备以 `v2.2.0-hotfix.5` 发布；发布过程中不删除、不移动、不覆盖历史 tag，不使用 force。
+
+清理状态：未执行删除、递归清理、移动目录、git clean、force 操作或用户目录清理。
+
+署名：开发者
+
 ## 2026-08-01 22:24:39 +08:00
 
 工作目标：新增微信回复慢点定位的低风险耗时诊断能力，发布并安装 v2.2.0-hotfix.3。

@@ -182,7 +182,7 @@ struct Cli {
     #[arg(
         long = "no-weixin-autostart",
         global = true,
-        help = "Do not automatically start the local Weixin gateway when entering interactive CLI"
+        help = "Do not automatically start the local Weixin gateway when entering interactive TUI or plain CLI"
     )]
     no_weixin_autostart: bool,
 
@@ -562,11 +562,7 @@ async fn run_cli() -> Result<()> {
             if let Some(notice) = terminal_resolution.fallback_notice {
                 eprintln!("{notice}");
             }
-            if should_attempt_interactive_weixin_autostart(
-                &cli,
-                stdin_is_terminal,
-                stdout_is_terminal,
-            ) {
+            if should_attempt_interactive_weixin_autostart(&cli, terminal_resolution) {
                 match maybe_autostart_weixin_gateway(&config, backend, provider_mode, cli.companion)
                 {
                     Ok(Some(report)) => match report.readiness {
@@ -628,8 +624,7 @@ enum WeixinAutostartReadiness {
 
 fn should_attempt_interactive_weixin_autostart(
     cli: &Cli,
-    stdin_is_terminal: bool,
-    stdout_is_terminal: bool,
+    terminal_resolution: terminal_mode::TerminalModeResolution,
 ) -> bool {
     !cli.no_weixin_autostart
         && weixin_autostart_enabled()
@@ -637,8 +632,18 @@ fn should_attempt_interactive_weixin_autostart(
         && cli.prompt.iter().all(|part| part.trim().is_empty())
         && !cli.json
         && !cli.jsonl
-        && stdin_is_terminal
-        && stdout_is_terminal
+        && terminal_mode_allows_weixin_autostart(terminal_resolution)
+}
+
+fn terminal_mode_allows_weixin_autostart(
+    terminal_resolution: terminal_mode::TerminalModeResolution,
+) -> bool {
+    match terminal_resolution.mode {
+        terminal_mode::ResolvedTerminalMode::Tui => true,
+        terminal_mode::ResolvedTerminalMode::Plain => {
+            terminal_resolution.reason == terminal_mode::TerminalModeReason::NoTuiRequested
+        }
+    }
 }
 
 fn weixin_autostart_enabled() -> bool {
@@ -925,6 +930,31 @@ mod tests {
         }
     }
 
+    fn terminal_resolution(
+        mode: terminal_mode::ResolvedTerminalMode,
+        reason: terminal_mode::TerminalModeReason,
+    ) -> terminal_mode::TerminalModeResolution {
+        terminal_mode::TerminalModeResolution {
+            mode,
+            reason,
+            fallback_notice: None,
+        }
+    }
+
+    fn tui_terminal_resolution() -> terminal_mode::TerminalModeResolution {
+        terminal_resolution(
+            terminal_mode::ResolvedTerminalMode::Tui,
+            terminal_mode::TerminalModeReason::InteractiveTerminal,
+        )
+    }
+
+    fn no_tui_plain_terminal_resolution() -> terminal_mode::TerminalModeResolution {
+        terminal_resolution(
+            terminal_mode::ResolvedTerminalMode::Plain,
+            terminal_mode::TerminalModeReason::NoTuiRequested,
+        )
+    }
+
     #[test]
     fn autostart_env_parser_handles_common_truthy_and_falsey_values() {
         assert!(weixin_autostart_env_value_enabled(None));
@@ -937,22 +967,46 @@ mod tests {
     }
 
     #[test]
-    fn autostart_decision_requires_terminal_interactive_plain_cli() {
+    fn autostart_decision_allows_tui_and_explicit_plain_interactive_cli() {
         let cli = base_cli();
         assert!(should_attempt_interactive_weixin_autostart(
-            &cli, true, true
+            &cli,
+            tui_terminal_resolution()
         ));
         assert!(!should_attempt_interactive_weixin_autostart(
-            &cli, false, true
+            &cli,
+            terminal_resolution(
+                terminal_mode::ResolvedTerminalMode::Plain,
+                terminal_mode::TerminalModeReason::StdinNotTerminal,
+            )
         ));
         assert!(!should_attempt_interactive_weixin_autostart(
-            &cli, true, false
+            &cli,
+            terminal_resolution(
+                terminal_mode::ResolvedTerminalMode::Plain,
+                terminal_mode::TerminalModeReason::StdoutNotTerminal,
+            )
+        ));
+        assert!(!should_attempt_interactive_weixin_autostart(
+            &cli,
+            terminal_resolution(
+                terminal_mode::ResolvedTerminalMode::Plain,
+                terminal_mode::TerminalModeReason::ContinuousIntegration,
+            )
+        ));
+
+        let mut cli = base_cli();
+        cli.no_tui = true;
+        assert!(should_attempt_interactive_weixin_autostart(
+            &cli,
+            no_tui_plain_terminal_resolution()
         ));
 
         let mut cli = base_cli();
         cli.no_weixin_autostart = true;
         assert!(!should_attempt_interactive_weixin_autostart(
-            &cli, true, true
+            &cli,
+            tui_terminal_resolution()
         ));
 
         let mut cli = base_cli();
@@ -960,25 +1014,29 @@ mod tests {
             command: EvalCommand::Weixin,
         });
         assert!(!should_attempt_interactive_weixin_autostart(
-            &cli, true, true
+            &cli,
+            tui_terminal_resolution()
         ));
 
         let mut cli = base_cli();
         cli.prompt = vec![String::from("hello")];
         assert!(!should_attempt_interactive_weixin_autostart(
-            &cli, true, true
+            &cli,
+            tui_terminal_resolution()
         ));
 
         let mut cli = base_cli();
         cli.json = true;
         assert!(!should_attempt_interactive_weixin_autostart(
-            &cli, true, true
+            &cli,
+            tui_terminal_resolution()
         ));
 
         let mut cli = base_cli();
         cli.jsonl = true;
         assert!(!should_attempt_interactive_weixin_autostart(
-            &cli, true, true
+            &cli,
+            tui_terminal_resolution()
         ));
     }
 

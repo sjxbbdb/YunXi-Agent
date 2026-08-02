@@ -4929,6 +4929,26 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 
 署名：开发者
 
+## 2026-08-02 10:24:51 +08:00
+
+发布完成补记：`v2.2.0-hotfix.6` 已提交、创建 tag、发布到 GitHub，并完成安装及微信服务恢复。
+
+提交、推送和 tag 状态：
+- 本地提交：`70b94a2 Fix companion control memory counts`。
+- GitHub 远端提交：`2b589848ef908793fabdbb90a415ecd74df469de`。
+- GitHub tag：`v2.2.0-hotfix.6`，tag object `73d8b602acab64227ee2ad0212d11b9df22a9025`。
+- GitHub Release：https://github.com/sjxbbdb/YunXi-Agent/releases/tag/v2.2.0-hotfix.6
+- 通过 GitHub CLI/API 非强制更新远端 `master`；未删除、未移动、未覆盖任何历史 tag，未使用 force。
+
+安装和运行状态：
+- 安装入口：`D:\Apps\YunXi Agent\bin\yunxi.exe`
+- 安装版本：`yunxi 2.2.0-hotfix.6`
+- 微信服务进程：PID `35528`，命令为 `weixin serve --account default`。
+- 微信状态：`state=ready`、`account_lock_state=active`、`credential_state=present`。
+- 微信待处理队列：`pending_inbound_count=0`、`pending_delivery_count=0`。
+
+署名：开发者
+
 ## 2026-08-02 10:10:53 +08:00
 
 工作目标：全量启用陪伴能力并修复控制面板记忆计数不一致的小问题，完成 hotfix.6 安装验收。

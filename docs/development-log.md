@@ -4960,7 +4960,13 @@ v2.1.1 至 v2.2.0 个人微信接入总纲图；将目录治理纳入首个发�
 - 启动日志：`D:\YunXi Agent\.tmp\weixin-bot\bot-20260802-091840.out.log`
 - 当前自动化 shell 不提供真实 TTY，无法直接在工具内启动 TUI 进行视觉验证；TUI 自启行为已由 CLI 终端模式单元测试覆盖。
 
-提交、推送和 tag 状态：准备以 `v2.2.0-hotfix.5` 发布；发布过程中不删除、不移动、不覆盖历史 tag，不使用 force。
+提交、推送和 tag 状态：
+- 本地提交：`5acf64f Allow Weixin autostart for TUI startup`。
+- 因当前环境直连 `github.com:443` 对 git push 仍不稳定，本轮继续使用 GitHub CLI + API token 通过 GitHub Git Database API 完成远端快进发布。
+- 远端 master：`3922e3b72aa73a2f580161bcc4c5ac64a3e74f91`，tree 与本地提交完全一致。
+- 远端 tag：`v2.2.0-hotfix.5`，tag object `478e766fea10fe7c7dd25a9a69e7facd3bc321cb`，目标 commit `3922e3b72aa73a2f580161bcc4c5ac64a3e74f91`。
+- GitHub Release：https://github.com/sjxbbdb/YunXi-Agent/releases/tag/v2.2.0-hotfix.5
+- 未删除、未移动、未覆盖任何历史 tag，未使用 force。
 
 清理状态：未执行删除、递归清理、移动目录、git clean、force 操作或用户目录清理。
 

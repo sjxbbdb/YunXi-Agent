@@ -291,9 +291,12 @@ fn persona_block(profile: &PersonaProfile) -> PersonaContextBlock {
         vec![
             optional_element("display_name", &profile.display_name, 3),
             optional_element("identity", &profile.layers.identity, 3),
+            optional_element("soul", &profile.layers.soul, 3),
+            optional_element("values", &profile.layers.values, 3),
             optional_element("voice", &profile.layers.voice, 3),
             optional_element("companion_style", &profile.layers.companion_style, 3),
             optional_element("work_style", &profile.layers.work_style, 3),
+            optional_element("addressing", &profile.layers.addressing, 3),
         ],
     )
 }

@@ -1,6 +1,6 @@
-# YunXi Agent v2.2.0
+# YunXi Agent v2.3.0
 
-YunXi Agent v2.2.0 is a terminal-first Rust general companion Agent CLI and reusable core library.
+YunXi Agent v2.3.0 is a terminal-first Rust general companion Agent CLI and reusable core library.
 The default runtime is YunXi-owned and does not depend on the upstream Codex
 runtime.
 
@@ -11,7 +11,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 
 ## Development Track
 
-The current `v2.2.0` development workspace is the merged Weixin integration
+The current `v2.3.0` development workspace is the merged Weixin integration
 line. It keeps the v2.1.x QR login, Windows Credential Manager secret boundary,
 atomic `WeixinStateStore`, stale account-lock recovery, pair lifecycle,
 authenticated encrypted pending inbound, and existing Runtime session binding.
@@ -560,6 +560,9 @@ default and become active only after `yunxi memory on` or
 ```powershell
 yunxi persona status
 yunxi persona profile
+yunxi persona list
+yunxi persona import .\my-persona.json
+yunxi persona set yunxi_companion_strong
 yunxi persona off
 yunxi persona on
 

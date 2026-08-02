@@ -130,7 +130,10 @@ fn yunxi_primary_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.2.0"));
+        .stdout(predicate::str::contains(format!(
+            "yunxi {}",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 #[test]
@@ -140,7 +143,10 @@ fn compatibility_binary_prints_v2_version() {
     cmd.arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("yunxi 2.2.0"));
+        .stdout(predicate::str::contains(format!(
+            "yunxi {}",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 #[test]
@@ -1414,6 +1420,65 @@ fn cli_persona_commands_manage_local_settings() {
         .assert()
         .success()
         .stdout(predicate::str::contains("persona_enabled: true"));
+}
+
+#[test]
+fn cli_imports_lists_and_activates_custom_persona_profile() {
+    let home = TempDir::new().expect("yunxi home");
+    let source = home.path().join("custom-persona.json");
+    fs::write(
+        &source,
+        r#"{
+  "id": "starlight_companion",
+  "display_name": "星河",
+  "version": "1.0.0",
+  "default_companion_strength": "strong",
+  "layers": {
+    "identity": "你是一个可靠的陪伴型 Agent。",
+    "soul": "你珍视真实，也允许沉默存在。",
+    "values": "诚实、尊重、边界感。",
+    "voice": "使用中文，语气自然清晰。",
+    "companion_style": "先理解，再帮助。",
+    "work_style": "先检查，再改动。",
+    "boundaries": "不编造记忆，不越过安全边界。",
+    "addressing": "优先使用已确认的称呼。"
+  },
+  "constraints": [
+    {
+      "id": "honest_memory",
+      "content": "没有写入的记忆不能声称已经记住。"
+    }
+  ]
+}"#,
+    )
+    .expect("write persona fixture");
+    let source_path = source.to_str().expect("persona fixture path");
+
+    let mut import = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    import
+        .env("YUNXI_HOME", home.path())
+        .args(["persona", "import", source_path])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "active_profile: starlight_companion",
+        ));
+
+    let mut profile = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    profile
+        .env("YUNXI_HOME", home.path())
+        .args(["--json", "persona", "profile"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"id\": \"starlight_companion\""))
+        .stdout(predicate::str::contains("你珍视真实"));
+
+    let mut list = Command::cargo_bin("yunxi-agent-cli").expect("binary should build");
+    list.env("YUNXI_HOME", home.path())
+        .args(["persona", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("* starlight_companion"));
 }
 
 #[test]

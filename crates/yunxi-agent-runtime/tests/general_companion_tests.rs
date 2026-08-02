@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use std::ffi::OsString;
+use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -7,7 +8,8 @@ use yunxi_agent_core::{
     Agent, AgentConfig, AgentInput, AgentResult, ControlScope, ControlSource, MemoryExtractionMode,
 };
 use yunxi_agent_persona::{
-    MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings, link_supersession_chain,
+    MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaProfileStore, PersonaSettings,
+    link_supersession_chain,
 };
 use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
@@ -44,6 +46,71 @@ async fn general_companion_closes_cross_session_memory_relationship_and_control_
     let result = run_general_companion_scenario(workspace.path()).await;
     restore_env_var("YUNXI_HOME", previous_home);
     result.expect("general companion integration should complete");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn custom_persona_profile_reaches_runtime_provider_context() {
+    let _guard = HOME_ENV_LOCK.lock().expect("home env lock");
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let previous_home = std::env::var_os("YUNXI_HOME");
+    unsafe {
+        std::env::set_var("YUNXI_HOME", home.path());
+    }
+
+    let source = home.path().join("custom-persona.json");
+    fs::write(
+        &source,
+        r#"{
+  "id": "runtime_custom",
+  "display_name": "星河",
+  "version": "1.0.0",
+  "default_companion_strength": "strong",
+  "layers": {
+    "identity": "你是一个可靠的陪伴型 Agent。",
+    "soul": "你珍视真实，也允许沉默存在。",
+    "values": "诚实、尊重、边界感。",
+    "voice": "使用中文，语气自然清晰。",
+    "companion_style": "先理解，再帮助。",
+    "work_style": "先检查，再改动。",
+    "boundaries": "不编造记忆，不越过安全边界。",
+    "addressing": "优先使用已确认的称呼。"
+  },
+  "constraints": []
+}"#,
+    )
+    .expect("write persona fixture");
+    let profile = PersonaProfileStore::import_file(&source).expect("import persona fixture");
+    PersonaSettings {
+        persona_enabled: true,
+        memory_enabled: false,
+        companion_enabled: false,
+        cloud_control_enabled: false,
+        active_profile: profile.id,
+    }
+    .save()
+    .expect("save custom persona settings");
+
+    let provider = CapturingProvider::default();
+    let captured = Arc::clone(&provider.messages);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let result = Agent::new(AgentConfig::new(workspace.path()))
+        .run_with_backend(&backend, AgentInput::text("你好"))
+        .await;
+    restore_env_var("YUNXI_HOME", previous_home);
+    result.expect("custom persona runtime should complete");
+
+    let system_context = captured
+        .lock()
+        .expect("messages lock")
+        .iter()
+        .filter(|message| message.role == ProviderRole::System)
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(system_context.contains("profile_id=\"runtime_custom\""));
+    assert!(system_context.contains("<soul>你珍视真实，也允许沉默存在"));
 }
 
 async fn run_general_companion_scenario(workspace: &Path) -> AgentResult<()> {

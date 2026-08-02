@@ -1,3 +1,44 @@
+## 2026-08-02 11:30:55 +08:00
+
+工作目标：将陪伴层从固定内置人格扩展为可持久化、可校验、可被 TUI/CLI/微信统一使用的自定义人格与灵魂档案。
+
+执行内容：
+1. 在 `D:\YunXi Agent\crates\yunxi-agent-persona\src\profile.rs` 扩展人格层，新增 `soul`、`values`、`addressing` 字段，并增加人格 ID、文本长度和约束项校验。
+2. 新增 `D:\YunXi Agent\crates\yunxi-agent-persona\src\registry.rs`，实现 `%USERPROFILE%\.yunxi\persona\profiles`（或 `YUNXI_HOME`）下的 JSON 档案加载、导入、列举和内置人格保护；异常档案在运行时安全回退到 `yunxi_companion_strong`。
+3. 更新 `D:\YunXi Agent\crates\yunxi-agent-persona\src\compiler.rs`，将 soul、values、addressing 编译进统一 Persona 上下文，并继续保留项目指令、安全、隐私和工具边界优先级。
+4. 更新 `D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs` 与 `D:\YunXi Agent\crates\yunxi-agent-runtime\src\general_companion.rs`，运行时和统一状态快照均按 active profile 解析；TUI、普通 CLI、微信入口因此共用同一人格档案。
+5. 更新 `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`，新增 `persona list`、`persona import <FILE>`，并让 `persona profile/status/set` 使用实际 active profile；导入成功后自动激活，禁止替换内置档案或覆盖已有自定义档案。
+6. 新增 CLI、Runtime、Persona 回归测试，覆盖档案导入、激活、列举、运行时上下文注入、路径穿越 ID 拒绝和安全回退。
+7. 更新 `D:\YunXi Agent\README.md`、`D:\YunXi Agent\docs\persona-memory.md`，补充 JSON 档案格式、命令和安全边界。
+8. 将 workspace 版本从 `2.2.0-hotfix.7` 提升为 `2.3.0`，同步 `Cargo.lock`。
+
+验证结果：
+- `cargo fmt --all`：通过。
+- `cargo check --workspace`：通过。
+- `cargo test -p yunxi-agent-persona -p yunxi-agent-runtime -p yunxi-agent-cli`：通过，新增自定义人格与运行时注入测试通过。
+- 待完成发布门禁：`cargo test --workspace`、release 构建、提交、annotated `v2.3.0` tag 和 GitHub CLI non-force 推送。
+
+涉及路径：
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\README.md`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-persona\src\compiler.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-persona\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-persona\src\profile.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-persona\src\registry.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-persona\tests\persona_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\src\general_companion.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\general_companion_tests.rs`
+- `D:\YunXi Agent\docs\persona-memory.md`
+- `D:\YunXi Agent\docs\development-log.md`
+
+清理与安全状态：未执行删除、递归清理、移动目录、`git clean`、force 操作、系统配置修改或用户目录清理。
+
+署名：开发者
+
 ## 2026-07-18 09:04:23 +08:00
 
 工作目标：基于用户纠正后的最新信息，重新审核 YunXi Agent v1.9.2 当前源码与发布状态，并在项目内写入重新审核报告与日志。

@@ -1,6 +1,7 @@
 use yunxi_agent_persona::{
-    HumanProfile, MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaPromptCompiler,
-    RelationshipState, yunxi_companion_strong,
+    HumanProfile, MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaProfile,
+    PersonaProfileStore, PersonaPromptCompiler, RelationshipState, validate_profile_id,
+    yunxi_companion_strong,
 };
 
 fn active_memory(id: &str, content: &str) -> MemoryRecord {
@@ -188,4 +189,40 @@ fn inactive_memories_are_not_compiled_into_context() {
     assert_eq!(memory_only.memory_count, 1);
     assert!(memory_only.content.contains("active-memory-content"));
     assert!(!memory_only.content.contains("pending-memory-content"));
+}
+
+#[test]
+fn custom_soul_layers_are_compiled_into_shared_persona_context() {
+    let mut profile = yunxi_companion_strong();
+    profile.id = "custom_soul".to_string();
+    profile.display_name = "星河".to_string();
+    profile.layers.soul = "记住真实的感受，也允许沉默存在。".to_string();
+    profile.layers.values = "温柔但不讨好，诚实但不冷漠。".to_string();
+    profile.layers.addressing = "称呼用户为朋友。".to_string();
+
+    let compiled = PersonaPromptCompiler::default().compile(
+        &profile,
+        &HumanProfile::default(),
+        &RelationshipState::default(),
+        &[],
+    );
+
+    assert!(compiled.content.contains("<soul>记住真实的感受"));
+    assert!(compiled.content.contains("<values>温柔但不讨好"));
+    assert!(compiled.content.contains("<addressing>称呼用户为朋友"));
+}
+
+#[test]
+fn persona_profile_validation_rejects_path_traversal_ids() {
+    assert!(validate_profile_id("../escape").is_err());
+    assert!(validate_profile_id("safe_profile-1").is_ok());
+    assert!(yunxi_companion_strong().validate().is_ok());
+}
+
+#[test]
+fn default_profile_store_resolves_builtin_profile() {
+    let settings = yunxi_agent_persona::PersonaSettings::default();
+    let profile = PersonaProfileStore::load_active_checked(&settings).unwrap();
+    assert_eq!(profile.id, "yunxi_companion_strong");
+    let _: PersonaProfile = profile;
 }

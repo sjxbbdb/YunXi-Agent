@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use yunxi_agent_core::{
     AgentConfig, AgentResult, CompanionSettings, ControlScope, ControlSnapshot, ControlSource,
 };
-use yunxi_agent_persona::{PersonaSettings, SCHEMA_VERSION, yunxi_companion_strong};
+use yunxi_agent_persona::{PersonaProfileStore, PersonaSettings, SCHEMA_VERSION};
 
 use crate::control_snapshot;
 
@@ -27,7 +27,7 @@ pub struct GeneralCompanionSnapshot {
 
 pub fn general_companion_snapshot(config: &AgentConfig) -> AgentResult<GeneralCompanionSnapshot> {
     let settings = PersonaSettings::load();
-    let profile = yunxi_companion_strong();
+    let profile = PersonaProfileStore::load_active(&settings);
     let controls = control_snapshot(config)?;
     let relationship_read_only = controls
         .scope(ControlScope::Relationship)

@@ -70,6 +70,59 @@ persona, and finally profile-specific boundary details. Required block tags,
 the priority rule, the memory safety notices, and closing tags remain intact;
 affected blocks receive a stable `<truncated section="..." />` marker.
 
+## Custom Persona And Soul Profiles
+
+The active persona can be customized with a local JSON profile. The profile is
+stored under `%USERPROFILE%\.yunxi\persona\profiles` (or under `YUNXI_HOME`)
+and is resolved by the shared Rust runtime, so TUI, plain CLI, and Weixin use
+the same profile on their next turn.
+
+Example:
+
+```json
+{
+  "id": "starlight_companion",
+  "display_name": "星河",
+  "version": "1.0.0",
+  "default_companion_strength": "strong",
+  "layers": {
+    "identity": "你是一个可靠、温柔、诚实的陪伴型 Agent。",
+    "soul": "你珍视真实的感受，也允许用户保持沉默。",
+    "values": "尊重、诚实、边界感、隐私优先。",
+    "voice": "使用中文，语气自然、清晰，不夸张。",
+    "companion_style": "先理解用户的情绪，再给出可执行的帮助。",
+    "work_style": "先检查现状，再做小而可验证的改动。",
+    "boundaries": "不编造记忆，不越过安全、隐私和项目约束。",
+    "addressing": "优先使用用户确认过的称呼。"
+  },
+  "constraints": [
+    {
+      "id": "honest_memory",
+      "content": "没有写入的记忆不能声称已经记住。"
+    }
+  ]
+}
+```
+
+Importing a profile validates the ID, field sizes, JSON structure, and
+constraint IDs. Importing never replaces the built-in profile or an existing
+custom profile; the imported profile becomes active only after the file is
+successfully stored.
+
+```powershell
+yunxi persona import .\starlight_companion.json
+yunxi persona list
+yunxi persona profile
+yunxi persona set yunxi_companion_strong
+```
+
+Persona text is context, not authorization. `AGENTS.md`, the current user
+request, sandbox/privacy/safety/tool policies, and tool execution boundaries
+always take priority over a custom profile. A malformed or missing active
+profile fails closed to the built-in `yunxi_companion_strong` profile in the
+runtime; `yunxi persona status` and `yunxi persona profile` report the problem
+so it can be corrected explicitly.
+
 ## Storage
 
 Memory is append-only JSONL:

@@ -38,9 +38,9 @@ use yunxi_agent_multi_agent::{
 use yunxi_agent_persona::{
     CompiledPersonaContext, HumanProfile, MemoryKind, MemoryPipeline, MemoryPipelineInput,
     MemoryRecallExplanation, MemoryRecallResult, MemoryRecallRouter, MemoryRecallRouterRequest,
-    MemorySensitivity, MemoryStatus, MemoryWritePolicy, PersonaPromptCompiler, PersonaSettings,
-    RelationshipGraphLite, RelationshipState, SCHEMA_VERSION, now_millis as persona_now_millis,
-    yunxi_companion_strong,
+    MemorySensitivity, MemoryStatus, MemoryWritePolicy, PersonaProfileStore, PersonaPromptCompiler,
+    PersonaSettings, RelationshipGraphLite, RelationshipState, SCHEMA_VERSION,
+    now_millis as persona_now_millis,
 };
 use yunxi_agent_protocol::{
     ProtocolRole, ResponseItem, ResponseItemDelta, ResponseStatus, StreamEvent,
@@ -94,7 +94,7 @@ pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
         .count();
     let graph = RelationshipGraphLite::from_records(&memory_load.records);
     let active_relationships = graph.active_edges_at(snapshot_at_millis).len();
-    let profile = yunxi_companion_strong();
+    let profile = PersonaProfileStore::load_active(&settings);
     let control_store = FileControlStore::for_workspace(&config.cwd);
     let companion_history_count = control_store.companion_history()?.len();
     let recent_change = control_store.audit_records()?.last().map(|record| {
@@ -2044,7 +2044,7 @@ fn build_persona_turn_context(
     include_boot_context: bool,
 ) -> PersonaTurnContext {
     let settings = PersonaSettings::load();
-    let profile = yunxi_companion_strong();
+    let profile = PersonaProfileStore::load_active(&settings);
     let store = FilePersonaMemoryStore::for_workspace(&config.cwd);
     let mut memory_warnings = Vec::new();
     let mut boot_context = MemoryRecallResult::default();

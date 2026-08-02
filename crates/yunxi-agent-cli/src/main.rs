@@ -11,8 +11,7 @@ use yunxi_agent_core::{
     ControlSnapshot, ControlVerb, MemoryExtractionMode, SandboxMode,
 };
 use yunxi_agent_persona::{
-    MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus, PersonaSettings,
-    yunxi_companion_strong,
+    MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus, PersonaProfileStore, PersonaSettings,
 };
 use yunxi_agent_protocol::{
     FunctionCallOutput, ProtocolRole, ResponseItem, ResponseItemDelta, RuntimeEvent, ThreadId,
@@ -373,6 +372,11 @@ enum ParityCommand {
 enum PersonaCommand {
     Status,
     Profile,
+    List,
+    Import {
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+    },
     Set {
         #[arg(value_name = "PROFILE")]
         profile: String,
@@ -2730,13 +2734,34 @@ async fn run_persona_command(
                 "completed",
                 "persona profile",
             )?;
-            print_persona_profile(json)?;
+            print_persona_profile(&settings, json)?;
+        }
+        PersonaCommand::List => {
+            append_control_audit(
+                &store,
+                &ControlRequest::new(ControlScope::Persona, ControlVerb::Show),
+                "completed",
+                "persona profile list",
+            )?;
+            print_persona_list(&settings, json)?;
+        }
+        PersonaCommand::Import { file } => {
+            let profile = PersonaProfileStore::import_file(&file)
+                .with_context(|| format!("failed to import persona profile {}", file.display()))?;
+            settings.active_profile = profile.id.clone();
+            settings.save().context("failed to save persona settings")?;
+            append_control_audit(
+                &store,
+                &ControlRequest::new(ControlScope::Persona, ControlVerb::Update),
+                "completed",
+                format!("imported and activated profile {}", profile.id),
+            )?;
+            print_persona_status(&settings, json)?;
         }
         PersonaCommand::Set { profile } => {
-            if profile != "yunxi_companion_strong" {
-                bail!("unknown persona profile: {profile}");
-            }
-            settings.active_profile = profile;
+            let selected = PersonaProfileStore::load(&profile)
+                .with_context(|| format!("failed to load persona profile {profile}"))?;
+            settings.active_profile = selected.id;
             settings.save().context("failed to save persona settings")?;
             append_control_audit(
                 &store,
@@ -2965,7 +2990,8 @@ async fn run_memory_command(command: MemoryCommand, config: AgentConfig, json: b
 }
 
 fn print_persona_status(settings: &PersonaSettings, json: bool) -> Result<()> {
-    let profile = yunxi_companion_strong();
+    let profile = PersonaProfileStore::load_active_checked(settings)
+        .context("failed to load active persona profile")?;
     if json {
         println!(
             "{}",
@@ -2994,8 +3020,9 @@ fn print_persona_status(settings: &PersonaSettings, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_persona_profile(json: bool) -> Result<()> {
-    let profile = yunxi_companion_strong();
+fn print_persona_profile(settings: &PersonaSettings, json: bool) -> Result<()> {
+    let profile = PersonaProfileStore::load_active_checked(settings)
+        .context("failed to load active persona profile")?;
     if json {
         println!("{}", serde_json::to_string_pretty(&profile)?);
     } else {
@@ -3009,6 +3036,37 @@ fn print_persona_profile(json: bool) -> Result<()> {
         println!("boundaries: {}", profile.layers.boundaries);
         for constraint in profile.constraints {
             println!("constraint.{}: {}", constraint.id, constraint.content);
+        }
+    }
+    Ok(())
+}
+
+fn print_persona_list(settings: &PersonaSettings, json: bool) -> Result<()> {
+    let profiles = PersonaProfileStore::list().context("failed to list persona profiles")?;
+    if json {
+        let profiles = profiles
+            .into_iter()
+            .map(|profile| {
+                serde_json::json!({
+                    "id": profile.id,
+                    "display_name": profile.display_name,
+                    "version": profile.version,
+                    "active": profile.id == settings.active_profile,
+                })
+            })
+            .collect::<Vec<_>>();
+        println!("{}", serde_json::to_string_pretty(&profiles)?);
+    } else {
+        for profile in profiles {
+            let marker = if profile.id == settings.active_profile {
+                "*"
+            } else {
+                " "
+            };
+            println!(
+                "{marker} {} — {} (v{})",
+                profile.id, profile.display_name, profile.version
+            );
         }
     }
     Ok(())

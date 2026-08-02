@@ -71,7 +71,7 @@
 
 报告路径：`D:\YunXi Agent\docs\reports\development\2026-08-02-160011-yunxi-agent-v2-3-3-hotfix-1-weixin-real-queue-remediation-development-log.md`
 
-提交、推送和 Git tag 状态：截至本条写入时，v2.3.3-hotfix.1 修复、测试、release 构建、安装替换和日志已完成；待创建 release commit、annotated `v2.3.3-hotfix.1` tag，并使用 GitHub CLI/API key non-force 推送。历史 `v2.3.3` tag 不删除、不移动、不覆盖。
+提交、推送和 Git tag 状态：v2.3.3-hotfix.1 release 已通过 GitHub CLI + Git Data API non-force 发布。远端 hotfix commit 为 `9e779867264dc054798af7f00c77793e7722345d`，远端 annotated tag object 为 `9224a2cea89bf5fd793dabebc3450feeaddce849`，tag target 为远端 hotfix commit；远端核验 `master_matches=true`、`tag_target_matches=true`，历史 `v2.3.3` 与 `v2.3.2` tag 均存在。API key 仅在当前 PowerShell 进程环境中使用，未打印、未写入仓库、Git 配置或 remote URL。本条发布结果将作为 tag 后 docs-only 收口提交推进 `master`，不移动 `v2.3.3-hotfix.1` tag。
 
 署名：开发者
 

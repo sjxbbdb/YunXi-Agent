@@ -1,3 +1,46 @@
+## 2026-08-02 17:24:23 +08:00 — YunXi Agent v2.3.3-hotfix.2 协同回归与记忆可召回口径修复
+
+工作目标：按用户要求，将验收重点从“功能数量”转向“已有 CLI、微信、Runtime、Persona、Companion、Memory 是否能稳定协同”；补齐跨端协同回归，并修复长期记忆管理口径中“存储 active”与“运行时可召回”混淆的问题。
+
+执行记录：
+
+1. 使用 CodeGraph 梳理长期记忆加载、Runtime persona context、微信 supervisor 和 CLI memory 管理链路。
+2. 修复 `memory status/list/search/show` 输出：新增 `runtime.recallable`、`runtime.non_recallable_active`、`runtime_status`、`runtime_recallable`、`runtime_blockers`，让被替代/失效记忆不会再被误判为运行时仍会加载。
+3. 补充 CLI 回归：语言偏好 supersession 后，旧记录保留历史但 `runtime_recallable=false`，新记录 `runtime_recallable=true`。
+4. 补充微信协同回归：微信 `WeixinTurnSupervisor` 通过真实 `YunXiRuntimeBackend` 处理私聊 pending inbound 时，会加载与 CLI/Runtime 同一份长期记忆并注入共享 persona context。
+5. 将版本升级为 `2.3.3-hotfix.2`，完成 release 构建并安装替换两个明确 YunXi 安装目录。
+
+修改文件与路径：
+
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\src\main.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-cli\tests\cli_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\Cargo.toml`
+- `D:\YunXi Agent\crates\yunxi-agent-weixin\tests\turn_supervisor_tests.rs`
+- `D:\YunXi Agent\docs\development-log.md`
+- `D:\YunXi Agent\docs\reports\development\2026-08-02-172423-yunxi-agent-v2-3-3-hotfix-2-coordination-regression-development-log.md`
+
+验证结果：
+
+- `cargo fmt --all`：通过。
+- `cargo check --workspace`：通过。
+- `cargo test --workspace -- --test-threads=1`：通过。
+- `cargo run -q -p yunxi-agent-cli --bin yunxi -- --json eval companion`：通过，33/33。
+- `cargo run -q -p yunxi-agent-cli --bin yunxi -- --json eval weixin`：通过，离线门禁无失败。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- 安装版 `yunxi --version`：`yunxi 2.3.3-hotfix.2`。
+- 当前微信服务 PID `10988`，状态 `ready` / `active`，pending inbound/delivery/remote control 均为 0。
+- 安装版记忆状态：`counts.active=3`，`runtime.recallable=2`，`runtime.non_recallable_active=1`，被替代旧记忆明确显示 `runtime_blockers=["invalidated","superseded"]`。
+
+报告路径：`D:\YunXi Agent\docs\reports\development\2026-08-02-172423-yunxi-agent-v2-3-3-hotfix-2-coordination-regression-development-log.md`
+
+提交、推送和 Git tag 状态：代码、测试、release 构建、安装替换和日志已完成；下一步创建 release commit、annotated `v2.3.3-hotfix.2` tag，并使用 GitHub CLI + Git Data API non-force 推送。历史 tag 不删除、不移动、不覆盖。
+
+安全边界：未删除、递归清理、移动或清理用户目录；未执行 `git reset`、`git clean` 或 force 操作；安装替换只针对两个明确 YunXi 安装目录；停止进程只针对安装目录下旧微信服务 PID `20020`。
+
+署名：开发者
+
 ## 2026-08-02 12:30:11 +08:00
 
 工作目标：在不破坏现有 Runtime、Persona、Memory、CLI、TUI 和微信逻辑的前提下，完善陪伴层的信号识别、关系触发和消息呈现，并发布补丁版本 `v2.3.1`。

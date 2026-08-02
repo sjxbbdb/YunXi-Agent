@@ -11,7 +11,8 @@ use yunxi_agent_core::{
     ControlSnapshot, ControlVerb, MemoryExtractionMode, SandboxMode,
 };
 use yunxi_agent_persona::{
-    MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus, PersonaProfileStore, PersonaSettings,
+    MemoryKind, MemoryRecord, MemorySensitivity, MemoryStatus, PersonaProfileStore,
+    PersonaSettings, now_millis as memory_now_millis,
 };
 use yunxi_agent_protocol::{
     FunctionCallOutput, ProtocolRole, ResponseItem, ResponseItemDelta, RuntimeEvent, ThreadId,
@@ -3123,6 +3124,7 @@ fn print_memory_status(
     warnings: &[String],
     json: bool,
 ) -> Result<()> {
+    let now = memory_now_millis();
     let active = records
         .iter()
         .filter(|record| record.status == MemoryStatus::Active)
@@ -3139,6 +3141,11 @@ fn print_memory_status(
         .iter()
         .filter(|record| record.status == MemoryStatus::Archived)
         .count();
+    let recallable = records
+        .iter()
+        .filter(|record| record.is_recallable_at(now))
+        .count();
+    let non_recallable_active = active.saturating_sub(recallable);
     if json {
         println!(
             "{}",
@@ -3153,6 +3160,10 @@ fn print_memory_status(
                     "rejected": rejected,
                     "archived": archived,
                 },
+                "runtime": {
+                    "recallable": recallable,
+                    "non_recallable_active": non_recallable_active,
+                },
                 "warnings": warnings,
             }))?
         );
@@ -3163,6 +3174,8 @@ fn print_memory_status(
         println!("pending: {pending}");
         println!("rejected: {rejected}");
         println!("archived: {archived}");
+        println!("runtime_recallable: {recallable}");
+        println!("runtime_non_recallable_active: {non_recallable_active}");
         for warning in warnings {
             println!("[memory-warning] {warning}");
         }
@@ -3179,6 +3192,7 @@ fn print_memory_on_status(
     json: bool,
 ) -> Result<()> {
     if json {
+        let now = memory_now_millis();
         let active = records
             .iter()
             .filter(|record| record.status == MemoryStatus::Active)
@@ -3195,6 +3209,11 @@ fn print_memory_on_status(
             .iter()
             .filter(|record| record.status == MemoryStatus::Archived)
             .count();
+        let recallable = records
+            .iter()
+            .filter(|record| record.is_recallable_at(now))
+            .count();
+        let non_recallable_active = active.saturating_sub(recallable);
         let roots = store.storage_roots();
         println!(
             "{}",
@@ -3226,6 +3245,10 @@ fn print_memory_on_status(
                     "rejected": rejected,
                     "archived": archived,
                 },
+                "runtime": {
+                    "recallable": recallable,
+                    "non_recallable_active": non_recallable_active,
+                },
                 "warnings": warnings,
             }))?
         );
@@ -3251,7 +3274,12 @@ fn print_memory_on_status(
 }
 
 fn print_memory_records(records: &[MemoryRecord], warnings: &[String], json: bool) -> Result<()> {
+    let now = memory_now_millis();
     if json {
+        let records = records
+            .iter()
+            .map(|record| memory_record_json(record, now))
+            .collect::<Vec<_>>();
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
@@ -3262,10 +3290,18 @@ fn print_memory_records(records: &[MemoryRecord], warnings: &[String], json: boo
     } else {
         println!("records: {}", records.len());
         for record in records {
+            let blockers = memory_runtime_blockers(record, now);
+            let blocked_by = if blockers.is_empty() {
+                "-".to_string()
+            } else {
+                blockers.join(",")
+            };
             println!(
-                "{}\t{}\t{}\t{}\trev={}\tmerged={}\t{}\t{}",
+                "{}\tstorage={}\truntime={}\tblocked_by={}\t{}\t{}\trev={}\tmerged={}\t{}\t{}",
                 record.id,
                 memory_status_label(record.status),
+                memory_runtime_status_label(record, now),
+                blocked_by,
                 memory_kind_label(record.kind),
                 memory_sensitivity_label(record.sensitivity),
                 record.revision,
@@ -3282,11 +3318,12 @@ fn print_memory_records(records: &[MemoryRecord], warnings: &[String], json: boo
 }
 
 fn print_memory_record(record: &MemoryRecord, warnings: &[String], json: bool) -> Result<()> {
+    let now = memory_now_millis();
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "record": record,
+                "record": memory_record_json(record, now),
                 "warnings": warnings,
             }))?
         );
@@ -3300,6 +3337,15 @@ fn print_memory_record(record: &MemoryRecord, warnings: &[String], json: bool) -
             memory_sensitivity_label(record.sensitivity)
         );
         println!("status: {}", memory_status_label(record.status));
+        println!(
+            "runtime_status: {}",
+            memory_runtime_status_label(record, now)
+        );
+        println!("runtime_recallable: {}", record.is_recallable_at(now));
+        let blockers = memory_runtime_blockers(record, now);
+        if !blockers.is_empty() {
+            println!("runtime_blockers: {}", blockers.join(","));
+        }
         println!("confidence: {}", record.confidence);
         println!("importance: {}", record.importance);
         if let Some(source_session_id) = &record.source_session_id {
@@ -3316,6 +3362,62 @@ fn print_memory_record(record: &MemoryRecord, warnings: &[String], json: bool) -
         }
     }
     Ok(())
+}
+
+fn memory_record_json(record: &MemoryRecord, now_millis: u128) -> serde_json::Value {
+    let mut value = serde_json::to_value(record).unwrap_or_else(|_| serde_json::json!({}));
+    if let serde_json::Value::Object(map) = &mut value {
+        let blockers = memory_runtime_blockers(record, now_millis);
+        map.insert(
+            "runtime_status".to_string(),
+            serde_json::json!(memory_runtime_status_label(record, now_millis)),
+        );
+        map.insert(
+            "runtime_recallable".to_string(),
+            serde_json::json!(blockers.is_empty()),
+        );
+        map.insert("runtime_blockers".to_string(), serde_json::json!(blockers));
+    }
+    value
+}
+
+fn memory_runtime_status_label(record: &MemoryRecord, now_millis: u128) -> &'static str {
+    if memory_runtime_blockers(record, now_millis).is_empty() {
+        "recallable"
+    } else {
+        "not_recallable"
+    }
+}
+
+fn memory_runtime_blockers(record: &MemoryRecord, now_millis: u128) -> Vec<&'static str> {
+    let mut blockers = Vec::new();
+    match record.status {
+        MemoryStatus::Active => {}
+        MemoryStatus::Pending => blockers.push("pending"),
+        MemoryStatus::Rejected => blockers.push("rejected"),
+        MemoryStatus::Archived => blockers.push("archived"),
+    }
+    if record
+        .temporal
+        .valid_from_millis
+        .is_some_and(|valid_from| valid_from > now_millis)
+    {
+        blockers.push("future_valid_from");
+    }
+    if record
+        .temporal
+        .expires_at_millis
+        .is_some_and(|expires_at| expires_at <= now_millis)
+    {
+        blockers.push("expired");
+    }
+    if record.invalidation.invalidated_at_millis.is_some() {
+        blockers.push("invalidated");
+    }
+    if record.invalidation.superseded_by.is_some() {
+        blockers.push("superseded");
+    }
+    blockers
 }
 
 fn memory_scope_from_flags(global: bool, workspace: bool) -> PersonaMemoryScope {

@@ -25,6 +25,7 @@ windows-sys.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 wiremock.workspace = true
+yunxi-agent-persona = { path = "../yunxi-agent-persona" }
 yunxi-agent-provider = { path = "../yunxi-agent-provider" }
 yunxi-agent-runtime = { path = "../yunxi-agent-runtime" }
 yunxi-agent-tools = { path = "../yunxi-agent-tools" }

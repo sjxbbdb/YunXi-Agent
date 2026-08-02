@@ -1798,11 +1798,26 @@ fn cli_language_change_creates_supersession_chain() {
         old["invalidation"]["superseded_by"].as_str(),
         new["id"].as_str()
     );
+    assert_eq!(old["runtime_recallable"].as_bool(), Some(false));
+    assert_eq!(old["runtime_status"].as_str(), Some("not_recallable"));
+    assert!(
+        old["runtime_blockers"]
+            .as_array()
+            .is_some_and(|blockers| blockers.iter().any(|value| value == "superseded")),
+        "old superseded record should explain why runtime will not load it: {old:#}"
+    );
+    assert_eq!(new["runtime_recallable"].as_bool(), Some(true));
+    assert_eq!(new["runtime_status"].as_str(), Some("recallable"));
     let supersedes = new["invalidation"]["supersedes"]
         .as_array()
         .expect("supersedes array");
     assert_eq!(supersedes.len(), 1);
     assert_eq!(supersedes[0], old["id"]);
+
+    let status = run_json_command_with_env(&home, &["--cwd", cwd, "--json", "memory", "status"]);
+    assert_eq!(status["counts"]["active"].as_u64(), Some(2));
+    assert_eq!(status["runtime"]["recallable"].as_u64(), Some(1));
+    assert_eq!(status["runtime"]["non_recallable_active"].as_u64(), Some(1));
 }
 
 #[test]

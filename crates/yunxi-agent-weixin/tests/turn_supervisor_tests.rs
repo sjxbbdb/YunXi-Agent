@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,11 +11,13 @@ use yunxi_agent_core::{
     AgentMessageStreamPhase, AgentResult, AgentRunControl, AgentRunResult, AgentRunStatus,
     ApprovalMode, CommandStatus, MemoryExtractionMode, SandboxMode,
 };
+use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings};
 use yunxi_agent_provider::{AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse};
 use yunxi_agent_runtime::YunXiRuntimeBackend;
 use yunxi_agent_storage::{
-    FileSessionStore, FileWeixinStateStore, WeixinConnectionStateRecord, WeixinInboundBatchCommit,
-    WeixinInboundCommitItem, WeixinPendingInboundState, WeixinStateSnapshot, WeixinStateStore,
+    FilePersonaMemoryStore, FileSessionStore, FileWeixinStateStore, WeixinConnectionStateRecord,
+    WeixinInboundBatchCommit, WeixinInboundCommitItem, WeixinPendingInboundState,
+    WeixinStateSnapshot, WeixinStateStore,
 };
 use yunxi_agent_tools::NoopToolRuntime;
 use yunxi_agent_weixin::ilink::{MessageItem, TextItem, WeixinMessage};
@@ -27,6 +30,7 @@ use yunxi_agent_weixin::{
 const ACCOUNT: &str = "account#933b5bde";
 const WORKSPACE: &str = "workspace#73521066";
 const ENDPOINT: &str = "https://ilinkai.weixin.qq.com/";
+static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn test_data_key() -> SecretString {
     SecretString::new("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
@@ -377,6 +381,91 @@ async fn supervisor_restores_parent_history_with_real_runtime_after_store_reload
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn supervisor_real_runtime_loads_same_long_term_memory_context_as_cli() {
+    let _guard = HOME_ENV_LOCK.lock().expect("home env lock");
+    let home = TempDir::new().expect("yunxi home");
+    let previous_home = std::env::var_os("YUNXI_HOME");
+    unsafe {
+        std::env::set_var("YUNXI_HOME", home.path());
+    }
+
+    async {
+        let (temp, store) = store_fixture();
+        PersonaSettings {
+            persona_enabled: true,
+            memory_enabled: true,
+            companion_enabled: true,
+            cloud_control_enabled: false,
+            active_profile: "yunxi_companion_strong".to_string(),
+        }
+        .save()
+        .expect("save isolated settings");
+
+        let memory_store = FilePersonaMemoryStore::for_workspace(temp.path());
+        let memory = MemoryRecord::new(
+            "cross-channel-report-format",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "跨端协同记忆：测试报告使用三段式格式——现象、影响、复现。",
+            1000,
+        )
+        .with_status(MemoryStatus::Active);
+        memory_store
+            .append(&memory)
+            .expect("append shared long-term memory");
+
+        let item_id = seed_pending(
+            &store,
+            ACCOUNT,
+            "raw-message-cross-channel-memory",
+            "raw-peer-cross-channel-memory",
+            "请根据长期记忆说出我的测试报告格式",
+            1100,
+        );
+        let provider = HistoryCapturingProvider::default();
+        let session_store = FileSessionStore::for_workspace(temp.path());
+        let backend = YunXiRuntimeBackend::with_parts(
+            provider.clone(),
+            NoopToolRuntime,
+            session_store,
+        );
+        let mut options = supervisor_options(temp.path());
+        options.config.companion.enabled = true;
+        let supervisor = WeixinTurnSupervisor::with_test_sink(
+            store,
+            test_data_key(),
+            options,
+            WeixinRuntimeTestSink::default(),
+        );
+
+        let report = supervisor
+            .run_pending_turn(&backend, ACCOUNT, &item_id)
+            .await
+            .expect("weixin runtime turn with shared memory");
+        assert_eq!(report.status, AgentRunStatus::Completed);
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 1);
+        let system_context = requests[0]
+            .iter()
+            .filter(|message| message.role == yunxi_agent_provider::ProviderRole::System)
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(system_context.contains("yunxi_persona_context version=\"2.3.3\""));
+        assert!(system_context.contains("reply_style_guidance"));
+        assert!(
+            system_context.contains("测试报告使用三段式格式")
+                && system_context.contains("现象、影响、复现"),
+            "Weixin runtime should load the same long-term memory context as CLI/runtime: {system_context}"
+        );
+    }
+    .await;
+
+    restore_env_var("YUNXI_HOME", previous_home);
+}
+
 #[derive(Clone)]
 struct BlockingBackend {
     started: Arc<Notify>,
@@ -604,5 +693,14 @@ async fn supervisor_observes_agent_events_but_weixin_uses_final_text_only() {
         "bearer token",
     ] {
         assert!(!outbound_text.contains(forbidden));
+    }
+}
+
+fn restore_env_var(name: &str, value: Option<OsString>) {
+    unsafe {
+        match value {
+            Some(value) => std::env::set_var(name, value),
+            None => std::env::remove_var(name),
+        }
     }
 }

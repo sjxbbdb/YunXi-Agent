@@ -75,7 +75,16 @@
 
 ## 提交、推送和 tag 状态
 
-代码、测试、release 构建、安装替换和日志已完成；下一步创建 release commit、annotated `v2.3.3-hotfix.2` tag，并使用 GitHub CLI + Git Data API non-force 推送到 `https://github.com/sjxbbdb/YunXi-Agent`。历史 tag 不删除、不移动、不覆盖。
+发布结果：
+
+- 本地 release commit：`3511d73c9002d82e4b91a52764b81e733311d36c`。
+- 本地 annotated tag：`v2.3.3-hotfix.2`，tag object `533ff3e5d480423c1aaa7c468e3183e48b8ab7b4`，target 为本地 release commit。
+- 远端 release commit：`9673398eea108763f09abd168f7723cc96e2ba52`。
+- 远端 annotated tag：`v2.3.3-hotfix.2`，tag object `ec052422936a4d547395981180516c7f5d8055dd`，target 为远端 release commit。
+- 远端发布以 `e198f6e0346f4278d8e1f5cc8e07b55d3a77955d` 为父提交，`master` 已 non-force 更新到远端 release commit。
+- 历史 `v2.3.3`、`v2.3.3-hotfix.1` tag 均存在且未移动。
+
+说明：由于本机 Git smart HTTP 此前无法稳定连接 GitHub，本次发布继续使用 GitHub CLI + Git Data API 创建 blob/tree/commit/ref/tag；未使用 force，未删除、移动或覆盖历史 tag。API key 仅由 GitHub CLI 使用，未打印、未写入仓库、Git 配置或 remote URL。本条最终发布结果将作为 tag 后 docs-only 收口提交推进 `master`，不移动 `v2.3.3-hotfix.2` tag。
 
 ## 安全边界
 

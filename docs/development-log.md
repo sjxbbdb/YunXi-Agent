@@ -35,7 +35,7 @@
 
 报告路径：`D:\YunXi Agent\docs\reports\development\2026-08-02-172423-yunxi-agent-v2-3-3-hotfix-2-coordination-regression-development-log.md`
 
-提交、推送和 Git tag 状态：代码、测试、release 构建、安装替换和日志已完成；下一步创建 release commit、annotated `v2.3.3-hotfix.2` tag，并使用 GitHub CLI + Git Data API non-force 推送。历史 tag 不删除、不移动、不覆盖。
+提交、推送和 Git tag 状态：v2.3.3-hotfix.2 release 已通过 GitHub CLI + Git Data API non-force 发布。 本地 release commit 为 `3511d73c9002d82e4b91a52764b81e733311d36c`，本地 annotated tag object 为 `533ff3e5d480423c1aaa7c468e3183e48b8ab7b4`，target 为本地 release commit。远端 release commit 为 `9673398eea108763f09abd168f7723cc96e2ba52`，远端 annotated tag object 为 `ec052422936a4d547395981180516c7f5d8055dd`，tag target 为远端 release commit。历史 tag 不删除、不移动、不覆盖。本条最终发布结果将作为 tag 后 docs-only 收口提交推进 `master`，不移动 `v2.3.3-hotfix.2` tag。
 
 安全边界：未删除、递归清理、移动或清理用户目录；未执行 `git reset`、`git clean` 或 force 操作；安装替换只针对两个明确 YunXi 安装目录；停止进程只针对安装目录下旧微信服务 PID `20020`。
 

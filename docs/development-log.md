@@ -1,3 +1,27 @@
+## 2026-08-02 11:46:05 +08:00
+
+发布收口：自定义人格与灵魂档案功能已完成验证并发布为 `v2.3.0`。
+
+验证结果：
+- `cargo test --workspace`：全量通过。
+- `cargo fmt --all -- --check`：通过。
+- `git diff --check`：通过，无 whitespace error。
+- `cargo build -p yunxi-agent-cli --release --bins`：通过。
+- `D:\YunXi Agent\target\release\yunxi.exe --version`：`yunxi 2.3.0`。
+- `D:\YunXi Agent\target\release\yunxi-agent-cli.exe --version`：`yunxi 2.3.0`。
+
+GitHub 发布：
+- GitHub CLI 登录账户：`sjxbbdb`。
+- 远程 `master` 已以 non-force 方式更新到 `ca7f09496cde564ec3e3ee2fb9488d338de05421`。
+- 新建 annotated tag：`v2.3.0`，tag object `2f60c2bcfadf1f4b6901de3e4dc79d3032640d06`。
+- GitHub Release：`https://github.com/sjxbbdb/YunXi-Agent/releases/tag/v2.3.0`。
+- 未删除、移动或覆盖任何历史 tag；未使用 `force`。
+- 由于 Git HTTPS 传输在本机连接 GitHub 时失败，本次使用 GitHub CLI 的 REST API 完成了 blob/tree/commit/ref/tag/release 的等价 non-force 发布；远程提交树与本地已验证工作树一致。
+
+安装状态：仅完成 release 构建和 GitHub 发布，未覆盖 PATH 中现有安装文件，避免未经用户明确授权改变当前运行版本。
+
+署名：开发者
+
 ## 2026-08-02 11:30:55 +08:00
 
 工作目标：将陪伴层从固定内置人格扩展为可持久化、可校验、可被 TUI/CLI/微信统一使用的自定义人格与灵魂档案。

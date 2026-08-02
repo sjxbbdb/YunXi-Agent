@@ -229,7 +229,7 @@ impl WeixinTurnSupervisor {
                 let mut final_response_present = false;
                 if target == WeixinPendingInboundState::Succeeded
                     && let Some(final_response) = result.final_response.as_ref()
-                    && !final_response.trim().is_empty()
+                    && let Some(public_response) = sanitize_public_final_response(final_response)
                 {
                     self.sink.write_final_response(WeixinRuntimeSinkRecord {
                         account_id: payload.account_id.clone(),
@@ -239,7 +239,7 @@ impl WeixinTurnSupervisor {
                         session_id: runtime_session_id.clone(),
                         reply_to_user_id: payload.reply_to_user_id.clone(),
                         reply_context_token: payload.reply_context_token.clone(),
-                        final_response: final_response.clone(),
+                        final_response: public_response,
                     })?;
                     final_response_present = true;
                 }
@@ -611,6 +611,45 @@ fn is_safe_public_agent_text(content: &str) -> bool {
     !contains_sensitive_agent_marker(content) && !contains_absolute_path_marker(content)
 }
 
+fn sanitize_public_final_response(content: &str) -> Option<String> {
+    let mut lines = Vec::new();
+    let mut awaiting_reason = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if is_internal_companion_heading(trimmed) {
+            awaiting_reason = true;
+            continue;
+        }
+        if awaiting_reason {
+            if trimmed.starts_with("原因：") || trimmed.starts_with("原因:") {
+                awaiting_reason = false;
+                continue;
+            }
+            awaiting_reason = false;
+        }
+        lines.push(line);
+    }
+
+    let mut sanitized = lines.join("\n");
+    while sanitized.contains("\n\n\n") {
+        sanitized = sanitized.replace("\n\n\n", "\n\n");
+    }
+    let sanitized = sanitized.trim().to_string();
+    (!sanitized.is_empty()).then_some(sanitized)
+}
+
+fn is_internal_companion_heading(line: &str) -> bool {
+    [
+        "[关心]",
+        "[下一步建议]",
+        "[阶段总结]",
+        "[需要确认的工具建议]",
+    ]
+    .iter()
+    .any(|marker| line.starts_with(marker))
+}
+
 fn contains_sensitive_agent_marker(content: &str) -> bool {
     let lower = content.to_ascii_lowercase();
     [
@@ -925,6 +964,23 @@ mod tests {
         request_task.abort();
         let _ = request_task.await;
         let _ = supervise.await;
+    }
+
+    #[test]
+    fn public_final_response_hides_internal_companion_blocks() {
+        let content = "正常回复。\n\n[关心] 最近的上下文有变化：关系记录更新。\n原因：a recent relationship or context milestone changed";
+
+        assert_eq!(
+            sanitize_public_final_response(content).as_deref(),
+            Some("正常回复。")
+        );
+    }
+
+    #[test]
+    fn public_final_response_drops_companion_only_messages() {
+        let content = "[阶段总结] 当前阶段已完成。\n原因：a bounded stage summary is due";
+
+        assert_eq!(sanitize_public_final_response(content), None);
     }
 }
 

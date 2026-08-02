@@ -1,26 +1,43 @@
 ## 2026-08-02 12:30:11 +08:00
 
-工作目标：在不破坏现有 Runtime、Persona、Memory、CLI、TUI 和微信逻辑的前提下，完善陪伴层的信号识别、关系触发和消息呈现。
+工作目标：在不破坏现有 Runtime、Persona、Memory、CLI、TUI 和微信逻辑的前提下，完善陪伴层的信号识别、关系触发和消息呈现，并发布补丁版本 `v2.3.1`。
 
 执行内容：
 1. 修复陪伴计划重复显示问题：陪伴提示继续作为独立 Runtime 消息记录和发送，不再拼接进 `final_response`，避免 CLI/微信重复展示，也避免陪伴元数据进入长期记忆抽取。
 2. 将陪伴信号解析从 Runtime 收回 `yunxi-agent-companion` crate，新增 `CompanionInput::from_prompt` 和 `CompanionInput::has_signal`，统一中英文提醒、未完成任务、话题延续、阶段总结、工具请求和长时间空闲识别。
 3. 限制关系里程碑触发条件：只有被记忆路由实际选中的关系解释才允许触发陪伴提示，被过滤、失效或未选中的关系记录不再误触发。
 4. 增加回归测试，覆盖陪伴提示独立投递、最终回复保持不变、普通对话静默、输入信号解析以及关系解释选中/过滤行为。
+5. 将 workspace 版本、README 和 TUI 版本快照从 `2.3.0` 同步提升到 `2.3.1`，并完成 release 构建。
 
 修改文件与路径：
 - `D:\YunXi Agent\crates\yunxi-agent-companion\src\lib.rs`
 - `D:\YunXi Agent\crates\yunxi-agent-runtime\src\lib.rs`
 - `D:\YunXi Agent\crates\yunxi-agent-runtime\tests\runtime_tests.rs`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_100x30.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_120x40.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_200x50.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_58x18.txt`
+- `D:\YunXi Agent\crates\yunxi-agent-tui\src\snapshots\full_frame_80x24.txt`
+- `D:\YunXi Agent\Cargo.toml`
+- `D:\YunXi Agent\Cargo.lock`
+- `D:\YunXi Agent\README.md`
 - `D:\YunXi Agent\docs\development-log.md`
 
 验证结果：
 - `cargo fmt --all -- --check`：通过。
+- `cargo check --workspace`：通过。
 - `cargo test -p yunxi-agent-companion -p yunxi-agent-runtime`：通过。
 - `cargo test --workspace`：通过。
-- Git 工作区仅包含上述三处代码/测试修改及本日志修改；未触碰用户目录、微信状态或其他运行数据。
+- `cargo build --release --bins`：通过。
+- `target\release\yunxi.exe --version` 与 `target\release\yunxi-agent-cli.exe --version`：均为 `yunxi 2.3.1`。
+- 未触碰用户目录、微信状态或其他运行数据。
 
-提交、推送和 tag 状态：准备按固定流程发布为 `v2.3.1`；不删除、移动或覆盖历史 tag，不使用 `force`。
+提交、推送和 tag 状态：
+- 本地提交：`9c0a1e28bef6c15a38749f43eded5debbfd96993`。
+- GitHub CLI API non-force 更新远程 `master`：`95ade63364d67941b57a6675be270df1497035ff`。
+- 新建 annotated tag：`v2.3.1`，tag object `4d623959a203673145791de119931a4cac6c8b65`。
+- GitHub Release：`https://github.com/sjxbbdb/YunXi-Agent/releases/tag/v2.3.1`。
+- 未删除、移动或覆盖任何历史 tag，未使用 `force`。
 
 清理状态：未执行删除、递归清理、移动目录、`git clean`、`force` 操作；测试产生的 `target` 为正常 Rust 构建缓存。
 

@@ -790,6 +790,10 @@ body[data-active-view="memory"] .memory-field {
   --float-x: 0px;
   --float-y: 0px;
   --float-r: 0deg;
+  --breath-duration: 7.2s;
+  --breath-delay: 0s;
+  --breath-scale: 1.075;
+  --breath-opacity: 0.42;
   position: absolute;
   left: var(--orb-left);
   top: var(--orb-top);
@@ -1471,6 +1475,24 @@ body[data-active-view="persona"] .persona-deck {
     background: rgba(24, 20, 17, 0.96);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+}
+
+@keyframes memoryBreath {
+  0%,
+  100% {
+    opacity: calc(var(--breath-opacity, 0.42) * 0.38);
+    transform: translate3d(0, 0, 0) scale(0.93);
+  }
+
+  48% {
+    opacity: var(--breath-opacity, 0.42);
+    transform: translate3d(0, 0, 0) scale(var(--breath-scale, 1.075));
+  }
+
+  62% {
+    opacity: calc(var(--breath-opacity, 0.42) * 0.72);
+    transform: translate3d(0, 0, 0) scale(1.015);
   }
 }
 
@@ -2884,8 +2906,22 @@ body[data-active-view="memory"] .memory-field {
 }
 
 .memory-orb-visual::before {
-  inset: 7%;
-  border-color: rgba(238, 242, 243, 0.12);
+  inset: -7%;
+  border-color: color-mix(in srgb, var(--orb-accent) 24%, transparent);
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--orb-accent) 13%, transparent) 0 48%,
+    transparent 72%
+  );
+  box-shadow:
+    0 0 1.2rem color-mix(in srgb, var(--orb-accent) 24%, transparent),
+    0 0 2.8rem color-mix(in srgb, var(--orb-accent) 12%, transparent);
+  opacity: calc(var(--breath-opacity, 0.42) * 0.38);
+  pointer-events: none;
+  transform: translate3d(0, 0, 0) scale(0.93);
+  animation: memoryBreath var(--breath-duration, 7.2s) cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  animation-delay: var(--breath-delay, 0s);
+  will-change: transform, opacity;
 }
 
 .memory-orb-visual::after {
@@ -2923,6 +2959,15 @@ body[data-active-view="memory"] .memory-field {
     inset 0 0 1.45rem rgba(238, 242, 243, 0.13),
     0 18px 46px rgba(2, 8, 11, 0.3);
   filter: saturate(112%) brightness(1.04);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .memory-orb-visual::before {
+    opacity: 0.22;
+    transform: translate3d(0, 0, 0) scale(1);
+    animation: none;
+    will-change: auto;
+  }
 }
 
 .memory-reveal {

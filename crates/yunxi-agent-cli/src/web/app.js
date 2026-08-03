@@ -633,6 +633,10 @@ function renderMemory(records = []) {
     const floatR = (seeded(seed, 17) - 0.5) * 6;
     const duration = 7 + seeded(seed, 19) * 8;
     const delay = seeded(seed, 23) * -6;
+    const breathDuration = 5.6 + seeded(seed, 29) * 3.2;
+    const breathDelay = seeded(seed, 31) * -breathDuration;
+    const breathScale = 1.055 + seeded(seed, 37) * 0.04;
+    const breathOpacity = 0.34 + seeded(seed, 41) * 0.16;
 
     const button = document.createElement("button");
     const shortContent = memoryOrbLabel(record);
@@ -651,6 +655,10 @@ function renderMemory(records = []) {
     button.style.setProperty("--float-r", `${floatR.toFixed(2)}deg`);
     button.style.setProperty("--float-duration", `${duration.toFixed(2)}s`);
     button.style.setProperty("--float-delay", `${delay.toFixed(2)}s`);
+    button.style.setProperty("--breath-duration", `${breathDuration.toFixed(2)}s`);
+    button.style.setProperty("--breath-delay", `${breathDelay.toFixed(2)}s`);
+    button.style.setProperty("--breath-scale", breathScale.toFixed(3));
+    button.style.setProperty("--breath-opacity", breathOpacity.toFixed(3));
     button.style.setProperty("--orb-accent", memoryColor(record));
     const visual = document.createElement("span");
     visual.className = "memory-orb-visual";

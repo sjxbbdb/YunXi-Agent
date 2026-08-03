@@ -1,6 +1,6 @@
-# YunXi Agent v2.3.3-hotfix.5
+# YunXi Agent v2.3.3-hotfix.6
 
-YunXi Agent v2.3.3-hotfix.5 is a local-first Rust general companion Agent with terminal, Web, and Weixin entry points plus a reusable core library.
+YunXi Agent v2.3.3-hotfix.6 is a local-first Rust general companion Agent with terminal, Web, and Weixin entry points plus a reusable core library.
 The default runtime is YunXi-owned and does not depend on the upstream Codex
 runtime.
 
@@ -11,7 +11,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 
 ## Development Track
 
-The current `v2.3.3-hotfix.5` development workspace is the merged Weixin and local Web integration
+The current `v2.3.3-hotfix.6` development workspace is the merged Weixin and local Web integration
 line. It keeps the v2.1.x QR login, Windows Credential Manager secret boundary,
 atomic `WeixinStateStore`, stale account-lock recovery, pair lifecycle,
 authenticated encrypted pending inbound, and existing Runtime session binding.
@@ -464,7 +464,7 @@ contains per-scenario checks plus aggregate metrics, including
 `proactive_boundary_violation_count`, and `tool_approval_bypass_count`.
 ## Install On Windows
 
-Build and install the v2.3.3-hotfix.5 CLI into a user-local bin directory:
+Build and install the v2.3.3-hotfix.6 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"

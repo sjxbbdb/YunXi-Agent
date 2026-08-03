@@ -36,11 +36,16 @@ const state = {
   activePersonaIndex: 0,
   gsapLoader: null,
   viewAnimations: [],
+  viewTimeline: null,
+  dockTimeline: null,
+  lastMessageSignature: null,
   personaEntrancePlayed: false,
   autoResizeFrame: 0,
   resizeFrame: 0,
   memoryCloseTimer: 0,
   personaCloseTimer: 0,
+  memoryTimeline: null,
+  personaTimeline: null,
   lastMemorySource: null,
   lastPersonaSource: null,
   sending: false,
@@ -209,15 +214,60 @@ function showView(name) {
 function animateViewEntrance(name) {
   cancelAnimations(state.viewAnimations);
   state.viewAnimations = [];
-  if (prefersReducedMotion() || name === "persona") return;
+  state.viewTimeline?.kill?.();
+  state.viewTimeline = null;
+  if (prefersReducedMotion()) return;
   const view = nodes.views.find((candidate) => candidate.dataset.view === name);
   if (!view || view.hidden) return;
   const selectors = {
-    chat: ".chat-hero > *",
-    memory: ".memory-head > *",
+    chat: ".chat-hero > *, .chat-panel",
+    memory: ".memory-head, .memory-field",
+    persona: ".persona-stage",
   };
   const targets = Array.from(view.querySelectorAll(selectors[name] || ":scope > *"));
+  if (window.gsap) {
+    state.viewTimeline = window.gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .addLabel("enter")
+      .fromTo(view, { autoAlpha: 0 }, { autoAlpha: 1, duration: 0.18, clearProps: "opacity,visibility" }, "enter")
+      .fromTo(
+        targets,
+        { y: 10, autoAlpha: 0 },
+        {
+          y: 0,
+          autoAlpha: 1,
+          duration: 0.34,
+          stagger: 0.035,
+          clearProps: "transform,opacity,visibility",
+        },
+        "enter+=0.04",
+      );
+    return;
+  }
   state.viewAnimations = animateElements(targets, { y: 6, duration: 240, stagger: 22 });
+}
+
+function animateDockSelection(item) {
+  const icon = item?.querySelector(".dock-icon");
+  if (!icon || prefersReducedMotion()) return;
+  if (window.gsap) {
+    state.dockTimeline?.kill?.();
+    state.dockTimeline = window.gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .to(icon, { y: 1, scale: 0.84, duration: 0.08 })
+      .to(icon, { y: -1, scale: 1.12, duration: 0.15 })
+      .to(icon, { y: 0, scale: 1, duration: 0.18, clearProps: "transform" });
+    return;
+  }
+  const feedback = icon.animate(
+    [
+      { transform: "translate3d(0, 1px, 0) scale(0.84)" },
+      { transform: "translate3d(0, -1px, 0) scale(1.12)" },
+      { transform: "translate3d(0, 0, 0) scale(1)" },
+    ],
+    { duration: 360, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+  );
+  feedback.finished.then(() => feedback.cancel()).catch(() => {});
 }
 
 function setupDockMotion() {
@@ -239,7 +289,9 @@ function setupDockMotion() {
     if (pointerX === null) return;
     const values = centers.map((center) => {
       const distance = Math.abs(pointerX - center);
-      const strength = Math.max(0, 1 - distance / 106);
+      const strength = window.gsap?.utils
+        ? window.gsap.utils.clamp(0, 1, window.gsap.utils.mapRange(106, 0, 0, 1, distance))
+        : clampNumber(1 - distance / 106, 0, 1);
       return { scale: 1 + strength * 0.14, y: -strength * 4 };
     });
     values.forEach((value, index) => {
@@ -267,6 +319,7 @@ function setupDockMotion() {
 
   const reset = () => {
     pointerX = null;
+    nodes.dock.classList.remove("is-tooltip-suppressed");
     if (frame) window.cancelAnimationFrame(frame);
     frame = 0;
     items.forEach((item, index) => {
@@ -286,6 +339,12 @@ function setupDockMotion() {
     schedule();
   });
   nodes.dock.addEventListener("pointerleave", reset);
+  items.forEach((item) => {
+    item.addEventListener("click", () => {
+      nodes.dock.classList.add("is-tooltip-suppressed");
+      animateDockSelection(item);
+    });
+  });
   window.addEventListener("resize", scheduleMeasure);
 
   ensureGsap().then((gsap) => {
@@ -316,6 +375,11 @@ function autoResize() {
 
 function renderMessages() {
   if (!nodes.chatLog) return;
+  const latestMessage = state.messages.at(-1);
+  const latestSignature = latestMessage
+    ? `${latestMessage.role}:${latestMessage.kind || ""}:${latestMessage.ts || 0}:${latestMessage.text || ""}`
+    : "";
+  const shouldAnimateLatest = latestSignature !== state.lastMessageSignature;
   nodes.chatLog.innerHTML = "";
   for (const message of state.messages) {
     const article = document.createElement("article");
@@ -339,6 +403,32 @@ function renderMessages() {
     nodes.chatLog.appendChild(article);
   }
   nodes.chatLog.scrollTop = nodes.chatLog.scrollHeight;
+  state.lastMessageSignature = latestSignature;
+  if (shouldAnimateLatest && latestMessage) {
+    const latestArticle = nodes.chatLog.lastElementChild;
+    window.requestAnimationFrame(() => animateMessageArrival(latestArticle));
+  }
+}
+
+function animateMessageArrival(article) {
+  if (!article || prefersReducedMotion()) return;
+  const bubble = article.querySelector(".message-bubble");
+  if (window.gsap) {
+    window.gsap.killTweensOf([article, bubble]);
+    window.gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .fromTo(article, { y: 8, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.28, clearProps: "transform,opacity,visibility" })
+      .fromTo(bubble, { scale: 0.988 }, { scale: 1, duration: 0.3, clearProps: "transform" }, "<");
+    return;
+  }
+  const arrival = article.animate(
+    [
+      { opacity: 0, transform: "translate3d(0, 8px, 0)" },
+      { opacity: 1, transform: "translate3d(0, 0, 0)" },
+    ],
+    { duration: 280, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+  );
+  arrival.finished.then(() => arrival.cancel()).catch(() => {});
 }
 
 function pushMessage(role, message, meta, kind) {
@@ -465,13 +555,24 @@ function dateText(value) {
   }
 }
 
-function memoryColor(record, index) {
+function memoryColor(record) {
   const status = text(fieldValue(record, "status", "active")).toLowerCase();
-  if (status === "pending") return "#f3c78d";
-  if (status === "rejected") return "#f38da4";
-  if (status === "archived") return "#a7a7a7";
-  const palette = ["#a9d8e9", "#f3c78d", "#9fd7bd", "#d7b3f4"];
-  return palette[index % palette.length];
+  if (status === "pending") return "#c5a16f";
+  if (status === "rejected") return "#bd858c";
+  if (status === "archived") return "#858d89";
+  return "#9fc5d6";
+}
+
+function memoryOrbLabel(record) {
+  const source = text(fieldValue(record, "content"))
+    .replace(/\s+/g, " ")
+    .trim();
+  const cleaned = source
+    .replace(/^(?:用户纠正\s*\/\s*限制|目标候选|事实候选|偏好候选|项目规则候选|长期记忆|记忆)\s*[：:]\s*/u, "")
+    .replace(/^请测试长期记忆\s*[：:]\s*/u, "")
+    .trim();
+  const firstSentence = cleaned.split(/[。！？!?；;\n]/u)[0]?.trim() || cleaned;
+  return truncate(firstSentence || source, 13);
 }
 
 function renderMemory(records = []) {
@@ -534,10 +635,13 @@ function renderMemory(records = []) {
     const delay = seeded(seed, 23) * -6;
 
     const button = document.createElement("button");
-    const shortContent = truncate(fieldValue(record, "content"), 18);
+    const shortContent = memoryOrbLabel(record);
+    const status = text(fieldValue(record, "status", "active")).toLowerCase();
     button.type = "button";
     button.className = "memory-orb";
+    button.classList.toggle("is-compact", size < 78);
     button.dataset.short = shortContent;
+    button.dataset.status = status;
     button.setAttribute("aria-label", `打开记忆：${truncate(fieldValue(record, "content"), 36)}`);
     button.style.setProperty("--orb-size", `${size.toFixed(1)}px`);
     button.style.setProperty("--orb-left", `${left.toFixed(1)}px`);
@@ -547,7 +651,7 @@ function renderMemory(records = []) {
     button.style.setProperty("--float-r", `${floatR.toFixed(2)}deg`);
     button.style.setProperty("--float-duration", `${duration.toFixed(2)}s`);
     button.style.setProperty("--float-delay", `${delay.toFixed(2)}s`);
-    button.style.setProperty("--orb-accent", memoryColor(record, index));
+    button.style.setProperty("--orb-accent", memoryColor(record));
     const visual = document.createElement("span");
     visual.className = "memory-orb-visual";
     visual.dataset.short = shortContent;
@@ -631,14 +735,17 @@ function openMemory(record, event, sourceNode) {
   }
   const x = event?.clientX ?? window.innerWidth / 2;
   const y = event?.clientY ?? window.innerHeight / 2;
-  const color = sourceNode?.style.getPropertyValue("--orb-accent") || "#f3c78d";
+  const color = sourceNode?.style.getPropertyValue("--orb-accent") || "#9fc5d6";
   state.lastMemorySource = sourceNode || null;
   renderMemoryDetail(record);
   nodes.memorySpread?.style.setProperty("--spread-x", `${x}px`);
   nodes.memorySpread?.style.setProperty("--spread-y", `${y}px`);
   nodes.memoryReveal.hidden = false;
   spawnMemoryParticles(x, y, color);
-  window.requestAnimationFrame(() => nodes.memoryReveal.classList.add("is-open"));
+  window.requestAnimationFrame(() => {
+    nodes.memoryReveal.classList.add("is-open");
+    animateMemoryReveal();
+  });
   if (sourceNode && !prefersReducedMotion()) {
     if (window.gsap) {
       window.gsap.killTweensOf(sourceNode);
@@ -665,6 +772,8 @@ function openMemory(record, event, sourceNode) {
 
 function closeMemory() {
   if (!nodes.memoryReveal) return;
+  state.memoryTimeline?.kill?.();
+  state.memoryTimeline = null;
   nodes.memoryReveal.classList.remove("is-open");
   if (state.memoryCloseTimer) window.clearTimeout(state.memoryCloseTimer);
   state.memoryCloseTimer = window.setTimeout(() => {
@@ -761,15 +870,7 @@ function renderPersona(payload) {
     preview.textContent = truncate(layer.content, 118);
     body.append(label, title, preview);
 
-    const footer = document.createElement("div");
-    footer.className = "persona-card-footer";
-    const indexLabel = document.createElement("span");
-    const actionLabel = document.createElement("span");
-    indexLabel.textContent = `${index + 1} / ${layers.length}`;
-    actionLabel.textContent = "点击查看";
-    footer.append(indexLabel, actionLabel);
-
-    card.append(body, footer);
+    card.append(body);
     card.addEventListener("click", () => {
       if (index === state.activePersonaIndex) {
         openPersonaDetail(layer, card);
@@ -818,10 +919,10 @@ function updatePersonaDeck() {
       if (offset > half) offset -= count;
       if (offset < -half) offset += count;
     }
-    const lane = clampNumber(offset, -2, 2);
+    const lane = clampNumber(offset, -1, 1);
     const absOffset = Math.abs(offset);
     const absLane = Math.abs(lane);
-    const visible = absOffset <= 2;
+    const visible = absOffset <= 1;
     card.style.setProperty("--offset", String(offset));
     card.style.setProperty("--lane", String(lane));
     card.style.setProperty("--abs-offset", String(absOffset));
@@ -832,10 +933,6 @@ function updatePersonaDeck() {
     card.setAttribute("aria-hidden", visible ? "false" : "true");
     card.tabIndex = visible ? 0 : -1;
     card.style.pointerEvents = visible ? "auto" : "none";
-    const actionLabel = card.querySelector(".persona-card-footer span:last-child");
-    if (actionLabel) {
-      actionLabel.textContent = offset === 0 ? "点击查看" : "切换";
-    }
   });
 }
 
@@ -896,16 +993,17 @@ function openPersonaDetail(layer, sourceNode = null) {
   setNodeText(nodes.personaDetailSummary, meta.summary);
   setNodeText(nodes.personaDetailContent, layer.content);
   nodes.personaDetail.hidden = false;
-  window.requestAnimationFrame(() => nodes.personaDetail.classList.add("is-open"));
-  const detailParts = nodes.personaDetail.querySelectorAll(
-    ".persona-detail-rail > *, .persona-detail-reading > *, .persona-detail-close",
-  );
-  animateElements(detailParts, { y: 8, duration: 220, stagger: 18 });
+  window.requestAnimationFrame(() => {
+    nodes.personaDetail.classList.add("is-open");
+    animatePersonaDetail();
+  });
   window.setTimeout(() => nodes.personaDetailClose?.focus({ preventScroll: true }), prefersReducedMotion() ? 1 : 120);
 }
 
 function closePersonaDetail() {
   if (!nodes.personaDetail) return;
+  state.personaTimeline?.kill?.();
+  state.personaTimeline = null;
   nodes.personaDetail.classList.remove("is-open");
   if (state.personaCloseTimer) window.clearTimeout(state.personaCloseTimer);
   state.personaCloseTimer = window.setTimeout(() => {
@@ -922,6 +1020,140 @@ function animatePersonaDeck() {
   const cards = Array.from(nodes.personaDeck?.querySelectorAll(".persona-card.is-persona-visible") || []);
   const cardParts = cards.flatMap((card) => Array.from(card.children));
   animateElements(cardParts, { y: 6, duration: 220, stagger: 20 });
+}
+
+function animateMemoryReveal() {
+  if (prefersReducedMotion() || !nodes.memoryReveal) return;
+  ensureGsap().then((gsap) => {
+    if (!gsap || nodes.memoryReveal.hidden || !nodes.memoryReveal.classList.contains("is-open")) return;
+    const card = nodes.memoryReveal.querySelector(".memory-detail-card");
+    const parts = card?.querySelectorAll(".detail-kicker, h2, #memory-detail-content, .detail-grid > *") || [];
+    state.memoryTimeline?.kill?.();
+    state.memoryTimeline = gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .addLabel("reveal")
+      .fromTo(nodes.memorySpread, { scale: 0.9, autoAlpha: 0 }, { scale: 1, autoAlpha: 1, duration: 0.34 }, "reveal")
+      .fromTo(card, { y: 16, scale: 0.985, autoAlpha: 0 }, { y: 0, scale: 1, autoAlpha: 1, duration: 0.4 }, "reveal+=0.08")
+      .fromTo(parts, { y: 7, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.24, stagger: 0.025 }, "reveal+=0.18");
+  });
+}
+
+function animatePersonaDetail() {
+  if (prefersReducedMotion() || !nodes.personaDetail) return;
+  ensureGsap().then((gsap) => {
+    if (!gsap || nodes.personaDetail.hidden || !nodes.personaDetail.classList.contains("is-open")) return;
+    const layout = nodes.personaDetail.querySelector(".persona-detail-layout");
+    const railParts = nodes.personaDetail.querySelectorAll(".persona-detail-rail > *");
+    const readingParts = nodes.personaDetail.querySelectorAll(".persona-detail-reading > *");
+    state.personaTimeline?.kill?.();
+    state.personaTimeline = gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .addLabel("open")
+      .fromTo(layout, { y: 18, scale: 0.99, autoAlpha: 0 }, { y: 0, scale: 1, autoAlpha: 1, duration: 0.38 }, "open")
+      .fromTo(railParts, { y: 8, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.26, stagger: 0.035 }, "open+=0.12")
+      .fromTo(readingParts, { y: 10, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.3, stagger: 0.04 }, "open+=0.18");
+  });
+}
+
+function setupPointerMaterials() {
+  const supportsFinePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  if (!supportsFinePointer || prefersReducedMotion()) return;
+
+  const personaControls = new WeakMap();
+  const resetSurface = (surface, onReset) => {
+    if (!surface) return;
+    surface.classList.remove("is-pointer-active");
+    onReset?.(surface);
+  };
+
+  const bindSurface = (root, selector, onUpdate, onReset) => {
+    if (!root) return;
+    let activeSurface = null;
+    root.addEventListener("pointermove", (event) => {
+      const surface = selector ? event.target.closest(selector) : root;
+      if (!surface || !root.contains(surface)) {
+        resetSurface(activeSurface, onReset);
+        activeSurface = null;
+        return;
+      }
+      if (surface !== activeSurface) {
+        resetSurface(activeSurface, onReset);
+        activeSurface = surface;
+        activeSurface.classList.add("is-pointer-active");
+      }
+      const rect = surface.getBoundingClientRect();
+      const x = clampNumber((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+      const y = clampNumber((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1);
+      surface.style.setProperty("--pointer-x", `${(x * 100).toFixed(2)}%`);
+      surface.style.setProperty("--pointer-y", `${(y * 100).toFixed(2)}%`);
+      onUpdate?.(surface, x, y);
+    });
+    root.addEventListener("pointerleave", () => {
+      resetSurface(activeSurface, onReset);
+      activeSurface = null;
+    });
+  };
+
+  const updatePersonaTilt = (card, x, y) => {
+    if (!card.classList.contains("is-active")) return;
+    const content = card.firstElementChild;
+    if (!content) return;
+    if (window.gsap) {
+      let controls = personaControls.get(content);
+      if (!controls) {
+        window.gsap.set(content, { transformPerspective: 900, transformOrigin: "50% 50%" });
+        controls = {
+          rotationX: window.gsap.quickTo(content, "rotationX", { duration: 0.28, ease: "power3.out" }),
+          rotationY: window.gsap.quickTo(content, "rotationY", { duration: 0.28, ease: "power3.out" }),
+          y: window.gsap.quickTo(content, "y", { duration: 0.28, ease: "power3.out" }),
+        };
+        personaControls.set(content, controls);
+      }
+      controls.rotationX((0.5 - y) * 3.2);
+      controls.rotationY((x - 0.5) * 4.2);
+      controls.y(-1.5);
+      return;
+    }
+    content.style.transform = `perspective(900px) rotateX(${((0.5 - y) * 3.2).toFixed(2)}deg) rotateY(${((x - 0.5) * 4.2).toFixed(2)}deg) translate3d(0, -1.5px, 0)`;
+  };
+
+  const resetPersonaTilt = (card) => {
+    const content = card.firstElementChild;
+    if (!content) return;
+    const controls = personaControls.get(content);
+    if (controls) {
+      controls.rotationX(0);
+      controls.rotationY(0);
+      controls.y(0);
+    } else {
+      content.style.removeProperty("transform");
+    }
+  };
+
+  bindSurface(nodes.composer, null);
+  bindSurface(nodes.memoryField, ".memory-orb");
+  bindSurface(nodes.personaDeck, ".persona-card.is-persona-visible", updatePersonaTilt, resetPersonaTilt);
+}
+
+function animateSendFeedback() {
+  const icon = nodes.send?.querySelector("svg");
+  if (!icon || prefersReducedMotion()) return;
+  if (window.gsap) {
+    window.gsap.killTweensOf(icon);
+    window.gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .to(icon, { y: -2, scale: 0.86, duration: 0.08 })
+      .to(icon, { y: 0, scale: 1, duration: 0.2, clearProps: "transform" });
+    return;
+  }
+  const feedback = icon.animate(
+    [
+      { transform: "translate3d(0, -2px, 0) scale(0.86)" },
+      { transform: "translate3d(0, 0, 0) scale(1)" },
+    ],
+    { duration: 280, easing: "cubic-bezier(0.16, 1, 0.3, 1)" },
+  );
+  feedback.finished.then(() => feedback.cancel()).catch(() => {});
 }
 
 function ensureGsap() {
@@ -956,6 +1188,7 @@ nodes.prompt?.addEventListener("keydown", (event) => {
 
 nodes.composer?.addEventListener("submit", (event) => {
   event.preventDefault();
+  animateSendFeedback();
   sendPrompt(nodes.prompt?.value || "");
 });
 
@@ -998,6 +1231,7 @@ window.addEventListener("resize", () => {
 });
 
 setupDockMotion();
+setupPointerMaterials();
 renderMessages();
 autoResize();
 loadStatus();

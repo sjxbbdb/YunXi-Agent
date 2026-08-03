@@ -16,6 +16,12 @@ Keep first-stage work focused on:
 
 Do not add TUI, desktop app, cloud tasks, SDK packaging, update, doctor, completion, marketplace, or full app-server product surfaces unless a later design explicitly includes them.
 
+## Frontend / Web References
+
+When designing or implementing Web UI, frontend components, landing pages, dashboards, or future App-facing Web surfaces, consult the configured `21st` MCP server first for relevant project, component, and interaction references.
+
+Use 21st references as design and implementation inspiration, not as blind copy-paste authority. Keep YunXi Agent's existing runtime, approval, memory, persona, companion, and Weixin boundaries intact.
+
 ## Rust
 
 - Use Rust 2024.

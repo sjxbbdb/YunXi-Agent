@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YunXi Agent Web</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="scene-backdrop" aria-hidden="true">
+      <div class="room-blur room-blur-a"></div>
+      <div class="room-blur room-blur-b"></div>
+      <div class="room-blur room-blur-c"></div>
+      <div class="glass-haze"></div>
+    </div>
+
+    <header class="top-dock" aria-label="YunXi Agent navigation">
+      <nav class="dock-shell" id="yunxi-dock" aria-label="主导航">
+        <button
+          class="dock-item is-active"
+          type="button"
+          data-nav="chat"
+          data-label="聊天"
+          aria-label="聊天"
+          aria-current="page"
+        >
+          <span class="dock-icon dock-icon-chat" aria-hidden="true"></span>
+        </button>
+        <button
+          class="dock-item"
+          type="button"
+          data-nav="memory"
+          data-label="记忆"
+          aria-label="记忆"
+        >
+          <span class="dock-icon dock-icon-memory" aria-hidden="true"></span>
+        </button>
+        <button
+          class="dock-item"
+          type="button"
+          data-nav="persona"
+          data-label="人格"
+          aria-label="人格"
+        >
+          <span class="dock-icon dock-icon-persona" aria-hidden="true"></span>
+        </button>
+      </nav>
+    </header>
+
+    <main class="app-stage">
+      <section class="view view-chat is-active" id="view-chat" data-view="chat">
+        <div class="chat-canvas">
+          <section class="chat-hero" aria-labelledby="chat-title">
+            <p class="section-kicker">本地陪伴智能体</p>
+            <h1 id="chat-title">
+              <span>YunXi</span>
+              <span>Agent</span>
+            </h1>
+            <p class="chat-subtitle">
+              和你一起想清楚，也一起做完。
+            </p>
+            <div class="runtime-strip" id="runtime-strip" aria-live="polite">
+              正在读取运行状态
+            </div>
+          </section>
+
+          <section class="chat-panel" aria-label="聊天">
+            <div class="chat-log" id="chat-log" aria-live="polite"></div>
+            <form class="composer" id="composer">
+              <textarea
+                id="prompt"
+                rows="1"
+                placeholder="和 YunXi 说点什么..."
+                autocomplete="off"
+              ></textarea>
+              <div class="composer-row">
+                <span class="composer-hint">Enter 发送，Shift + Enter 换行</span>
+                <button class="send-button" id="send-button" type="submit" aria-label="发送">
+                  <span aria-hidden="true"></span>
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <section class="view view-memory" id="view-memory" data-view="memory" hidden>
+        <div class="memory-canvas">
+          <section class="memory-head" aria-labelledby="memory-title">
+            <h1 id="memory-title">长期记忆</h1>
+            <p>
+              点击一颗气泡，打开它保存的片段。
+            </p>
+          </section>
+
+          <section
+            class="memory-field"
+            id="memory-field"
+            aria-label="长期记忆气泡"
+            aria-live="polite"
+          >
+            <div class="empty-state">正在读取长期记忆</div>
+          </section>
+        </div>
+
+        <aside
+          class="memory-reveal"
+          id="memory-reveal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="memory-detail-title"
+          hidden
+          aria-live="polite"
+        >
+          <button class="close-reveal" id="memory-close" type="button" aria-label="关闭记忆详情">
+            <span aria-hidden="true"></span>
+          </button>
+          <div class="memory-spread" id="memory-spread"></div>
+          <article class="memory-detail-card">
+            <p class="detail-kicker" id="memory-detail-kind">Memory</p>
+            <h2 id="memory-detail-title">记忆详情</h2>
+            <p id="memory-detail-content"></p>
+            <dl class="detail-grid" id="memory-detail-meta"></dl>
+          </article>
+        </aside>
+      </section>
+
+      <section class="view view-persona" id="view-persona" data-view="persona" hidden>
+        <div class="persona-canvas">
+          <h1 class="visually-hidden" id="persona-title">人格档案</h1>
+
+          <section class="persona-stage" aria-label="人格卡片">
+            <button class="persona-arrow" id="persona-prev" type="button" aria-label="上一张人格卡">
+              <span aria-hidden="true"></span>
+            </button>
+            <div class="persona-deck" id="persona-deck" aria-live="polite">
+              <div class="empty-state">正在读取人格档案</div>
+            </div>
+            <button class="persona-arrow" id="persona-next" type="button" aria-label="下一张人格卡">
+              <span aria-hidden="true"></span>
+            </button>
+          </section>
+
+          <section
+            class="persona-detail"
+            id="persona-detail"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="persona-detail-title"
+            hidden
+            aria-live="polite"
+          >
+            <button class="persona-detail-close" id="persona-detail-close" type="button" aria-label="收起人格详情">
+              <span aria-hidden="true"></span>
+            </button>
+            <div class="persona-detail-layout">
+              <aside class="persona-detail-rail" aria-label="人格层概览">
+                <p class="detail-kicker" id="persona-detail-kicker">人格层</p>
+                <h2 id="persona-detail-title">人格详情</h2>
+                <p class="persona-detail-summary" id="persona-detail-summary">当前会影响回复的稳定设定</p>
+              </aside>
+              <article class="persona-detail-reading" aria-label="人格层详情">
+                <p class="persona-detail-reading-label">人格原文</p>
+                <p id="persona-detail-content"></p>
+              </article>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

@@ -20,9 +20,11 @@ codex-native = ["codex-compat"]
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
 clap.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }

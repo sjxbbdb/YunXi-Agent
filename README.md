@@ -1,6 +1,6 @@
-# YunXi Agent v2.3.1
+# YunXi Agent v2.3.3-hotfix.4
 
-YunXi Agent v2.3.1 is a terminal-first Rust general companion Agent CLI and reusable core library.
+YunXi Agent v2.3.3-hotfix.4 is a local-first Rust general companion Agent with terminal, Web, and Weixin entry points plus a reusable core library.
 The default runtime is YunXi-owned and does not depend on the upstream Codex
 runtime.
 
@@ -11,7 +11,7 @@ with `[offline]` and `/cost` reports that no model call was made.
 
 ## Development Track
 
-The current `v2.3.1` development workspace is the merged Weixin integration
+The current `v2.3.3-hotfix.4` development workspace is the merged Weixin and local Web integration
 line. It keeps the v2.1.x QR login, Windows Credential Manager secret boundary,
 atomic `WeixinStateStore`, stale account-lock recovery, pair lifecycle,
 authenticated encrypted pending inbound, and existing Runtime session binding.
@@ -44,7 +44,7 @@ governance baseline, reports, evidence, and engineering entry points.
 - `crates/yunxi-agent-codex`: standalone compatibility layer around the vendored Codex headless runtime
 - `crates/yunxi-agent-tui`: YunXi-owned terminal TUI presentation boundary, quiet transcript, composer, and approval overlay
 - `crates/yunxi-agent-weixin`: v2.2.0 QR login state machine, system credential boundary, non-secret account metadata, legacy metadata initialization boundary, iLink model/fixed-endpoint client, foreground getupdates serve loop, inbound envelope normalization, authenticated pending payload encryption/recovery, pairing admission, idempotency, Runtime session binding supervisor, bounded per-conversation dispatch queue, delivery spool, slash-command control, and deterministic mock boundary
-- `crates/yunxi-agent-cli`: v2.2.0 terminal CLI package that builds `yunxi`
+- `crates/yunxi-agent-cli`: v2.3.3 terminal and local Web package that builds `yunxi`
   and the compatibility `yunxi-agent-cli`
 - `vendor/codex-rs`: vendored Codex Rust workspace source used by `codex-native`
 - `docs/README.md`: stable documentation index, report archive policy, and current roadmap/audit entry points
@@ -57,6 +57,8 @@ governance baseline, reports, evidence, and engineering entry points.
 
 - Compiles as an independent Rust workspace
 - Builds a terminal command named `yunxi`
+- Serves a local-only Web console with shared chat, long-term memory, persona,
+  companion, approval, and runtime boundaries through `yunxi web`
 - Starts an interactive terminal session when `yunxi` is run without a prompt
 - Uses a Codex-style TUI terminal host by default when stdin/stdout are both
   real terminals, with mouse wheel/PageUp/PageDown/Home/End transcript
@@ -460,10 +462,9 @@ The command exits unsuccessfully when any scenario fails. Structured output
 contains per-scenario checks plus aggregate metrics, including
 `memory_precision`, `relationship_continuity_rate`,
 `proactive_boundary_violation_count`, and `tool_approval_bypass_count`.
-
 ## Install On Windows
 
-Build and install the v2.2.0 CLI into a user-local bin directory:
+Build and install the v2.3.3-hotfix.4 CLI into a user-local bin directory:
 
 ```powershell
 Set-Location "D:\YunXi Agent"
@@ -492,9 +493,32 @@ yunxi companion off
 The planner never runs a tool on its own. A tool-related plan is rendered as a
 request for confirmation. Quiet hours and limits are configured through the
 `AgentConfig.companion` facade; the default is disabled and requires reasons.
-
 The installer copies both `yunxi.exe` and the compatibility
 `yunxi-agent-cli.exe`.
+
+## Local Web Console
+
+Start the local Web console from the same workspace used by the CLI and Weixin
+gateway:
+
+```powershell
+Set-Location "D:\YunXi Agent"
+yunxi web
+```
+
+Open `http://127.0.0.1:17861/`. The server binds to loopback by default and
+exposes only the local health, runtime status, persona, memory, and chat routes
+required by the interface. Use `--port` to select another local port or
+`--bind` for an explicit address.
+
+When Weixin autostart is enabled, `yunxi web` resolves the workspace containing
+the configured account and starts the same guarded Weixin gateway used by the
+interactive CLI. Pass `--no-weixin-autostart` when the Web process must run
+without starting that gateway.
+
+The Web interface keeps chat, memory, and persona on one runtime boundary.
+Animation falls back to the Web Animations API when GSAP is unavailable and
+honors `prefers-reduced-motion` and `prefers-reduced-transparency`.
 
 ## Interactive CLI
 

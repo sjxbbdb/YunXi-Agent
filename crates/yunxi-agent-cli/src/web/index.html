@@ -209,17 +209,114 @@
 
       <section class="view view-her" id="view-her" data-view="her" hidden>
         <div class="her-canvas" id="her-canvas" aria-busy="true">
-          <div class="her-ascii-field" aria-hidden="true">
-            <pre class="her-ascii-layer" id="her-ascii-layer"></pre>
+          <div class="her-backdrop" id="her-backdrop" aria-hidden="true">
+            <div class="her-backdrop-media" id="her-backdrop-media">
+              <img
+                class="her-backdrop-image her-backdrop-base"
+                id="her-backdrop-base"
+                src="/assets/yunxi-her-background.jpg"
+                alt=""
+              />
+              <img
+                class="her-backdrop-image her-backdrop-reveal"
+                id="her-backdrop-reveal"
+                src="/assets/yunxi-her-background.jpg"
+                alt=""
+              />
+            </div>
+            <div class="her-backdrop-veil"></div>
+            <div class="her-backdrop-grain"></div>
           </div>
 
-          <div class="her-copy">
-            <section class="her-information" aria-labelledby="her-display-name">
-              <header class="her-heading">
-                <p class="her-page-name">她</p>
-                <p class="her-archive-mark">YUNXI / RELATIONSHIP ARCHIVE</p>
-                <h1 id="her-display-name">YunXi</h1>
-                <p class="her-identity" id="her-identity">正在读取她的档案</p>
+          <section class="her-profile-zone" aria-label="YunXi 角色卡">
+            <p class="her-scene-index">RELATIONSHIP / 01</p>
+            <div class="her-profile-frame">
+              <button
+                class="her-profile-card"
+                id="her-profile-card"
+                type="button"
+                aria-label="展开 YunXi 关系档案"
+                aria-controls="her-detail"
+                aria-expanded="false"
+              >
+                <span class="her-art-window" id="her-art-window" data-art-mode="portrait">
+                  <span class="her-art-plane" id="her-art-plane">
+                    <img
+                      class="her-art-image"
+                      id="her-art-image"
+                      src="/assets/yunxi-her-profile-card.jpg"
+                      data-profile-src="/assets/yunxi-her-profile-card.jpg"
+                      data-sheet-src="/assets/yunxi-character-design.jpg"
+                      alt="YunXi 人物形象"
+                    />
+                    <span class="her-art-shade" aria-hidden="true"></span>
+                  </span>
+                </span>
+                <span class="her-card-caption">
+                  <span class="her-card-name" id="her-display-name">YunXi</span>
+                  <span class="her-card-stage" id="her-card-stage">初识</span>
+                </span>
+                <span class="her-card-open" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M7 12h10"></path>
+                    <path d="m13 8 4 4-4 4"></path>
+                  </svg>
+                </span>
+              </button>
+
+              <div class="her-art-controls" role="toolbar" aria-label="人物形象视图">
+                <button class="is-active" type="button" data-her-art-mode="portrait" aria-label="查看人物形象" title="形象" aria-pressed="true">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="8" r="3"></circle>
+                    <path d="M5.5 21a6.5 6.5 0 0 1 13 0"></path>
+                  </svg>
+                </button>
+                <button type="button" data-her-art-mode="expressions" aria-label="查看表情设定" title="表情" aria-pressed="false">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    <path d="M8 10h.01M16 10h.01M8.5 15a5 5 0 0 0 7 0"></path>
+                  </svg>
+                </button>
+                <button type="button" data-her-art-mode="sheet" aria-label="查看完整设定图" title="设定图" aria-pressed="false">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                    <path d="M3 9h18M9 9v12"></path>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="her-card-meta">
+              <p id="her-identity">正在读取她的档案</p>
+              <span>YUNXI / PRESENT</span>
+            </div>
+
+            <div class="her-error" id="her-error" hidden>
+              <p>她的档案暂时没有读取成功。</p>
+              <button id="her-retry" type="button">重新读取</button>
+            </div>
+          </section>
+
+          <section
+            class="her-detail"
+            id="her-detail"
+            role="dialog"
+            aria-modal="false"
+            aria-hidden="true"
+            aria-labelledby="her-detail-display-name"
+            inert
+          >
+            <button class="her-detail-close" id="her-detail-close" type="button" aria-label="关闭关系档案" title="关闭">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 6l12 12M18 6 6 18"></path>
+              </svg>
+            </button>
+
+            <div class="her-detail-scroll">
+              <header class="her-detail-heading">
+                <p>RELATIONSHIP ARCHIVE</p>
+                <h1 id="her-detail-display-name">YunXi</h1>
+                <span>她与你共同形成的关系档案</span>
               </header>
 
               <section class="her-relationship" aria-labelledby="her-relationship-label">
@@ -247,13 +344,7 @@
                 </dl>
               </section>
 
-              <div class="her-error" id="her-error" hidden>
-                <p>她的档案暂时没有读取成功。</p>
-                <button id="her-retry" type="button">重新读取</button>
-              </div>
-            </section>
-
-            <aside class="her-signals" aria-labelledby="her-signals-title">
+              <aside class="her-signals" aria-labelledby="her-signals-title">
               <header class="her-signals-heading">
                 <p>INNER CONSTELLATION</p>
                 <h2 id="her-signals-title">灵魂与性格</h2>
@@ -279,44 +370,7 @@
               </section>
 
               <div class="her-runtime-state" id="her-runtime-state" aria-live="polite"></div>
-            </aside>
-          </div>
-
-          <section class="her-visual" aria-label="YunXi 人物形象">
-            <div class="her-art-window" id="her-art-window" data-art-mode="portrait">
-              <div class="her-art-plane" id="her-art-plane">
-                <img
-                  class="her-art-image"
-                  id="her-art-image"
-                  src="/assets/yunxi-character-design.jpg"
-                  alt="YunXi 人物设定图，包含全身形象、表情与动作设定"
-                />
-                <div class="her-art-shade" aria-hidden="true"></div>
-              </div>
-              <div class="her-art-coordinate" aria-hidden="true">
-                <span>YUNXI</span>
-                <span>LOCAL / PRESENT</span>
-              </div>
-            </div>
-            <div class="her-art-controls" role="toolbar" aria-label="人物形象视图">
-              <button class="is-active" type="button" data-her-art-mode="portrait" aria-label="查看全身形象" title="全身" aria-pressed="true">
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="5" r="2.5"></circle>
-                  <path d="M8.5 21 10 13l-2-2 1.2-3h5.6L16 11l-2 2 1.5 8"></path>
-                </svg>
-              </button>
-              <button type="button" data-her-art-mode="expressions" aria-label="查看表情设定" title="表情" aria-pressed="false">
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="9"></circle>
-                  <path d="M8 10h.01M16 10h.01M8.5 15a5 5 0 0 0 7 0"></path>
-                </svg>
-              </button>
-              <button type="button" data-her-art-mode="sheet" aria-label="查看完整设定图" title="设定图" aria-pressed="false">
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-                  <path d="M3 9h18M9 9v12"></path>
-                </svg>
-              </button>
+              </aside>
             </div>
           </section>
         </div>

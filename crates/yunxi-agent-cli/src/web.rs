@@ -27,6 +27,8 @@ const INDEX_HTML: &str = include_str!("web/index.html");
 const APP_CSS: &str = include_str!("web/app.css");
 const APP_JS: &str = include_str!("web/app.js");
 const YUNXI_CHARACTER_ART: &[u8] = include_bytes!("web/yunxi-character-design.jpg");
+const YUNXI_HER_BACKGROUND: &[u8] = include_bytes!("web/yunxi-her-background.jpg");
+const YUNXI_HER_PROFILE_CARD: &[u8] = include_bytes!("web/yunxi-her-profile-card.jpg");
 
 #[derive(Clone, Debug)]
 pub(crate) struct WebOptions {
@@ -242,6 +244,8 @@ fn app(state: AppState) -> Router {
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
         .route("/assets/yunxi-character-design.jpg", get(character_art))
+        .route("/assets/yunxi-her-background.jpg", get(her_background_art))
+        .route("/assets/yunxi-her-profile-card.jpg", get(her_profile_art))
         .route("/api/health", get(health))
         .route("/api/status", get(status))
         .route("/api/persona", get(persona))
@@ -267,10 +271,22 @@ async fn app_js() -> Response {
 }
 
 async fn character_art() -> Response {
+    image_response(YUNXI_CHARACTER_ART)
+}
+
+async fn her_background_art() -> Response {
+    image_response(YUNXI_HER_BACKGROUND)
+}
+
+async fn her_profile_art() -> Response {
+    image_response(YUNXI_HER_PROFILE_CARD)
+}
+
+fn image_response(image: &'static [u8]) -> Response {
     Response::builder()
         .header(header::CONTENT_TYPE, "image/jpeg")
         .header(header::CACHE_CONTROL, "public, max-age=3600")
-        .body(Body::from(YUNXI_CHARACTER_ART))
+        .body(Body::from(image))
         .expect("static character art response should be valid")
 }
 
@@ -768,12 +784,17 @@ mod tests {
         assert!(INDEX_HTML.contains("data-nav=\"her\""));
         assert!(APP_CSS.contains(".mailbox-canvas"));
         assert!(APP_CSS.contains(".her-canvas"));
-        assert!(APP_CSS.contains(".her-ascii-field"));
-        assert!(INDEX_HTML.contains("id=\"her-ascii-layer\""));
+        assert!(APP_CSS.contains(".her-backdrop-reveal"));
+        assert!(INDEX_HTML.contains("/assets/yunxi-her-background.jpg"));
+        assert!(INDEX_HTML.contains("/assets/yunxi-her-profile-card.jpg"));
         assert!(INDEX_HTML.contains("id=\"her-art-plane\""));
-        assert!(APP_JS.contains("buildHerAsciiTexture"));
+        assert!(INDEX_HTML.contains("id=\"her-detail\""));
+        assert!(APP_JS.contains("setupHerReveal"));
         assert!(!INDEX_HTML.contains("assets.21st.dev"));
+        assert_eq!(APP_CSS.matches('{').count(), APP_CSS.matches('}').count());
         assert!(!YUNXI_CHARACTER_ART.is_empty());
+        assert!(!YUNXI_HER_BACKGROUND.is_empty());
+        assert!(!YUNXI_HER_PROFILE_CARD.is_empty());
     }
 
     #[test]

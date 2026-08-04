@@ -51,7 +51,15 @@ const nodes = {
   herRuntimeState: document.querySelector("#her-runtime-state"),
   herError: document.querySelector("#her-error"),
   herRetry: document.querySelector("#her-retry"),
-  herAsciiLayer: document.querySelector("#her-ascii-layer"),
+  herBackdrop: document.querySelector("#her-backdrop"),
+  herBackdropMedia: document.querySelector("#her-backdrop-media"),
+  herBackdropBase: document.querySelector("#her-backdrop-base"),
+  herBackdropReveal: document.querySelector("#her-backdrop-reveal"),
+  herProfileCard: document.querySelector("#her-profile-card"),
+  herCardStage: document.querySelector("#her-card-stage"),
+  herDetail: document.querySelector("#her-detail"),
+  herDetailClose: document.querySelector("#her-detail-close"),
+  herDetailDisplayName: document.querySelector("#her-detail-display-name"),
   herArtWindow: document.querySelector("#her-art-window"),
   herArtPlane: document.querySelector("#her-art-plane"),
   herArtImage: document.querySelector("#her-art-image"),
@@ -81,6 +89,7 @@ const state = {
   personaTimeline: null,
   mailboxTimeline: null,
   herTimeline: null,
+  herDetailTimeline: null,
   herAmbientTimeline: null,
   lastMemorySource: null,
   lastPersonaSource: null,
@@ -90,6 +99,8 @@ const state = {
   mailboxLoading: false,
   herLoading: false,
   herArtMode: "portrait",
+  herRevealTimer: 0,
+  lastHerSource: null,
   sending: false,
 };
 
@@ -225,6 +236,7 @@ async function api(path, options = {}) {
 
 function showView(name) {
   const target = ["chat", "memory", "persona", "her", "mailbox"].includes(name) ? name : "chat";
+  if (target !== "her" && nodes.herCanvas?.classList.contains("is-detail-open")) closeHerDetail(false);
   document.documentElement.dataset.activeView = target;
   document.body.dataset.activeView = target;
   nodes.views.forEach((view) => {
@@ -269,7 +281,7 @@ function animateViewEntrance(name) {
     chat: ".chat-hero > *, .chat-panel",
     memory: ".memory-head, .memory-field",
     persona: ".persona-stage",
-    her: ".her-heading > *, .her-relationship, .her-signals-heading, .her-facets > *, .her-traits, .her-runtime-state, .her-visual",
+    her: ".her-scene-index, .her-profile-frame, .her-card-meta",
     mailbox: ".mailbox-head, .mailbox-list",
   };
   const targets = Array.from(view.querySelectorAll(selectors[name] || ":scope > *"));
@@ -296,7 +308,7 @@ function animateViewEntrance(name) {
 }
 
 function startHerAmbientMotion() {
-  if (!nodes.herAsciiLayer || prefersReducedMotion()) return;
+  if (!nodes.herBackdropMedia || prefersReducedMotion()) return;
   if (state.herAmbientTimeline) {
     state.herAmbientTimeline.resume();
     return;
@@ -307,18 +319,18 @@ function startHerAmbientMotion() {
       state.herAmbientTimeline = gsap
         .timeline({ repeat: -1, yoyo: true, defaults: { ease: "sine.inOut" } })
         .fromTo(
-          nodes.herAsciiLayer,
-          { xPercent: -1.2, yPercent: -1.5, autoAlpha: 0.34 },
-          { xPercent: 1.2, yPercent: -5.5, autoAlpha: 0.66, duration: 10 },
+          nodes.herBackdropMedia,
+          { xPercent: -0.2, scale: 1.012 },
+          { xPercent: 0.35, scale: 1.025, duration: 14 },
         );
       return;
     }
-    const animation = nodes.herAsciiLayer.animate(
+    const animation = nodes.herBackdropMedia.animate(
       [
-        { transform: "translate3d(-1.2%, -1.5%, 0)", opacity: 0.34 },
-        { transform: "translate3d(1.2%, -5.5%, 0)", opacity: 0.66 },
+        { transform: "translate3d(-0.2%, 0, 0) scale(1.012)" },
+        { transform: "translate3d(0.35%, 0, 0) scale(1.025)" },
       ],
-      { duration: 20000, direction: "alternate", iterations: Infinity, easing: "ease-in-out" },
+      { duration: 28000, direction: "alternate", iterations: Infinity, easing: "ease-in-out" },
     );
     state.herAmbientTimeline = {
       pause: () => animation.pause(),
@@ -326,44 +338,6 @@ function startHerAmbientMotion() {
       kill: () => animation.cancel(),
     };
   });
-}
-
-function buildHerAsciiTexture() {
-  if (!nodes.herAsciiLayer) return;
-  const width = 112;
-  const height = 54;
-  const glyphs = [" ", " ", ".", ".", ":", "+", "*"];
-  const labels = new Map([
-    [8, "YUNXI"],
-    [21, "MEMORY / SOUL"],
-    [36, "LOCAL / PRESENT"],
-  ]);
-  let seed = 0x5f3759df;
-  const random = () => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-  const lines = [];
-
-  for (let row = 0; row < height; row += 1) {
-    const cells = [];
-    for (let column = 0; column < width; column += 1) {
-      const x = (column - width / 2) / (width / 2);
-      const y = (row - height / 2) / (height / 2);
-      const radius = Math.sqrt(x * x * 0.78 + y * y * 1.18);
-      const pulse = Math.sin(column * 0.22 + row * 0.31) * 0.12;
-      const threshold = 0.22 + Math.max(0, 0.92 - radius) * 0.42 + pulse;
-      cells.push(random() < threshold ? glyphs[Math.floor(random() * glyphs.length)] : " ");
-    }
-    const label = labels.get(row);
-    if (label) {
-      const start = Math.max(0, Math.floor((width - label.length) / 2));
-      for (let index = 0; index < label.length; index += 1) cells[start + index] = label[index];
-    }
-    lines.push(cells.join(""));
-  }
-
-  nodes.herAsciiLayer.textContent = lines.join("\n");
 }
 
 function animateDockSelection(item) {
@@ -1372,8 +1346,10 @@ function renderHerRuntime(payload) {
 function renderHer(payload) {
   state.her = payload;
   setNodeText(nodes.herDisplayName, text(payload?.displayName, "YunXi"));
+  setNodeText(nodes.herDetailDisplayName, text(payload?.displayName, "YunXi"));
   setNodeText(nodes.herIdentity, text(payload?.identity, "她的身份档案暂时为空。"));
   setNodeText(nodes.herRelationshipLabel, text(payload?.relationshipLabel, "初识"));
+  setNodeText(nodes.herCardStage, text(payload?.relationshipLabel, "初识"));
   setNodeText(nodes.herRelationshipDescription, text(payload?.relationshipDescription));
   setNodeText(
     nodes.herMemoryCount,
@@ -1426,6 +1402,15 @@ function setHerArtMode(mode) {
   const nextMode = ["portrait", "expressions", "sheet"].includes(mode) ? mode : "portrait";
   state.herArtMode = nextMode;
   if (nodes.herArtWindow) nodes.herArtWindow.dataset.artMode = nextMode;
+  if (nodes.herArtImage) {
+    const profileSource = nodes.herArtImage.dataset.profileSrc || "/assets/yunxi-her-profile-card.jpg";
+    const sheetSource = nodes.herArtImage.dataset.sheetSrc || "/assets/yunxi-character-design.jpg";
+    const nextSource = nextMode === "portrait" ? profileSource : sheetSource;
+    if (nodes.herArtImage.getAttribute("src") !== nextSource) {
+      nodes.herArtImage.setAttribute("src", nextSource);
+    }
+    nodes.herArtImage.alt = nextMode === "portrait" ? "YunXi 人物形象" : "YunXi 人物设定图";
+  }
   nodes.herArtModes.forEach((button) => {
     const active = button.dataset.herArtMode === nextMode;
     button.classList.toggle("is-active", active);
@@ -1443,6 +1428,90 @@ function setHerArtMode(mode) {
         { autoAlpha: 1, duration: 0.34, clearProps: "opacity,visibility" },
       );
   });
+}
+
+function openHerDetail() {
+  if (!nodes.herDetail || !nodes.herCanvas || nodes.herCanvas.classList.contains("is-detail-open")) return;
+  state.lastHerSource = document.activeElement;
+  nodes.herCanvas.classList.add("is-detail-open");
+  nodes.herProfileCard?.setAttribute("aria-expanded", "true");
+  nodes.herDetail.setAttribute("aria-hidden", "false");
+  nodes.herDetail.inert = false;
+
+  if (!prefersReducedMotion() && window.gsap) {
+    const parts = nodes.herDetail.querySelectorAll(
+      ".her-detail-heading > *, .her-relationship > *, .her-signals-heading > *, .her-facets > *, .her-traits, .her-runtime-state",
+    );
+    state.herDetailTimeline?.kill?.();
+    state.herDetailTimeline = window.gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .fromTo(parts, { y: 10, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.38, stagger: 0.028, clearProps: "transform,opacity,visibility" });
+  } else if (!window.gsap) {
+    ensureGsap();
+  }
+  window.setTimeout(() => nodes.herDetailClose?.focus({ preventScroll: true }), prefersReducedMotion() ? 0 : 280);
+}
+
+function closeHerDetail(restoreFocus = true) {
+  if (!nodes.herDetail || !nodes.herCanvas?.classList.contains("is-detail-open")) return;
+  state.herDetailTimeline?.kill?.();
+  nodes.herCanvas.classList.remove("is-detail-open");
+  nodes.herProfileCard?.setAttribute("aria-expanded", "false");
+  nodes.herDetail.setAttribute("aria-hidden", "true");
+  nodes.herDetail.inert = true;
+  const source = state.lastHerSource;
+  state.lastHerSource = null;
+  if (!restoreFocus) return;
+  window.setTimeout(() => {
+    if (source instanceof HTMLElement && document.contains(source)) source.focus({ preventScroll: true });
+    else nodes.herProfileCard?.focus({ preventScroll: true });
+  }, prefersReducedMotion() ? 0 : 220);
+}
+
+function setupHerReveal() {
+  if (!nodes.herCanvas || !nodes.herBackdrop) return;
+  const supportsFinePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  if (!supportsFinePointer || prefersReducedMotion()) return;
+
+  let xTo = null;
+  let yTo = null;
+  const spotlight = { x: 0, y: 0 };
+  const syncSpotlight = () => {
+    nodes.herBackdrop?.style.setProperty("--spot-x", `${spotlight.x.toFixed(1)}px`);
+    nodes.herBackdrop?.style.setProperty("--spot-y", `${spotlight.y.toFixed(1)}px`);
+  };
+  ensureGsap().then((gsap) => {
+    if (!gsap || !nodes.herBackdrop) return;
+    xTo = gsap.quickTo(spotlight, "x", { duration: 0.42, ease: "power3.out", onUpdate: syncSpotlight });
+    yTo = gsap.quickTo(spotlight, "y", { duration: 0.42, ease: "power3.out", onUpdate: syncSpotlight });
+  });
+
+  const holdReveal = () => {
+    window.clearTimeout(state.herRevealTimer);
+    state.herRevealTimer = window.setTimeout(() => {
+      nodes.herBackdrop?.classList.remove("is-revealing");
+      nodes.herBackdrop?.classList.add("is-fading");
+      window.setTimeout(() => nodes.herBackdrop?.classList.remove("is-fading"), 1600);
+    }, 900);
+  };
+
+  nodes.herCanvas.addEventListener("pointermove", (event) => {
+    const rect = nodes.herCanvas.getBoundingClientRect();
+    const x = clampNumber(event.clientX - rect.left, 0, rect.width);
+    const y = clampNumber(event.clientY - rect.top, 0, rect.height);
+    nodes.herBackdrop.classList.remove("is-fading");
+    nodes.herBackdrop.classList.add("is-revealing");
+    if (xTo && yTo) {
+      xTo(x);
+      yTo(y);
+    } else {
+      spotlight.x = x;
+      spotlight.y = y;
+      syncSpotlight();
+    }
+    holdReveal();
+  });
+  nodes.herCanvas.addEventListener("pointerleave", holdReveal);
 }
 
 function setPersonaDetailOrigin(sourceNode) {
@@ -1775,14 +1844,30 @@ nodes.personaPrev?.addEventListener("click", () => setPersonaIndex(state.activeP
 nodes.personaNext?.addEventListener("click", () => setPersonaIndex(state.activePersonaIndex + 1));
 nodes.personaDetailClose?.addEventListener("click", closePersonaDetail);
 nodes.herRetry?.addEventListener("click", () => loadHer(true));
+nodes.herProfileCard?.addEventListener("click", openHerDetail);
+nodes.herDetailClose?.addEventListener("click", closeHerDetail);
 nodes.herArtModes.forEach((button) => {
   button.addEventListener("click", () => setHerArtMode(button.dataset.herArtMode));
 });
-nodes.herArtImage?.addEventListener("load", () => {
-  nodes.herArtWindow?.classList.remove("has-image-error");
+const syncHerProfileImageState = () => {
+  if (!nodes.herArtImage?.complete) return;
+  nodes.herArtWindow?.classList.toggle("has-image-error", nodes.herArtImage.naturalWidth === 0);
+};
+nodes.herArtImage?.addEventListener("load", syncHerProfileImageState);
+nodes.herArtImage?.addEventListener("error", syncHerProfileImageState);
+
+const syncHerBackgroundImageState = () => {
+  const images = [nodes.herBackdropBase, nodes.herBackdropReveal].filter(Boolean);
+  const failed = images.some((image) => image.complete && image.naturalWidth === 0);
+  nodes.herCanvas?.classList.toggle("has-background-error", failed);
+};
+[nodes.herBackdropBase, nodes.herBackdropReveal].forEach((image) => {
+  image?.addEventListener("load", syncHerBackgroundImageState);
+  image?.addEventListener("error", syncHerBackgroundImageState);
 });
-nodes.herArtImage?.addEventListener("error", () => {
-  nodes.herArtWindow?.classList.add("has-image-error");
+window.queueMicrotask(() => {
+  syncHerProfileImageState();
+  syncHerBackgroundImageState();
 });
 nodes.mailboxRefresh?.addEventListener("click", () => loadMailbox(true));
 nodes.mailboxDetailClose?.addEventListener("click", closeMailboxDetail);
@@ -1795,6 +1880,7 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeMemory();
     closePersonaDetail();
+    closeHerDetail();
     closeMailboxDetail();
   }
   if (document.activeElement instanceof HTMLTextAreaElement) return;
@@ -1819,9 +1905,9 @@ window.addEventListener("resize", () => {
   });
 });
 
-buildHerAsciiTexture();
 setupDockMotion();
 setupPointerMaterials();
+setupHerReveal();
 renderMessages();
 autoResize();
 loadStatus();

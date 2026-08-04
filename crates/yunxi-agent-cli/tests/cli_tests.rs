@@ -1272,7 +1272,7 @@ fn yunxi_interactive_mode_runs_prompt_and_session_command() {
 fn yunxi_no_tui_keeps_plain_interactive_mode() {
     let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
 
-    cmd.args(["--offline", "--no-tui"])
+    cmd.args(["--offline", "--no-tui", "--no-weixin-autostart"])
         .write_stdin("/exit\n")
         .assert()
         .success()

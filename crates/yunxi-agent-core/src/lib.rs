@@ -13,7 +13,8 @@ pub use backend::{AgentBackend, BackendKind, DryRunBackend};
 pub use cancellation::AgentCancellationToken;
 pub use codex_source::{CodexSource, CodexSourceStatus};
 pub use config::{
-    AgentConfig, ApprovalMode, CompanionSettings, MemoryExtractionMode, QuietHours, SandboxMode,
+    AgentConfig, ApprovalMode, CompanionSettings, LoveLetterSettings, MemoryExtractionMode,
+    QuietHours, SandboxMode,
 };
 pub use control::{
     CompanionHistoryRecord, ControlAuditRecord, ControlRequest, ControlScope, ControlScopeSnapshot,

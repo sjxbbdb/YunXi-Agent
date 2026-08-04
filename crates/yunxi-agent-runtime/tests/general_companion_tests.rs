@@ -2,20 +2,25 @@ use async_trait::async_trait;
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tempfile::TempDir;
+use yunxi_agent_companion::MailboxQuery;
 use yunxi_agent_core::{
     Agent, AgentConfig, AgentInput, AgentResult, ControlScope, ControlSource, MemoryExtractionMode,
 };
 use yunxi_agent_persona::{
     MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaProfileStore, PersonaSettings,
-    link_supersession_chain,
+    link_supersession_chain, now_millis,
 };
 use yunxi_agent_provider::{
     AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse, ProviderRole,
 };
 use yunxi_agent_runtime::{YunXiRuntimeBackend, general_companion_snapshot};
-use yunxi_agent_storage::{FilePersonaMemoryStore, InMemorySessionStore, PersonaMemoryScope};
+use yunxi_agent_storage::{
+    FileCompanionMailboxStore, FilePersonaMemoryStore, InMemorySessionStore, PersonaMemoryScope,
+};
 use yunxi_agent_tools::NoopToolRuntime;
 
 static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -23,6 +28,24 @@ static HOME_ENV_LOCK: Mutex<()> = Mutex::new(());
 #[derive(Clone, Default)]
 struct CapturingProvider {
     messages: Arc<Mutex<Vec<ProviderMessage>>>,
+}
+
+#[derive(Clone, Default)]
+struct LoveLetterProvider {
+    love_letter_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl AgentProvider for LoveLetterProvider {
+    async fn complete(&self, request: ProviderRequest) -> AgentResult<ProviderResponse> {
+        if request.input.prompt == "YunXi love letter composition" {
+            self.love_letter_calls.fetch_add(1, Ordering::SeqCst);
+            return Ok(ProviderResponse::assistant(
+                r#"{"subject":"写给你","body":"我记得那些被认真确认过的小事，也珍惜我们一起把事情做好的时刻。"}"#,
+            ));
+        }
+        Ok(ProviderResponse::assistant("正常回复不等待情书生成。"))
+    }
 }
 
 #[async_trait]
@@ -85,6 +108,7 @@ async fn custom_persona_profile_reaches_runtime_provider_context() {
         persona_enabled: true,
         memory_enabled: false,
         companion_enabled: false,
+        love_letters_enabled: false,
         cloud_control_enabled: false,
         active_profile: profile.id,
     }
@@ -113,11 +137,118 @@ async fn custom_persona_profile_reaches_runtime_provider_context() {
     assert!(system_context.contains("<soul>你珍视真实，也允许沉默存在"));
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn successful_reply_generates_encrypted_mailbox_item_without_memory_feedback() {
+    let _guard = HOME_ENV_LOCK.lock().expect("home env lock");
+    let home = TempDir::new().expect("yunxi home");
+    let workspace = TempDir::new().expect("workspace");
+    let previous_home = std::env::var_os("YUNXI_HOME");
+    let previous_mailbox_key = std::env::var_os("YUNXI_MAILBOX_KEY_HEX");
+    unsafe {
+        std::env::set_var("YUNXI_HOME", home.path());
+        std::env::set_var("YUNXI_MAILBOX_KEY_HEX", "11".repeat(32));
+    }
+
+    PersonaSettings {
+        persona_enabled: true,
+        memory_enabled: true,
+        companion_enabled: true,
+        love_letters_enabled: true,
+        cloud_control_enabled: false,
+        active_profile: "yunxi_companion_strong".to_string(),
+    }
+    .save()
+    .expect("save settings");
+    let memory_store = FilePersonaMemoryStore::for_workspace(workspace.path());
+    let old = now_millis().saturating_sub(30 * 86_400_000);
+    for record in [
+        MemoryRecord::new(
+            "letter-pref",
+            MemoryScope::GlobalUser,
+            MemoryKind::Preference,
+            "用户喜欢真诚、克制的表达。",
+            old,
+        )
+        .with_status(MemoryStatus::Active),
+        MemoryRecord::new(
+            "letter-relation",
+            MemoryScope::Relationship,
+            MemoryKind::RelationshipNote,
+            "彼此已经建立了稳定的信任。",
+            old + 1,
+        )
+        .with_status(MemoryStatus::Active),
+        MemoryRecord::new(
+            "letter-event",
+            MemoryScope::Relationship,
+            MemoryKind::Event,
+            "一起完成了 YunXi 的一次重要集成测试。",
+            old + 2,
+        )
+        .with_status(MemoryStatus::Active),
+    ] {
+        memory_store.append(&record).expect("append memory");
+    }
+    let memory_count_before = memory_store.list(PersonaMemoryScope::All).records.len();
+
+    let provider = LoveLetterProvider::default();
+    let love_letter_calls = Arc::clone(&provider.love_letter_calls);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let mut config = AgentConfig::new(workspace.path())
+        .with_memory_extraction_mode(MemoryExtractionMode::RuleOnly);
+    config.companion.enabled = true;
+    config.companion.love_letters.enabled = true;
+    config.companion.love_letters.cooldown_min_days = 0;
+    config.companion.love_letters.cooldown_max_days = 0;
+    let result = Agent::new(config)
+        .run_with_backend(&backend, AgentInput::text("今天也继续把事情做好。"))
+        .await
+        .expect("runtime completes");
+    assert_eq!(
+        result.final_response.as_deref(),
+        Some("正常回复不等待情书生成。")
+    );
+
+    let mailbox = FileCompanionMailboxStore::for_workspace(workspace.path()).expect("mailbox");
+    let item = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let page = mailbox.list(MailboxQuery::default()).expect("mailbox list");
+            if let Some(item) = page.items.into_iter().next() {
+                break item;
+            }
+            assert!(
+                love_letter_calls.load(Ordering::SeqCst) <= 1,
+                "worker must not duplicate model calls"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("love letter worker completes");
+    let entry = mailbox
+        .get(&item.item_id)
+        .expect("mailbox get")
+        .expect("mailbox entry");
+    assert_eq!(entry.content.subject, "写给你");
+    assert!(entry.content.body.contains("认真确认过的小事"));
+    assert_eq!(love_letter_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        memory_store.list(PersonaMemoryScope::All).records.len(),
+        memory_count_before,
+        "generated letters must never feed back into long-term memory"
+    );
+
+    restore_env_var("YUNXI_MAILBOX_KEY_HEX", previous_mailbox_key);
+    restore_env_var("YUNXI_HOME", previous_home);
+}
+
 async fn run_general_companion_scenario(workspace: &Path) -> AgentResult<()> {
     PersonaSettings {
         persona_enabled: true,
         memory_enabled: true,
         companion_enabled: false,
+        love_letters_enabled: false,
         cloud_control_enabled: false,
         active_profile: "yunxi_companion_strong".to_string(),
     }

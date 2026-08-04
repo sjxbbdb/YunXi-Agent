@@ -21,7 +21,12 @@ use yunxi_agent_persona::{
 };
 use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
+mod companion_mailbox;
 mod weixin_state;
+
+pub use companion_mailbox::{
+    CompanionMailboxSnapshot, FileCompanionMailboxStore, MailboxEnqueueOutcome,
+};
 
 pub use weixin_state::{
     FileWeixinStateStore, WEIXIN_PAYLOAD_AAD_VERSION, WEIXIN_PAYLOAD_ALGORITHM,

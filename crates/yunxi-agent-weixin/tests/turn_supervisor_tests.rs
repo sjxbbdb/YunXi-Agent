@@ -396,6 +396,7 @@ async fn supervisor_real_runtime_loads_same_long_term_memory_context_as_cli() {
             persona_enabled: true,
             memory_enabled: true,
             companion_enabled: true,
+            love_letters_enabled: false,
             cloud_control_enabled: false,
             active_profile: "yunxi_companion_strong".to_string(),
         }

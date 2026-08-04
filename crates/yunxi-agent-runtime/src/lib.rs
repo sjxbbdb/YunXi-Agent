@@ -1,4 +1,5 @@
 mod general_companion;
+mod love_letter;
 mod runtime_state;
 mod session_driver;
 mod turn_driver;
@@ -1420,6 +1421,7 @@ impl YunXiRuntimeBackend {
         let events = sink.events().await?;
         session.events = events.clone();
         self.storage.save(session).await?;
+        let _ = crate::love_letter::schedule(Arc::clone(&self.provider), runtime_config.clone());
 
         Ok(AgentRunResult {
             status: AgentRunStatus::Completed,

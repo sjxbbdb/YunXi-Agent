@@ -1,6 +1,19 @@
 use serde::{Deserialize, Serialize};
 use yunxi_agent_core::{CompanionSettings, QuietHours};
 
+pub mod love_letter;
+pub mod mailbox;
+
+pub use love_letter::{
+    LoveLetterEligibilityDecision, LoveLetterEligibilityInput, LoveLetterEligibilityPolicy,
+    LoveLetterIneligibilityReason, LoveLetterMemoryReference, LoveLetterMemorySelection,
+    LoveLetterMemorySelector, LoveLetterTask, LoveLetterTaskState, stable_hash64,
+};
+pub use mailbox::{
+    COMPANION_MAILBOX_SCHEMA_VERSION, CompanionMailboxContent, CompanionMailboxEntry,
+    CompanionMailboxItem, MailboxCursor, MailboxItemType, MailboxPage, MailboxQuery, MailboxState,
+};
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CompanionMemorySummary {
     pub boot_summary: Option<String>,

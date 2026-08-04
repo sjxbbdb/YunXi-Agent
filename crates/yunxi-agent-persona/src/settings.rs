@@ -6,6 +6,7 @@ pub struct PersonaSettings {
     pub persona_enabled: bool,
     pub memory_enabled: bool,
     pub companion_enabled: bool,
+    pub love_letters_enabled: bool,
     pub cloud_control_enabled: bool,
     pub active_profile: String,
 }
@@ -16,6 +17,7 @@ impl Default for PersonaSettings {
             persona_enabled: true,
             memory_enabled: false,
             companion_enabled: false,
+            love_letters_enabled: false,
             cloud_control_enabled: false,
             active_profile: "yunxi_companion_strong".to_string(),
         }
@@ -37,6 +39,9 @@ impl PersonaSettings {
         }
         if let Ok(value) = std::env::var("YUNXI_COMPANION_ENABLED") {
             settings.companion_enabled = env_bool(&value, settings.companion_enabled);
+        }
+        if let Ok(value) = std::env::var("YUNXI_LOVE_LETTERS_ENABLED") {
+            settings.love_letters_enabled = env_bool(&value, settings.love_letters_enabled);
         }
         if let Ok(value) = std::env::var("YUNXI_CLOUD_CONTROL_ENABLED") {
             settings.cloud_control_enabled = env_bool(&value, settings.cloud_control_enabled);
@@ -73,6 +78,9 @@ impl PersonaSettings {
                 "companion_enabled" => {
                     settings.companion_enabled = env_bool(value, settings.companion_enabled)
                 }
+                "love_letters_enabled" => {
+                    settings.love_letters_enabled = env_bool(value, settings.love_letters_enabled)
+                }
                 "cloud_control_enabled" => {
                     settings.cloud_control_enabled = env_bool(value, settings.cloud_control_enabled)
                 }
@@ -87,10 +95,11 @@ impl PersonaSettings {
 
     fn to_config_string(&self) -> String {
         format!(
-            "persona_enabled = {}\nmemory_enabled = {}\ncompanion_enabled = {}\ncloud_control_enabled = {}\nactive_profile = \"{}\"\n",
+            "persona_enabled = {}\nmemory_enabled = {}\ncompanion_enabled = {}\nlove_letters_enabled = {}\ncloud_control_enabled = {}\nactive_profile = \"{}\"\n",
             self.persona_enabled,
             self.memory_enabled,
             self.companion_enabled,
+            self.love_letters_enabled,
             self.cloud_control_enabled,
             self.active_profile
         )
@@ -119,5 +128,29 @@ fn env_bool(value: &str, default: bool) -> bool {
         "1" | "true" | "yes" | "on" => true,
         "0" | "false" | "no" | "off" => false,
         _ => default,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_keeps_love_letters_disabled() {
+        let settings = PersonaSettings::parse_lossy(
+            "persona_enabled = true\nmemory_enabled = true\ncompanion_enabled = true\n",
+        );
+        assert!(settings.companion_enabled);
+        assert!(!settings.love_letters_enabled);
+    }
+
+    #[test]
+    fn love_letter_setting_round_trips_through_config_text() {
+        let settings = PersonaSettings {
+            love_letters_enabled: true,
+            ..PersonaSettings::default()
+        };
+        let parsed = PersonaSettings::parse_lossy(&settings.to_config_string());
+        assert!(parsed.love_letters_enabled);
     }
 }

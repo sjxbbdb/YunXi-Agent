@@ -7,9 +7,12 @@ version.workspace = true
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true
+chacha20poly1305.workspace = true
+getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+yunxi-agent-companion = { path = "../yunxi-agent-companion" }
 yunxi-agent-core = { path = "../yunxi-agent-core" }
 yunxi-agent-multi-agent = { path = "../yunxi-agent-multi-agent" }
 yunxi-agent-persona = { path = "../yunxi-agent-persona" }

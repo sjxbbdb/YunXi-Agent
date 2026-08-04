@@ -1230,6 +1230,7 @@ fn build_agent_config(cli: &Cli) -> Result<AgentConfig> {
     config = config.with_memory_extraction_mode(cli.memory_extraction.into());
     let persisted_settings = PersonaSettings::load();
     config.companion.enabled = persisted_settings.companion_enabled;
+    config.companion.love_letters.enabled = persisted_settings.love_letters_enabled;
     config.companion.cloud_control_enabled = persisted_settings.cloud_control_enabled;
     if cli.companion
         || matches!(

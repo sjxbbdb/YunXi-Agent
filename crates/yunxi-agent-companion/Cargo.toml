@@ -7,3 +7,4 @@ version.workspace = true
 [dependencies]
 serde.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
+yunxi-agent-persona = { path = "../yunxi-agent-persona" }

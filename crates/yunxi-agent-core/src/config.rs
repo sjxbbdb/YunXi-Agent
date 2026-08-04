@@ -121,6 +121,8 @@ pub struct CompanionSettings {
     pub cloud_control_enabled: bool,
     #[serde(default = "default_true")]
     pub clear_requires_confirmation: bool,
+    #[serde(default)]
+    pub love_letters: LoveLetterSettings,
 }
 
 impl Default for CompanionSettings {
@@ -134,6 +136,48 @@ impl Default for CompanionSettings {
             allow_tool_requests: false,
             cloud_control_enabled: false,
             clear_requires_confirmation: true,
+            love_letters: LoveLetterSettings::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LoveLetterSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_love_letter_minimum_active_memories")]
+    pub minimum_active_memories: usize,
+    #[serde(default = "default_love_letter_minimum_new_memories")]
+    pub minimum_new_memories: usize,
+    #[serde(default = "default_love_letter_cooldown_min_days")]
+    pub cooldown_min_days: u32,
+    #[serde(default = "default_love_letter_cooldown_max_days")]
+    pub cooldown_max_days: u32,
+    #[serde(default = "default_love_letter_max_per_day")]
+    pub max_per_day: u32,
+    #[serde(default = "default_love_letter_generation_timeout_seconds")]
+    pub generation_timeout_seconds: u64,
+    #[serde(default = "default_love_letter_max_content_chars")]
+    pub max_content_chars: usize,
+    #[serde(default = "default_love_letter_max_generation_attempts")]
+    pub max_generation_attempts: u32,
+    #[serde(default = "default_love_letter_retry_backoff_seconds")]
+    pub retry_backoff_seconds: u64,
+}
+
+impl Default for LoveLetterSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            minimum_active_memories: default_love_letter_minimum_active_memories(),
+            minimum_new_memories: default_love_letter_minimum_new_memories(),
+            cooldown_min_days: default_love_letter_cooldown_min_days(),
+            cooldown_max_days: default_love_letter_cooldown_max_days(),
+            max_per_day: default_love_letter_max_per_day(),
+            generation_timeout_seconds: default_love_letter_generation_timeout_seconds(),
+            max_content_chars: default_love_letter_max_content_chars(),
+            max_generation_attempts: default_love_letter_max_generation_attempts(),
+            retry_backoff_seconds: default_love_letter_retry_backoff_seconds(),
         }
     }
 }
@@ -169,6 +213,33 @@ fn default_max_proactive_per_day() -> u32 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_love_letter_minimum_active_memories() -> usize {
+    3
+}
+fn default_love_letter_minimum_new_memories() -> usize {
+    1
+}
+fn default_love_letter_cooldown_min_days() -> u32 {
+    3
+}
+fn default_love_letter_cooldown_max_days() -> u32 {
+    10
+}
+fn default_love_letter_max_per_day() -> u32 {
+    1
+}
+fn default_love_letter_generation_timeout_seconds() -> u64 {
+    20
+}
+fn default_love_letter_max_content_chars() -> usize {
+    4_000
+}
+fn default_love_letter_max_generation_attempts() -> u32 {
+    3
+}
+fn default_love_letter_retry_backoff_seconds() -> u64 {
+    21_600
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

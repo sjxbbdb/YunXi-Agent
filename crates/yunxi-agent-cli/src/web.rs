@@ -1,16 +1,19 @@
 use anyhow::{Context, Result};
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, SocketAddr};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
+use yunxi_agent_companion::{
+    CompanionMailboxContent, CompanionMailboxItem, MailboxItemType, MailboxQuery, MailboxState,
+};
 use yunxi_agent_core::{AgentConfig, AgentEvent, AgentRunStatus, BackendKind};
 use yunxi_agent_persona::{PersonaProfile, PersonaProfileStore, PersonaSettings};
-use yunxi_agent_storage::{FilePersonaMemoryStore, PersonaMemoryScope};
+use yunxi_agent_storage::{FileCompanionMailboxStore, FilePersonaMemoryStore, PersonaMemoryScope};
 
 use crate::provider_mode;
 
@@ -76,6 +79,42 @@ struct MemoryResponse {
     workspace_fingerprint: String,
     records: Vec<yunxi_agent_persona::MemoryRecord>,
     warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MailboxResponse {
+    items: Vec<MailboxItemResponse>,
+    unread_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MailboxItemResponse {
+    item_id: String,
+    item_type: MailboxItemType,
+    state: MailboxState,
+    subject: String,
+    preview: String,
+    created_at_millis: u128,
+    available_at_millis: u128,
+    updated_at_millis: u128,
+    read_at_millis: Option<u128>,
+    archived_at_millis: Option<u128>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MailboxDetailResponse {
+    item: MailboxItemResponse,
+    subject: String,
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MailboxStateRequest {
+    state: MailboxState,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,6 +199,9 @@ fn app(state: AppState) -> Router {
         .route("/api/status", get(status))
         .route("/api/persona", get(persona))
         .route("/api/memory", get(memory))
+        .route("/api/mailbox", get(mailbox))
+        .route("/api/mailbox/{item_id}", get(mailbox_detail))
+        .route("/api/mailbox/{item_id}/state", post(mailbox_state))
         .route("/api/chat", post(chat))
         .with_state(state)
 }
@@ -222,6 +264,109 @@ async fn memory(
         records: load.records,
         warnings: load.warnings,
     }))
+}
+
+async fn mailbox(
+    State(state): State<AppState>,
+) -> std::result::Result<Json<MailboxResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let store = FileCompanionMailboxStore::for_workspace(&state.config.cwd)
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?;
+    let page = store
+        .list(MailboxQuery {
+            item_type: Some(MailboxItemType::LoveLetter),
+            limit: 50,
+            ..MailboxQuery::default()
+        })
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?;
+    let mut items = Vec::with_capacity(page.items.len());
+    for item in page.items {
+        let entry = store
+            .get(&item.item_id)
+            .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?
+            .ok_or_else(|| internal_error(anyhow::Error::msg("mailbox item disappeared")))?;
+        items.push(mailbox_item_response(&entry.item, &entry.content));
+    }
+    let unread_count = store
+        .unread_count()
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?;
+    Ok(Json(MailboxResponse {
+        items,
+        unread_count,
+    }))
+}
+
+async fn mailbox_detail(
+    State(state): State<AppState>,
+    Path(item_id): Path<String>,
+) -> std::result::Result<Json<MailboxDetailResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let store = FileCompanionMailboxStore::for_workspace(&state.config.cwd)
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?;
+    let entry = store
+        .get(&item_id)
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?
+        .ok_or_else(|| not_found("mailbox item not found"))?;
+    let item = mailbox_item_response(&entry.item, &entry.content);
+    Ok(Json(MailboxDetailResponse {
+        item,
+        subject: entry.content.subject,
+        body: entry.content.body,
+    }))
+}
+
+async fn mailbox_state(
+    State(state): State<AppState>,
+    Path(item_id): Path<String>,
+    Json(request): Json<MailboxStateRequest>,
+) -> std::result::Result<Json<MailboxDetailResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let store = FileCompanionMailboxStore::for_workspace(&state.config.cwd)
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?;
+    let item = store
+        .mark_state(&item_id, request.state, now_millis())
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?
+        .ok_or_else(|| not_found("mailbox item not found"))?;
+    let entry = store
+        .get(&item.item_id)
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?
+        .ok_or_else(|| not_found("mailbox item disappeared"))?;
+    Ok(Json(MailboxDetailResponse {
+        item: mailbox_item_response(&item, &entry.content),
+        subject: entry.content.subject,
+        body: entry.content.body,
+    }))
+}
+
+fn mailbox_item_response(
+    item: &CompanionMailboxItem,
+    content: &CompanionMailboxContent,
+) -> MailboxItemResponse {
+    MailboxItemResponse {
+        item_id: item.item_id.clone(),
+        item_type: item.item_type,
+        state: item.state,
+        subject: content.subject.clone(),
+        preview: mailbox_preview(&content.body),
+        created_at_millis: item.created_at_millis,
+        available_at_millis: item.available_at_millis,
+        updated_at_millis: item.updated_at_millis,
+        read_at_millis: item.read_at_millis,
+        archived_at_millis: item.archived_at_millis,
+    }
+}
+
+fn mailbox_preview(body: &str) -> String {
+    let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut preview = compact.chars().take(132).collect::<String>();
+    if compact.chars().count() > 132 {
+        preview.push('…');
+    }
+    preview
+}
+
+fn now_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 async fn chat(
@@ -386,6 +531,15 @@ fn bad_request(message: &'static str) -> (StatusCode, Json<ApiErrorResponse>) {
     )
 }
 
+fn not_found(message: &'static str) -> (StatusCode, Json<ApiErrorResponse>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(ApiErrorResponse {
+            error: message.to_string(),
+        }),
+    )
+}
+
 fn internal_error(error: anyhow::Error) -> (StatusCode, Json<ApiErrorResponse>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -414,7 +568,42 @@ mod tests {
         assert!(APP_JS.contains("/api/status"));
         assert!(APP_JS.contains("/api/persona"));
         assert!(APP_JS.contains("/api/memory"));
+        assert!(APP_JS.contains("/api/mailbox"));
         assert!(APP_JS.contains("/api/chat"));
+        assert!(INDEX_HTML.contains("data-nav=\"mailbox\""));
+        assert!(APP_CSS.contains(".mailbox-canvas"));
+    }
+
+    #[test]
+    fn mailbox_response_excludes_private_storage_references() {
+        let item = CompanionMailboxItem {
+            schema_version: 1,
+            item_id: "mail-1".to_string(),
+            owner_scope: "workspace:private".to_string(),
+            item_type: MailboxItemType::LoveLetter,
+            source_id: "task-1".to_string(),
+            source_revision: "memory-1".to_string(),
+            content_ref: "content-private".to_string(),
+            state: MailboxState::Unread,
+            created_at_millis: 1,
+            available_at_millis: 1,
+            updated_at_millis: 1,
+            read_at_millis: None,
+            archived_at_millis: None,
+        };
+        let response = mailbox_item_response(
+            &item,
+            &CompanionMailboxContent {
+                subject: "一封信".to_string(),
+                body: "给你的一段话".to_string(),
+            },
+        );
+        let json = serde_json::to_value(response).expect("mailbox response should serialize");
+        assert_eq!(json["itemId"], "mail-1");
+        assert_eq!(json["subject"], "一封信");
+        assert!(json.get("ownerScope").is_none());
+        assert!(json.get("contentRef").is_none());
+        assert!(json.get("sourceId").is_none());
     }
 
     #[test]

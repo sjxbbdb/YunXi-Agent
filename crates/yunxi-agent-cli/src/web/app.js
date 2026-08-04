@@ -26,6 +26,16 @@ const nodes = {
   personaDetailSummary: document.querySelector("#persona-detail-summary"),
   personaDetailContent: document.querySelector("#persona-detail-content"),
   personaDetailClose: document.querySelector("#persona-detail-close"),
+  mailboxList: document.querySelector("#mailbox-list"),
+  mailboxCount: document.querySelector("#mailbox-count"),
+  mailboxRefresh: document.querySelector("#mailbox-refresh"),
+  mailboxDetail: document.querySelector("#mailbox-detail"),
+  mailboxDetailClose: document.querySelector("#mailbox-detail-close"),
+  mailboxDetailTitle: document.querySelector("#mailbox-detail-title"),
+  mailboxLetterDate: document.querySelector("#mailbox-letter-date"),
+  mailboxLetterBody: document.querySelector("#mailbox-letter-body"),
+  mailboxLetterState: document.querySelector("#mailbox-letter-state"),
+  mailboxArchive: document.querySelector("#mailbox-archive"),
 };
 
 const state = {
@@ -33,6 +43,8 @@ const state = {
   status: null,
   memory: null,
   persona: null,
+  mailbox: null,
+  activeMailboxItem: null,
   activePersonaIndex: 0,
   gsapLoader: null,
   viewAnimations: [],
@@ -46,8 +58,13 @@ const state = {
   personaCloseTimer: 0,
   memoryTimeline: null,
   personaTimeline: null,
+  mailboxTimeline: null,
   lastMemorySource: null,
   lastPersonaSource: null,
+  lastMailboxSource: null,
+  lastMailboxItemId: null,
+  mailboxCloseTimer: 0,
+  mailboxLoading: false,
   sending: false,
 };
 
@@ -182,7 +199,7 @@ async function api(path, options = {}) {
 }
 
 function showView(name) {
-  const target = ["chat", "memory", "persona"].includes(name) ? name : "chat";
+  const target = ["chat", "memory", "persona", "mailbox"].includes(name) ? name : "chat";
   document.documentElement.dataset.activeView = target;
   document.body.dataset.activeView = target;
   nodes.views.forEach((view) => {
@@ -201,6 +218,7 @@ function showView(name) {
   });
   if (target === "memory") loadMemory();
   if (target === "persona") loadPersona();
+  if (target === "mailbox") loadMailbox();
   if (target === "chat") {
     window.requestAnimationFrame(() => nodes.prompt?.focus());
   }
@@ -223,6 +241,7 @@ function animateViewEntrance(name) {
     chat: ".chat-hero > *, .chat-panel",
     memory: ".memory-head, .memory-field",
     persona: ".persona-stage",
+    mailbox: ".mailbox-head, .mailbox-list",
   };
   const targets = Array.from(view.querySelectorAll(selectors[name] || ":scope > *"));
   if (window.gsap) {
@@ -499,6 +518,7 @@ async function sendPrompt(prompt) {
     saveMessages();
     renderMessages();
     loadMemory();
+    loadMailbox(true);
   }
 }
 
@@ -789,6 +809,234 @@ function closeMemory() {
     state.lastMemorySource?.focus({ preventScroll: true });
     state.lastMemorySource = null;
     state.memoryCloseTimer = 0;
+  }, prefersReducedMotion() ? 1 : 220);
+}
+
+function mailboxStateLabel(value) {
+  const labels = {
+    unread: "未读",
+    read: "已读",
+    archived: "已归档",
+  };
+  return labels[text(value).toLowerCase()] || "信件";
+}
+
+function mailboxDate(value) {
+  const millis = Number(value);
+  if (!Number.isFinite(millis) || millis <= 0) return "时间未知";
+  try {
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(millis));
+  } catch {
+    return "时间未知";
+  }
+}
+
+function renderMailboxLoading() {
+  if (!nodes.mailboxList) return;
+  nodes.mailboxList.setAttribute("aria-busy", "true");
+  nodes.mailboxList.innerHTML = "";
+  const loading = document.createElement("div");
+  loading.className = "mailbox-loading";
+  loading.setAttribute("aria-label", "正在读取信件");
+  for (let index = 0; index < 3; index += 1) {
+    loading.appendChild(document.createElement("span"));
+  }
+  nodes.mailboxList.appendChild(loading);
+  setNodeText(nodes.mailboxCount, "正在读取信件");
+}
+
+function renderMailboxError(error) {
+  if (!nodes.mailboxList) return;
+  nodes.mailboxList.setAttribute("aria-busy", "false");
+  nodes.mailboxList.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.className = "mailbox-empty";
+  const title = document.createElement("h2");
+  const detail = document.createElement("p");
+  const retry = document.createElement("button");
+  title.textContent = "信箱暂时无法打开";
+  detail.textContent = text(error?.message, "读取失败");
+  retry.type = "button";
+  retry.className = "mailbox-retry";
+  retry.textContent = "重试";
+  retry.addEventListener("click", () => loadMailbox(true));
+  empty.append(title, detail, retry);
+  nodes.mailboxList.appendChild(empty);
+  setNodeText(nodes.mailboxCount, "读取失败");
+}
+
+function renderMailbox(payload) {
+  if (!nodes.mailboxList) return;
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  const unreadCount = Number(payload?.unreadCount) || 0;
+  nodes.mailboxList.setAttribute("aria-busy", "false");
+  nodes.mailboxList.innerHTML = "";
+  setNodeText(nodes.mailboxCount, unreadCount > 0 ? `${unreadCount} 封未读` : "没有未读信件");
+
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "mailbox-empty";
+    const title = document.createElement("h2");
+    const detail = document.createElement("p");
+    title.textContent = "还没有信件";
+    detail.textContent = "新的信会安静地留在这里。";
+    empty.append(title, detail);
+    nodes.mailboxList.appendChild(empty);
+    return;
+  }
+
+  for (const item of items) {
+    const button = document.createElement("button");
+    const meta = document.createElement("span");
+    const stateLabel = document.createElement("span");
+    const date = document.createElement("time");
+    const subject = document.createElement("h2");
+    const preview = document.createElement("p");
+    const itemState = text(item.state, "read").toLowerCase();
+    button.type = "button";
+    button.className = `mailbox-item is-${itemState}`;
+    button.dataset.mailboxItem = text(item.itemId);
+    button.setAttribute("aria-label", `打开信件：${text(item.subject, "一封信")}`);
+    stateLabel.className = "mailbox-item-state";
+    stateLabel.textContent = mailboxStateLabel(itemState);
+    date.dateTime = new Date(Number(item.availableAtMillis) || 0).toISOString();
+    date.textContent = mailboxDate(item.availableAtMillis);
+    meta.className = "mailbox-item-meta";
+    meta.append(stateLabel, date);
+    subject.textContent = text(item.subject, "一封来自 YunXi 的信");
+    preview.textContent = text(item.preview, "打开阅读正文");
+    button.append(meta, subject, preview);
+    button.addEventListener("click", () => openMailbox(item, button));
+    nodes.mailboxList.appendChild(button);
+  }
+
+  animateElements(nodes.mailboxList.querySelectorAll(".mailbox-item"), {
+    y: 7,
+    duration: 300,
+    stagger: 28,
+  });
+}
+
+async function loadMailbox(force = false) {
+  if (state.mailboxLoading) return;
+  if (state.mailbox && !force) renderMailbox(state.mailbox);
+  if (!state.mailbox || force) renderMailboxLoading();
+  state.mailboxLoading = true;
+  nodes.mailboxRefresh?.setAttribute("aria-busy", "true");
+  nodes.mailboxRefresh?.setAttribute("disabled", "");
+  try {
+    const payload = await api("/api/mailbox");
+    state.mailbox = payload;
+    renderMailbox(payload);
+  } catch (error) {
+    renderMailboxError(error);
+  } finally {
+    state.mailboxLoading = false;
+    nodes.mailboxRefresh?.removeAttribute("aria-busy");
+    nodes.mailboxRefresh?.removeAttribute("disabled");
+  }
+}
+
+function updateMailboxCache(item) {
+  if (!state.mailbox || !item) return;
+  const index = state.mailbox.items?.findIndex((candidate) => candidate.itemId === item.itemId) ?? -1;
+  if (index >= 0) state.mailbox.items[index] = item;
+  state.mailbox.unreadCount = (state.mailbox.items || []).filter(
+    (candidate) => candidate.state === "unread",
+  ).length;
+}
+
+function renderMailboxDetail(detail) {
+  const item = detail?.item || state.activeMailboxItem || {};
+  state.activeMailboxItem = item;
+  setNodeText(nodes.mailboxDetailTitle, detail?.subject || item.subject || "一封信");
+  setNodeText(nodes.mailboxLetterDate, mailboxDate(item.availableAtMillis));
+  setNodeText(nodes.mailboxLetterBody, detail?.body || "正文暂时无法读取");
+  setNodeText(nodes.mailboxLetterState, mailboxStateLabel(item.state));
+  if (nodes.mailboxArchive) {
+    const archived = item.state === "archived";
+    nodes.mailboxArchive.disabled = archived;
+    nodes.mailboxArchive.querySelector("span").textContent = archived ? "已归档" : "归档";
+  }
+}
+
+async function openMailbox(item, sourceNode) {
+  if (!nodes.mailboxDetail || !item?.itemId) return;
+  if (state.mailboxCloseTimer) {
+    window.clearTimeout(state.mailboxCloseTimer);
+    state.mailboxCloseTimer = 0;
+  }
+  state.lastMailboxSource = sourceNode || null;
+  state.lastMailboxItemId = item.itemId;
+  state.activeMailboxItem = item;
+  renderMailboxDetail({ item, subject: item.subject, body: "正在解密信件..." });
+  nodes.mailboxDetail.hidden = false;
+  window.requestAnimationFrame(() => {
+    nodes.mailboxDetail.classList.add("is-open");
+    animateMailboxDetail();
+  });
+  window.setTimeout(
+    () => nodes.mailboxDetailClose?.focus({ preventScroll: true }),
+    prefersReducedMotion() ? 1 : 120,
+  );
+
+  try {
+    let detail = await api(`/api/mailbox/${encodeURIComponent(item.itemId)}`);
+    if (detail.item?.state === "unread") {
+      detail = await api(`/api/mailbox/${encodeURIComponent(item.itemId)}/state`, {
+        method: "POST",
+        body: JSON.stringify({ state: "read" }),
+      });
+    }
+    updateMailboxCache(detail.item);
+    renderMailbox(state.mailbox);
+    renderMailboxDetail(detail);
+  } catch (error) {
+    setNodeText(nodes.mailboxLetterBody, `信件读取失败：${error.message}`);
+  }
+}
+
+async function archiveActiveMailbox() {
+  const item = state.activeMailboxItem;
+  if (!item?.itemId || item.state === "archived") return;
+  nodes.mailboxArchive.disabled = true;
+  try {
+    const detail = await api(`/api/mailbox/${encodeURIComponent(item.itemId)}/state`, {
+      method: "POST",
+      body: JSON.stringify({ state: "archived" }),
+    });
+    updateMailboxCache(detail.item);
+    renderMailbox(state.mailbox);
+    renderMailboxDetail(detail);
+  } catch (error) {
+    setNodeText(nodes.mailboxLetterState, `归档失败：${error.message}`);
+    nodes.mailboxArchive.disabled = false;
+  }
+}
+
+function closeMailboxDetail() {
+  if (!nodes.mailboxDetail) return;
+  state.mailboxTimeline?.kill?.();
+  state.mailboxTimeline = null;
+  nodes.mailboxDetail.classList.remove("is-open");
+  if (state.mailboxCloseTimer) window.clearTimeout(state.mailboxCloseTimer);
+  state.mailboxCloseTimer = window.setTimeout(() => {
+    nodes.mailboxDetail.hidden = true;
+    const updatedSource = Array.from(nodes.mailboxList?.querySelectorAll(".mailbox-item") || []).find(
+      (candidate) => candidate.dataset.mailboxItem === state.lastMailboxItemId,
+    );
+    const focusTarget = state.lastMailboxSource?.isConnected ? state.lastMailboxSource : updatedSource;
+    focusTarget?.focus({ preventScroll: true });
+    state.lastMailboxSource = null;
+    state.lastMailboxItemId = null;
+    state.activeMailboxItem = null;
+    state.mailboxCloseTimer = 0;
   }, prefersReducedMotion() ? 1 : 220);
 }
 
@@ -1100,6 +1348,23 @@ function animatePersonaDetail() {
   });
 }
 
+function animateMailboxDetail() {
+  if (prefersReducedMotion() || !nodes.mailboxDetail) return;
+  ensureGsap().then((gsap) => {
+    if (!gsap || nodes.mailboxDetail.hidden || !nodes.mailboxDetail.classList.contains("is-open")) return;
+    const letter = nodes.mailboxDetail.querySelector(".mailbox-letter");
+    const parts = letter?.querySelectorAll(
+      ".mailbox-letter-kicker, h2, .mailbox-letter-date, .mailbox-letter-body, .mailbox-letter-actions",
+    ) || [];
+    state.mailboxTimeline?.kill?.();
+    state.mailboxTimeline = gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .addLabel("open")
+      .fromTo(letter, { y: 18, scale: 0.985, autoAlpha: 0 }, { y: 0, scale: 1, autoAlpha: 1, duration: 0.38 }, "open")
+      .fromTo(parts, { y: 7, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.26, stagger: 0.035 }, "open+=0.12");
+  });
+}
+
 function setupPointerMaterials() {
   const supportsFinePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
   if (!supportsFinePointer || prefersReducedMotion()) return;
@@ -1178,6 +1443,7 @@ function setupPointerMaterials() {
   bindSurface(nodes.composer, null);
   bindSurface(nodes.memoryField, ".memory-orb");
   bindSurface(nodes.personaDeck, ".persona-card.is-persona-visible", updatePersonaTilt, resetPersonaTilt);
+  bindSurface(nodes.mailboxList, ".mailbox-item");
 }
 
 function animateSendFeedback() {
@@ -1247,11 +1513,18 @@ nodes.memoryReveal?.addEventListener("click", (event) => {
 nodes.personaPrev?.addEventListener("click", () => setPersonaIndex(state.activePersonaIndex - 1));
 nodes.personaNext?.addEventListener("click", () => setPersonaIndex(state.activePersonaIndex + 1));
 nodes.personaDetailClose?.addEventListener("click", closePersonaDetail);
+nodes.mailboxRefresh?.addEventListener("click", () => loadMailbox(true));
+nodes.mailboxDetailClose?.addEventListener("click", closeMailboxDetail);
+nodes.mailboxArchive?.addEventListener("click", archiveActiveMailbox);
+nodes.mailboxDetail?.addEventListener("click", (event) => {
+  if (event.target === nodes.mailboxDetail) closeMailboxDetail();
+});
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeMemory();
     closePersonaDetail();
+    closeMailboxDetail();
   }
   if (document.activeElement instanceof HTMLTextAreaElement) return;
   if (!document.querySelector("#view-persona")?.hidden) {

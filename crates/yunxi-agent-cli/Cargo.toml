@@ -28,6 +28,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 yunxi-agent-core = { path = "../yunxi-agent-core" }
+yunxi-agent-companion = { path = "../yunxi-agent-companion" }
 yunxi-agent-protocol = { path = "../yunxi-agent-protocol" }
 yunxi-agent-provider = { path = "../yunxi-agent-provider" }
 yunxi-agent-persona = { path = "../yunxi-agent-persona" }

@@ -36,6 +36,24 @@ const nodes = {
   mailboxLetterBody: document.querySelector("#mailbox-letter-body"),
   mailboxLetterState: document.querySelector("#mailbox-letter-state"),
   mailboxArchive: document.querySelector("#mailbox-archive"),
+  herCanvas: document.querySelector("#her-canvas"),
+  herDisplayName: document.querySelector("#her-display-name"),
+  herIdentity: document.querySelector("#her-identity"),
+  herRelationshipLabel: document.querySelector("#her-relationship-label"),
+  herRelationshipDescription: document.querySelector("#her-relationship-description"),
+  herStagePath: document.querySelector("#her-stage-path"),
+  herMemoryCount: document.querySelector("#her-memory-count"),
+  herLastCheckIn: document.querySelector("#her-last-check-in"),
+  herSoulSignature: document.querySelector("#her-soul-signature"),
+  herVoice: document.querySelector("#her-voice"),
+  herCompanionStyle: document.querySelector("#her-companion-style"),
+  herTraitList: document.querySelector("#her-trait-list"),
+  herRuntimeState: document.querySelector("#her-runtime-state"),
+  herError: document.querySelector("#her-error"),
+  herRetry: document.querySelector("#her-retry"),
+  herArtWindow: document.querySelector("#her-art-window"),
+  herArtImage: document.querySelector("#her-art-image"),
+  herArtModes: Array.from(document.querySelectorAll("[data-her-art-mode]")),
 };
 
 const state = {
@@ -44,6 +62,7 @@ const state = {
   memory: null,
   persona: null,
   mailbox: null,
+  her: null,
   activeMailboxItem: null,
   activePersonaIndex: 0,
   gsapLoader: null,
@@ -59,12 +78,15 @@ const state = {
   memoryTimeline: null,
   personaTimeline: null,
   mailboxTimeline: null,
+  herTimeline: null,
   lastMemorySource: null,
   lastPersonaSource: null,
   lastMailboxSource: null,
   lastMailboxItemId: null,
   mailboxCloseTimer: 0,
   mailboxLoading: false,
+  herLoading: false,
+  herArtMode: "portrait",
   sending: false,
 };
 
@@ -199,7 +221,7 @@ async function api(path, options = {}) {
 }
 
 function showView(name) {
-  const target = ["chat", "memory", "persona", "mailbox"].includes(name) ? name : "chat";
+  const target = ["chat", "memory", "persona", "her", "mailbox"].includes(name) ? name : "chat";
   document.documentElement.dataset.activeView = target;
   document.body.dataset.activeView = target;
   nodes.views.forEach((view) => {
@@ -218,6 +240,7 @@ function showView(name) {
   });
   if (target === "memory") loadMemory();
   if (target === "persona") loadPersona();
+  if (target === "her") loadHer();
   if (target === "mailbox") loadMailbox();
   if (target === "chat") {
     window.requestAnimationFrame(() => nodes.prompt?.focus());
@@ -241,6 +264,7 @@ function animateViewEntrance(name) {
     chat: ".chat-hero > *, .chat-panel",
     memory: ".memory-head, .memory-field",
     persona: ".persona-stage",
+    her: ".her-heading > *, .her-relationship, .her-facets > *, .her-traits, .her-runtime-state, .her-visual",
     mailbox: ".mailbox-head, .mailbox-list",
   };
   const targets = Array.from(view.querySelectorAll(selectors[name] || ":scope > *"));
@@ -518,6 +542,7 @@ async function sendPrompt(prompt) {
     saveMessages();
     renderMessages();
     loadMemory();
+    loadHer(true);
     loadMailbox(true);
   }
 }
@@ -1221,6 +1246,129 @@ function updatePersonaDeck() {
   });
 }
 
+function formatHerCheckIn(value) {
+  const millis = Number(value);
+  if (!Number.isFinite(millis) || millis <= 0) return "尚未形成记录";
+  try {
+    return new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    }).format(new Date(millis));
+  } catch {
+    return "时间未知";
+  }
+}
+
+function renderHerTraits(traits) {
+  if (!nodes.herTraitList) return;
+  nodes.herTraitList.innerHTML = "";
+  for (const trait of Array.isArray(traits) ? traits : []) {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    const level = document.createElement("strong");
+    item.className = "her-trait";
+    item.dataset.trait = text(trait.id);
+    item.style.setProperty("--trait-score", String(clampNumber(Number(trait.score) || 0, 0, 100)));
+    label.textContent = text(trait.label, "性格");
+    level.textContent = text(trait.level, "平衡");
+    item.append(label, level);
+    nodes.herTraitList.appendChild(item);
+  }
+}
+
+function renderHerRuntime(payload) {
+  if (!nodes.herRuntimeState) return;
+  nodes.herRuntimeState.innerHTML = "";
+  const statuses = [
+    ["人格", Boolean(payload?.personaEnabled)],
+    ["记忆", Boolean(payload?.memoryEnabled)],
+    ["陪伴", Boolean(payload?.companionEnabled)],
+  ];
+  for (const [label, enabled] of statuses) {
+    const item = document.createElement("span");
+    item.className = enabled ? "is-online" : "is-offline";
+    item.textContent = `${label}${enabled ? "在线" : "未启用"}`;
+    nodes.herRuntimeState.appendChild(item);
+  }
+}
+
+function renderHer(payload) {
+  state.her = payload;
+  setNodeText(nodes.herDisplayName, text(payload?.displayName, "YunXi"));
+  setNodeText(nodes.herIdentity, text(payload?.identity, "她的身份档案暂时为空。"));
+  setNodeText(nodes.herRelationshipLabel, text(payload?.relationshipLabel, "初识"));
+  setNodeText(nodes.herRelationshipDescription, text(payload?.relationshipDescription));
+  setNodeText(
+    nodes.herMemoryCount,
+    `${Number(payload?.meaningfulMemoryCount) || 0} 条关系记忆 · ${Number(payload?.activeMemoryCount) || 0} 条可用`,
+  );
+  setNodeText(nodes.herLastCheckIn, formatHerCheckIn(payload?.lastMeaningfulCheckInMillis));
+  setNodeText(nodes.herSoulSignature, text(payload?.soulSignature, "尚未设置"));
+  setNodeText(nodes.herVoice, text(payload?.voice, "尚未设置"));
+  setNodeText(nodes.herCompanionStyle, text(payload?.companionStyle, "尚未设置"));
+  const stages = ["new", "familiar", "established"];
+  const currentIndex = Math.max(0, stages.indexOf(text(payload?.relationshipStage, "new")));
+  nodes.herStagePath?.querySelectorAll("[data-her-stage]").forEach((item, index) => {
+    item.classList.toggle("is-current", index === currentIndex);
+    item.classList.toggle("is-reached", index <= currentIndex);
+    if (index === currentIndex) item.setAttribute("aria-current", "step");
+    else item.removeAttribute("aria-current");
+  });
+  renderHerTraits(payload?.traits);
+  renderHerRuntime(payload);
+  nodes.herCanvas?.classList.remove("is-loading", "has-error");
+  nodes.herCanvas?.setAttribute("aria-busy", "false");
+  if (nodes.herError) nodes.herError.hidden = true;
+}
+
+function renderHerError() {
+  nodes.herCanvas?.classList.remove("is-loading");
+  nodes.herCanvas?.classList.add("has-error");
+  nodes.herCanvas?.setAttribute("aria-busy", "false");
+  if (nodes.herError) nodes.herError.hidden = false;
+}
+
+async function loadHer(force = false) {
+  if (state.herLoading) return;
+  if (state.her && !force) renderHer(state.her);
+  if (!state.her || force) {
+    nodes.herCanvas?.classList.add("is-loading");
+    nodes.herCanvas?.setAttribute("aria-busy", "true");
+  }
+  state.herLoading = true;
+  try {
+    renderHer(await api("/api/her"));
+  } catch {
+    renderHerError();
+  } finally {
+    state.herLoading = false;
+  }
+}
+
+function setHerArtMode(mode) {
+  const nextMode = ["portrait", "expressions", "sheet"].includes(mode) ? mode : "portrait";
+  state.herArtMode = nextMode;
+  if (nodes.herArtWindow) nodes.herArtWindow.dataset.artMode = nextMode;
+  nodes.herArtModes.forEach((button) => {
+    const active = button.dataset.herArtMode === nextMode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  if (prefersReducedMotion() || !nodes.herArtImage) return;
+  ensureGsap().then((gsap) => {
+    if (!gsap || !nodes.herArtImage) return;
+    state.herTimeline?.kill?.();
+    state.herTimeline = gsap
+      .timeline({ defaults: { ease: "power3.out" } })
+      .fromTo(
+        nodes.herArtImage,
+        { autoAlpha: 0.46, filter: "blur(5px)" },
+        { autoAlpha: 1, filter: "blur(0px)", duration: 0.48, clearProps: "opacity,visibility,filter" },
+      );
+  });
+}
+
 function setPersonaDetailOrigin(sourceNode) {
   if (!nodes.personaDetail) return;
   const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
@@ -1443,6 +1591,7 @@ function setupPointerMaterials() {
   bindSurface(nodes.composer, null);
   bindSurface(nodes.memoryField, ".memory-orb");
   bindSurface(nodes.personaDeck, ".persona-card.is-persona-visible", updatePersonaTilt, resetPersonaTilt);
+  bindSurface(nodes.herArtWindow, null);
   bindSurface(nodes.mailboxList, ".mailbox-item");
 }
 
@@ -1513,6 +1662,16 @@ nodes.memoryReveal?.addEventListener("click", (event) => {
 nodes.personaPrev?.addEventListener("click", () => setPersonaIndex(state.activePersonaIndex - 1));
 nodes.personaNext?.addEventListener("click", () => setPersonaIndex(state.activePersonaIndex + 1));
 nodes.personaDetailClose?.addEventListener("click", closePersonaDetail);
+nodes.herRetry?.addEventListener("click", () => loadHer(true));
+nodes.herArtModes.forEach((button) => {
+  button.addEventListener("click", () => setHerArtMode(button.dataset.herArtMode));
+});
+nodes.herArtImage?.addEventListener("load", () => {
+  nodes.herArtWindow?.classList.remove("has-image-error");
+});
+nodes.herArtImage?.addEventListener("error", () => {
+  nodes.herArtWindow?.classList.add("has-image-error");
+});
 nodes.mailboxRefresh?.addEventListener("click", () => loadMailbox(true));
 nodes.mailboxDetailClose?.addEventListener("click", closeMailboxDetail);
 nodes.mailboxArchive?.addEventListener("click", archiveActiveMailbox);

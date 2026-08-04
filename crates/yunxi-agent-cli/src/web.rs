@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
@@ -12,7 +13,10 @@ use yunxi_agent_companion::{
     CompanionMailboxContent, CompanionMailboxItem, MailboxItemType, MailboxQuery, MailboxState,
 };
 use yunxi_agent_core::{AgentConfig, AgentEvent, AgentRunStatus, BackendKind};
-use yunxi_agent_persona::{PersonaProfile, PersonaProfileStore, PersonaSettings};
+use yunxi_agent_persona::{
+    MemoryKind, PersonaProfile, PersonaProfileStore, PersonaRuleLevel, PersonaSettings,
+    RelationshipFamiliarity,
+};
 use yunxi_agent_storage::{FileCompanionMailboxStore, FilePersonaMemoryStore, PersonaMemoryScope};
 
 use crate::provider_mode;
@@ -22,6 +26,7 @@ pub(crate) const DEFAULT_WEB_PORT: u16 = 17861;
 const INDEX_HTML: &str = include_str!("web/index.html");
 const APP_CSS: &str = include_str!("web/app.css");
 const APP_JS: &str = include_str!("web/app.js");
+const YUNXI_CHARACTER_ART: &[u8] = include_bytes!("web/yunxi-character-design.jpg");
 
 #[derive(Clone, Debug)]
 pub(crate) struct WebOptions {
@@ -79,6 +84,47 @@ struct MemoryResponse {
     workspace_fingerprint: String,
     records: Vec<yunxi_agent_persona::MemoryRecord>,
     warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HerResponse {
+    display_name: String,
+    profile_id: String,
+    profile_version: String,
+    identity: String,
+    soul_signature: String,
+    voice: String,
+    companion_style: String,
+    addressing: String,
+    relationship_stage: &'static str,
+    relationship_label: &'static str,
+    relationship_description: &'static str,
+    active_memory_count: usize,
+    meaningful_memory_count: usize,
+    last_meaningful_check_in_millis: Option<u128>,
+    persona_enabled: bool,
+    memory_enabled: bool,
+    companion_enabled: bool,
+    traits: Vec<HerTraitResponse>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HerTraitResponse {
+    id: &'static str,
+    label: &'static str,
+    level: &'static str,
+    score: u8,
+}
+
+#[derive(Debug)]
+struct HerDisplayFields {
+    identity: String,
+    soul_signature: String,
+    voice: String,
+    companion_style: String,
+    addressing: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -195,9 +241,11 @@ fn app(state: AppState) -> Router {
         .route("/", get(index))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
+        .route("/assets/yunxi-character-design.jpg", get(character_art))
         .route("/api/health", get(health))
         .route("/api/status", get(status))
         .route("/api/persona", get(persona))
+        .route("/api/her", get(her))
         .route("/api/memory", get(memory))
         .route("/api/mailbox", get(mailbox))
         .route("/api/mailbox/{item_id}", get(mailbox_detail))
@@ -216,6 +264,14 @@ async fn app_css() -> Response {
 
 async fn app_js() -> Response {
     static_response(APP_JS, "application/javascript; charset=utf-8")
+}
+
+async fn character_art() -> Response {
+    Response::builder()
+        .header(header::CONTENT_TYPE, "image/jpeg")
+        .header(header::CACHE_CONTROL, "public, max-age=3600")
+        .body(Body::from(YUNXI_CHARACTER_ART))
+        .expect("static character art response should be valid")
 }
 
 fn static_response(body: &'static str, content_type: &'static str) -> Response {
@@ -264,6 +320,143 @@ async fn memory(
         records: load.records,
         warnings: load.warnings,
     }))
+}
+
+async fn her(
+    State(state): State<AppState>,
+) -> std::result::Result<Json<HerResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let settings = PersonaSettings::load();
+    let profile = PersonaProfileStore::load_active_checked(&settings)
+        .map_err(|error| internal_error(anyhow::Error::msg(error.to_string())))?;
+    let store = FilePersonaMemoryStore::for_workspace(&state.config.cwd);
+    let load = store.list(PersonaMemoryScope::All);
+    let now = now_millis();
+    let active_memory_count = load
+        .records
+        .iter()
+        .filter(|record| record.is_recallable_at(now))
+        .count();
+    let meaningful_memory_count = load
+        .records
+        .iter()
+        .filter(|record| record.is_recallable_at(now))
+        .filter(|record| {
+            matches!(
+                record.kind,
+                MemoryKind::Preference
+                    | MemoryKind::PersonalFact
+                    | MemoryKind::RelationshipNote
+                    | MemoryKind::EmotionalState
+                    | MemoryKind::Goal
+                    | MemoryKind::Event
+            )
+        })
+        .count();
+    let relationship = yunxi_agent_runtime::derive_relationship_state(&load.records);
+    let (relationship_stage, relationship_label, relationship_description) =
+        relationship_display(relationship.familiarity);
+    let display = her_display_fields(&profile);
+    let traits = vec![
+        her_trait("warmth", "温度", profile.companion_rules.warmth),
+        her_trait("directness", "直接", profile.companion_rules.directness),
+        her_trait("initiative", "主动", profile.companion_rules.initiative),
+        her_trait("humor", "幽默", profile.companion_rules.humor),
+        her_trait(
+            "emotional_attunement",
+            "共情",
+            profile.companion_rules.emotional_attunement,
+        ),
+    ];
+
+    Ok(Json(HerResponse {
+        display_name: profile.display_name,
+        profile_id: profile.id,
+        profile_version: profile.version,
+        identity: display.identity,
+        soul_signature: display.soul_signature,
+        voice: display.voice,
+        companion_style: display.companion_style,
+        addressing: display.addressing,
+        relationship_stage,
+        relationship_label,
+        relationship_description,
+        active_memory_count,
+        meaningful_memory_count,
+        last_meaningful_check_in_millis: relationship.last_meaningful_check_in_millis,
+        persona_enabled: settings.persona_enabled,
+        memory_enabled: settings.memory_enabled,
+        companion_enabled: settings.companion_enabled,
+        traits,
+    }))
+}
+
+fn her_display_fields(profile: &PersonaProfile) -> HerDisplayFields {
+    if profile.authoritative_soul {
+        return HerDisplayFields {
+            identity: "本地陪伴型 Agent".to_string(),
+            soul_signature: "权威灵魂已载入".to_string(),
+            voice: "随灵魂原文保持一致".to_string(),
+            companion_style: "随关系与记忆自然生长".to_string(),
+            addressing: "沿用已经确认的称呼".to_string(),
+        };
+    }
+    let soul_signature = profile
+        .companion_rules
+        .soul_signature
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&profile.layers.soul);
+    HerDisplayFields {
+        identity: display_excerpt(&profile.layers.identity, 180),
+        soul_signature: display_excerpt(soul_signature, 180),
+        voice: display_excerpt(&profile.layers.voice, 180),
+        companion_style: display_excerpt(&profile.layers.companion_style, 180),
+        addressing: display_excerpt(&profile.layers.addressing, 140),
+    }
+}
+
+fn relationship_display(
+    familiarity: RelationshipFamiliarity,
+) -> (&'static str, &'static str, &'static str) {
+    match familiarity {
+        RelationshipFamiliarity::New => (
+            "new",
+            "初识",
+            "她正在认真认识你，也会谨慎地区分已经确认的事实和猜测。",
+        ),
+        RelationshipFamiliarity::Familiar => (
+            "familiar",
+            "熟悉",
+            "她已经熟悉一些稳定偏好与共同经历，会更自然地承接你们的上下文。",
+        ),
+        RelationshipFamiliarity::Established => (
+            "established",
+            "相知",
+            "你们之间已经形成稳定的关系脉络，而真实、尊重和边界仍会被认真保留。",
+        ),
+    }
+}
+
+fn her_trait(id: &'static str, label: &'static str, level: PersonaRuleLevel) -> HerTraitResponse {
+    HerTraitResponse {
+        id,
+        label,
+        level: match level {
+            PersonaRuleLevel::Low => "低",
+            PersonaRuleLevel::Balanced => "平衡",
+            PersonaRuleLevel::High => "高",
+        },
+        score: level.score(),
+    }
+}
+
+fn display_excerpt(value: &str, max_chars: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut excerpt = compact.chars().take(max_chars).collect::<String>();
+    if compact.chars().count() > max_chars {
+        excerpt.push('…');
+    }
+    excerpt
 }
 
 async fn mailbox(
@@ -567,11 +760,54 @@ mod tests {
         assert!(INDEX_HTML.contains("/assets/app.js"));
         assert!(APP_JS.contains("/api/status"));
         assert!(APP_JS.contains("/api/persona"));
+        assert!(APP_JS.contains("/api/her"));
         assert!(APP_JS.contains("/api/memory"));
         assert!(APP_JS.contains("/api/mailbox"));
         assert!(APP_JS.contains("/api/chat"));
         assert!(INDEX_HTML.contains("data-nav=\"mailbox\""));
+        assert!(INDEX_HTML.contains("data-nav=\"her\""));
         assert!(APP_CSS.contains(".mailbox-canvas"));
+        assert!(APP_CSS.contains(".her-canvas"));
+        assert!(!YUNXI_CHARACTER_ART.is_empty());
+    }
+
+    #[test]
+    fn her_relationship_labels_match_runtime_familiarity() {
+        assert_eq!(relationship_display(RelationshipFamiliarity::New).1, "初识");
+        assert_eq!(
+            relationship_display(RelationshipFamiliarity::Familiar).1,
+            "熟悉"
+        );
+        assert_eq!(
+            relationship_display(RelationshipFamiliarity::Established).1,
+            "相知"
+        );
+    }
+
+    #[test]
+    fn her_display_excerpt_is_compact_and_unicode_safe() {
+        assert_eq!(display_excerpt("  温暖\n清晰  稳定 ", 20), "温暖 清晰 稳定");
+        assert_eq!(display_excerpt("一二三四五六", 4), "一二三四…");
+    }
+
+    #[test]
+    fn her_authoritative_soul_keeps_private_original_out_of_web_fields() {
+        let mut profile = yunxi_agent_persona::yunxi_companion_strong();
+        profile.authoritative_soul = true;
+        profile.layers.soul = "PRIVATE-SOUL-MARKER".to_string();
+
+        let display = her_display_fields(&profile);
+        let serialized = format!(
+            "{}{}{}{}{}",
+            display.identity,
+            display.soul_signature,
+            display.voice,
+            display.companion_style,
+            display.addressing
+        );
+
+        assert!(!serialized.contains("PRIVATE-SOUL-MARKER"));
+        assert_eq!(display.soul_signature, "权威灵魂已载入");
     }
 
     #[test]

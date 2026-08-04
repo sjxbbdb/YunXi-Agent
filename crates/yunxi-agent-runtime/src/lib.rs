@@ -1632,7 +1632,9 @@ fn compact_memory_summary(records: &[yunxi_agent_persona::MemoryRecord]) -> Stri
         .join("；")
 }
 
-fn derive_relationship_state(records: &[yunxi_agent_persona::MemoryRecord]) -> RelationshipState {
+pub fn derive_relationship_state(
+    records: &[yunxi_agent_persona::MemoryRecord],
+) -> RelationshipState {
     let now = persona_now_millis();
     let mut active = records
         .iter()

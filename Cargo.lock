@@ -2346,7 +2346,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-cli"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2376,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-companion"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "yunxi-agent-core",
@@ -2385,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-context"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "tempfile",
@@ -2394,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-core"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "async-trait",
  "serde",
@@ -2406,7 +2406,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-eval"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "serde_json",
@@ -2419,7 +2419,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-exec"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "tempfile",
@@ -2430,7 +2430,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-mcp"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-multi-agent"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "yunxi-agent-core",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-patch"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "serde_json",
@@ -2461,7 +2461,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-persona"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "serde_json",
@@ -2469,7 +2469,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-protocol"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "serde_json",
@@ -2477,7 +2477,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-provider"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2494,7 +2494,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-runtime"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "async-trait",
  "serde",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-sandbox"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "tempfile",
@@ -2525,7 +2525,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-skills"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "serde",
  "serde_json",
@@ -2535,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-storage"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "async-trait",
  "base64",
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-tools"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "async-trait",
  "serde",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-tui"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -2586,7 +2586,7 @@ dependencies = [
 
 [[package]]
 name = "yunxi-agent-weixin"
-version = "2.3.3-hotfix.10"
+version = "2.3.3-hotfix.11"
 dependencies = [
  "async-trait",
  "base64",

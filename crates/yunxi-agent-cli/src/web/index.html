@@ -58,6 +58,17 @@
         <button
           class="dock-item"
           type="button"
+          data-nav="her"
+          data-label="她"
+          aria-label="她"
+        >
+          <svg class="dock-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"></path>
+          </svg>
+        </button>
+        <button
+          class="dock-item"
+          type="button"
           data-nav="mailbox"
           data-label="信箱"
           aria-label="信箱"
@@ -191,6 +202,100 @@
                 <p class="persona-detail-reading-label">人格原文</p>
                 <p id="persona-detail-content"></p>
               </article>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view view-her" id="view-her" data-view="her" hidden>
+        <div class="her-canvas" id="her-canvas" aria-busy="true">
+          <section class="her-information" aria-labelledby="her-display-name">
+            <header class="her-heading">
+              <p class="her-page-name">她</p>
+              <h1 id="her-display-name">YunXi</h1>
+              <p class="her-identity" id="her-identity">正在读取她的档案</p>
+            </header>
+
+            <section class="her-relationship" aria-labelledby="her-relationship-label">
+              <div class="her-relationship-title">
+                <p>关系阶段</p>
+                <h2 id="her-relationship-label">读取中</h2>
+              </div>
+              <ol class="her-stage-path" id="her-stage-path" aria-label="关系阶段">
+                <li data-her-stage="new"><span>初识</span></li>
+                <li data-her-stage="familiar"><span>熟悉</span></li>
+                <li data-her-stage="established"><span>相知</span></li>
+              </ol>
+              <p class="her-relationship-description" id="her-relationship-description">
+                关系状态会依据已经确认的长期记忆自然变化。
+              </p>
+              <dl class="her-relationship-meta">
+                <div>
+                  <dt>关系记忆</dt>
+                  <dd id="her-memory-count">0 条</dd>
+                </div>
+                <div>
+                  <dt>最近互动</dt>
+                  <dd id="her-last-check-in">尚未形成记录</dd>
+                </div>
+              </dl>
+            </section>
+
+            <dl class="her-facets">
+              <div>
+                <dt>灵魂底色</dt>
+                <dd id="her-soul-signature">正在读取</dd>
+              </div>
+              <div>
+                <dt>说话方式</dt>
+                <dd id="her-voice">正在读取</dd>
+              </div>
+              <div>
+                <dt>陪伴方式</dt>
+                <dd id="her-companion-style">正在读取</dd>
+              </div>
+            </dl>
+
+            <section class="her-traits" aria-label="性格倾向">
+              <div class="her-trait-list" id="her-trait-list"></div>
+            </section>
+
+            <div class="her-runtime-state" id="her-runtime-state" aria-live="polite"></div>
+            <div class="her-error" id="her-error" hidden>
+              <p>她的档案暂时没有读取成功。</p>
+              <button id="her-retry" type="button">重新读取</button>
+            </div>
+          </section>
+
+          <section class="her-visual" aria-label="YunXi 人物形象">
+            <div class="her-art-window" id="her-art-window" data-art-mode="portrait">
+              <img
+                class="her-art-image"
+                id="her-art-image"
+                src="/assets/yunxi-character-design.jpg"
+                alt="YunXi 人物设定图，包含全身形象、表情与动作设定"
+              />
+              <div class="her-art-shade" aria-hidden="true"></div>
+            </div>
+            <div class="her-art-controls" role="toolbar" aria-label="人物形象视图">
+              <button class="is-active" type="button" data-her-art-mode="portrait" aria-label="查看全身形象" title="全身" aria-pressed="true">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="5" r="2.5"></circle>
+                  <path d="M8.5 21 10 13l-2-2 1.2-3h5.6L16 11l-2 2 1.5 8"></path>
+                </svg>
+              </button>
+              <button type="button" data-her-art-mode="expressions" aria-label="查看表情设定" title="表情" aria-pressed="false">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9"></circle>
+                  <path d="M8 10h.01M16 10h.01M8.5 15a5 5 0 0 0 7 0"></path>
+                </svg>
+              </button>
+              <button type="button" data-her-art-mode="sheet" aria-label="查看完整设定图" title="设定图" aria-pressed="false">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                  <path d="M3 9h18M9 9v12"></path>
+                </svg>
+              </button>
             </div>
           </section>
         </div>

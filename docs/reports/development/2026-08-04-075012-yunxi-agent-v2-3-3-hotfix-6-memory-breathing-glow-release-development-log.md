@@ -52,13 +52,23 @@
 
 ## 本机运行与安装状态
 
-- hotfix.6 release 构建当前运行于 `http://127.0.0.1:17861/`
-- Web 健康检查：`status=ok`，`version=2.3.3-hotfix.6`
-- 为避免重复微信服务，当前 Web 使用 `--no-weixin-autostart`
-- 用户在 2026-08-04 07:44:01 启动的交互式 YunXi CLI 与微信子进程仍在运行
-- 未强行终止该用户会话
+- 发布时曾由 hotfix.6 release 构建临时监听 `http://127.0.0.1:17861/`
+- 为避免重复微信服务，临时 Web 使用 `--no-weixin-autostart`
+- 首次替换因用户在 2026-08-04 07:44:01 启动的交互式 YunXi CLI 占用安装文件而停止
+- 未在缺少用户确认时强行终止该会话
 - 安装前备份已创建并校验：`D:\Apps\YunXi Agent\bin\backups\20260804-074832`
-- 正式安装目录仍为 `2.3.3-hotfix.5`；关闭活动 CLI 后再执行 hotfix.6 二进制替换
+
+正式安装完成时间：2026-08-04 08:11:20 +08:00
+
+- 用户确认继续后，仅停止已核验路径、命令行与父子关系的 YunXi 进程
+- 已替换 `D:\Apps\YunXi Agent\bin\yunxi.exe`
+- 已替换 `D:\Apps\YunXi Agent\bin\yunxi-agent-cli.exe`
+- 两个安装文件均与 hotfix.6 release 构建完成 SHA-256 一致性验证
+- 正式 Web 进程来源：`D:\Apps\YunXi Agent\bin\yunxi.exe`
+- Web 健康检查：`status=ok`，`version=2.3.3-hotfix.6`
+- 微信服务进程真实存在，账户锁 `active`，版本 `2.3.3-hotfix.6`
+- 微信凭据状态正常，待入站与待发送数量均为 0
+- 临时预览端口 `17862` 未监听
 
 ## 发布约束
 

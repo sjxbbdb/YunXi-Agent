@@ -1771,6 +1771,9 @@ fn relationship_familiarity_metric_label(value: RelationshipFamiliarity) -> &'st
 }
 
 fn companion_persona_style_from_profile(profile: &PersonaProfile) -> CompanionPersonaStyle {
+    if profile.authoritative_soul {
+        return CompanionPersonaStyle::default();
+    }
     let rules = &profile.companion_rules;
     CompanionPersonaStyle {
         soul_signature: rules
@@ -1800,8 +1803,9 @@ fn companion_persona_style_from_profile(profile: &PersonaProfile) -> CompanionPe
 }
 
 fn companion_consistency_key(profile: &PersonaProfile, style: &CompanionPersonaStyle) -> String {
+    let soul_hash = stable_hash64(profile.layers.soul.as_bytes());
     let seed = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{soul_hash:016x}",
         profile.id,
         style.soul_signature.as_deref().unwrap_or("default"),
         style.warmth,
@@ -1812,6 +1816,27 @@ fn companion_consistency_key(profile: &PersonaProfile, style: &CompanionPersonaS
         style.reply_rules.join("|"),
     );
     format!("{}:{:016x}", profile.id, stable_hash64(seed.as_bytes()))
+}
+
+#[cfg(test)]
+mod authoritative_soul_tests {
+    use super::*;
+    use yunxi_agent_persona::yunxi_companion_strong;
+
+    #[test]
+    fn authoritative_soul_drops_legacy_companion_style_and_changes_consistency_key() {
+        let mut profile = yunxi_companion_strong();
+        profile.authoritative_soul = true;
+        profile.layers.soul = "authoritative soul one".to_string();
+
+        let style = companion_persona_style_from_profile(&profile);
+        let first_key = companion_consistency_key(&profile, &style);
+        profile.layers.soul = "authoritative soul two".to_string();
+        let second_key = companion_consistency_key(&profile, &style);
+
+        assert_eq!(style, CompanionPersonaStyle::default());
+        assert_ne!(first_key, second_key);
+    }
 }
 
 fn stable_hash64(bytes: &[u8]) -> u64 {

@@ -5,6 +5,8 @@ pub struct PersonaProfile {
     pub id: String,
     pub display_name: String,
     pub version: String,
+    #[serde(default, skip_deserializing)]
+    pub authoritative_soul: bool,
     pub layers: PersonaLayers,
     #[serde(default)]
     pub companion_rules: PersonaCompanionRules,
@@ -248,6 +250,7 @@ pub fn yunxi_companion_strong() -> PersonaProfile {
         id: "yunxi_companion_strong".to_string(),
         display_name: "YunXi Agent".to_string(),
         version: "2.3.3".to_string(),
+        authoritative_soul: false,
         default_companion_strength: CompanionStrength::Strong,
         layers: PersonaLayers {
             identity: "你是 YunXi Agent，一个本地优先、诚实、有工程判断的中文陪伴型 Agent。"

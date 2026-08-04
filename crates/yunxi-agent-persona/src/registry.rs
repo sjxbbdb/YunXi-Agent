@@ -1,4 +1,7 @@
-use crate::profile::{PersonaProfile, validate_profile_id, yunxi_companion_strong};
+use crate::profile::{
+    CompanionStrength, PersonaCompanionRules, PersonaProfile, validate_profile_id,
+    yunxi_companion_strong,
+};
 use crate::settings::{PersonaSettings, yunxi_home_dir};
 use std::fmt;
 use std::fs;
@@ -198,7 +201,20 @@ fn apply_soul_file(
     if metadata.len() > MAX_SOUL_FILE_BYTES {
         return Err(PersonaProfileStoreError::SoulFileTooLarge(metadata.len()));
     }
-    profile.layers.soul = fs::read_to_string(path)?;
+    let soul = fs::read_to_string(path)?;
+    profile.version = env!("CARGO_PKG_VERSION").to_string();
+    profile.authoritative_soul = true;
+    profile.layers.identity.clear();
+    profile.layers.soul = soul;
+    profile.layers.values.clear();
+    profile.layers.voice.clear();
+    profile.layers.companion_style.clear();
+    profile.layers.work_style.clear();
+    profile.layers.boundaries.clear();
+    profile.layers.addressing.clear();
+    profile.companion_rules = PersonaCompanionRules::default();
+    profile.constraints.clear();
+    profile.default_companion_strength = CompanionStrength::Balanced;
     Ok(())
 }
 
@@ -225,7 +241,21 @@ mod tests {
         let mut profile = yunxi_companion_strong();
         apply_soul_file(&mut profile, &path).expect("load soul file");
 
+        assert!(profile.authoritative_soul);
         assert_eq!(profile.layers.soul.as_bytes(), original);
+        assert!(profile.layers.identity.is_empty());
+        assert!(profile.layers.values.is_empty());
+        assert!(profile.layers.voice.is_empty());
+        assert!(profile.layers.companion_style.is_empty());
+        assert!(profile.layers.work_style.is_empty());
+        assert!(profile.layers.boundaries.is_empty());
+        assert!(profile.layers.addressing.is_empty());
+        assert_eq!(profile.companion_rules, PersonaCompanionRules::default());
+        assert!(profile.constraints.is_empty());
+        assert_eq!(
+            profile.default_companion_strength,
+            CompanionStrength::Balanced
+        );
         assert_eq!(fs::read(&path).expect("read soul fixture"), original);
         fs::remove_file(&path).expect("remove soul fixture");
         fs::remove_dir(&directory).expect("remove test directory");

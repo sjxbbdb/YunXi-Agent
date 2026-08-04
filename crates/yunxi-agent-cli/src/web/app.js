@@ -808,9 +808,38 @@ function personaLayerLabel(key) {
   return labels[key] || key.replaceAll("_", " ");
 }
 
+function buildAuthoritativeSoulSections(source) {
+  const content = typeof source === "string" ? source : "";
+  const matches = Array.from(content.matchAll(/^\*\*(\d+)\.\s*(.+?)\*\*\s*$/gm));
+  if (matches.length === 0) {
+    return [
+      {
+        key: "soul_section_1",
+        label: "原文",
+        title: "soul.txt",
+        content,
+      },
+    ];
+  }
+  return matches.map((match, index) => {
+    const start = match.index || 0;
+    const end = matches[index + 1]?.index ?? content.length;
+    return {
+      key: `soul_section_${match[1]}`,
+      label: `原文 ${match[1]}`,
+      title: match[2],
+      content: content.slice(start, end),
+    };
+  });
+}
+
 function buildPersonaLayers(payload) {
   const profile = payload?.profile || {};
   const layers = profile.layers || {};
+  const authoritativeSoul = profile.authoritative_soul || profile.authoritativeSoul;
+  if (authoritativeSoul) {
+    return buildAuthoritativeSoulSections(layers.soul);
+  }
   const entries = Object.entries(layers).map(([key, value]) => ({
     key,
     label: personaLayerLabel(key),
@@ -969,6 +998,11 @@ function setPersonaDetailOrigin(sourceNode) {
 
 function personaLayerMeta(layer) {
   const key = layer?.key || "persona";
+  if (key.startsWith("soul_section_")) {
+    return {
+      summary: "来自 soul.txt 的原始章节，内容未改写。",
+    };
+  }
   const summaries = {
     identity: "它回答时先确认自己是谁，不把本地 Agent 说成云端人格或万能助手。",
     soul: "这是陪伴的底色：真实、持续、克制，不用表演替代理解。",
@@ -996,7 +1030,10 @@ function openPersonaDetail(layer, sourceNode = null) {
   state.lastPersonaSource = sourceNode;
   setPersonaDetailOrigin(sourceNode);
   const meta = personaLayerMeta(layer);
-  setNodeText(nodes.personaDetailKicker, "人格层");
+  setNodeText(
+    nodes.personaDetailKicker,
+    layer.key?.startsWith("soul_section_") ? "soul.txt" : "人格层",
+  );
   setNodeText(nodes.personaDetailTitle, layer.title);
   setNodeText(nodes.personaDetailSummary, meta.summary);
   setNodeText(nodes.personaDetailContent, layer.content);

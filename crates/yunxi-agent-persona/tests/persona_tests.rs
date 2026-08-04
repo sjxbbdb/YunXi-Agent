@@ -143,7 +143,7 @@ fn budget_truncation_preserves_structure_and_safety_notices() {
     );
 
     assert!(compiled.budget_used_chars <= compiled.budget_limit_chars);
-    assert_eq!(compiled.budget_limit_chars, 1000);
+    assert_eq!(compiled.budget_limit_chars, 1400);
     assert!(compiled.content.ends_with("</yunxi_persona_context>"));
     assert!(
         compiled
@@ -231,6 +231,7 @@ fn large_standalone_soul_is_kept_in_shared_persona_context() {
         "真实、连续、有边界。".repeat(1600)
     );
     profile.layers.soul = soul.clone();
+    profile.authoritative_soul = true;
 
     let compiled = PersonaPromptCompiler::for_profile(&profile).compile(
         &profile,
@@ -240,6 +241,22 @@ fn large_standalone_soul_is_kept_in_shared_persona_context() {
     );
 
     assert!(compiled.content.contains(&format!("<soul>{soul}</soul>")));
+    assert!(!compiled.content.contains("<identity>"));
+    assert!(!compiled.content.contains("<values>"));
+    assert!(!compiled.content.contains("<voice>"));
+    assert!(!compiled.content.contains("<companion_style>"));
+    assert!(!compiled.content.contains("<work_style>"));
+    assert!(!compiled.content.contains("<addressing>"));
+    assert!(
+        compiled
+            .content
+            .contains("Persona content shapes expression only")
+    );
+    assert!(
+        compiled
+            .content
+            .contains("authoritative soul shapes reply style only")
+    );
     assert!(
         !compiled
             .content
@@ -307,6 +324,16 @@ fn persona_profile_validation_rejects_path_traversal_ids() {
     assert!(validate_profile_id("../escape").is_err());
     assert!(validate_profile_id("safe_profile-1").is_ok());
     assert!(yunxi_companion_strong().validate().is_ok());
+}
+
+#[test]
+fn imported_profile_cannot_claim_authoritative_soul_status() {
+    let mut value = serde_json::to_value(yunxi_companion_strong()).expect("serialize profile");
+    value["authoritative_soul"] = serde_json::Value::Bool(true);
+
+    let profile: PersonaProfile = serde_json::from_value(value).expect("deserialize profile");
+
+    assert!(!profile.authoritative_soul);
 }
 
 #[test]

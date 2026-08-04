@@ -224,6 +224,32 @@ fn custom_soul_layers_are_compiled_into_shared_persona_context() {
 }
 
 #[test]
+fn large_standalone_soul_is_kept_in_shared_persona_context() {
+    let mut profile = yunxi_companion_strong();
+    let soul = format!(
+        "BEGIN-SOUL\n{}\nEND-SOUL",
+        "真实、连续、有边界。".repeat(1600)
+    );
+    profile.layers.soul = soul.clone();
+
+    let compiled = PersonaPromptCompiler::for_profile(&profile).compile(
+        &profile,
+        &HumanProfile::default(),
+        &RelationshipState::default(),
+        &[],
+    );
+
+    assert!(compiled.content.contains(&format!("<soul>{soul}</soul>")));
+    assert!(
+        !compiled
+            .content
+            .contains("<truncated section=\"persona\" />")
+    );
+    assert!(compiled.budget_limit_chars > 3200);
+    assert!(compiled.budget_used_chars <= compiled.budget_limit_chars);
+}
+
+#[test]
 fn companion_rules_are_backward_compatible_and_compiled() {
     let legacy_json = r#"{
         "id": "legacy_profile",

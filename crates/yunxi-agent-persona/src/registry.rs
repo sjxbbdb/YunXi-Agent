@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_PROFILE_ID: &str = "yunxi_companion_strong";
 const MAX_PROFILE_FILE_BYTES: u64 = 512 * 1024;
+const MAX_SOUL_FILE_BYTES: u64 = 128 * 1024;
 
 #[derive(Debug)]
 pub enum PersonaProfileStoreError {
@@ -15,6 +16,7 @@ pub enum PersonaProfileStoreError {
     ProfileAlreadyExists(PathBuf),
     ProfileNotFound(String),
     ProfileFileTooLarge(u64),
+    SoulFileTooLarge(u64),
 }
 
 impl fmt::Display for PersonaProfileStoreError {
@@ -38,6 +40,10 @@ impl fmt::Display for PersonaProfileStoreError {
             Self::ProfileFileTooLarge(bytes) => write!(
                 formatter,
                 "persona profile file is too large ({bytes} bytes; limit is {MAX_PROFILE_FILE_BYTES} bytes)"
+            ),
+            Self::SoulFileTooLarge(bytes) => write!(
+                formatter,
+                "persona soul file is too large ({bytes} bytes; limit is {MAX_SOUL_FILE_BYTES} bytes)"
             ),
         }
     }
@@ -65,28 +71,35 @@ impl PersonaProfileStore {
         yunxi_home_dir().join("persona").join("profiles")
     }
 
+    pub fn soul_path() -> PathBuf {
+        yunxi_home_dir().join("persona").join("soul.txt")
+    }
+
     pub fn profile_path(profile_id: &str) -> Result<PathBuf, PersonaProfileStoreError> {
         validate_profile_id(profile_id).map_err(PersonaProfileStoreError::InvalidProfile)?;
         Ok(Self::profiles_dir().join(format!("{profile_id}.json")))
     }
 
     pub fn load(profile_id: &str) -> Result<PersonaProfile, PersonaProfileStoreError> {
-        if profile_id == DEFAULT_PROFILE_ID {
-            return Ok(yunxi_companion_strong());
-        }
-        let path = Self::profile_path(profile_id)?;
-        if !path.is_file() {
-            return Err(PersonaProfileStoreError::ProfileNotFound(
-                profile_id.to_string(),
-            ));
-        }
-        let profile = parse_profile_file(&path)?;
-        if profile.id != profile_id {
-            return Err(PersonaProfileStoreError::InvalidProfile(format!(
-                "profile id '{}' does not match requested id '{profile_id}'",
-                profile.id
-            )));
-        }
+        let mut profile = if profile_id == DEFAULT_PROFILE_ID {
+            yunxi_companion_strong()
+        } else {
+            let path = Self::profile_path(profile_id)?;
+            if !path.is_file() {
+                return Err(PersonaProfileStoreError::ProfileNotFound(
+                    profile_id.to_string(),
+                ));
+            }
+            let profile = parse_profile_file(&path)?;
+            if profile.id != profile_id {
+                return Err(PersonaProfileStoreError::InvalidProfile(format!(
+                    "profile id '{}' does not match requested id '{profile_id}'",
+                    profile.id
+                )));
+            }
+            profile
+        };
+        apply_soul_file(&mut profile, &Self::soul_path())?;
         Ok(profile)
     }
 
@@ -166,4 +179,55 @@ fn parse_profile_file(path: &Path) -> Result<PersonaProfile, PersonaProfileStore
         .validate()
         .map_err(PersonaProfileStoreError::InvalidProfile)?;
     Ok(profile)
+}
+
+fn apply_soul_file(
+    profile: &mut PersonaProfile,
+    path: &Path,
+) -> Result<(), PersonaProfileStoreError> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let metadata = fs::metadata(path)?;
+    if !metadata.is_file() {
+        return Err(PersonaProfileStoreError::InvalidProfile(format!(
+            "persona soul path is not a regular file: {}",
+            path.display()
+        )));
+    }
+    if metadata.len() > MAX_SOUL_FILE_BYTES {
+        return Err(PersonaProfileStoreError::SoulFileTooLarge(metadata.len()));
+    }
+    profile.layers.soul = fs::read_to_string(path)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_soul_file_replaces_profile_soul_without_rewriting_it() {
+        let unique = format!(
+            "yunxi-persona-soul-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        );
+        let directory = std::env::temp_dir().join(unique);
+        fs::create_dir(&directory).expect("create test directory");
+        let path = directory.join("soul.txt");
+        let original = b"line one\r\nline two <soul> & exact\n";
+        fs::write(&path, original).expect("write soul fixture");
+
+        let mut profile = yunxi_companion_strong();
+        apply_soul_file(&mut profile, &path).expect("load soul file");
+
+        assert_eq!(profile.layers.soul.as_bytes(), original);
+        assert_eq!(fs::read(&path).expect("read soul fixture"), original);
+        fs::remove_file(&path).expect("remove soul fixture");
+        fs::remove_dir(&directory).expect("remove test directory");
+    }
 }

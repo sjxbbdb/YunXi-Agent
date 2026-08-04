@@ -5,6 +5,9 @@ use crate::profile::{
 
 const CONTEXT_BLOCK_VERSION: &str = "2.3.3";
 const MIN_SAFE_CONTEXT_BUDGET_CHARS: usize = 1000;
+const DEFAULT_CONTEXT_BUDGET_CHARS: usize = 3200;
+const LARGE_SOUL_THRESHOLD_CHARS: usize = 4000;
+const LARGE_SOUL_CONTEXT_HEADROOM_CHARS: usize = 8192;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledPersonaContext {
@@ -120,7 +123,9 @@ impl PersonaContextBlock {
 
 impl Default for PersonaPromptCompiler {
     fn default() -> Self {
-        Self { budget_chars: 3200 }
+        Self {
+            budget_chars: DEFAULT_CONTEXT_BUDGET_CHARS,
+        }
     }
 }
 
@@ -131,6 +136,14 @@ impl PersonaPromptCompiler {
             // truncated. A safety floor keeps those required lines well-formed.
             budget_chars: budget_chars.max(MIN_SAFE_CONTEXT_BUDGET_CHARS),
         }
+    }
+
+    pub fn for_profile(profile: &PersonaProfile) -> Self {
+        let escaped_soul_chars = escape_context_text(&profile.layers.soul).chars().count();
+        if escaped_soul_chars <= LARGE_SOUL_THRESHOLD_CHARS {
+            return Self::default();
+        }
+        Self::new(escaped_soul_chars.saturating_add(LARGE_SOUL_CONTEXT_HEADROOM_CHARS))
     }
 
     pub fn compile(

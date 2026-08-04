@@ -2515,14 +2515,16 @@ fn build_persona_turn_context(
         .then(|| companion_consistency_key(&profile, &companion_persona_style));
 
     let compiled_context = if settings.persona_enabled {
-        Some(PersonaPromptCompiler::default().compile_routed_for_turn(
-            &profile,
-            &HumanProfile::default(),
-            &relationship,
-            &boot_context.records,
-            &dynamic_recall.records,
-            include_boot_context,
-        ))
+        Some(
+            PersonaPromptCompiler::for_profile(&profile).compile_routed_for_turn(
+                &profile,
+                &HumanProfile::default(),
+                &relationship,
+                &boot_context.records,
+                &dynamic_recall.records,
+                include_boot_context,
+            ),
+        )
     } else if settings.memory_enabled
         && (!boot_context.records.is_empty() || !dynamic_recall.records.is_empty())
     {

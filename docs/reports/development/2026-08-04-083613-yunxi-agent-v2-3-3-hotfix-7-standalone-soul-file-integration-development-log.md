@@ -62,6 +62,16 @@
 
 ## 安全与发布约束
 
-未执行递归清理、目录移动、用户目录删除、`git clean`、force push、历史 tag 删除、移动或覆盖。历史 tag 全部保留；本版本准备发布为新 tag `v2.3.3-hotfix.7`。
+未执行递归清理、目录移动、用户目录删除、`git clean`、force push、历史 tag 删除、移动或覆盖。历史 tag 全部保留。
+
+## GitHub 发布结果
+
+- 发布 commit：`33cdf900b76716d038cfe8c9bef42a1b4ea619c4`
+- annotated tag：`v2.3.3-hotfix.7`
+- tag target：`33cdf900b76716d038cfe8c9bef42a1b4ea619c4`
+- 推送方式：GitHub CLI 当前认证账号配置 Git 凭据后执行普通 push
+- 远端仓库：`https://github.com/sjxbbdb/YunXi-Agent`
+- 远端 `master` 与新 tag 均推送成功；未使用 force，未修改任何历史 tag
+- 本节作为 tag 后 docs-only 收口记录，不移动 `v2.3.3-hotfix.7`
 
 署名：开发者

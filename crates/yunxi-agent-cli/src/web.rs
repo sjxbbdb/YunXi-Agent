@@ -768,6 +768,11 @@ mod tests {
         assert!(INDEX_HTML.contains("data-nav=\"her\""));
         assert!(APP_CSS.contains(".mailbox-canvas"));
         assert!(APP_CSS.contains(".her-canvas"));
+        assert!(APP_CSS.contains(".her-ascii-field"));
+        assert!(INDEX_HTML.contains("id=\"her-ascii-layer\""));
+        assert!(INDEX_HTML.contains("id=\"her-art-plane\""));
+        assert!(APP_JS.contains("buildHerAsciiTexture"));
+        assert!(!INDEX_HTML.contains("assets.21st.dev"));
         assert!(!YUNXI_CHARACTER_ART.is_empty());
     }
 

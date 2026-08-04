@@ -51,7 +51,9 @@ const nodes = {
   herRuntimeState: document.querySelector("#her-runtime-state"),
   herError: document.querySelector("#her-error"),
   herRetry: document.querySelector("#her-retry"),
+  herAsciiLayer: document.querySelector("#her-ascii-layer"),
   herArtWindow: document.querySelector("#her-art-window"),
+  herArtPlane: document.querySelector("#her-art-plane"),
   herArtImage: document.querySelector("#her-art-image"),
   herArtModes: Array.from(document.querySelectorAll("[data-her-art-mode]")),
 };
@@ -79,6 +81,7 @@ const state = {
   personaTimeline: null,
   mailboxTimeline: null,
   herTimeline: null,
+  herAmbientTimeline: null,
   lastMemorySource: null,
   lastPersonaSource: null,
   lastMailboxSource: null,
@@ -257,6 +260,8 @@ function animateViewEntrance(name) {
   state.viewAnimations = [];
   state.viewTimeline?.kill?.();
   state.viewTimeline = null;
+  if (name === "her") startHerAmbientMotion();
+  else state.herAmbientTimeline?.pause?.();
   if (prefersReducedMotion()) return;
   const view = nodes.views.find((candidate) => candidate.dataset.view === name);
   if (!view || view.hidden) return;
@@ -264,7 +269,7 @@ function animateViewEntrance(name) {
     chat: ".chat-hero > *, .chat-panel",
     memory: ".memory-head, .memory-field",
     persona: ".persona-stage",
-    her: ".her-heading > *, .her-relationship, .her-facets > *, .her-traits, .her-runtime-state, .her-visual",
+    her: ".her-heading > *, .her-relationship, .her-signals-heading, .her-facets > *, .her-traits, .her-runtime-state, .her-visual",
     mailbox: ".mailbox-head, .mailbox-list",
   };
   const targets = Array.from(view.querySelectorAll(selectors[name] || ":scope > *"));
@@ -288,6 +293,77 @@ function animateViewEntrance(name) {
     return;
   }
   state.viewAnimations = animateElements(targets, { y: 6, duration: 240, stagger: 22 });
+}
+
+function startHerAmbientMotion() {
+  if (!nodes.herAsciiLayer || prefersReducedMotion()) return;
+  if (state.herAmbientTimeline) {
+    state.herAmbientTimeline.resume();
+    return;
+  }
+  ensureGsap().then((gsap) => {
+    if (state.herAmbientTimeline || document.querySelector("#view-her")?.hidden) return;
+    if (gsap) {
+      state.herAmbientTimeline = gsap
+        .timeline({ repeat: -1, yoyo: true, defaults: { ease: "sine.inOut" } })
+        .fromTo(
+          nodes.herAsciiLayer,
+          { xPercent: -1.2, yPercent: -1.5, autoAlpha: 0.34 },
+          { xPercent: 1.2, yPercent: -5.5, autoAlpha: 0.66, duration: 10 },
+        );
+      return;
+    }
+    const animation = nodes.herAsciiLayer.animate(
+      [
+        { transform: "translate3d(-1.2%, -1.5%, 0)", opacity: 0.34 },
+        { transform: "translate3d(1.2%, -5.5%, 0)", opacity: 0.66 },
+      ],
+      { duration: 20000, direction: "alternate", iterations: Infinity, easing: "ease-in-out" },
+    );
+    state.herAmbientTimeline = {
+      pause: () => animation.pause(),
+      resume: () => animation.play(),
+      kill: () => animation.cancel(),
+    };
+  });
+}
+
+function buildHerAsciiTexture() {
+  if (!nodes.herAsciiLayer) return;
+  const width = 112;
+  const height = 54;
+  const glyphs = [" ", " ", ".", ".", ":", "+", "*"];
+  const labels = new Map([
+    [8, "YUNXI"],
+    [21, "MEMORY / SOUL"],
+    [36, "LOCAL / PRESENT"],
+  ]);
+  let seed = 0x5f3759df;
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const lines = [];
+
+  for (let row = 0; row < height; row += 1) {
+    const cells = [];
+    for (let column = 0; column < width; column += 1) {
+      const x = (column - width / 2) / (width / 2);
+      const y = (row - height / 2) / (height / 2);
+      const radius = Math.sqrt(x * x * 0.78 + y * y * 1.18);
+      const pulse = Math.sin(column * 0.22 + row * 0.31) * 0.12;
+      const threshold = 0.22 + Math.max(0, 0.92 - radius) * 0.42 + pulse;
+      cells.push(random() < threshold ? glyphs[Math.floor(random() * glyphs.length)] : " ");
+    }
+    const label = labels.get(row);
+    if (label) {
+      const start = Math.max(0, Math.floor((width - label.length) / 2));
+      for (let index = 0; index < label.length; index += 1) cells[start + index] = label[index];
+    }
+    lines.push(cells.join(""));
+  }
+
+  nodes.herAsciiLayer.textContent = lines.join("\n");
 }
 
 function animateDockSelection(item) {
@@ -1269,7 +1345,7 @@ function renderHerTraits(traits) {
     const level = document.createElement("strong");
     item.className = "her-trait";
     item.dataset.trait = text(trait.id);
-    item.style.setProperty("--trait-score", String(clampNumber(Number(trait.score) || 0, 0, 100)));
+    item.style.setProperty("--trait-progress", `${clampNumber(Number(trait.score) || 0, 0, 100)}%`);
     label.textContent = text(trait.label, "性格");
     level.textContent = text(trait.level, "平衡");
     item.append(label, level);
@@ -1363,8 +1439,8 @@ function setHerArtMode(mode) {
       .timeline({ defaults: { ease: "power3.out" } })
       .fromTo(
         nodes.herArtImage,
-        { autoAlpha: 0.46, filter: "blur(5px)" },
-        { autoAlpha: 1, filter: "blur(0px)", duration: 0.48, clearProps: "opacity,visibility,filter" },
+        { autoAlpha: 0.62 },
+        { autoAlpha: 1, duration: 0.34, clearProps: "opacity,visibility" },
       );
   });
 }
@@ -1518,6 +1594,7 @@ function setupPointerMaterials() {
   if (!supportsFinePointer || prefersReducedMotion()) return;
 
   const personaControls = new WeakMap();
+  let herControls = null;
   const resetSurface = (surface, onReset) => {
     if (!surface) return;
     surface.classList.remove("is-pointer-active");
@@ -1588,10 +1665,45 @@ function setupPointerMaterials() {
     }
   };
 
+  const updateHerParallax = (_surface, x, y) => {
+    const plane = nodes.herArtPlane;
+    if (!plane) return;
+    if (window.gsap) {
+      if (!herControls) {
+        window.gsap.set(plane, { transformPerspective: 1200, transformOrigin: "50% 50%" });
+        herControls = {
+          x: window.gsap.quickTo(plane, "x", { duration: 0.5, ease: "power3.out" }),
+          y: window.gsap.quickTo(plane, "y", { duration: 0.5, ease: "power3.out" }),
+          rotationX: window.gsap.quickTo(plane, "rotationX", { duration: 0.5, ease: "power3.out" }),
+          rotationY: window.gsap.quickTo(plane, "rotationY", { duration: 0.5, ease: "power3.out" }),
+        };
+      }
+      herControls.x((x - 0.5) * -7);
+      herControls.y((y - 0.5) * -5);
+      herControls.rotationX((0.5 - y) * 1.2);
+      herControls.rotationY((x - 0.5) * 1.4);
+      return;
+    }
+    plane.style.transform = `perspective(1200px) translate3d(${((x - 0.5) * -7).toFixed(2)}px, ${((y - 0.5) * -5).toFixed(2)}px, 0)`;
+  };
+
+  const resetHerParallax = () => {
+    const plane = nodes.herArtPlane;
+    if (!plane) return;
+    if (herControls) {
+      herControls.x(0);
+      herControls.y(0);
+      herControls.rotationX(0);
+      herControls.rotationY(0);
+    } else {
+      plane.style.removeProperty("transform");
+    }
+  };
+
   bindSurface(nodes.composer, null);
   bindSurface(nodes.memoryField, ".memory-orb");
   bindSurface(nodes.personaDeck, ".persona-card.is-persona-visible", updatePersonaTilt, resetPersonaTilt);
-  bindSurface(nodes.herArtWindow, null);
+  bindSurface(nodes.herArtWindow, null, updateHerParallax, resetHerParallax);
   bindSurface(nodes.mailboxList, ".mailbox-item");
 }
 
@@ -1707,6 +1819,7 @@ window.addEventListener("resize", () => {
   });
 });
 
+buildHerAsciiTexture();
 setupDockMotion();
 setupPointerMaterials();
 renderMessages();

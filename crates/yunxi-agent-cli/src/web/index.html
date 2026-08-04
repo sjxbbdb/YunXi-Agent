@@ -209,73 +209,94 @@
 
       <section class="view view-her" id="view-her" data-view="her" hidden>
         <div class="her-canvas" id="her-canvas" aria-busy="true">
-          <section class="her-information" aria-labelledby="her-display-name">
-            <header class="her-heading">
-              <p class="her-page-name">她</p>
-              <h1 id="her-display-name">YunXi</h1>
-              <p class="her-identity" id="her-identity">正在读取她的档案</p>
-            </header>
+          <div class="her-ascii-field" aria-hidden="true">
+            <pre class="her-ascii-layer" id="her-ascii-layer"></pre>
+          </div>
 
-            <section class="her-relationship" aria-labelledby="her-relationship-label">
-              <div class="her-relationship-title">
-                <p>关系阶段</p>
-                <h2 id="her-relationship-label">读取中</h2>
+          <div class="her-copy">
+            <section class="her-information" aria-labelledby="her-display-name">
+              <header class="her-heading">
+                <p class="her-page-name">她</p>
+                <p class="her-archive-mark">YUNXI / RELATIONSHIP ARCHIVE</p>
+                <h1 id="her-display-name">YunXi</h1>
+                <p class="her-identity" id="her-identity">正在读取她的档案</p>
+              </header>
+
+              <section class="her-relationship" aria-labelledby="her-relationship-label">
+                <div class="her-relationship-title">
+                  <p>关系阶段</p>
+                  <h2 id="her-relationship-label">读取中</h2>
+                </div>
+                <ol class="her-stage-path" id="her-stage-path" aria-label="关系阶段">
+                  <li data-her-stage="new"><span>初识</span></li>
+                  <li data-her-stage="familiar"><span>熟悉</span></li>
+                  <li data-her-stage="established"><span>相知</span></li>
+                </ol>
+                <p class="her-relationship-description" id="her-relationship-description">
+                  关系状态会依据已经确认的长期记忆自然变化。
+                </p>
+                <dl class="her-relationship-meta">
+                  <div>
+                    <dt>关系记忆</dt>
+                    <dd id="her-memory-count">0 条</dd>
+                  </div>
+                  <div>
+                    <dt>最近互动</dt>
+                    <dd id="her-last-check-in">尚未形成记录</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <div class="her-error" id="her-error" hidden>
+                <p>她的档案暂时没有读取成功。</p>
+                <button id="her-retry" type="button">重新读取</button>
               </div>
-              <ol class="her-stage-path" id="her-stage-path" aria-label="关系阶段">
-                <li data-her-stage="new"><span>初识</span></li>
-                <li data-her-stage="familiar"><span>熟悉</span></li>
-                <li data-her-stage="established"><span>相知</span></li>
-              </ol>
-              <p class="her-relationship-description" id="her-relationship-description">
-                关系状态会依据已经确认的长期记忆自然变化。
-              </p>
-              <dl class="her-relationship-meta">
+            </section>
+
+            <aside class="her-signals" aria-labelledby="her-signals-title">
+              <header class="her-signals-heading">
+                <p>INNER CONSTELLATION</p>
+                <h2 id="her-signals-title">灵魂与性格</h2>
+              </header>
+
+              <dl class="her-facets">
                 <div>
-                  <dt>关系记忆</dt>
-                  <dd id="her-memory-count">0 条</dd>
+                  <dt>灵魂底色</dt>
+                  <dd id="her-soul-signature">正在读取</dd>
                 </div>
                 <div>
-                  <dt>最近互动</dt>
-                  <dd id="her-last-check-in">尚未形成记录</dd>
+                  <dt>说话方式</dt>
+                  <dd id="her-voice">正在读取</dd>
+                </div>
+                <div>
+                  <dt>陪伴方式</dt>
+                  <dd id="her-companion-style">正在读取</dd>
                 </div>
               </dl>
-            </section>
 
-            <dl class="her-facets">
-              <div>
-                <dt>灵魂底色</dt>
-                <dd id="her-soul-signature">正在读取</dd>
-              </div>
-              <div>
-                <dt>说话方式</dt>
-                <dd id="her-voice">正在读取</dd>
-              </div>
-              <div>
-                <dt>陪伴方式</dt>
-                <dd id="her-companion-style">正在读取</dd>
-              </div>
-            </dl>
+              <section class="her-traits" aria-label="性格倾向">
+                <div class="her-trait-list" id="her-trait-list"></div>
+              </section>
 
-            <section class="her-traits" aria-label="性格倾向">
-              <div class="her-trait-list" id="her-trait-list"></div>
-            </section>
-
-            <div class="her-runtime-state" id="her-runtime-state" aria-live="polite"></div>
-            <div class="her-error" id="her-error" hidden>
-              <p>她的档案暂时没有读取成功。</p>
-              <button id="her-retry" type="button">重新读取</button>
-            </div>
-          </section>
+              <div class="her-runtime-state" id="her-runtime-state" aria-live="polite"></div>
+            </aside>
+          </div>
 
           <section class="her-visual" aria-label="YunXi 人物形象">
             <div class="her-art-window" id="her-art-window" data-art-mode="portrait">
-              <img
-                class="her-art-image"
-                id="her-art-image"
-                src="/assets/yunxi-character-design.jpg"
-                alt="YunXi 人物设定图，包含全身形象、表情与动作设定"
-              />
-              <div class="her-art-shade" aria-hidden="true"></div>
+              <div class="her-art-plane" id="her-art-plane">
+                <img
+                  class="her-art-image"
+                  id="her-art-image"
+                  src="/assets/yunxi-character-design.jpg"
+                  alt="YunXi 人物设定图，包含全身形象、表情与动作设定"
+                />
+                <div class="her-art-shade" aria-hidden="true"></div>
+              </div>
+              <div class="her-art-coordinate" aria-hidden="true">
+                <span>YUNXI</span>
+                <span>LOCAL / PRESENT</span>
+              </div>
             </div>
             <div class="her-art-controls" role="toolbar" aria-label="人物形象视图">
               <button class="is-active" type="button" data-her-art-mode="portrait" aria-label="查看全身形象" title="全身" aria-pressed="true">

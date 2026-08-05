@@ -1,5 +1,14 @@
 const STORAGE_KEY = "yunxi-web-redesign-chat";
 
+const HER_EXPRESSION_ASSETS = Object.freeze([
+  { src: "/assets/yunxi-her-expression-reserved.jpg", label: "克制" },
+  { src: "/assets/yunxi-her-expression-calm.jpg", label: "平静" },
+  { src: "/assets/yunxi-her-expression-thoughtful.jpg", label: "思索" },
+  { src: "/assets/yunxi-her-expression-wistful.jpg", label: "侧望" },
+  { src: "/assets/yunxi-her-expression-smile.jpg", label: "微笑" },
+  { src: "/assets/yunxi-her-expression-gentle.jpg", label: "温柔" },
+]);
+
 const nodes = {
   dock: document.querySelector("#yunxi-dock"),
   navItems: Array.from(document.querySelectorAll("[data-nav]")),
@@ -102,6 +111,9 @@ const state = {
   mailboxLoading: false,
   herLoading: false,
   herArtMode: "portrait",
+  herExpressionIndex: 0,
+  herExpressionsPreloaded: false,
+  herArtSwapSequence: 0,
   herRevealTimer: 0,
   lastHerSource: null,
   sending: false,
@@ -1401,35 +1413,76 @@ async function loadHer(force = false) {
   }
 }
 
-function setHerArtMode(mode) {
-  const nextMode = ["portrait", "expressions", "sheet"].includes(mode) ? mode : "portrait";
-  state.herArtMode = nextMode;
-  if (nodes.herArtWindow) nodes.herArtWindow.dataset.artMode = nextMode;
-  if (nodes.herArtImage) {
-    const profileSource = nodes.herArtImage.dataset.profileSrc || "/assets/yunxi-her-profile-card.jpg";
-    const sheetSource = nodes.herArtImage.dataset.sheetSrc || "/assets/yunxi-character-design.jpg";
-    const nextSource = nextMode === "portrait" ? profileSource : sheetSource;
-    if (nodes.herArtImage.getAttribute("src") !== nextSource) {
-      nodes.herArtImage.setAttribute("src", nextSource);
-    }
-    nodes.herArtImage.alt = nextMode === "portrait" ? "YunXi 人物形象" : "YunXi 人物设定图";
-  }
-  nodes.herArtModes.forEach((button) => {
-    const active = button.dataset.herArtMode === nextMode;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", active ? "true" : "false");
+function preloadHerExpressions() {
+  if (state.herExpressionsPreloaded) return;
+  state.herExpressionsPreloaded = true;
+  HER_EXPRESSION_ASSETS.forEach(({ src }) => {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = src;
   });
-  if (prefersReducedMotion() || !nodes.herArtImage) return;
+}
+
+function animateHerArtSwap(sequence) {
+  if (sequence !== state.herArtSwapSequence || prefersReducedMotion() || !nodes.herArtImage) return;
   ensureGsap().then((gsap) => {
-    if (!gsap || !nodes.herArtImage) return;
+    if (!gsap || !nodes.herArtImage || sequence !== state.herArtSwapSequence) return;
     state.herTimeline?.kill?.();
     state.herTimeline = gsap
       .timeline({ defaults: { ease: "power3.out" } })
       .fromTo(
         nodes.herArtImage,
-        { autoAlpha: 0.62 },
-        { autoAlpha: 1, duration: 0.34, clearProps: "opacity,visibility" },
+        { autoAlpha: 0.46 },
+        { autoAlpha: 1, duration: 0.36, clearProps: "opacity,visibility" },
       );
+  });
+}
+
+function setHerArtMode(mode, { advanceExpression = false } = {}) {
+  const nextMode = ["portrait", "expressions"].includes(mode) ? mode : "portrait";
+  if (nextMode === "expressions") {
+    preloadHerExpressions();
+    if (advanceExpression && state.herArtMode === "expressions") {
+      state.herExpressionIndex = (state.herExpressionIndex + 1) % HER_EXPRESSION_ASSETS.length;
+    }
+  }
+  state.herArtMode = nextMode;
+  const expression = HER_EXPRESSION_ASSETS[state.herExpressionIndex];
+  if (nodes.herArtWindow) {
+    nodes.herArtWindow.dataset.artMode = nextMode;
+    nodes.herArtWindow.dataset.expressionIndex = String(state.herExpressionIndex);
+  }
+  const sequence = ++state.herArtSwapSequence;
+  if (nodes.herArtImage) {
+    const profileSource = nodes.herArtImage.dataset.profileSrc || "/assets/yunxi-her-profile-card.jpg";
+    const nextSource = nextMode === "portrait" ? profileSource : expression.src;
+    let revealed = false;
+    const reveal = () => {
+      if (revealed) return;
+      revealed = true;
+      animateHerArtSwap(sequence);
+    };
+    if (nodes.herArtImage.getAttribute("src") !== nextSource) {
+      nodes.herArtImage.addEventListener("load", reveal, { once: true });
+      nodes.herArtImage.setAttribute("src", nextSource);
+      if (nodes.herArtImage.complete && nodes.herArtImage.naturalWidth > 0) queueMicrotask(reveal);
+    } else {
+      reveal();
+    }
+    nodes.herArtImage.alt = nextMode === "portrait" ? "YunXi 人物形象" : `YunXi ${expression.label}神情`;
+  }
+  nodes.herArtModes.forEach((button) => {
+    const active = button.dataset.herArtMode === nextMode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+    if (button.dataset.herArtMode === "expressions") {
+      const expressionPosition = `${state.herExpressionIndex + 1}/${HER_EXPRESSION_ASSETS.length}`;
+      const label = active
+        ? `${expression.label}，表情 ${expressionPosition}，再次点击切换`
+        : "查看表情图";
+      button.setAttribute("aria-label", label);
+      button.title = active ? `${expression.label} · ${expressionPosition}` : "表情";
+    }
   });
 }
 
@@ -1913,7 +1966,9 @@ nodes.herRetry?.addEventListener("click", () => loadHer(true));
 nodes.herProfileCard?.addEventListener("click", openHerDetail);
 nodes.herDetailClose?.addEventListener("click", closeHerDetail);
 nodes.herArtModes.forEach((button) => {
-  button.addEventListener("click", () => setHerArtMode(button.dataset.herArtMode));
+  button.addEventListener("click", () =>
+    setHerArtMode(button.dataset.herArtMode, { advanceExpression: true }),
+  );
 });
 const syncHerProfileImageState = () => {
   if (!nodes.herArtImage?.complete) return;

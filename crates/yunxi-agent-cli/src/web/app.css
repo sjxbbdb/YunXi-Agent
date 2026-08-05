@@ -1957,15 +1957,8 @@ body[data-active-view="her"] .app-stage {
 }
 
 .her-art-window[data-art-mode="expressions"] .her-art-image {
-  object-position: 82% 22%;
-  transform: scale(2.2);
-  transform-origin: 82% 22%;
-}
-
-.her-art-window[data-art-mode="sheet"] .her-art-image {
-  object-fit: contain;
   object-position: 50% 50%;
-  transform: scale(0.96);
+  transform: scale(1.02);
   transform-origin: 50% 50%;
 }
 
@@ -1995,10 +1988,6 @@ body[data-active-view="her"] .app-stage {
   font-weight: 670;
   letter-spacing: 0.14em;
   pointer-events: none;
-}
-
-.her-art-window[data-art-mode="sheet"] .her-art-shade {
-  opacity: 0.2;
 }
 
 .her-art-window.has-image-error::after {
@@ -5210,16 +5199,8 @@ body[data-active-view="her"] .app-stage {
 
 .her-art-window[data-art-mode="expressions"] .her-art-image {
   object-fit: cover;
-  object-position: 82% 21%;
-  transform: scale(2.2);
-  transform-origin: 82% 21%;
-}
-
-.her-art-window[data-art-mode="sheet"] .her-art-image {
-  object-fit: contain;
   object-position: 50% 50%;
-  background: #151b21;
-  transform: scale(0.94);
+  transform: scale(1.02);
   transform-origin: 50% 50%;
 }
 

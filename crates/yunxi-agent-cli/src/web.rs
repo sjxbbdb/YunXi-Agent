@@ -29,6 +29,14 @@ const APP_JS: &str = include_str!("web/app.js");
 const YUNXI_CHARACTER_ART: &[u8] = include_bytes!("web/yunxi-character-design.jpg");
 const YUNXI_HER_BACKGROUND: &[u8] = include_bytes!("web/yunxi-her-background.jpg");
 const YUNXI_HER_PROFILE_CARD: &[u8] = include_bytes!("web/yunxi-her-profile-card.jpg");
+const YUNXI_HER_EXPRESSION_RESERVED: &[u8] =
+    include_bytes!("web/yunxi-her-expression-reserved.jpg");
+const YUNXI_HER_EXPRESSION_CALM: &[u8] = include_bytes!("web/yunxi-her-expression-calm.jpg");
+const YUNXI_HER_EXPRESSION_THOUGHTFUL: &[u8] =
+    include_bytes!("web/yunxi-her-expression-thoughtful.jpg");
+const YUNXI_HER_EXPRESSION_WISTFUL: &[u8] = include_bytes!("web/yunxi-her-expression-wistful.jpg");
+const YUNXI_HER_EXPRESSION_SMILE: &[u8] = include_bytes!("web/yunxi-her-expression-smile.jpg");
+const YUNXI_HER_EXPRESSION_GENTLE: &[u8] = include_bytes!("web/yunxi-her-expression-gentle.jpg");
 
 #[derive(Clone, Debug)]
 pub(crate) struct WebOptions {
@@ -246,6 +254,30 @@ fn app(state: AppState) -> Router {
         .route("/assets/yunxi-character-design.jpg", get(character_art))
         .route("/assets/yunxi-her-background.jpg", get(her_background_art))
         .route("/assets/yunxi-her-profile-card.jpg", get(her_profile_art))
+        .route(
+            "/assets/yunxi-her-expression-reserved.jpg",
+            get(her_expression_reserved_art),
+        )
+        .route(
+            "/assets/yunxi-her-expression-calm.jpg",
+            get(her_expression_calm_art),
+        )
+        .route(
+            "/assets/yunxi-her-expression-thoughtful.jpg",
+            get(her_expression_thoughtful_art),
+        )
+        .route(
+            "/assets/yunxi-her-expression-wistful.jpg",
+            get(her_expression_wistful_art),
+        )
+        .route(
+            "/assets/yunxi-her-expression-smile.jpg",
+            get(her_expression_smile_art),
+        )
+        .route(
+            "/assets/yunxi-her-expression-gentle.jpg",
+            get(her_expression_gentle_art),
+        )
         .route("/api/health", get(health))
         .route("/api/status", get(status))
         .route("/api/persona", get(persona))
@@ -280,6 +312,30 @@ async fn her_background_art() -> Response {
 
 async fn her_profile_art() -> Response {
     image_response(YUNXI_HER_PROFILE_CARD)
+}
+
+async fn her_expression_reserved_art() -> Response {
+    image_response(YUNXI_HER_EXPRESSION_RESERVED)
+}
+
+async fn her_expression_calm_art() -> Response {
+    image_response(YUNXI_HER_EXPRESSION_CALM)
+}
+
+async fn her_expression_thoughtful_art() -> Response {
+    image_response(YUNXI_HER_EXPRESSION_THOUGHTFUL)
+}
+
+async fn her_expression_wistful_art() -> Response {
+    image_response(YUNXI_HER_EXPRESSION_WISTFUL)
+}
+
+async fn her_expression_smile_art() -> Response {
+    image_response(YUNXI_HER_EXPRESSION_SMILE)
+}
+
+async fn her_expression_gentle_art() -> Response {
+    image_response(YUNXI_HER_EXPRESSION_GENTLE)
 }
 
 fn image_response(image: &'static [u8]) -> Response {
@@ -791,15 +847,24 @@ mod tests {
         assert!(INDEX_HTML.contains("id=\"her-detail\""));
         assert!(INDEX_HTML.contains("id=\"her-card-surface\""));
         assert!(INDEX_HTML.contains("class=\"her-card-depth"));
+        assert_eq!(INDEX_HTML.matches("data-her-art-mode=").count(), 2);
+        assert!(!INDEX_HTML.contains("data-her-art-mode=\"sheet\""));
         assert!(APP_JS.contains("setupHerReveal"));
         assert!(APP_JS.contains("updateHerParallax"));
         assert!(APP_JS.contains("herCardDepthLayers"));
+        assert!(APP_JS.contains("/assets/yunxi-her-expression-smile.jpg"));
         assert!(APP_CSS.contains(".her-card-glass"));
         assert!(!INDEX_HTML.contains("assets.21st.dev"));
         assert_eq!(APP_CSS.matches('{').count(), APP_CSS.matches('}').count());
         assert!(!YUNXI_CHARACTER_ART.is_empty());
         assert!(!YUNXI_HER_BACKGROUND.is_empty());
         assert!(!YUNXI_HER_PROFILE_CARD.is_empty());
+        assert!(!YUNXI_HER_EXPRESSION_RESERVED.is_empty());
+        assert!(!YUNXI_HER_EXPRESSION_CALM.is_empty());
+        assert!(!YUNXI_HER_EXPRESSION_THOUGHTFUL.is_empty());
+        assert!(!YUNXI_HER_EXPRESSION_WISTFUL.is_empty());
+        assert!(!YUNXI_HER_EXPRESSION_SMILE.is_empty());
+        assert!(!YUNXI_HER_EXPRESSION_GENTLE.is_empty());
     }
 
     #[test]

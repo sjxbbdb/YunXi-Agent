@@ -52,6 +52,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 | 关系与信箱 | 从有效记忆派生关系阶段；按人格和记忆生成情书并写入本地加密信箱 |
 | 微信接入 | 二维码登录、私聊接入、配对、远程审批、会话绑定、投递恢复和自动拉起 |
 | 本地 Web | 聊天、记忆气泡、人格卡片、关系档案“她”和情书信箱，共享同一工作区状态 |
+| 本地语音 | SenseVoiceSmall 语音输入、CosyVoice 预设音色输出，并复用同一人格、记忆、陪伴与工具审批链路 |
 | 工程验证 | 离线评估、CLI/TUI/微信回归、Windows ConPTY 证据、脱敏检查和完整发布门禁 |
 
 ### 多入口协同
@@ -107,6 +108,8 @@ flowchart TB
 - Rust stable `1.85` 或更高版本（Rust 2024 edition）
 - Cargo
 - Visual Studio Build Tools 的 MSVC C++ 构建工具和 Windows SDK
+
+可选本地语音还需要 NVIDIA GPU、兼容驱动、约 8 GB 以上独立磁盘空间，以及由安装脚本管理的 Python 3.10 环境。模型和 Python 运行时不会写入 Rust 仓库。
 
 ### 方式一：安装预编译包
 
@@ -244,6 +247,53 @@ yunxi weixin doctor --cwd $YunXiWorkspace --account default
 ```
 
 Token 与数据密钥通过 Windows Credential Manager 保存；工作区只保存非机密元数据和加密运行状态。交互式 CLI/TUI 与 Web 会按照现有登录状态尝试自动拉起默认微信网关；不需要时可传入 `--no-weixin-autostart`。
+
+### 5. 可选：本地语音闭环
+
+语音 MVP 使用 `SenseVoiceSmall → YunXi Runtime → CosyVoice-300M-SFT`。它不是另一套聊天逻辑：转写文本仍进入现有 Provider、人格、记忆、陪伴和工具审批链路，成功回复再合成为 WAV。
+
+首次安装运行时与模型：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\scripts\voice\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+```
+
+在另一个 PowerShell 中启动本地 sidecar：
+
+```powershell
+.\scripts\voice\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+yunxi voice doctor
+```
+
+使用示例：
+
+```powershell
+yunxi voice devices
+yunxi voice talk --companion
+yunxi voice transcribe --input .\question.wav
+yunxi voice speak "你好，我是 YunXi。" --output .\reply.wav
+yunxi voice chat --input .\question.wav --output .\reply.wav --companion
+```
+
+在已经运行的交互式 CLI 或 TUI 中，直接使用内置语音模式：
+
+```text
+yunxi> /voice status
+yunxi> /voice devices
+yunxi> /voice
+yunxi> /voice realtime on
+yunxi> /voice realtime status
+yunxi> /voice realtime off
+```
+
+`/voice` 会在当前文字会话中进入连续按键对讲：按 Enter 开始录音，再按 Enter 结束，输入 `q` 返回文字模式。识别文本直接进入当前 `InteractiveSession`，因此语音和文字共享同一条会话链、流式事件、人格、记忆、陪伴、工具和审批状态。
+
+`/voice realtime on` 明确开启免按键半双工模式。VAD 会在内存中判断开始说话和尾部静音，自动完成一轮收音；回复会按自然短句分段，第一段合成后立即播放，并在播放当前段时预合成下一段。云熙播放完毕后继续监听。说“关闭实时语音”可以关麦并返回文字模式；TUI 中也可以输入 `q` 或 `/voice realtime off` 后按 Enter，或按 Ctrl+C 停止当前播放并立即关麦。`/voice realtime status` 查看状态。该开关默认关闭且不跨 CLI 会话保存，TUI 开启期间显示 `voice=live`。
+
+`voice talk` 提供独立终端中的同类按键对讲。两种模式的录音都只保存在内存中，识别后进入同一套 YunXi Runtime，并在合成完成后通过默认扬声器播放。单次文件命令仍使用 WAV。
+
+当前实时模式是 VAD 驱动的免按键半双工对话，不是全双工通话；支持键盘停止播放，但暂不支持用语音插话打断、流式 STT、服务端流式 TTS、音色克隆、JSONL 或语音直接批准工具。工具审批继续使用现有交互，语音内容不会自动放宽权限。
 
 ## 使用方式
 

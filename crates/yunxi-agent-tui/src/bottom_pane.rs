@@ -116,7 +116,6 @@ impl BottomPane {
         self.mode = BottomPaneMode::Composer;
     }
 
-    #[cfg(test)]
     pub(crate) fn reset_composer(&mut self, prompt: impl Into<String>) {
         self.suspended_composer = None;
         self.composer.clear();

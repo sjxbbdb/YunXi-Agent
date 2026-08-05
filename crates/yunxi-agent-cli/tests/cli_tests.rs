@@ -188,6 +188,46 @@ fn cli_bot_help_covers_the_local_weixin_gateway_entrypoint() {
 }
 
 #[test]
+fn cli_voice_help_covers_live_conversation_commands() {
+    let mut root = Command::cargo_bin("yunxi").expect("binary should build");
+    root.args(["voice", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("devices"))
+        .stdout(predicate::str::contains("talk"));
+
+    for args in [
+        vec!["voice", "devices", "--help"],
+        vec!["voice", "talk", "--help"],
+    ] {
+        let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+        cmd.args(args).assert().success();
+    }
+}
+
+#[test]
+fn cli_voice_talk_rejects_json_mode() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+    cmd.args(["--json", "voice", "talk"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "voice talk is interactive and does not support --json",
+        ));
+}
+
+#[test]
+fn cli_voice_talk_rejects_non_terminal_input() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+    cmd.args(["voice", "talk"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "voice talk requires an interactive terminal",
+        ));
+}
+
+#[test]
 fn cli_weixin_status_doctor_and_pair_list_are_offline_and_secret_free() {
     let workspace = TempDir::new().expect("workspace");
     let cwd = workspace.path().to_str().expect("workspace path");
@@ -1107,6 +1147,18 @@ fn cli_enters_interactive_mode_without_prompt() {
             "offline_runtime: static_provider (stage fixtures disabled by default)",
         ))
         .stdout(predicate::str::contains("YunXi interactive session ended."));
+}
+
+#[test]
+fn interactive_voice_control_is_not_sent_to_the_agent_runtime() {
+    let mut cmd = Command::cargo_bin("yunxi").expect("binary should build");
+
+    cmd.arg("--offline")
+        .write_stdin("/voice realtime off\n/exit\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("实时语音已关闭"))
+        .stdout(predicate::str::contains("accepted prompt: /voice realtime off").not());
 }
 
 #[test]

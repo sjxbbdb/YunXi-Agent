@@ -12,6 +12,9 @@
 *.log
 *.tmp
 /.tmp/
+__pycache__/
+*.py[cod]
+.pytest_cache/
 *.bak
 *.swp
 *.swo

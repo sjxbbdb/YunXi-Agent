@@ -26,6 +26,7 @@ pub(crate) trait InteractiveRenderer {
     fn banner(&mut self, banner: &InteractiveBanner) -> Result<()>;
     fn warning(&mut self, message: &str) -> Result<()>;
     fn notice(&mut self, label: &str, message: &str) -> Result<()>;
+    fn user_message(&mut self, message: &str) -> Result<()>;
     fn clear(&mut self) -> Result<()>;
     fn controls(&mut self, snapshot: &ControlSnapshot) -> Result<()>;
     fn event(&mut self, event: &AgentEvent, state: &mut RenderState) -> Result<()>;
@@ -44,6 +45,12 @@ pub(crate) trait InteractiveRenderer {
     }
     fn flush(&mut self) -> Result<()> {
         Ok(())
+    }
+    fn realtime_voice_state(&mut self, _enabled: bool) -> Result<()> {
+        Ok(())
+    }
+    fn poll_realtime_voice_stop(&mut self) -> Result<bool> {
+        Ok(false)
     }
     fn set_debug_events(&mut self, enabled: bool) -> Result<()>;
     fn show_details(&mut self, id: Option<usize>) -> Result<()>;
@@ -66,6 +73,11 @@ impl InteractiveRenderer for PlainInteractiveRenderer {
 
     fn notice(&mut self, _label: &str, message: &str) -> Result<()> {
         println!("{message}");
+        Ok(())
+    }
+
+    fn user_message(&mut self, message: &str) -> Result<()> {
+        println!("you: {message}");
         Ok(())
     }
 

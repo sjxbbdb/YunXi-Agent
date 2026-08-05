@@ -8,7 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use yunxi_agent_core::{
-    AgentError, AgentEvent, AgentResult, AgentRunStatus, CompanionHistoryRecord, ControlAuditRecord,
+    AgentError, AgentEvent, AgentInputModality, AgentResult, AgentRunStatus,
+    CompanionHistoryRecord, ControlAuditRecord,
 };
 use yunxi_agent_multi_agent::{
     AgentGraphSessionMetadata, AgentId, AgentMetadata, AgentRole, AgentStatus,
@@ -70,6 +71,8 @@ pub struct SessionRecord {
     pub id: SessionId,
     pub cwd: PathBuf,
     pub prompt: String,
+    #[serde(default)]
+    pub input_modality: AgentInputModality,
     pub final_response: Option<String>,
     pub events: Vec<AgentEvent>,
     pub status: AgentRunStatus,
@@ -610,6 +613,7 @@ impl SessionRecord {
             id: SessionId::generate(),
             cwd: cwd.into(),
             prompt: prompt.into(),
+            input_modality: AgentInputModality::Text,
             final_response,
             events,
             status: AgentRunStatus::Completed,
@@ -626,6 +630,11 @@ impl SessionRecord {
 
     pub fn with_status(mut self, status: AgentRunStatus) -> Self {
         self.status = status;
+        self
+    }
+
+    pub fn with_input_modality(mut self, modality: AgentInputModality) -> Self {
+        self.input_modality = modality;
         self
     }
 

@@ -64,6 +64,11 @@ impl YunxiTui {
         self.request_redraw(RedrawReason::StatusChanged)
     }
 
+    pub fn set_realtime_voice_enabled(&mut self, enabled: bool) -> Result<()> {
+        self.app.set_realtime_voice_enabled(enabled);
+        self.request_redraw(RedrawReason::StatusChanged)
+    }
+
     pub fn clear_transcript(&mut self) -> Result<()> {
         self.app.clear_transcript();
         self.request_redraw(RedrawReason::InputChanged)
@@ -84,6 +89,11 @@ impl YunxiTui {
     pub fn push_notice(&mut self, kind: &str, message: &str) -> Result<()> {
         self.app.push_notice(kind, message);
         self.request_redraw(RedrawReason::StatusChanged)
+    }
+
+    pub fn push_user_message(&mut self, message: impl Into<String>) -> Result<()> {
+        self.app.push_user(message);
+        self.request_redraw(RedrawReason::InputChanged)
     }
 
     pub fn push_warning(&mut self, message: &str) -> Result<()> {
@@ -117,6 +127,49 @@ impl YunxiTui {
         Ok(action)
     }
 
+    pub fn poll_realtime_voice_stop(&mut self) -> Result<bool> {
+        let mut stop = false;
+        let mut redraw_reason = None;
+        let mut poll_timeout = Duration::ZERO;
+        while poll(poll_timeout)? {
+            poll_timeout = if cfg!(windows) {
+                Duration::from_millis(5)
+            } else {
+                Duration::ZERO
+            };
+            let event = read()?;
+            if is_ctrl_c_event(&event) {
+                stop = true;
+                redraw_reason = Some(RedrawReason::CancelCurrentTurn);
+                continue;
+            }
+            if is_realtime_voice_submit_event(&event)
+                && is_realtime_voice_stop_draft(self.app.bottom_pane().composer_buffer().text())
+            {
+                self.app.bottom_pane_mut().reset_composer("yunxi> ");
+                stop = true;
+                redraw_reason = Some(RedrawReason::InputChanged);
+                continue;
+            }
+            if self.handle_navigation_event(&event)? {
+                redraw_reason = Some(if matches!(event, Event::Resize(_, _)) {
+                    RedrawReason::Resize
+                } else {
+                    RedrawReason::ScrollChanged
+                });
+                continue;
+            }
+            if apply_turn_draft_event(&mut self.app, &event) {
+                redraw_reason = Some(RedrawReason::InputChanged);
+            }
+        }
+        if let Some(reason) = redraw_reason {
+            self.frame.request(reason);
+        }
+        self.flush_frame(Instant::now())?;
+        Ok(stop)
+    }
+
     pub fn flush(&mut self) -> Result<()> {
         self.request_draw_now()
     }
@@ -145,7 +198,7 @@ impl YunxiTui {
                     ComposerAction::None => {}
                     ComposerAction::Cancel => return Ok(None),
                     ComposerAction::Submit(value) => {
-                        if !value.trim().is_empty() {
+                        if should_render_submitted_user_prompt(&value) {
                             self.app.push_user(value.clone());
                         }
                         self.request_draw_now()?;
@@ -320,6 +373,29 @@ impl YunxiTui {
             &self.app,
         ))
     }
+}
+
+fn should_render_submitted_user_prompt(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && !value.starts_with('/')
+}
+
+fn is_realtime_voice_submit_event(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(KeyEvent {
+            code: KeyCode::Enter,
+            kind: KeyEventKind::Press,
+            ..
+        })
+    )
+}
+
+fn is_realtime_voice_stop_draft(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "q" | "quit" | "exit" | "/voice off" | "/voice realtime off"
+    )
 }
 
 fn handle_navigation_event_with_metrics(
@@ -813,6 +889,30 @@ mod tests {
     use crossterm::Command;
     use crossterm::style::ResetColor;
     use crossterm::terminal::SetSize;
+
+    #[test]
+    fn slash_commands_are_not_rendered_as_user_messages() {
+        assert!(!should_render_submitted_user_prompt("/voice"));
+        assert!(!should_render_submitted_user_prompt("  /status  "));
+        assert!(!should_render_submitted_user_prompt(""));
+        assert!(should_render_submitted_user_prompt("和云熙聊一会儿"));
+    }
+
+    #[test]
+    fn realtime_voice_stop_draft_accepts_only_explicit_commands() {
+        for value in ["q", " Q ", "quit", "/voice off", "/voice realtime off"] {
+            assert!(
+                is_realtime_voice_stop_draft(value),
+                "expected stop: {value}"
+            );
+        }
+        for value in ["", "question", "/voice realtime on", "关闭实时语音"] {
+            assert!(
+                !is_realtime_voice_stop_draft(value),
+                "unexpected stop: {value}"
+            );
+        }
+    }
 
     #[derive(Default)]
     struct RecordingLifecycleSink {

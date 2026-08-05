@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use tempfile::TempDir;
-use yunxi_agent_core::{AgentEvent, AgentRunStatus};
+use yunxi_agent_core::{AgentEvent, AgentInputModality, AgentRunStatus};
 use yunxi_agent_persona::{
     MemoryKind, MemoryPipeline, MemoryPipelineInput, MemoryRecord, MemoryScope, MemoryStatus,
 };
@@ -72,6 +72,46 @@ async fn file_session_store_persists_records_across_instances() {
             .expect("session list should succeed"),
         vec![record]
     );
+}
+
+#[tokio::test]
+async fn file_session_store_round_trips_voice_input_modality() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = FileSessionStore::new(temp.path().join("sessions"));
+    let record = SessionRecord::new(
+        PathBuf::from("."),
+        "spoken prompt",
+        Some("spoken answer".to_string()),
+        vec![],
+    )
+    .with_input_modality(AgentInputModality::Voice);
+
+    let id = store
+        .save(record)
+        .await
+        .expect("session save should succeed");
+    let loaded = FileSessionStore::new(temp.path().join("sessions"))
+        .load(&id)
+        .await
+        .expect("session load should succeed")
+        .expect("session should exist");
+
+    assert_eq!(loaded.input_modality, AgentInputModality::Voice);
+}
+
+#[test]
+fn legacy_session_without_input_modality_defaults_to_text() {
+    let record = SessionRecord::new(".", "legacy prompt", None, vec![]);
+    let mut value = serde_json::to_value(record).expect("serialize session");
+    value
+        .as_object_mut()
+        .expect("session object")
+        .remove("input_modality");
+
+    let loaded =
+        serde_json::from_value::<SessionRecord>(value).expect("deserialize legacy session");
+
+    assert_eq!(loaded.input_modality, AgentInputModality::Text);
 }
 
 #[test]

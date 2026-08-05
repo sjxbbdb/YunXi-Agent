@@ -18,6 +18,7 @@ members = [
     "crates/yunxi-agent-runtime",
     "crates/yunxi-agent-tui",
     "crates/yunxi-agent-weixin",
+    "crates/yunxi-agent-voice",
     "crates/yunxi-agent-cli",
 ]
 default-members = [
@@ -39,6 +40,7 @@ default-members = [
     "crates/yunxi-agent-runtime",
     "crates/yunxi-agent-tui",
     "crates/yunxi-agent-weixin",
+    "crates/yunxi-agent-voice",
     "crates/yunxi-agent-cli",
 ]
 resolver = "2"
@@ -59,9 +61,12 @@ chacha20poly1305 = "0.10"
 predicates = "3"
 futures-util = "0.3"
 crossterm = "0.28"
+cpal = "0.16"
+hound = "3.5.1"
 httpdate = "1"
 ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rodio = { version = "0.21.1", default-features = false, features = ["playback", "wav"] }
 reedline = "0.36"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

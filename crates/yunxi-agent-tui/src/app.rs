@@ -28,6 +28,7 @@ pub(crate) struct YunxiTuiApp {
     viewport: TranscriptViewport,
     bottom_pane: BottomPane,
     control_snapshot: Option<ControlSnapshot>,
+    realtime_voice_enabled: bool,
     details: Option<String>,
     details_scroll: u16,
     focus: FocusTarget,
@@ -45,6 +46,7 @@ impl Default for YunxiTuiApp {
             viewport: TranscriptViewport::default(),
             bottom_pane: BottomPane::default(),
             control_snapshot: None,
+            realtime_voice_enabled: false,
             details: None,
             details_scroll: 0,
             focus: FocusTarget::Composer,
@@ -62,6 +64,10 @@ impl YunxiTuiApp {
     pub(crate) fn set_banner(&mut self, banner: YunxiTuiBanner) {
         self.presentation.set_offline_label(!banner.provider_live);
         self.banner = Some(banner);
+    }
+
+    pub(crate) fn set_realtime_voice_enabled(&mut self, enabled: bool) {
+        self.realtime_voice_enabled = enabled;
     }
 
     pub(crate) fn transcript(&self) -> &Transcript {
@@ -166,6 +172,16 @@ impl YunxiTuiApp {
                     PrioritySegment::new("Enter confirm", ClipPriority::MustKeep),
                     PrioritySegment::new("Esc decline", ClipPriority::Important),
                     PrioritySegment::new("Ctrl+C cancel", ClipPriority::Optional),
+                ],
+                width,
+            );
+        }
+        if self.realtime_voice_enabled {
+            return TextLayout::priority_line(
+                &[
+                    PrioritySegment::new("Speak naturally", ClipPriority::MustKeep),
+                    PrioritySegment::new("q + Enter stop", ClipPriority::Important),
+                    PrioritySegment::new("Ctrl+C stop", ClipPriority::Important),
                 ],
                 width,
             );
@@ -294,14 +310,15 @@ impl YunxiTuiApp {
                 if width < 90 {
                     let provider =
                         format!("provider={}", TextLayout::truncate(&banner.provider, 18));
-                    return TextLayout::priority_line(
-                        &[
-                            PrioritySegment::new(view, ClipPriority::MustKeep),
-                            PrioritySegment::new(&cells, ClipPriority::Important),
-                            PrioritySegment::new(&provider, ClipPriority::Optional),
-                        ],
-                        width,
-                    );
+                    let mut segments = vec![
+                        PrioritySegment::new(view, ClipPriority::MustKeep),
+                        PrioritySegment::new(&cells, ClipPriority::Important),
+                    ];
+                    if self.realtime_voice_enabled {
+                        segments.push(PrioritySegment::new("voice=live", ClipPriority::Important));
+                    }
+                    segments.push(PrioritySegment::new(&provider, ClipPriority::Optional));
+                    return TextLayout::priority_line(&segments, width);
                 }
                 let source = if width < 90 {
                     banner.provider_source.clone()
@@ -309,16 +326,19 @@ impl YunxiTuiApp {
                     format!("source={}", banner.provider_source)
                 };
                 let backend = format!("backend={}", banner.backend);
-                TextLayout::priority_line(
-                    &[
-                        PrioritySegment::new(view, ClipPriority::MustKeep),
-                        PrioritySegment::new(&cells, ClipPriority::Important),
-                        PrioritySegment::new(&backend, ClipPriority::Optional),
-                        PrioritySegment::new(&source, ClipPriority::Optional),
-                        PrioritySegment::new(&debug, ClipPriority::DebugOnly),
-                    ],
-                    width,
-                )
+                let mut segments = vec![
+                    PrioritySegment::new(view, ClipPriority::MustKeep),
+                    PrioritySegment::new(&cells, ClipPriority::Important),
+                ];
+                if self.realtime_voice_enabled {
+                    segments.push(PrioritySegment::new("voice=live", ClipPriority::Important));
+                }
+                segments.extend([
+                    PrioritySegment::new(&backend, ClipPriority::Optional),
+                    PrioritySegment::new(&source, ClipPriority::Optional),
+                    PrioritySegment::new(&debug, ClipPriority::DebugOnly),
+                ]);
+                TextLayout::priority_line(&segments, width)
             }
             None => "initializing".to_string(),
         }
@@ -628,6 +648,19 @@ mod tests {
         assert!(header.contains("yunxi-agent-cli"));
         assert!(subheader.contains("backend=yunxi"));
         assert!(subheader.contains("source=offline_static"));
+    }
+
+    #[test]
+    fn realtime_voice_state_is_visible_without_changing_the_banner_contract() {
+        let mut app = YunxiTuiApp::default();
+        app.set_banner(banner());
+        assert!(!app.subheader_for_width(120).contains("voice=live"));
+
+        app.set_realtime_voice_enabled(true);
+
+        assert!(app.subheader_for_width(120).contains("voice=live"));
+        assert!(app.subheader_for_width(70).contains("voice=live"));
+        assert!(app.footer_for_width(120).contains("q + Enter stop"));
     }
 
     #[test]

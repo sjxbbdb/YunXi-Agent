@@ -96,8 +96,23 @@ impl InteractiveRenderer for TuiInteractiveRenderer {
         self.handle.with_mut(|tui| tui.push_notice(label, message))
     }
 
+    fn user_message(&mut self, message: &str) -> Result<()> {
+        self.handle
+            .with_mut(|tui| tui.push_user_message(message.to_string()))
+    }
+
     fn clear(&mut self) -> Result<()> {
         self.handle.with_mut(YunxiTui::clear_transcript)
+    }
+
+    fn realtime_voice_state(&mut self, enabled: bool) -> Result<()> {
+        self.handle
+            .with_mut(|tui| tui.set_realtime_voice_enabled(enabled))
+    }
+
+    fn poll_realtime_voice_stop(&mut self) -> Result<bool> {
+        self.handle
+            .with_mut(YunxiTui::poll_realtime_voice_stop)
     }
 
     fn controls(&mut self, snapshot: &ControlSnapshot) -> Result<()> {

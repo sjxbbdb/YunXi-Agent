@@ -252,6 +252,24 @@ fn openai_request_json_uses_yunxi_provider_messages() {
 }
 
 #[test]
+fn openai_request_json_can_disable_tools_for_a_single_turn() {
+    let request = ProviderRequest::new(
+        AgentConfig::new(PathBuf::from(".")),
+        AgentInput::text("answer from history"),
+    )
+    .with_tools_enabled(false);
+
+    let json = build_openai_request_json(
+        &ProviderConfig::openai_compatible("fallback-model"),
+        &request,
+    )
+    .expect("request json");
+
+    assert!(json.get("tools").is_none());
+    assert!(json.get("parallel_tool_calls").is_none());
+}
+
+#[test]
 fn openai_request_json_preserves_assistant_tool_calls_and_tool_result_ids() {
     let request = ProviderRequest::with_messages(
         AgentConfig::new(PathBuf::from(".")),

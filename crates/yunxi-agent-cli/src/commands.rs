@@ -16,6 +16,7 @@ pub(crate) enum InteractiveCommand {
     Details(Option<usize>),
     Controls(Option<String>),
     Companion(Option<String>),
+    Voice(Option<String>),
     Unknown(String),
 }
 
@@ -55,6 +56,7 @@ pub(crate) fn parse_interactive_command(input: &str) -> Option<InteractiveComman
         }),
         "/controls" => InteractiveCommand::Controls(rest.map(ToOwned::to_owned)),
         "/companion" => InteractiveCommand::Companion(rest.map(ToOwned::to_owned)),
+        "/voice" => InteractiveCommand::Voice(rest.map(ToOwned::to_owned)),
         "/resume" => match rest {
             Some(session_id) => InteractiveCommand::Resume(session_id.to_string()),
             None => InteractiveCommand::Unknown("/resume requires a session id".to_string()),
@@ -78,6 +80,8 @@ pub(crate) fn help_text() -> &'static str {
      /details [id]         Show the latest or selected TUI debug detail\n\
      /controls [action]    Show or update the unified control panel\n\
      /companion [on|off]   Show or persist the local companion switch\n\
+     /voice [status|devices] Enter the local push-to-talk voice mode\n\
+     /voice realtime on|off|status  Control hands-free half-duplex voice\n\
      /controls clear <scope> asks for explicit confirmation\n\
      /cwd                  Show the active working directory\n\
      /clear                Clear the terminal\n\
@@ -100,6 +104,17 @@ mod tests {
             parse_interactive_command("/companion off"),
             Some(InteractiveCommand::Companion(Some("off".to_string())))
         );
+        assert_eq!(
+            parse_interactive_command("/voice status"),
+            Some(InteractiveCommand::Voice(Some("status".to_string())))
+        );
+        assert_eq!(
+            parse_interactive_command("/voice realtime on"),
+            Some(InteractiveCommand::Voice(Some(
+                "realtime on".to_string()
+            )))
+        );
+        assert!(help_text().contains("hands-free half-duplex voice"));
         assert!(help_text().contains("explicit confirmation"));
     }
 }

@@ -1,3 +1,6 @@
+#[path = "interactive/voice.rs"]
+mod integrated_voice;
+
 use crate::commands::{InteractiveCommand, help_text, parse_interactive_command};
 use crate::input::{InteractiveInput, PlainInput};
 use crate::provider_mode::{ProviderMode, ProviderSelection};
@@ -12,8 +15,8 @@ use anyhow::{Context, Result};
 use std::io::{self, IsTerminal};
 use std::time::Duration;
 use yunxi_agent_core::{
-    AgentConfig, AgentEvent, AgentRunControl, AgentRunResult, AgentRunStatus, BackendKind,
-    ControlRequest, ControlScope, ControlVerb, TokenUsage,
+    AgentConfig, AgentEvent, AgentInput, AgentInputModality, AgentRunControl, AgentRunResult,
+    AgentRunStatus, BackendKind, ControlRequest, ControlScope, ControlVerb, TokenUsage,
 };
 use yunxi_agent_persona::PersonaSettings;
 use yunxi_agent_runtime::control_snapshot;
@@ -40,6 +43,7 @@ struct InteractiveSession {
     active_session_id: Option<String>,
     turn_count: usize,
     stats: InteractiveStats,
+    realtime_voice_enabled: bool,
 }
 
 pub(crate) async fn run_interactive(options: InteractiveOptions) -> Result<()> {
@@ -80,6 +84,7 @@ impl InteractiveSession {
             active_session_id: None,
             turn_count: 0,
             stats: InteractiveStats::default(),
+            realtime_voice_enabled: false,
         })
     }
 
@@ -179,6 +184,9 @@ impl InteractiveSession {
                 if let Some(action) = action {
                     self.handle_control_command(Some(action), input, renderer)?;
                 }
+            }
+            InteractiveCommand::Voice(action) => {
+                integrated_voice::handle_voice_command(self, action, input, renderer).await?;
             }
             InteractiveCommand::Resume(session_id) => {
                 self.resume_session(session_id, renderer).await?;
@@ -578,7 +586,18 @@ impl InteractiveSession {
         prompt: String,
         input: &mut dyn InteractiveInput,
         renderer: &mut dyn InteractiveRenderer,
-    ) -> Result<()> {
+    ) -> Result<Option<String>> {
+        self.run_turn_with_modality(prompt, AgentInputModality::Text, input, renderer)
+            .await
+    }
+
+    async fn run_turn_with_modality(
+        &mut self,
+        prompt: String,
+        modality: AgentInputModality,
+        input: &mut dyn InteractiveInput,
+        renderer: &mut dyn InteractiveRenderer,
+    ) -> Result<Option<String>> {
         let mut turn_config = self.config.clone();
         if let Some(parent_session_id) = &self.active_session_id {
             turn_config = turn_config
@@ -597,7 +616,7 @@ impl InteractiveSession {
         let mut turn = Box::pin(run_agent_backend_stream(
             backend,
             turn_config,
-            prompt,
+            AgentInput::with_modality(prompt, modality),
             self.provider_selection.live,
             run_control,
         ));
@@ -676,6 +695,7 @@ impl InteractiveSession {
                 }
             }
         }
+        let final_response = result.as_ref().and_then(|result| result.final_response.clone());
         if let Some(result) = result {
             if !render_state.saw_assistant_message()
                 && let Some(final_response) = &result.final_response
@@ -691,7 +711,7 @@ impl InteractiveSession {
             self.record_turn_result(&result);
         }
         renderer.flush()?;
-        Ok(())
+        Ok(final_response)
     }
 
     fn record_turn_result(&mut self, result: &AgentRunResult) {

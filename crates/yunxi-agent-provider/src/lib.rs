@@ -18,6 +18,12 @@ pub struct ProviderRequest {
     pub config: AgentConfig,
     pub input: AgentInput,
     pub messages: Vec<ProviderMessage>,
+    #[serde(default = "default_tools_enabled")]
+    pub tools_enabled: bool,
+}
+
+fn default_tools_enabled() -> bool {
+    true
 }
 
 impl ProviderRequest {
@@ -27,6 +33,7 @@ impl ProviderRequest {
             config,
             input,
             messages,
+            tools_enabled: true,
         }
     }
 
@@ -39,7 +46,13 @@ impl ProviderRequest {
             config,
             input,
             messages,
+            tools_enabled: true,
         }
+    }
+
+    pub fn with_tools_enabled(mut self, tools_enabled: bool) -> Self {
+        self.tools_enabled = tools_enabled;
+        self
     }
 }
 
@@ -2149,11 +2162,11 @@ pub fn build_openai_request_json(
             .unwrap_or(provider_config.model.as_str()),
         "messages": messages
     });
-    if matrix.capabilities.tools {
+    if matrix.capabilities.tools && request.tools_enabled {
         body["tools"] =
             Value::Array(workspace_tool_registry(&request.config.cwd)?.openai_tools_json());
     }
-    if matrix.capabilities.parallel_tool_calls {
+    if matrix.capabilities.parallel_tool_calls && request.tools_enabled {
         body["parallel_tool_calls"] = Value::Bool(true);
     }
     if matrix.request_metadata {

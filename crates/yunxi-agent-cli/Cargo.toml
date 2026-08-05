@@ -39,6 +39,7 @@ yunxi-agent-tools = { path = "../yunxi-agent-tools" }
 yunxi-agent-mcp = { path = "../yunxi-agent-mcp" }
 yunxi-agent-tui = { path = "../yunxi-agent-tui" }
 yunxi-agent-weixin = { path = "../yunxi-agent-weixin" }
+yunxi-agent-voice = { path = "../yunxi-agent-voice" }
 
 [dev-dependencies]
 async-trait.workspace = true

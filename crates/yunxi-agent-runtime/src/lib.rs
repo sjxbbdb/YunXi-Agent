@@ -26,8 +26,8 @@ use yunxi_agent_context::{
 };
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
-    AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase, AgentResult,
-    AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus,
+    AgentInputModality, AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase,
+    AgentResult, AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus,
     CommandExecutionDetails, CommandStatus, CompanionHistoryRecord, ControlScope,
     ControlScopeSnapshot, ControlSnapshot, ControlSource, DecodedExecOutput, FileChangeKind,
     MemoryExtractionMode, OutputIntegrity, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata,
@@ -75,6 +75,7 @@ const DEFAULT_MAX_CHILD_DEPTH: usize = 2;
 const COMPANION_POLICY_BUDGET: Duration = Duration::from_millis(50);
 const MAX_MENTIONED_FILE_CONTEXT_FILES: usize = 8;
 const MAX_MENTIONED_FILE_CONTEXT_BYTES: u64 = 32 * 1024;
+const VOICE_HISTORY_PREFIX: &str = "[YunXi input modality: voice]\n";
 
 pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
     let settings = PersonaSettings::load();
@@ -816,6 +817,7 @@ impl YunXiRuntimeBackend {
         turn: AgentTurn,
         control: AgentRunControl,
     ) -> AgentResult<AgentRunResult> {
+        let input_modality = turn.input.modality;
         let prompt = turn.input.prompt.trim();
         if prompt.is_empty() {
             return Err(AgentError::EmptyPrompt);
@@ -871,6 +873,7 @@ impl YunXiRuntimeBackend {
                 runtime_data([
                     ("session_driver", "active".to_string()),
                     ("turn_driver", "active".to_string()),
+                    ("input_modality", input_modality.as_str().to_string()),
                 ]),
             )
             .await?;
@@ -953,6 +956,7 @@ impl YunXiRuntimeBackend {
                 pre_storage_events.clone(),
             )
             .with_status(AgentRunStatus::Cancelled)
+            .with_input_modality(input_modality)
             .with_model(runtime_config.model.clone())
             .with_provider(runtime_config.provider.clone());
             session.id = session_id.clone();
@@ -1004,7 +1008,9 @@ impl YunXiRuntimeBackend {
             prepare_stage_4m_fixture_workspace(&runtime_config)?;
         }
 
-        let initial_messages = self.build_initial_messages(&runtime_config, prompt).await?;
+        let initial_messages = self
+            .build_initial_messages(&runtime_config, prompt, input_modality)
+            .await?;
         let context_state = initial_messages.context_state.clone();
         sink.emit(AgentEvent::ContextStatus {
             active_context_tokens: context_state.status.active_context_tokens,
@@ -1085,6 +1091,7 @@ impl YunXiRuntimeBackend {
         let mut messages = initial_messages.messages;
         let mut final_response = None;
         let mut usage = None;
+        let tools_enabled = tools_enabled_for_prompt(prompt);
 
         for turn_index in 0..self.max_turns {
             if control.is_cancelled() {
@@ -1102,6 +1109,7 @@ impl YunXiRuntimeBackend {
                     runtime_data([
                         ("provider", matrix.provider.clone()),
                         ("tools", matrix.capabilities.tools.to_string()),
+                        ("tools_enabled_for_turn", tools_enabled.to_string()),
                         (
                             "parallel_tool_calls",
                             matrix.capabilities.parallel_tool_calls.to_string(),
@@ -1124,9 +1132,10 @@ impl YunXiRuntimeBackend {
                 let provider_stream_future = self.provider.stream_with_sink(
                     ProviderRequest::with_messages(
                         runtime_config.clone(),
-                        AgentInput::text(prompt),
+                        AgentInput::with_modality(prompt, input_modality),
                         messages.clone(),
-                    ),
+                    )
+                    .with_tools_enabled(tools_enabled),
                     ThreadId(thread_id.clone()),
                     TurnId(turn_id.clone()),
                     Some(&mut provider_event_sink),
@@ -1381,6 +1390,7 @@ impl YunXiRuntimeBackend {
             pre_storage_events.clone(),
         )
         .with_status(AgentRunStatus::Completed)
+        .with_input_modality(input_modality)
         .with_model(session_model)
         .with_provider(session_provider);
         session.id = session_id.clone();
@@ -2390,6 +2400,7 @@ impl YunXiRuntimeBackend {
         &self,
         config: &AgentConfig,
         prompt: &str,
+        input_modality: AgentInputModality,
     ) -> AgentResult<InitialMessages> {
         let mut messages = Vec::new();
         let agents = load_agents_md_hierarchy(&config.cwd)?;
@@ -2407,6 +2418,16 @@ impl YunXiRuntimeBackend {
         if is_memory_intent_prompt(prompt) {
             messages.push(ProviderMessage::system(
                 "The user is asking YunXi to remember, save, or note a preference. Do not route this to tool_search or any workspace file scan. Respond naturally and let YunXi's memory pipeline handle persistence after the turn.",
+            ));
+        }
+        if input_modality == AgentInputModality::Voice {
+            messages.push(ProviderMessage::system(
+                "The current user message was transcribed from local speech. Its authoritative input modality is voice. Treat the transcript as the user's exact words. Do not expose this internal metadata unless the user asks about how a message was sent.",
+            ));
+        }
+        if is_input_modality_history_prompt(prompt) {
+            messages.push(ProviderMessage::system(
+                "The user is asking which recent messages were spoken or typed. Answer only from the restored conversation history and its `[YunXi input modality: voice]` markers. Messages without a voice marker were typed. Do not call tool_search, shell, MCP, memory search, or any other tool for this question.",
             ));
         }
 
@@ -2603,10 +2624,14 @@ fn memory_recall_query(prompt: &str, restored_history: Option<&RestoredHistory>)
         if recent.len() >= 4 || used >= RECENT_CONTEXT_BUDGET_CHARS {
             break;
         }
+        let content = message
+            .content
+            .strip_prefix(VOICE_HISTORY_PREFIX)
+            .unwrap_or(&message.content);
         let remaining = RECENT_CONTEXT_BUDGET_CHARS
             .saturating_sub(used)
             .min(RECENT_MESSAGE_MAX_CHARS);
-        let bounded = message.content.chars().take(remaining).collect::<String>();
+        let bounded = content.chars().take(remaining).collect::<String>();
         used += bounded.chars().count();
         if !bounded.trim().is_empty() {
             recent.push(bounded);
@@ -2644,6 +2669,216 @@ fn is_memory_intent_prompt(prompt: &str) -> bool {
     has_memory && has_write_intent
 }
 
+fn is_input_modality_history_prompt(prompt: &str) -> bool {
+    let lower = prompt.to_ascii_lowercase();
+    let mentions_modality = prompt.contains("语音")
+        || prompt.contains("打字")
+        || prompt.contains("文字输入")
+        || lower.contains("voice")
+        || lower.contains("spoken")
+        || lower.contains("typed");
+    let asks_about_history = prompt.contains("刚才")
+        || prompt.contains("之前")
+        || prompt.contains("哪句")
+        || prompt.contains("说了什么")
+        || prompt.contains("问了什么")
+        || lower.contains("which message")
+        || lower.contains("what did i")
+        || lower.contains("earlier")
+        || lower.contains("previous");
+    mentions_modality && asks_about_history
+}
+
+fn tools_enabled_for_prompt(prompt: &str) -> bool {
+    !is_input_modality_history_prompt(prompt) && !is_self_contained_conversation_prompt(prompt)
+}
+
+fn is_self_contained_conversation_prompt(prompt: &str) -> bool {
+    let prompt = prompt.trim();
+    if prompt.is_empty() || has_explicit_tool_intent(prompt) {
+        return false;
+    }
+
+    let lower = prompt.to_ascii_lowercase();
+    let chinese_conversation_markers = [
+        "句话",
+        "介绍",
+        "解释",
+        "总结",
+        "写一",
+        "改写",
+        "润色",
+        "翻译",
+        "聊聊",
+        "说说",
+        "讲个",
+        "讲一个",
+        "列出",
+        "建议",
+        "起个名字",
+        "想几个",
+    ];
+    let english_conversation_markers = [
+        "write a ",
+        "write me ",
+        "tell me ",
+        "explain ",
+        "summarize ",
+        "rewrite ",
+        "translate ",
+        "give me ",
+        "list some ",
+        "suggest ",
+    ];
+    let social_prompts = [
+        "你好",
+        "早上好",
+        "中午好",
+        "下午好",
+        "晚上好",
+        "晚安",
+        "谢谢",
+        "没事",
+        "能听到吗",
+    ];
+
+    chinese_conversation_markers
+        .iter()
+        .any(|marker| prompt.contains(marker))
+        || english_conversation_markers
+            .iter()
+            .any(|marker| lower.contains(marker))
+        || social_prompts
+            .iter()
+            .any(|social| prompt.trim_end_matches(&['。', '！', '？', '!', '?'][..]) == *social)
+        || matches!(lower.as_str(), "hello" | "hi" | "thanks" | "thank you")
+}
+
+fn has_explicit_tool_intent(prompt: &str) -> bool {
+    let lower = prompt.to_ascii_lowercase();
+    let chinese_tool_markers = [
+        "运行",
+        "执行",
+        "命令",
+        "终端",
+        "工具调用",
+        "打开",
+        "读取",
+        "当前目录",
+        "目录",
+        "文件",
+        "路径",
+        "源码",
+        "代码",
+        "项目",
+        "仓库",
+        "工作区",
+        "网页",
+        "网站",
+        "链接",
+        "网址",
+        "联网",
+        "搜索",
+        "查询",
+        "检索",
+        "下载",
+        "上传",
+        "安装",
+        "启动",
+        "停止",
+        "删除",
+        "修改",
+        "编辑",
+        "写入",
+        "保存",
+        "提交",
+        "推送",
+        "构建",
+        "编译",
+        "测试",
+        "部署",
+        "截图",
+        "图片",
+        "数据库",
+        "日志",
+        "进程",
+        "服务",
+        "接口",
+        "天气",
+        "新闻",
+        "股价",
+        "汇率",
+        "当前时间",
+        "日期",
+        "记住",
+        "记忆",
+        "偏好",
+    ];
+    let english_tool_markers = [
+        "run ",
+        "execute ",
+        "command",
+        "shell",
+        "powershell",
+        "terminal",
+        "tool call",
+        "open file",
+        "read file",
+        "workspace",
+        "repository",
+        " repo",
+        "path",
+        "directory",
+        "folder",
+        "source code",
+        "codebase",
+        "readme",
+        "git",
+        "github",
+        "install",
+        "download",
+        "upload",
+        "start server",
+        "stop server",
+        "build",
+        "compile",
+        "test",
+        "deploy",
+        "search",
+        "browse",
+        "look up",
+        "website",
+        "url",
+        "api",
+        "mcp",
+        "memory",
+        "remember",
+        "save preference",
+        "database",
+        "log file",
+        "process",
+        "service",
+        "screenshot",
+        "image",
+        "weather",
+        "news",
+        "stock price",
+        "exchange rate",
+        "current time",
+        "today's date",
+    ];
+
+    chinese_tool_markers
+        .iter()
+        .any(|marker| prompt.contains(marker))
+        || english_tool_markers
+            .iter()
+            .any(|marker| lower.contains(marker))
+        || prompt.contains(":\\")
+        || lower.contains("http://")
+        || lower.contains("https://")
+}
+
 #[cfg(test)]
 mod memory_recall_query_tests {
     use super::*;
@@ -2666,6 +2901,44 @@ mod memory_recall_query_tests {
         assert!(query.ends_with("continue"));
         assert!(!query.contains("system text must stay out"));
         assert!(query.chars().count() <= 600 + "continue".chars().count() + 1);
+    }
+
+    #[test]
+    fn dynamic_recall_query_strips_internal_voice_marker() {
+        let budget = ContextWindowBudget::new(Some(4096), Some(3072));
+        let mut history = RestoredHistory::empty(budget);
+        history.messages = vec![ConversationMessage::user(format!(
+            "{VOICE_HISTORY_PREFIX}spoken preference"
+        ))];
+
+        let query = memory_recall_query("continue", Some(&history));
+
+        assert!(query.contains("spoken preference"));
+        assert!(!query.contains("YunXi input modality"));
+    }
+
+    #[test]
+    fn input_modality_history_detection_catches_chinese_and_english_prompts() {
+        assert!(is_input_modality_history_prompt("刚才我用语音问了什么"));
+        assert!(is_input_modality_history_prompt(
+            "What did I ask by voice earlier?"
+        ));
+        assert!(is_input_modality_history_prompt(
+            "Which message was typed previously?"
+        ));
+        assert!(!is_input_modality_history_prompt("请打开语音模式"));
+        assert!(!is_input_modality_history_prompt("刚才的口令是什么"));
+    }
+
+    #[test]
+    fn self_contained_conversation_disables_tools_without_hiding_explicit_actions() {
+        assert!(!tools_enabled_for_prompt(
+            "请用四句话介绍今天适合做的四件小事，每句话稍微完整一些。"
+        ));
+        assert!(!tools_enabled_for_prompt("晚上好。"));
+        assert!(tools_enabled_for_prompt("运行命令查看当前目录"));
+        assert!(tools_enabled_for_prompt("请用 shell 查看当前日期"));
+        assert!(tools_enabled_for_prompt("请记住我偏好简洁回复"));
     }
 
     #[test]
@@ -3238,7 +3511,18 @@ fn session_history_to_conversation_messages(history: &SessionHistory) -> Vec<Con
                 HistoryItemKind::User => ConversationRole::User,
                 HistoryItemKind::Assistant => ConversationRole::Assistant,
             };
-            ConversationMessage::new(role, item.content.clone())
+            let content = if item.kind == HistoryItemKind::User
+                && history
+                    .sessions
+                    .iter()
+                    .find(|session| session.id == item.session_id)
+                    .is_some_and(|session| session.input_modality == AgentInputModality::Voice)
+            {
+                format!("{VOICE_HISTORY_PREFIX}{}", item.content)
+            } else {
+                item.content.clone()
+            };
+            ConversationMessage::new(role, content)
         })
         .collect()
 }

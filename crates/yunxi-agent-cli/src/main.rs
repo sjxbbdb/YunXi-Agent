@@ -50,6 +50,7 @@ mod render {
 mod terminal_mode {
     include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/terminal_mode.rs"));
 }
+mod voice;
 mod web;
 mod weixin;
 mod workspace;
@@ -232,6 +233,12 @@ enum CliCommand {
     Weixin {
         #[command(subcommand)]
         command: weixin::WeixinCommand,
+    },
+    Voice {
+        #[arg(long, value_name = "URL")]
+        runtime_url: Option<String>,
+        #[command(subcommand)]
+        command: voice::VoiceCommand,
     },
     Web {
         #[arg(
@@ -1484,7 +1491,7 @@ pub(crate) async fn run_agent_backend(
 pub(crate) async fn run_agent_backend_stream(
     backend: BackendKind,
     config: AgentConfig,
-    prompt: String,
+    input: AgentInput,
     provider_live: bool,
     control: AgentRunControl,
 ) -> Result<AgentRunResult> {
@@ -1493,22 +1500,18 @@ pub(crate) async fn run_agent_backend_stream(
             let agent = Agent::new(config);
             let backend = build_yunxi_runtime_backend(agent.config(), provider_live);
             agent
-                .run_with_backend_stream(&backend, AgentInput::text(prompt), control)
+                .run_with_backend_stream(&backend, input, control)
                 .await
                 .context("yunxi agent run failed")?
         }
         BackendKind::DryRun => {
             let agent = Agent::new(config);
             agent
-                .run_with_backend_stream(
-                    &yunxi_agent_core::DryRunBackend,
-                    AgentInput::text(prompt),
-                    control,
-                )
+                .run_with_backend_stream(&yunxi_agent_core::DryRunBackend, input, control)
                 .await
                 .context("agent run failed")?
         }
-        BackendKind::Codex => run_codex_backend(config, prompt)
+        BackendKind::Codex => run_codex_backend(config, input.prompt)
             .await
             .context("codex agent run failed")?,
     };
@@ -2377,6 +2380,10 @@ async fn run_command(
         CliCommand::Weixin { command } => {
             weixin::run(command, config, backend, provider_mode, json).await
         }
+        CliCommand::Voice {
+            runtime_url,
+            command,
+        } => voice::run(command, runtime_url, config, backend, provider_mode, json).await,
         CliCommand::Web { bind, port } => {
             if should_attempt_command_weixin_autostart(no_weixin_autostart) {
                 report_weixin_autostart_result(maybe_autostart_weixin_gateway(
@@ -2478,6 +2485,9 @@ fn ensure_command_jsonl_supported(command: &CliCommand, jsonl: bool) -> Result<(
         CliCommand::Eval { .. } => Ok(()),
         CliCommand::Weixin { .. } => bail!(
             "--jsonl is only supported for agent execution commands; use --json for weixin metadata commands"
+        ),
+        CliCommand::Voice { .. } => bail!(
+            "--jsonl is not supported for voice commands in the MVP; use --json for structured voice output"
         ),
         CliCommand::Web { .. } => {
             bail!("--jsonl is not supported for the long-running web console command")

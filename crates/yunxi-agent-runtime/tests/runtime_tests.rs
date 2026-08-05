@@ -7,10 +7,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentMessageSequence,
-    AgentMessageStreamPhase, AgentRunApprovalDecision, AgentRunControl, AgentRunStatus,
-    AgentRunUserInputResponse, ApprovalMode, CommandStatus, CompanionSettings, FileChangeKind,
-    MemoryExtractionMode, PatchStatus, SandboxMode,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentInputModality,
+    AgentMessageSequence, AgentMessageStreamPhase, AgentRunApprovalDecision, AgentRunControl,
+    AgentRunStatus, AgentRunUserInputResponse, ApprovalMode, CommandStatus, CompanionSettings,
+    FileChangeKind, MemoryExtractionMode, PatchStatus, SandboxMode,
 };
 use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus};
 use yunxi_agent_protocol::{
@@ -510,6 +510,7 @@ impl AgentProvider for PatchCallingProvider {
 #[derive(Clone, Default)]
 struct CapturingProvider {
     messages: Arc<Mutex<Vec<ProviderMessage>>>,
+    requests: Arc<Mutex<Vec<ProviderRequest>>>,
 }
 
 #[async_trait::async_trait]
@@ -520,6 +521,7 @@ impl AgentProvider for CapturingProvider {
     ) -> yunxi_agent_core::AgentResult<ProviderResponse> {
         *self.messages.lock().expect("messages lock") =
             request.messages.iter().cloned().collect::<Vec<_>>();
+        self.requests.lock().expect("requests lock").push(request);
         Ok(ProviderResponse::assistant("captured"))
     }
 }
@@ -665,6 +667,114 @@ async fn yunxi_runtime_records_parent_session_metadata() {
         Some("parent-session")
     );
     assert_eq!(sessions[0].title.as_deref(), Some("Resume parent-session"));
+}
+
+#[tokio::test]
+async fn yunxi_runtime_persists_voice_input_modality() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let backend =
+        YunXiRuntimeBackend::with_parts(StaticProvider::default(), NoopToolRuntime, store.clone());
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    let result = agent
+        .run_with_backend(&backend, AgentInput::voice("spoken question"))
+        .await
+        .expect("voice turn should complete");
+    let sessions = store.list().await.expect("session list");
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].input_modality, AgentInputModality::Voice);
+    assert!(result.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::TurnMetadata { metadata }
+            if metadata.data.get("input_modality") == Some(&"voice".to_string())
+    )));
+}
+
+#[tokio::test]
+async fn modality_history_prompt_restores_voice_provenance_and_disables_tools() {
+    let temp = TempDir::new().expect("temp dir");
+    let store = InMemorySessionStore::default();
+    let mut voice_turn = SessionRecord::new(
+        temp.path(),
+        "刚才的口令是什么？",
+        Some("刚才的口令是月白风铃。".to_string()),
+        vec![],
+    )
+    .with_input_modality(AgentInputModality::Voice);
+    voice_turn.id = SessionId::new("voice-turn");
+    store.save(voice_turn).await.expect("save voice turn");
+
+    let provider = CapturingProvider::default();
+    let requests = Arc::clone(&provider.requests);
+    let backend = YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, store);
+    let agent = Agent::new(
+        AgentConfig::new(temp.path())
+            .with_parent_session_id("voice-turn")
+            .with_approval_mode(ApprovalMode::Never),
+    );
+
+    agent
+        .run_with_backend(&backend, AgentInput::text("刚才我用语音问了什么"))
+        .await
+        .expect("history question should complete");
+
+    let captured = requests.lock().expect("requests lock");
+    let request = captured.last().expect("provider request");
+    assert!(!request.tools_enabled);
+    assert_eq!(request.input.modality, AgentInputModality::Text);
+    assert!(request.messages.iter().any(|message| {
+        message.role == ProviderRole::System && message.content.contains("Do not call tool_search")
+    }));
+    assert!(request.messages.iter().any(|message| {
+        message.role == ProviderRole::User
+            && message
+                .content
+                .contains("[YunXi input modality: voice]\n刚才的口令是什么？")
+    }));
+}
+
+#[tokio::test]
+async fn self_contained_conversation_prompt_disables_provider_tools() {
+    let temp = TempDir::new().expect("temp dir");
+    let provider = CapturingProvider::default();
+    let requests = Arc::clone(&provider.requests);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    agent
+        .run_with_backend(
+            &backend,
+            AgentInput::voice("请用四句话介绍今天适合做的四件小事，每句话稍微完整一些。"),
+        )
+        .await
+        .expect("conversation turn should complete");
+
+    let captured = requests.lock().expect("requests lock");
+    let request = captured.last().expect("provider request");
+    assert!(!request.tools_enabled);
+    assert_eq!(request.input.modality, AgentInputModality::Voice);
+}
+
+#[tokio::test]
+async fn explicit_command_prompt_keeps_provider_tools_enabled() {
+    let temp = TempDir::new().expect("temp dir");
+    let provider = CapturingProvider::default();
+    let requests = Arc::clone(&provider.requests);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    agent
+        .run_with_backend(&backend, AgentInput::text("运行命令查看当前目录"))
+        .await
+        .expect("explicit tool turn should complete");
+
+    let captured = requests.lock().expect("requests lock");
+    let request = captured.last().expect("provider request");
+    assert!(request.tools_enabled);
 }
 
 #[tokio::test]

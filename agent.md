@@ -463,6 +463,18 @@ $env:YUNXI_AGENT_MODEL = "deepseek-v4-flash"
 
 只汇报脱敏状态。用户不需要自动拉起时，在交互式 YunXi 或 Web 启动参数中加入 `--no-weixin-autostart`。
 
+### 11.6 本地语音（可选）
+
+只有用户明确要求本地语音且接受额外磁盘、Python 与模型依赖时才能安装。不得把语音模型放进源码仓库或 Release 安装目录。先确认 NVIDIA GPU、驱动和至少 8 GB 可用空间，再执行：
+
+```powershell
+.\scripts\voice\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+.\scripts\voice\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+& $YunXiExe voice doctor --json
+```
+
+验收至少覆盖 `voice speak`、`voice transcribe`、一次 `voice chat`、`voice devices`，以及在真实交互终端内完成两轮 `voice talk`。还必须在已经运行的 CLI/TUI 中验证 `/voice status`、`/voice devices` 和两轮 `/voice`：语音文本必须进入当前 `InteractiveSession`，与此前文字轮次共享会话，并继续显示原有流式事件与工具审批。第二轮必须能沿用第一轮会话上下文，默认输出设备必须能播放合成结果。实时模式还要验证 `/voice realtime on|off|status`、TUI `voice=live` 状态、VAD 自动收音、自然短句分段、播放时预合成下一段、键盘停止当前播放、语音口令“关闭实时语音”以及关闭后释放麦克风。不得用 mock health 代替真实模型验收；不得把语音内容视为自动批准工具的指令；测试输入不得污染用户长期记忆。当前实时模式是免按键半双工，只能描述为支持键盘停止播放，不得描述成全双工、服务端流式或支持语音插话打断。
+
 ## 12. 失败处理与回滚
 
 ### 二进制被占用
@@ -511,6 +523,7 @@ Get-Process | Where-Object {
 | 在线 | 有凭证时真实 Provider 成功；无凭证时标记未验证 |
 | Web | `/api/health` 返回成功和正确版本 |
 | 微信 | 仅在用户选择后验证，结果必须脱敏 |
+| 本地语音 | 仅在用户选择后安装；真实 STT、TTS 与 voice chat 均成功 |
 | 私密数据 | 日志和最终报告中无密钥、二维码、私人记忆或微信标识 |
 
 ## 14. 最终报告格式

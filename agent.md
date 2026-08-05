@@ -465,11 +465,13 @@ $env:YUNXI_AGENT_MODEL = "deepseek-v4-flash"
 
 ### 11.6 本地语音（可选）
 
-只有用户明确要求本地语音且接受额外磁盘、Python 与模型依赖时才能安装。不得把语音模型放进源码仓库或 Release 安装目录。先确认 NVIDIA GPU、驱动和至少 8 GB 可用空间，再执行：
+只有用户明确要求本地语音且接受额外磁盘、Python 与模型依赖时才能安装。不得把语音模型放进源码仓库或 Release 安装目录。先确认 NVIDIA GPU、驱动和至少 30 GB 可用空间，再从私有仓库 `https://github.com/sjxbbdb/YunXi-Voice-Runtime` 建立独立源码 checkout：
 
 ```powershell
-.\scripts\voice\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
-.\scripts\voice\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+gh repo clone sjxbbdb/YunXi-Voice-Runtime "D:\YunXi Voice Runtime Source"
+Set-Location "D:\YunXi Voice Runtime Source"
+.\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
 & $YunXiExe voice doctor --json
 ```
 

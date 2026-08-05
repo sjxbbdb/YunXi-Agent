@@ -20,6 +20,7 @@
   <a href="#核心能力">核心能力</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#配置">配置</a> ·
+  <a href="#5-可选本地语音闭环">本地语音</a> ·
   <a href="#使用方式">使用方式</a> ·
   <a href="#项目结构">项目结构</a> ·
   <a href="#常见问题">常见问题</a>
@@ -52,7 +53,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 | 关系与信箱 | 从有效记忆派生关系阶段；按人格和记忆生成情书并写入本地加密信箱 |
 | 微信接入 | 二维码登录、私聊接入、配对、远程审批、会话绑定、投递恢复和自动拉起 |
 | 本地 Web | 聊天、记忆气泡、人格卡片、关系档案“她”和情书信箱，共享同一工作区状态 |
-| 本地语音 | SenseVoiceSmall 语音输入、CosyVoice 预设音色输出，并复用同一人格、记忆、陪伴与工具审批链路 |
+| 本地语音 | Rust 语音客户端连接独立的 [YunXi Voice Runtime](https://github.com/sjxbbdb/YunXi-Voice-Runtime) 私有 sidecar，使用 SenseVoiceSmall 输入与 CosyVoice 输出 |
 | 工程验证 | 离线评估、CLI/TUI/微信回归、Windows ConPTY 证据、脱敏检查和完整发布门禁 |
 
 ### 多入口协同
@@ -109,7 +110,7 @@ flowchart TB
 - Cargo
 - Visual Studio Build Tools 的 MSVC C++ 构建工具和 Windows SDK
 
-可选本地语音还需要 NVIDIA GPU、兼容驱动、约 8 GB 以上独立磁盘空间，以及由安装脚本管理的 Python 3.10 环境。模型和 Python 运行时不会写入 Rust 仓库。
+可选本地语音还需要 NVIDIA GPU、兼容驱动、建议至少 `30 GB` 可用磁盘空间，以及由独立语音仓库安装脚本管理的 Python 3.10 环境。模型、Python 运行时和缓存不会写入 Rust 仓库或 Git。
 
 ### 方式一：安装预编译包
 
@@ -252,19 +253,84 @@ Token 与数据密钥通过 Windows Credential Manager 保存；工作区只保�
 
 语音 MVP 使用 `SenseVoiceSmall → YunXi Runtime → CosyVoice-300M-SFT`。它不是另一套聊天逻辑：转写文本仍进入现有 Provider、人格、记忆、陪伴和工具审批链路，成功回复再合成为 WAV。
 
-首次安装运行时与模型：
+> [!IMPORTANT]
+> 语音 sidecar 的独立部署仓库是 [sjxbbdb/YunXi-Voice-Runtime](https://github.com/sjxbbdb/YunXi-Voice-Runtime)。该仓库当前为 **Private**，克隆账户必须具有访问权限。`YunXi-Agent` 主仓库负责 Rust 客户端与 Agent 逻辑；语音仓库负责 Python 服务、模型安装与本地推理。
 
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\voice\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+#### 仓库关联与依赖
+
+| 仓库 | 负责内容 | 依赖关系 |
+| --- | --- | --- |
+| `YunXi-Agent` | 麦克风、VAD、播放、CLI/TUI、对话、人格、记忆、陪伴、工具与审批 | 可独立运行文字功能；启用语音时依赖 sidecar HTTP 服务 |
+| `YunXi-Voice-Runtime` | SenseVoiceSmall、CosyVoice、本地 Python sidecar、安装与启动脚本 | 不包含 Agent 逻辑；只向 YunXi Agent 提供 STT/TTS |
+
+两者没有 Cargo、Python import、Git submodule 或共享状态目录依赖。运行时只通过本机回环 HTTP 连接：
+
+```mermaid
+flowchart LR
+    AUDIO["麦克风 / WAV"] --> CLIENT["YunXi Agent<br/>Rust voice client"]
+    CLIENT -->|"POST /v1/transcribe"| SIDECAR["YunXi Voice Runtime<br/>127.0.0.1:17862"]
+    SIDECAR -->|"转写文本"| CLIENT
+    CLIENT --> CORE["YunXi Runtime<br/>人格 · 记忆 · 工具审批"]
+    CORE -->|"回复文本"| CLIENT
+    CLIENT -->|"POST /v1/synthesize"| SIDECAR
+    SIDECAR -->|"WAV"| CLIENT
 ```
 
-在另一个 PowerShell 中启动本地 sidecar：
+主仓库的 `crates/yunxi-agent-voice` 是协议和客户端实现；`scripts/voice` 保留单仓集成测试快照。独立安装和部署以私有语音仓库 README 为准。
+
+#### 需要下载的内容
+
+语音仓库不提交模型和第三方运行产物。安装脚本会在指定的 `RuntimeRoot` 中下载：
+
+- uv 管理的 Python 3.10 与独立 `venv`
+- PyTorch `2.8.0+cu129`、torchaudio 和 STT/TTS 依赖
+- `iic/SenseVoiceSmall`
+- `iic/CosyVoice-300M-SFT`
+- FunAudioLLM/CosyVoice 与 Matcha-TTS 源码
+- uv、ModelScope 和 Hugging Face 缓存
+
+#### 本地部署
+
+先获取主仓库和已授权的私有语音仓库：
 
 ```powershell
-.\scripts\voice\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+git clone https://github.com/sjxbbdb/YunXi-Agent.git "D:\YunXi Agent"
+gh repo clone sjxbbdb/YunXi-Voice-Runtime "D:\YunXi Voice Runtime Source"
+```
+
+安装 uv、Python 环境、依赖和模型：
+
+```powershell
+winget install -e --id astral-sh.uv
+Set-ExecutionPolicy -Scope Process Bypass
+Set-Location "D:\YunXi Voice Runtime Source"
+.\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+```
+
+源码 checkout `D:\YunXi Voice Runtime Source` 与运行数据目录 `D:\YunXi Voice Runtime` 必须分开。后者包含模型、虚拟环境和缓存，不得加入 Git。
+
+启动本地 sidecar：
+
+```powershell
+.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
+```
+
+YunXi Agent 默认连接 `http://127.0.0.1:17862`，无需额外配置。另开 PowerShell 验证：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:17862/health
 yunxi voice doctor
 ```
+
+需要改端口时，sidecar 的 `-Port` 与客户端的 `YUNXI_VOICE_RUNTIME_URL` 必须一致：
+
+```powershell
+.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -Port 17863
+$env:YUNXI_VOICE_RUNTIME_URL = "http://127.0.0.1:17863"
+yunxi voice doctor
+```
+
+可选 `YUNXI_VOICE_AUTH_TOKEN` 必须在 sidecar 和 YunXi Agent 两端设置为相同值。默认只允许回环地址；连接非回环地址还必须显式设置 `YUNXI_VOICE_ALLOW_REMOTE=1`。
 
 使用示例：
 

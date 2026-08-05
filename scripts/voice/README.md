@@ -1,5 +1,7 @@
 # YunXi Voice Runtime
 
+> Independent private deployment repository: [sjxbbdb/YunXi-Voice-Runtime](https://github.com/sjxbbdb/YunXi-Voice-Runtime). This directory remains the monorepo integration snapshot; use the private repository README for standalone installation.
+
 This directory contains the optional local STT/TTS sidecar used by the voice MVP.
 
 The Rust CLI never imports Python or model code. It calls a loopback-only HTTP

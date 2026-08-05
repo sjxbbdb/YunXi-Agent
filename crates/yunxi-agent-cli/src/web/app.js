@@ -55,7 +55,10 @@ const nodes = {
   herBackdropMedia: document.querySelector("#her-backdrop-media"),
   herBackdropBase: document.querySelector("#her-backdrop-base"),
   herBackdropReveal: document.querySelector("#her-backdrop-reveal"),
+  herProfileFrame: document.querySelector(".her-profile-frame"),
   herProfileCard: document.querySelector("#her-profile-card"),
+  herCardSurface: document.querySelector("#her-card-surface"),
+  herCardDepthLayers: Array.from(document.querySelectorAll(".her-card-depth")),
   herCardStage: document.querySelector("#her-card-stage"),
   herDetail: document.querySelector("#her-detail"),
   herDetailClose: document.querySelector("#her-detail-close"),
@@ -1734,45 +1737,108 @@ function setupPointerMaterials() {
     }
   };
 
+  const herDepthValues = nodes.herCardDepthLayers.map((layer, index) => ({
+    element: layer,
+    x: Number(layer.dataset.depthX) || 0,
+    y: Number(layer.dataset.depthY) || 0,
+    scale: Number(layer.dataset.depthScale) || 1,
+    factor: index + 1,
+  }));
+
   const updateHerParallax = (_surface, x, y) => {
+    const card = nodes.herCardSurface;
     const plane = nodes.herArtPlane;
-    if (!plane) return;
+    if (!card || !plane) return;
+    nodes.herProfileFrame?.classList.add("is-card-active");
+    const rotationX = (0.5 - y) * 5.2;
+    const rotationY = (x - 0.5) * -6.4;
+    const artX = (x - 0.5) * -8;
+    const artY = (y - 0.5) * -5.5;
     if (window.gsap) {
       if (!herControls) {
-        window.gsap.set(plane, { transformPerspective: 1200, transformOrigin: "50% 50%" });
+        window.gsap.set(card, { transformPerspective: 1100, transformOrigin: "50% 50%" });
+        window.gsap.set(plane, { transformOrigin: "50% 50%" });
         herControls = {
-          x: window.gsap.quickTo(plane, "x", { duration: 0.5, ease: "power3.out" }),
-          y: window.gsap.quickTo(plane, "y", { duration: 0.5, ease: "power3.out" }),
-          rotationX: window.gsap.quickTo(plane, "rotationX", { duration: 0.5, ease: "power3.out" }),
-          rotationY: window.gsap.quickTo(plane, "rotationY", { duration: 0.5, ease: "power3.out" }),
+          card: {
+            y: window.gsap.quickTo(card, "y", { duration: 0.38, ease: "power3.out" }),
+            scale: window.gsap.quickTo(card, "scale", { duration: 0.38, ease: "power3.out" }),
+            rotationX: window.gsap.quickTo(card, "rotationX", { duration: 0.38, ease: "power3.out" }),
+            rotationY: window.gsap.quickTo(card, "rotationY", { duration: 0.38, ease: "power3.out" }),
+          },
+          art: {
+            x: window.gsap.quickTo(plane, "x", { duration: 0.48, ease: "power3.out" }),
+            y: window.gsap.quickTo(plane, "y", { duration: 0.48, ease: "power3.out" }),
+          },
+          depth: herDepthValues.map((depth) => {
+            window.gsap.set(depth.element, {
+              x: depth.x,
+              y: depth.y,
+              scale: depth.scale,
+              transformPerspective: 1100,
+              transformOrigin: "50% 50%",
+            });
+            return {
+              ...depth,
+              xTo: window.gsap.quickTo(depth.element, "x", { duration: 0.5, ease: "power3.out" }),
+              yTo: window.gsap.quickTo(depth.element, "y", { duration: 0.5, ease: "power3.out" }),
+              rotationXTo: window.gsap.quickTo(depth.element, "rotationX", { duration: 0.5, ease: "power3.out" }),
+              rotationYTo: window.gsap.quickTo(depth.element, "rotationY", { duration: 0.5, ease: "power3.out" }),
+            };
+          }),
         };
       }
-      herControls.x((x - 0.5) * -7);
-      herControls.y((y - 0.5) * -5);
-      herControls.rotationX((0.5 - y) * 1.2);
-      herControls.rotationY((x - 0.5) * 1.4);
+      herControls.card.y(-2.2);
+      herControls.card.scale(1.012);
+      herControls.card.rotationX(rotationX);
+      herControls.card.rotationY(rotationY);
+      herControls.art.x(artX);
+      herControls.art.y(artY);
+      herControls.depth.forEach((depth) => {
+        depth.xTo(depth.x + (x - 0.5) * depth.factor * 2.8);
+        depth.yTo(depth.y + (y - 0.5) * depth.factor * 2.2);
+        depth.rotationXTo(rotationX * (0.12 + depth.factor * 0.04));
+        depth.rotationYTo(rotationY * (0.12 + depth.factor * 0.04));
+      });
       return;
     }
-    plane.style.transform = `perspective(1200px) translate3d(${((x - 0.5) * -7).toFixed(2)}px, ${((y - 0.5) * -5).toFixed(2)}px, 0)`;
+    card.style.transform = `perspective(1100px) translate3d(0, -2.2px, 0) rotateX(${rotationX.toFixed(2)}deg) rotateY(${rotationY.toFixed(2)}deg) scale(1.012)`;
+    plane.style.transform = `translate3d(${artX.toFixed(2)}px, ${artY.toFixed(2)}px, 0)`;
+    herDepthValues.forEach((depth) => {
+      const depthX = depth.x + (x - 0.5) * depth.factor * 2.8;
+      const depthY = depth.y + (y - 0.5) * depth.factor * 2.2;
+      depth.element.style.transform = `perspective(1100px) translate3d(${depthX.toFixed(2)}px, ${depthY.toFixed(2)}px, 0) rotateX(${(rotationX * (0.12 + depth.factor * 0.04)).toFixed(2)}deg) rotateY(${(rotationY * (0.12 + depth.factor * 0.04)).toFixed(2)}deg) scale(${depth.scale})`;
+    });
   };
 
   const resetHerParallax = () => {
+    const card = nodes.herCardSurface;
     const plane = nodes.herArtPlane;
-    if (!plane) return;
+    if (!card || !plane) return;
+    nodes.herProfileFrame?.classList.remove("is-card-active");
     if (herControls) {
-      herControls.x(0);
-      herControls.y(0);
-      herControls.rotationX(0);
-      herControls.rotationY(0);
+      herControls.card.y(0);
+      herControls.card.scale(1);
+      herControls.card.rotationX(0);
+      herControls.card.rotationY(0);
+      herControls.art.x(0);
+      herControls.art.y(0);
+      herControls.depth.forEach((depth) => {
+        depth.xTo(depth.x);
+        depth.yTo(depth.y);
+        depth.rotationXTo(0);
+        depth.rotationYTo(0);
+      });
     } else {
+      card.style.removeProperty("transform");
       plane.style.removeProperty("transform");
+      herDepthValues.forEach((depth) => depth.element.style.removeProperty("transform"));
     }
   };
 
   bindSurface(nodes.composer, null);
   bindSurface(nodes.memoryField, ".memory-orb");
   bindSurface(nodes.personaDeck, ".persona-card.is-persona-visible", updatePersonaTilt, resetPersonaTilt);
-  bindSurface(nodes.herArtWindow, null, updateHerParallax, resetHerParallax);
+  bindSurface(nodes.herProfileCard, null, updateHerParallax, resetHerParallax);
   bindSurface(nodes.mailboxList, ".mailbox-item");
 }
 

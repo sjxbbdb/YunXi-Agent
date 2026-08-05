@@ -789,7 +789,12 @@ mod tests {
         assert!(INDEX_HTML.contains("/assets/yunxi-her-profile-card.jpg"));
         assert!(INDEX_HTML.contains("id=\"her-art-plane\""));
         assert!(INDEX_HTML.contains("id=\"her-detail\""));
+        assert!(INDEX_HTML.contains("id=\"her-card-surface\""));
+        assert!(INDEX_HTML.contains("class=\"her-card-depth"));
         assert!(APP_JS.contains("setupHerReveal"));
+        assert!(APP_JS.contains("updateHerParallax"));
+        assert!(APP_JS.contains("herCardDepthLayers"));
+        assert!(APP_CSS.contains(".her-card-glass"));
         assert!(!INDEX_HTML.contains("assets.21st.dev"));
         assert_eq!(APP_CSS.matches('{').count(), APP_CSS.matches('}').count());
         assert!(!YUNXI_CHARACTER_ART.is_empty());

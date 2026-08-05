@@ -224,6 +224,11 @@
                 alt=""
               />
             </div>
+            <div class="her-backdrop-flow" id="her-backdrop-flow">
+              <span class="her-flow-ribbon her-flow-ribbon-primary" id="her-flow-primary"></span>
+              <span class="her-flow-ribbon her-flow-ribbon-secondary" id="her-flow-secondary"></span>
+              <span class="her-flow-streak" id="her-flow-streak"></span>
+            </div>
             <div class="her-backdrop-veil"></div>
             <div class="her-backdrop-grain"></div>
           </div>
@@ -234,14 +239,7 @@
               <span class="her-card-depth her-card-depth-1" data-depth-x="-8" data-depth-y="10" data-depth-scale="0.982" aria-hidden="true"></span>
               <span class="her-card-depth her-card-depth-2" data-depth-x="-4" data-depth-y="6" data-depth-scale="0.99" aria-hidden="true"></span>
               <span class="her-card-depth her-card-depth-3" data-depth-x="4" data-depth-y="-4" data-depth-scale="0.996" aria-hidden="true"></span>
-              <button
-                class="her-profile-card"
-                id="her-profile-card"
-                type="button"
-                aria-label="展开 YunXi 关系档案"
-                aria-controls="her-detail"
-                aria-expanded="false"
-              >
+              <div class="her-profile-card" id="her-profile-card">
                 <span class="her-card-surface" id="her-card-surface">
                   <span class="her-art-window" id="her-art-window" data-art-mode="portrait">
                     <span class="her-art-plane" id="her-art-plane">
@@ -260,14 +258,8 @@
                     <span class="her-card-name" id="her-display-name">YunXi</span>
                     <span class="her-card-stage" id="her-card-stage">初识</span>
                   </span>
-                  <span class="her-card-open" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M7 12h10"></path>
-                      <path d="m13 8 4 4-4 4"></path>
-                    </svg>
-                  </span>
                 </span>
-              </button>
+              </div>
 
               <div class="her-art-controls" role="toolbar" aria-label="人物形象视图">
                 <button class="is-active" type="button" data-her-art-mode="portrait" aria-label="查看人物形象" title="形象" aria-pressed="true">
@@ -299,18 +291,8 @@
           <section
             class="her-detail"
             id="her-detail"
-            role="dialog"
-            aria-modal="false"
-            aria-hidden="true"
             aria-labelledby="her-detail-display-name"
-            inert
           >
-            <button class="her-detail-close" id="her-detail-close" type="button" aria-label="关闭关系档案" title="关闭">
-              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M6 6l12 12M18 6 6 18"></path>
-              </svg>
-            </button>
-
             <div class="her-detail-scroll">
               <header class="her-detail-heading">
                 <p>RELATIONSHIP ARCHIVE</p>

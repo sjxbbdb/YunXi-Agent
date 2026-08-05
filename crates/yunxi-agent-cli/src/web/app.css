@@ -4950,13 +4950,14 @@ body[data-active-view="her"] .app-stage {
   inset: 0;
   z-index: 0;
   overflow: hidden;
-  background: linear-gradient(90deg, #171d23 0%, #252d36 52%, #3a4652 100%);
+  background: linear-gradient(120deg, #030506 0%, #070a0d 48%, #0c1115 100%);
   pointer-events: none;
 }
 
 .her-backdrop-media {
   position: absolute;
   inset: -1.5%;
+  z-index: 0;
   transform: scale(1.012);
   transform-origin: 50% 50%;
   will-change: transform;
@@ -4973,24 +4974,25 @@ body[data-active-view="her"] .app-stage {
 }
 
 .her-backdrop-base {
+  opacity: 0;
   filter: brightness(0.34) saturate(0.72) contrast(1.02);
 }
 
 .her-backdrop-reveal {
   opacity: 0;
-  filter: brightness(0.82) saturate(0.9) contrast(1.02);
+  filter: brightness(0.94) saturate(0.94) contrast(1.02);
   -webkit-mask-image: radial-gradient(
-    circle 14rem at var(--spot-x) var(--spot-y),
+    circle 15.5rem at var(--spot-x) var(--spot-y),
     #000 0%,
-    rgba(0, 0, 0, 0.96) 34%,
-    rgba(0, 0, 0, 0.58) 68%,
+    rgba(0, 0, 0, 0.98) 36%,
+    rgba(0, 0, 0, 0.62) 70%,
     transparent 100%
   );
   mask-image: radial-gradient(
-    circle 14rem at var(--spot-x) var(--spot-y),
+    circle 15.5rem at var(--spot-x) var(--spot-y),
     #000 0%,
-    rgba(0, 0, 0, 0.96) 34%,
-    rgba(0, 0, 0, 0.58) 68%,
+    rgba(0, 0, 0, 0.98) 36%,
+    rgba(0, 0, 0, 0.62) 70%,
     transparent 100%
   );
   transition: opacity 1.45s cubic-bezier(0.16, 1, 0.3, 1);
@@ -5007,9 +5009,93 @@ body[data-active-view="her"] .app-stage {
   transition-duration: 1.45s;
 }
 
+.her-backdrop-flow {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  opacity: 0;
+  mix-blend-mode: screen;
+  -webkit-mask-image: radial-gradient(
+    circle 18rem at var(--spot-x) var(--spot-y),
+    #000 0%,
+    rgba(0, 0, 0, 0.9) 46%,
+    transparent 100%
+  );
+  mask-image: radial-gradient(
+    circle 18rem at var(--spot-x) var(--spot-y),
+    #000 0%,
+    rgba(0, 0, 0, 0.9) 46%,
+    transparent 100%
+  );
+  transition: opacity 1.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.her-backdrop.is-revealing .her-backdrop-flow {
+  opacity: 0.72;
+  transition-duration: 220ms;
+}
+
+.her-backdrop.is-fading .her-backdrop-flow {
+  opacity: 0;
+  transition-duration: 1.45s;
+}
+
+.her-flow-ribbon,
+.her-flow-streak {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.her-flow-ribbon {
+  left: -24%;
+  width: 88%;
+  transform-origin: center;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(140, 190, 205, 0.04) 24%,
+    rgba(174, 214, 224, 0.24) 49%,
+    rgba(118, 169, 187, 0.08) 72%,
+    transparent 100%
+  );
+  filter: blur(18px);
+}
+
+.her-flow-ribbon-primary {
+  top: 18%;
+  height: 9rem;
+  opacity: 0.12;
+  transform: translate3d(-28%, -4%, 0) rotate(-8deg);
+}
+
+.her-flow-ribbon-secondary {
+  right: -20%;
+  bottom: 14%;
+  left: auto;
+  width: 74%;
+  height: 7rem;
+  opacity: 0.08;
+  transform: translate3d(34%, 5%, 0) rotate(6deg);
+}
+
+.her-flow-streak {
+  top: 42%;
+  left: -38%;
+  width: 66%;
+  height: 1px;
+  opacity: 0.06;
+  transform: translate3d(-18%, 0, 0) rotate(-5deg);
+  background: linear-gradient(90deg, transparent, rgba(218, 239, 243, 0.66), transparent);
+  box-shadow: 0 0 1.25rem rgba(123, 184, 199, 0.24);
+}
+
 .her-backdrop-veil {
   position: absolute;
   inset: 0;
+  z-index: 2;
   background:
     linear-gradient(90deg, rgba(8, 12, 16, 0.82) 0%, rgba(13, 18, 23, 0.48) 32%, transparent 61%),
     linear-gradient(180deg, rgba(4, 8, 11, 0.26) 0%, transparent 30%, rgba(4, 8, 11, 0.34) 100%);
@@ -5018,6 +5104,7 @@ body[data-active-view="her"] .app-stage {
 .her-backdrop-grain {
   position: absolute;
   inset: 0;
+  z-index: 3;
   background-image: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 3px);
   mix-blend-mode: soft-light;
   opacity: 0.34;
@@ -5112,7 +5199,7 @@ body[data-active-view="her"] .app-stage {
   background: transparent;
   color: #edf5f7;
   box-shadow: none;
-  cursor: pointer;
+  cursor: default;
   text-align: left;
   transform: translate3d(0, 0, 0);
   transition:
@@ -5142,8 +5229,7 @@ body[data-active-view="her"] .app-stage {
   will-change: transform;
 }
 
-.her-profile-card:hover .her-card-surface,
-.her-profile-card:focus-visible .her-card-surface {
+.her-profile-card:hover .her-card-surface {
   border-color: rgba(169, 216, 233, 0.58);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.26),
@@ -5151,15 +5237,6 @@ body[data-active-view="her"] .app-stage {
     inset 0 -1px 0 rgba(4, 9, 13, 0.72),
     0 30px 82px rgba(1, 5, 8, 0.54),
     0 0 0 1px rgba(169, 216, 233, 0.08);
-}
-
-.her-profile-card:focus-visible {
-  outline: none;
-}
-
-.her-profile-card:focus-visible .her-card-surface {
-  outline: 1px solid rgba(203, 232, 242, 0.7);
-  outline-offset: 3px;
 }
 
 .her-art-window,
@@ -5192,8 +5269,7 @@ body[data-active-view="her"] .app-stage {
     opacity 260ms ease;
 }
 
-.her-profile-card:hover .her-art-window[data-art-mode="portrait"] .her-art-image,
-.her-profile-card:focus-visible .her-art-window[data-art-mode="portrait"] .her-art-image {
+.her-profile-card:hover .her-art-window[data-art-mode="portrait"] .her-art-image {
   transform: scale(1.045);
 }
 
@@ -5262,20 +5338,23 @@ body[data-active-view="her"] .app-stage {
   left: 1rem;
   z-index: 2;
   display: flex;
-  align-items: end;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 0.7rem;
 }
 
 .her-card-name {
-  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: visible;
   color: #f1f6f7;
   font-size: 1.25rem;
   font-weight: 610;
   line-height: 1.1;
   letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  white-space: normal;
 }
 
 .her-card-stage {
@@ -5285,35 +5364,7 @@ body[data-active-view="her"] .app-stage {
   line-height: 1;
 }
 
-.her-card-open {
-  position: absolute;
-  top: 0.8rem;
-  right: 0.8rem;
-  z-index: 2;
-  display: grid;
-  width: 2rem;
-  height: 2rem;
-  place-items: center;
-  border: 1px solid rgba(222, 238, 243, 0.18);
-  border-radius: 50%;
-  background: rgba(8, 13, 18, 0.44);
-  color: rgba(237, 246, 248, 0.74);
-  transition:
-    color 200ms ease,
-    background-color 200ms ease,
-    transform 360ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.her-profile-card:hover .her-card-open,
-.her-profile-card:focus-visible .her-card-open {
-  background: rgba(169, 216, 233, 0.16);
-  color: #edf8fb;
-  transform: translateX(2px);
-}
-
-.her-card-open svg,
-.her-art-controls svg,
-.her-detail-close svg {
+.her-art-controls svg {
   width: 1rem;
   height: 1rem;
 }
@@ -5441,62 +5492,18 @@ body[data-active-view="her"] .app-stage {
   left: clamp(20rem, 29vw, 34rem);
   z-index: 4;
   overflow: hidden;
-  border-left: 1px solid rgba(215, 230, 236, 0.11);
-  background: linear-gradient(90deg, rgba(13, 18, 23, 0.96) 0%, rgba(18, 25, 31, 0.9) 66%, rgba(20, 28, 34, 0.46) 100%);
-  box-shadow: -28px 0 80px rgba(1, 5, 8, 0.28);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transform: translate3d(2rem, 0, 0);
-  transition:
-    opacity 420ms ease,
-    transform 620ms cubic-bezier(0.16, 1, 0.3, 1),
-    visibility 0s linear 620ms;
-}
-
-.her-canvas.is-detail-open .her-detail {
+  border-left: 1px solid rgba(215, 230, 236, 0.08);
+  background: linear-gradient(
+    90deg,
+    rgba(7, 11, 15, 0.82) 0%,
+    rgba(10, 15, 19, 0.62) 48%,
+    rgba(12, 18, 22, 0.18) 100%
+  );
+  box-shadow: -22px 0 64px rgba(1, 5, 8, 0.18);
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
-  transform: translate3d(0, 0, 0);
-  transition-delay: 0s;
-}
-
-.her-canvas.is-detail-open .her-profile-card {
-  border-color: rgba(169, 216, 233, 0.28);
-  opacity: 0.76;
-  transform: translate3d(-0.35rem, 0, 0) scale(0.985);
-}
-
-.her-detail-close {
-  position: absolute;
-  top: 6.2rem;
-  right: 2rem;
-  z-index: 2;
-  display: grid;
-  width: 2.5rem;
-  height: 2.5rem;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(220, 233, 238, 0.18);
-  border-radius: 50%;
-  background: rgba(12, 18, 23, 0.58);
-  color: rgba(231, 240, 243, 0.7);
-  cursor: pointer;
-  transition:
-    color 180ms ease,
-    border-color 180ms ease,
-    background-color 180ms ease,
-    transform 180ms ease;
-}
-
-.her-detail-close:hover,
-.her-detail-close:focus-visible {
-  border-color: rgba(169, 216, 233, 0.42);
-  background: rgba(169, 216, 233, 0.12);
-  color: #eff9fb;
-  outline: none;
-  transform: rotate(4deg);
+  transform: none;
 }
 
 .her-detail-scroll {
@@ -5509,6 +5516,7 @@ body[data-active-view="her"] .app-stage {
   overflow-y: auto;
   padding: 7.6rem 5.5rem 3rem 3rem;
   scrollbar-width: thin;
+  text-shadow: 0 1px 16px rgba(0, 0, 0, 0.46);
 }
 
 .her-detail-heading {
@@ -5813,6 +5821,17 @@ body[data-active-view="her"] .app-stage {
     filter: brightness(0.3) saturate(0.7);
   }
 
+  .her-flow-ribbon-primary {
+    top: 24%;
+    width: 112%;
+  }
+
+  .her-flow-ribbon-secondary {
+    right: -34%;
+    bottom: 24%;
+    width: 94%;
+  }
+
   .her-backdrop-veil {
     background:
       linear-gradient(90deg, rgba(6, 10, 14, 0.72) 0%, rgba(9, 14, 18, 0.28) 55%, rgba(6, 10, 14, 0.12) 100%),
@@ -5820,6 +5839,7 @@ body[data-active-view="her"] .app-stage {
   }
 
   .her-profile-zone {
+    display: none;
     top: auto;
     bottom: 1.2rem;
     left: 0.85rem;
@@ -5850,13 +5870,6 @@ body[data-active-view="her"] .app-stage {
     font-size: 0.62rem;
   }
 
-  .her-card-open {
-    top: 0.55rem;
-    right: 0.55rem;
-    width: 1.8rem;
-    height: 1.8rem;
-  }
-
   .her-art-controls {
     right: 0.48rem;
     bottom: 2.8rem;
@@ -5882,17 +5895,7 @@ body[data-active-view="her"] .app-stage {
     left: 0;
     border-left: 0;
     background: rgba(13, 18, 23, 0.95);
-    transform: translate3d(0, 1.5rem, 0);
-  }
-
-  .her-canvas.is-detail-open .her-profile-zone {
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .her-detail-close {
-    top: 5.25rem;
-    right: 1rem;
+    transform: none;
   }
 
   .her-detail-scroll {
@@ -5943,19 +5946,17 @@ body[data-active-view="her"] .app-stage {
     padding-top: 5.8rem;
   }
 
-  .her-detail-close {
-    top: 5.2rem;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .her-backdrop-media,
+  .her-flow-ribbon,
+  .her-flow-streak,
   .her-profile-card,
   .her-card-surface,
   .her-card-depth,
   .her-card-glass,
   .her-art-image,
-  .her-card-open,
   .her-detail,
   .her-stage-path li,
   .her-stage-path li::before,
@@ -5972,15 +5973,35 @@ body[data-active-view="her"] .app-stage {
     display: none;
   }
 
+  .her-backdrop-flow {
+    opacity: 0;
+  }
+
+  .her-flow-ribbon-primary {
+    opacity: 0.12;
+    transform: translate3d(24%, 0, 0) rotate(-8deg);
+  }
+
+  .her-flow-ribbon-secondary {
+    opacity: 0.08;
+    transform: translate3d(-12%, 0, 0) rotate(6deg);
+  }
+
+  .her-flow-streak {
+    display: none;
+  }
+
   .her-profile-card:hover,
-  .her-profile-card:focus-visible,
-  .her-profile-card:hover .her-art-image,
-  .her-profile-card:focus-visible .her-art-image {
+  .her-profile-card:hover .her-art-image {
     transform: none;
   }
 }
 
 @media (prefers-reduced-transparency: reduce) {
+  .her-backdrop-flow {
+    display: none;
+  }
+
   .her-card-glass,
   .her-art-controls,
   .her-detail {

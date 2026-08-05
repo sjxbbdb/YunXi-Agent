@@ -841,17 +841,61 @@ mod tests {
         assert!(APP_CSS.contains(".mailbox-canvas"));
         assert!(APP_CSS.contains(".her-canvas"));
         assert!(APP_CSS.contains(".her-backdrop-reveal"));
+        assert!(APP_CSS.contains(".her-backdrop-flow"));
+        assert!(APP_CSS.contains(".her-flow-ribbon"));
         assert!(INDEX_HTML.contains("/assets/yunxi-her-background.jpg"));
         assert!(INDEX_HTML.contains("/assets/yunxi-her-profile-card.jpg"));
         assert!(INDEX_HTML.contains("id=\"her-art-plane\""));
         assert!(INDEX_HTML.contains("id=\"her-detail\""));
         assert!(INDEX_HTML.contains("id=\"her-card-surface\""));
+        assert!(INDEX_HTML.contains("id=\"her-backdrop-flow\""));
+        assert!(INDEX_HTML.contains("id=\"her-flow-streak\""));
         assert!(INDEX_HTML.contains("class=\"her-card-depth"));
         assert_eq!(INDEX_HTML.matches("data-her-art-mode=").count(), 2);
         assert!(!INDEX_HTML.contains("data-her-art-mode=\"sheet\""));
         assert!(APP_JS.contains("setupHerReveal"));
+        assert!(!INDEX_HTML.contains("id=\"her-detail-close\""));
+        assert!(!INDEX_HTML.contains("her-card-open"));
+        assert!(!INDEX_HTML.contains("aria-controls=\"her-detail\""));
+        assert!(!APP_JS.contains("openHerDetail"));
+        assert!(!APP_JS.contains("closeHerDetail"));
+        assert!(!APP_JS.contains("is-detail-open"));
+        assert!(!APP_CSS.contains(".her-detail-close"));
+        assert!(!APP_CSS.contains(".her-card-open"));
+        assert!(!APP_CSS.contains("is-detail-open"));
         assert!(APP_JS.contains("updateHerParallax"));
         assert!(APP_JS.contains("herCardDepthLayers"));
+        assert!(APP_JS.contains("herFlowPrimary"));
+        let backdrop_base_rule = APP_CSS
+            .split(".her-backdrop-base {")
+            .nth(1)
+            .and_then(|rules| rules.split('}').next())
+            .expect("her backdrop base styles");
+        assert!(backdrop_base_rule.contains("opacity: 0"));
+        let backdrop_flow_rule = APP_CSS
+            .split(".her-backdrop-flow {")
+            .nth(1)
+            .and_then(|rules| rules.split('}').next())
+            .expect("her backdrop flow styles");
+        assert!(backdrop_flow_rule.contains("opacity: 0"));
+        assert!(backdrop_flow_rule.contains("mask-image"));
+        assert!(APP_CSS.contains(".her-backdrop.is-revealing .her-backdrop-flow"));
+        let her_detail_rule = APP_CSS
+            .split(".her-detail {")
+            .nth(1)
+            .and_then(|rules| rules.split('}').next())
+            .expect("her detail styles");
+        assert!(her_detail_rule.contains("rgba(12, 18, 22, 0.18)"));
+        assert!(her_detail_rule.contains("opacity: 1"));
+        assert!(her_detail_rule.contains("visibility: visible"));
+        assert!(her_detail_rule.contains("pointer-events: auto"));
+        let name_rule = APP_CSS
+            .split(".her-card-name {")
+            .nth(1)
+            .and_then(|rules| rules.split('}').next())
+            .expect("her card name styles");
+        assert!(name_rule.contains("overflow: visible"));
+        assert!(!name_rule.contains("text-overflow: ellipsis"));
         assert!(APP_JS.contains("/assets/yunxi-her-expression-smile.jpg"));
         assert!(APP_CSS.contains(".her-card-glass"));
         assert!(!INDEX_HTML.contains("assets.21st.dev"));

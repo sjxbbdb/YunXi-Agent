@@ -62,6 +62,9 @@ const nodes = {
   herRetry: document.querySelector("#her-retry"),
   herBackdrop: document.querySelector("#her-backdrop"),
   herBackdropMedia: document.querySelector("#her-backdrop-media"),
+  herFlowPrimary: document.querySelector("#her-flow-primary"),
+  herFlowSecondary: document.querySelector("#her-flow-secondary"),
+  herFlowStreak: document.querySelector("#her-flow-streak"),
   herBackdropBase: document.querySelector("#her-backdrop-base"),
   herBackdropReveal: document.querySelector("#her-backdrop-reveal"),
   herProfileFrame: document.querySelector(".her-profile-frame"),
@@ -69,8 +72,6 @@ const nodes = {
   herCardSurface: document.querySelector("#her-card-surface"),
   herCardDepthLayers: Array.from(document.querySelectorAll(".her-card-depth")),
   herCardStage: document.querySelector("#her-card-stage"),
-  herDetail: document.querySelector("#her-detail"),
-  herDetailClose: document.querySelector("#her-detail-close"),
   herDetailDisplayName: document.querySelector("#her-detail-display-name"),
   herArtWindow: document.querySelector("#her-art-window"),
   herArtPlane: document.querySelector("#her-art-plane"),
@@ -101,7 +102,6 @@ const state = {
   personaTimeline: null,
   mailboxTimeline: null,
   herTimeline: null,
-  herDetailTimeline: null,
   herAmbientTimeline: null,
   lastMemorySource: null,
   lastPersonaSource: null,
@@ -115,12 +115,15 @@ const state = {
   herExpressionsPreloaded: false,
   herArtSwapSequence: 0,
   herRevealTimer: 0,
-  lastHerSource: null,
   sending: false,
 };
 
 function prefersReducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function prefersReducedTransparency() {
+  return window.matchMedia("(prefers-reduced-transparency: reduce)").matches;
 }
 
 function loadMessages() {
@@ -251,7 +254,6 @@ async function api(path, options = {}) {
 
 function showView(name) {
   const target = ["chat", "memory", "persona", "her", "mailbox"].includes(name) ? name : "chat";
-  if (target !== "her" && nodes.herCanvas?.classList.contains("is-detail-open")) closeHerDetail(false);
   document.documentElement.dataset.activeView = target;
   document.body.dataset.activeView = target;
   nodes.views.forEach((view) => {
@@ -296,7 +298,7 @@ function animateViewEntrance(name) {
     chat: ".chat-hero > *, .chat-panel",
     memory: ".memory-head, .memory-field",
     persona: ".persona-stage",
-    her: ".her-scene-index, .her-profile-frame, .her-card-meta",
+    her: ".her-scene-index, .her-profile-frame, .her-card-meta, .her-detail-heading, .her-relationship, .her-signals",
     mailbox: ".mailbox-head, .mailbox-list",
   };
   const targets = Array.from(view.querySelectorAll(selectors[name] || ":scope > *"));
@@ -323,7 +325,7 @@ function animateViewEntrance(name) {
 }
 
 function startHerAmbientMotion() {
-  if (!nodes.herBackdropMedia || prefersReducedMotion()) return;
+  if (!nodes.herBackdropMedia || prefersReducedMotion() || prefersReducedTransparency()) return;
   if (state.herAmbientTimeline) {
     state.herAmbientTimeline.resume();
     return;
@@ -337,20 +339,62 @@ function startHerAmbientMotion() {
           nodes.herBackdropMedia,
           { xPercent: -0.2, scale: 1.012 },
           { xPercent: 0.35, scale: 1.025, duration: 14 },
+          0,
+        )
+        .fromTo(
+          nodes.herFlowPrimary,
+          { xPercent: -28, yPercent: -4, rotation: -8, opacity: 0.08 },
+          { xPercent: 62, yPercent: 7, rotation: -5.5, opacity: 0.34, duration: 17 },
+          0,
+        )
+        .fromTo(
+          nodes.herFlowSecondary,
+          { xPercent: 34, yPercent: 5, rotation: 6, opacity: 0.06 },
+          { xPercent: -48, yPercent: -7, rotation: 3.5, opacity: 0.24, duration: 21 },
+          0,
+        )
+        .fromTo(
+          nodes.herFlowStreak,
+          { xPercent: -18, rotation: -5, opacity: 0.02 },
+          { xPercent: 118, rotation: -3, opacity: 0.22, duration: 13 },
+          2,
         );
       return;
     }
-    const animation = nodes.herBackdropMedia.animate(
+    const animations = [nodes.herBackdropMedia.animate(
       [
         { transform: "translate3d(-0.2%, 0, 0) scale(1.012)" },
         { transform: "translate3d(0.35%, 0, 0) scale(1.025)" },
       ],
       { duration: 28000, direction: "alternate", iterations: Infinity, easing: "ease-in-out" },
+    )];
+    animations.push(
+      nodes.herFlowPrimary.animate(
+        [
+          { transform: "translate3d(-28%, -4%, 0) rotate(-8deg)", opacity: 0.08 },
+          { transform: "translate3d(62%, 7%, 0) rotate(-5.5deg)", opacity: 0.34 },
+        ],
+        { duration: 34000, direction: "alternate", iterations: Infinity, easing: "ease-in-out" },
+      ),
+      nodes.herFlowSecondary.animate(
+        [
+          { transform: "translate3d(34%, 5%, 0) rotate(6deg)", opacity: 0.06 },
+          { transform: "translate3d(-48%, -7%, 0) rotate(3.5deg)", opacity: 0.24 },
+        ],
+        { duration: 42000, direction: "alternate", iterations: Infinity, easing: "ease-in-out" },
+      ),
+      nodes.herFlowStreak.animate(
+        [
+          { transform: "translate3d(-18%, 0, 0) rotate(-5deg)", opacity: 0.02 },
+          { transform: "translate3d(118%, 0, 0) rotate(-3deg)", opacity: 0.22 },
+        ],
+        { duration: 26000, direction: "alternate", iterations: Infinity, easing: "ease-in-out" },
+      ),
     );
     state.herAmbientTimeline = {
-      pause: () => animation.pause(),
-      resume: () => animation.play(),
-      kill: () => animation.cancel(),
+      pause: () => animations.forEach((animation) => animation.pause()),
+      resume: () => animations.forEach((animation) => animation.play()),
+      kill: () => animations.forEach((animation) => animation.cancel()),
     };
   });
 }
@@ -1486,44 +1530,6 @@ function setHerArtMode(mode, { advanceExpression = false } = {}) {
   });
 }
 
-function openHerDetail() {
-  if (!nodes.herDetail || !nodes.herCanvas || nodes.herCanvas.classList.contains("is-detail-open")) return;
-  state.lastHerSource = document.activeElement;
-  nodes.herCanvas.classList.add("is-detail-open");
-  nodes.herProfileCard?.setAttribute("aria-expanded", "true");
-  nodes.herDetail.setAttribute("aria-hidden", "false");
-  nodes.herDetail.inert = false;
-
-  if (!prefersReducedMotion() && window.gsap) {
-    const parts = nodes.herDetail.querySelectorAll(
-      ".her-detail-heading > *, .her-relationship > *, .her-signals-heading > *, .her-facets > *, .her-traits, .her-runtime-state",
-    );
-    state.herDetailTimeline?.kill?.();
-    state.herDetailTimeline = window.gsap
-      .timeline({ defaults: { ease: "power3.out" } })
-      .fromTo(parts, { y: 10, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.38, stagger: 0.028, clearProps: "transform,opacity,visibility" });
-  } else if (!window.gsap) {
-    ensureGsap();
-  }
-  window.setTimeout(() => nodes.herDetailClose?.focus({ preventScroll: true }), prefersReducedMotion() ? 0 : 280);
-}
-
-function closeHerDetail(restoreFocus = true) {
-  if (!nodes.herDetail || !nodes.herCanvas?.classList.contains("is-detail-open")) return;
-  state.herDetailTimeline?.kill?.();
-  nodes.herCanvas.classList.remove("is-detail-open");
-  nodes.herProfileCard?.setAttribute("aria-expanded", "false");
-  nodes.herDetail.setAttribute("aria-hidden", "true");
-  nodes.herDetail.inert = true;
-  const source = state.lastHerSource;
-  state.lastHerSource = null;
-  if (!restoreFocus) return;
-  window.setTimeout(() => {
-    if (source instanceof HTMLElement && document.contains(source)) source.focus({ preventScroll: true });
-    else nodes.herProfileCard?.focus({ preventScroll: true });
-  }, prefersReducedMotion() ? 0 : 220);
-}
-
 function setupHerReveal() {
   if (!nodes.herCanvas || !nodes.herBackdrop) return;
   const supportsFinePointer = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
@@ -1963,8 +1969,6 @@ nodes.personaPrev?.addEventListener("click", () => setPersonaIndex(state.activeP
 nodes.personaNext?.addEventListener("click", () => setPersonaIndex(state.activePersonaIndex + 1));
 nodes.personaDetailClose?.addEventListener("click", closePersonaDetail);
 nodes.herRetry?.addEventListener("click", () => loadHer(true));
-nodes.herProfileCard?.addEventListener("click", openHerDetail);
-nodes.herDetailClose?.addEventListener("click", closeHerDetail);
 nodes.herArtModes.forEach((button) => {
   button.addEventListener("click", () =>
     setHerArtMode(button.dataset.herArtMode, { advanceExpression: true }),
@@ -2001,7 +2005,6 @@ window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeMemory();
     closePersonaDetail();
-    closeHerDetail();
     closeMailboxDetail();
   }
   if (document.activeElement instanceof HTMLTextAreaElement) return;

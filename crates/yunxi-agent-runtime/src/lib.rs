@@ -2713,6 +2713,11 @@ fn is_self_contained_conversation_prompt(prompt: &str) -> bool {
         "说说",
         "讲个",
         "讲一个",
+        "生成一段",
+        "说一段",
+        "来一段",
+        "多说一点",
+        "多讲一点",
         "列出",
         "建议",
         "起个名字",
@@ -2935,9 +2940,13 @@ mod memory_recall_query_tests {
         assert!(!tools_enabled_for_prompt(
             "请用四句话介绍今天适合做的四件小事，每句话稍微完整一些。"
         ));
+        assert!(!tools_enabled_for_prompt("生成一段比较长的语音。"));
+        assert!(!tools_enabled_for_prompt("说一段长一点的话。"));
         assert!(!tools_enabled_for_prompt("晚上好。"));
         assert!(tools_enabled_for_prompt("运行命令查看当前目录"));
         assert!(tools_enabled_for_prompt("请用 shell 查看当前日期"));
+        assert!(tools_enabled_for_prompt("生成一段 Rust 代码并写入文件"));
+        assert!(tools_enabled_for_prompt("打开语音模式"));
         assert!(tools_enabled_for_prompt("请记住我偏好简洁回复"));
     }
 

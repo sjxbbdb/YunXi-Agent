@@ -759,6 +759,26 @@ async fn self_contained_conversation_prompt_disables_provider_tools() {
 }
 
 #[tokio::test]
+async fn spoken_long_response_request_disables_provider_tools() {
+    let temp = TempDir::new().expect("temp dir");
+    let provider = CapturingProvider::default();
+    let requests = Arc::clone(&provider.requests);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let agent = Agent::new(AgentConfig::new(temp.path()).with_approval_mode(ApprovalMode::Never));
+
+    agent
+        .run_with_backend(&backend, AgentInput::voice("生成一段比较长的语音。"))
+        .await
+        .expect("spoken response request should complete");
+
+    let captured = requests.lock().expect("requests lock");
+    let request = captured.last().expect("provider request");
+    assert!(!request.tools_enabled);
+    assert_eq!(request.input.modality, AgentInputModality::Voice);
+}
+
+#[tokio::test]
 async fn explicit_command_prompt_keeps_provider_tools_enabled() {
     let temp = TempDir::new().expect("temp dir");
     let provider = CapturingProvider::default();

@@ -14,11 +14,12 @@ mod live;
 pub use live::{
     AudioDeviceSummary, CapturedAudio, LiveRecording, PlaybackCancellationToken,
     VoiceActivityConfig, audio_devices, play_wav, play_wav_cancellable,
+    play_wav_sequence_cancellable,
 };
 
 pub const VOICE_API_SCHEMA_VERSION: u32 = 1;
 pub const DEFAULT_VOICE_RUNTIME_URL: &str = "http://127.0.0.1:17862";
-pub const DEFAULT_PRESET_VOICE: &str = "中文女";
+pub const DEFAULT_PRESET_VOICE: &str = "yunxi-primary";
 pub const DEFAULT_MAX_INPUT_BYTES: usize = 25 * 1024 * 1024;
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
 pub const DEFAULT_MAX_SPEECH_CHARS: usize = 2_000;

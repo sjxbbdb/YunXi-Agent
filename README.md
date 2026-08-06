@@ -36,7 +36,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 - **行动必须可控。** 工具调用经过明确策略与审批，不因“陪伴”而绕过工作区、安全或隐私边界。
 - **能力必须诚实。** 没有在线凭证时明确进入离线模式；失败、降级和未验证状态不会被包装成成功。
 
-当前稳定版本为 `v2.3.3-hotfix.24`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
+当前稳定版本为 `v2.3.3-hotfix.31`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
 
 > [!NOTE]
 > 默认人格开启；长期记忆、主动陪伴和情书生成默认关闭。YunXi 会在没有 Provider 凭证时使用带明确标记的离线 Runtime，不会伪造在线模型回复。
@@ -251,7 +251,7 @@ Token 与数据密钥通过 Windows Credential Manager 保存；工作区只保�
 
 ### 5. 可选：本地语音闭环
 
-语音运行时只保留一条模型链：`SenseVoiceSmall + Fun-CosyVoice3-0.5B-2512`。SenseVoiceSmall 在 CPU 上完成中文识别和热词模糊纠正，把 GPU 完整留给 CosyVoice3 的定制音色、情绪指令与模型内分块合成。语音不是另一套聊天逻辑：确认后的转写文本仍进入同一个 YunXi Runtime、Provider、人格、记忆、陪伴和工具审批链路，成功回复再合成为 WAV。
+语音运行时只保留一条模型链：`SenseVoiceSmall + Fun-CosyVoice3-0.5B-2512`。SenseVoiceSmall 在 CPU 上完成中文识别和热词模糊纠正，把 GPU 完整留给 CosyVoice3 的定制音色、情绪指令与模型内分块合成。语音不是另一套聊天逻辑：转写文本仍进入同一个 YunXi Runtime、Provider、人格、记忆、陪伴和工具审批链路，成功回复再带着相应情绪合成为 WAV。
 
 > [!IMPORTANT]
 > 语音 sidecar 的独立部署仓库是 [sjxbbdb/YunXi-Voice-Runtime](https://github.com/sjxbbdb/YunXi-Voice-Runtime)。该仓库当前为 **Private**，克隆账户必须具有访问权限。`YunXi-Agent` 主仓库负责 Rust 客户端与 Agent 逻辑；语音仓库负责 Python 服务、模型安装与本地推理。
@@ -368,11 +368,11 @@ yunxi> /voice realtime off
 
 `/voice` 会在当前文字会话中进入连续按键对讲：按 Enter 开始录音，再按 Enter 结束，输入 `q` 返回文字模式。识别文本直接进入当前 `InteractiveSession`，因此语音和文字共享同一条会话链、流式事件、人格、记忆、陪伴、工具和审批状态。
 
-`/voice realtime on` 明确开启免按键半双工模式。VAD 会在内存中判断开始说话和尾部静音，自动完成一轮收音；回复会按自然短句分段，第一段合成后立即播放，并在播放当前段时预合成下一段。云熙播放完毕后继续监听。说“关闭实时语音”可以关麦并返回文字模式；TUI 中也可以输入 `q` 或 `/voice realtime off` 后按 Enter，或按 Ctrl+C 停止当前播放并立即关麦。`/voice realtime status` 查看状态。该开关默认关闭且不跨 CLI 会话保存，TUI 开启期间显示 `voice=live`。
+`/voice realtime on` 开启免按键轮流对话。VAD 只在等待用户时收音并判断尾部静音；一句话结束后麦克风释放，SenseVoice 完成转写，文本进入 YunXi Runtime。CLI 直接消费 Provider 已有的助手文字增量，在第一个自然语句完成后立即启动 CosyVoice；播放当前语句时顺序预合成后续 1～2 段，并复用同一扬声器输出流，减少首声等待和段间设备重开造成的停顿。轮流对话使用较短的中文端点参数，可以接住“嗯”“等一下”等短句，并在用户停顿后更快送去识别。云熙思考、调用工具、合成和播放期间不收音；整段回复播放结束后还会保留短暂关麦缓冲，再监听下一句，从结构上避免把扬声器尾音或双方混音当成新的用户输入。说“关闭实时语音”可以返回文字模式；TUI 中也可以输入 `q` 或 `/voice realtime off` 后按 Enter，或按 Ctrl+C 停止当前流程。`/voice realtime status` 查看状态。该开关默认关闭且不跨 CLI 会话保存，TUI 开启期间显示 `voice=live`。
 
 `voice talk` 提供独立终端中的同类按键对讲。两种模式的录音都只保存在内存中，识别后进入同一套 YunXi Runtime，并在合成完成后通过默认扬声器播放。单次文件命令仍使用 WAV。
 
-当前实时模式是 VAD 驱动的免按键半双工对话，不是全双工通话；支持键盘停止播放和 CosyVoice3 模型内分块推理，但 HTTP v1 仍返回完整 WAV，暂不支持用语音插话打断、流式 STT、服务端流式播放、JSONL 或语音直接批准工具。工具审批继续使用现有交互，语音内容不会自动放宽权限。
+当前模式是 VAD 驱动的半双工轮流对话，不支持播放期语音插话。SenseVoice 在一句话结束后完成转写；文字回复采用客户端流式分句，但每个分句仍通过兼容的 HTTP v1 请求返回完整 WAV，不依赖流式 STT 或服务端音频首包协议。暂不支持 JSONL 语音传输或语音直接批准工具。工具审批继续使用现有交互，语音内容不会自动放宽权限。
 
 ## 使用方式
 
@@ -578,7 +578,7 @@ target\release\yunxi.exe
 
 ## 版本与许可
 
-- 当前版本：`v2.3.3-hotfix.24`
+- 当前版本：`v2.3.3-hotfix.31`
 - 主要目标：`x86_64-pc-windows-msvc`
 - Rust edition：`2024`
 - Workspace license：`Apache-2.0`

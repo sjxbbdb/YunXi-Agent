@@ -506,6 +506,54 @@ mod platform {
         Ok(true)
     }
 
+    pub fn play_wav_sequence_cancellable(
+        mut receiver: tokio::sync::mpsc::Receiver<Vec<u8>>,
+        cancellation: &PlaybackCancellationToken,
+        maximum_queued_chunks: usize,
+    ) -> VoiceResult<usize> {
+        if maximum_queued_chunks == 0 {
+            return Err(VoiceError::InvalidConfiguration(
+                "maximum queued playback chunks must be positive".to_string(),
+            ));
+        }
+        let mut stream = rodio::OutputStreamBuilder::open_default_stream()
+            .map_err(|error| VoiceError::AudioDevice(error.to_string()))?;
+        stream.log_on_drop(false);
+        let sink = rodio::Sink::connect_new(stream.mixer());
+        let mut appended_chunks = 0usize;
+        let mut disconnected = false;
+
+        loop {
+            if cancellation.is_cancelled() {
+                sink.stop();
+                drop(stream);
+                return Ok(appended_chunks);
+            }
+            if !disconnected && sink.len() < maximum_queued_chunks {
+                match receiver.try_recv() {
+                    Ok(bytes) => {
+                        validate_wav(&bytes, bytes.len())?;
+                        let source = rodio::Decoder::try_from(Cursor::new(bytes))
+                            .map_err(|error| VoiceError::InvalidResponse(error.to_string()))?;
+                        sink.append(source);
+                        appended_chunks += 1;
+                        continue;
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                    }
+                }
+            }
+            if disconnected && sink.empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        drop(stream);
+        Ok(appended_chunks)
+    }
+
     fn select_input_device(
         host: &cpal::Host,
         requested: Option<&str>,
@@ -708,7 +756,9 @@ mod platform {
 }
 
 #[cfg(windows)]
-pub use platform::{LiveRecording, audio_devices, play_wav, play_wav_cancellable};
+pub use platform::{
+    LiveRecording, audio_devices, play_wav, play_wav_cancellable, play_wav_sequence_cancellable,
+};
 
 #[cfg(not(windows))]
 pub struct LiveRecording;
@@ -768,6 +818,17 @@ pub fn play_wav_cancellable(
     _bytes: &[u8],
     _cancellation: &PlaybackCancellationToken,
 ) -> VoiceResult<bool> {
+    Err(VoiceError::AudioDevice(
+        "live audio playback is currently supported on Windows only".to_string(),
+    ))
+}
+
+#[cfg(not(windows))]
+pub fn play_wav_sequence_cancellable(
+    _receiver: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    _cancellation: &PlaybackCancellationToken,
+    _maximum_queued_chunks: usize,
+) -> VoiceResult<usize> {
     Err(VoiceError::AudioDevice(
         "live audio playback is currently supported on Windows only".to_string(),
     ))

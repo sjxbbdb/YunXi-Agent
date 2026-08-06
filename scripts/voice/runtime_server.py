@@ -83,6 +83,25 @@ def safe_float_env(name: str, default: float, minimum: float, maximum: float) ->
     return min(maximum, max(minimum, value))
 
 
+def normalize_speech_level(
+    speech: Any,
+    target_rms: float = 0.094,
+    peak_ceiling: float = 0.92,
+) -> Any:
+    """Keep emotional prosody while preventing large loudness jumps between replies."""
+    if getattr(speech, "size", 0) == 0:
+        return speech
+    working = speech.astype("float64", copy=False)
+    rms = float((working * working).mean() ** 0.5)
+    if rms > 1e-8:
+        gain = min(1.8, max(0.2, target_rms / rms))
+        speech = speech * gain
+    peak = float(abs(speech).max())
+    if peak > peak_ceiling:
+        speech = speech * (peak_ceiling / peak)
+    return speech
+
+
 def configured_hotwords(value: str | None = None) -> list[str]:
     raw = os.environ.get("YUNXI_VOICE_HOTWORDS", "") if value is None else value
     words = [*DEFAULT_HOTWORDS, *re.split(r"[,，;；\n]+", raw)]
@@ -367,7 +386,9 @@ class LocalVoiceModels:
                         chunks.append(speech.detach().cpu())
         if not chunks:
             raise RuntimeError("CosyVoice returned no audio")
-        speech = self._torch.cat(chunks, dim=1).squeeze(0).numpy()
+        speech = normalize_speech_level(
+            self._torch.cat(chunks, dim=1).squeeze(0).numpy()
+        )
         import soundfile
 
         buffer = io.BytesIO()

@@ -1,5 +1,7 @@
 #[path = "interactive/voice.rs"]
 mod integrated_voice;
+#[path = "interactive/voice_stream.rs"]
+mod voice_stream;
 
 use crate::commands::{InteractiveCommand, help_text, parse_interactive_command};
 use crate::input::{InteractiveInput, PlainInput};
@@ -598,6 +600,18 @@ impl InteractiveSession {
         input: &mut dyn InteractiveInput,
         renderer: &mut dyn InteractiveRenderer,
     ) -> Result<Option<String>> {
+        self.run_turn_with_modality_observed(prompt, modality, input, renderer, None)
+            .await
+    }
+
+    async fn run_turn_with_modality_observed(
+        &mut self,
+        prompt: String,
+        modality: AgentInputModality,
+        input: &mut dyn InteractiveInput,
+        renderer: &mut dyn InteractiveRenderer,
+        event_observer: Option<&tokio::sync::mpsc::UnboundedSender<AgentEvent>>,
+    ) -> Result<Option<String>> {
         let mut turn_config = self.config.clone();
         if let Some(parent_session_id) = &self.active_session_id {
             turn_config = turn_config
@@ -637,7 +651,12 @@ impl InteractiveSession {
             tokio::select! {
                 event = stream.events.recv(), if events_open => {
                     match event {
-                        Some(event) => renderer.event(&event, &mut render_state)?,
+                        Some(event) => {
+                            if let Some(observer) = event_observer {
+                                let _ = observer.send(event.clone());
+                            }
+                            renderer.event(&event, &mut render_state)?;
+                        }
                         None => events_open = false,
                     }
                 }
@@ -700,13 +719,14 @@ impl InteractiveSession {
             if !render_state.saw_assistant_message()
                 && let Some(final_response) = &result.final_response
             {
-                renderer.event(
-                    &AgentEvent::Message {
-                        content: final_response.clone(),
-                        stream: None,
-                    },
-                    &mut render_state,
-                )?;
+                let event = AgentEvent::Message {
+                    content: final_response.clone(),
+                    stream: None,
+                };
+                if let Some(observer) = event_observer {
+                    let _ = observer.send(event.clone());
+                }
+                renderer.event(&event, &mut render_state)?;
             }
             self.record_turn_result(&result);
         }

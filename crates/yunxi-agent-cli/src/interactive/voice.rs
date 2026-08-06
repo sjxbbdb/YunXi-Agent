@@ -1,9 +1,10 @@
 use super::InteractiveSession;
+use super::voice_stream::{StreamingSpeechReport, run_streaming_speech_pipeline};
 use crate::input::InteractiveInput;
 use crate::render::InteractiveRenderer;
 use anyhow::Result;
 use std::time::{Duration, Instant};
-use yunxi_agent_core::AgentInputModality;
+use yunxi_agent_core::{AgentEvent, AgentInputModality};
 use yunxi_agent_voice::{
     CapturedAudio, DEFAULT_PRESET_VOICE, LiveRecording, PlaybackCancellationToken,
     SpeechToTextProvider, SynthesizedAudio, SynthesisRequest, TextToSpeechProvider,
@@ -14,6 +15,15 @@ use yunxi_agent_voice::{
 const MAX_RECORDING_SECONDS: u32 = 60;
 const MAX_SPEECH_CHUNK_CHARS: usize = 90;
 const PLAYBACK_CONTROL_POLL: Duration = Duration::from_millis(40);
+const PLAYBACK_REARM_DELAY: Duration = Duration::from_millis(180);
+const REALTIME_ACTIVITY_CONFIG: VoiceActivityConfig = VoiceActivityConfig {
+    rms_threshold: 650,
+    minimum_speech_ms: 180,
+    trailing_silence_ms: 550,
+    idle_timeout_ms: 30_000,
+    pre_roll_ms: 300,
+    tail_ms: 220,
+};
 
 pub(super) async fn handle_voice_command(
     session: &mut InteractiveSession,
@@ -161,7 +171,15 @@ async fn run_voice_mode(
                     continue;
                 }
             };
-            let _ = process_captured_audio(session, input, renderer, &client, captured, false).await?;
+            let _ = process_captured_audio(
+                session,
+                input,
+                renderer,
+                &client,
+                captured,
+                false,
+            )
+            .await?;
         }
         renderer.notice("voice", "语音模式已结束，已回到文字模式")?;
     Ok(())
@@ -206,7 +224,7 @@ async fn run_realtime_voice_mode(
     renderer.notice(
         "voice",
         &format!(
-            "实时语音已开启\n麦克风: {}\n音色: {}\n扬声器: {}\n直接说话即可；说“关闭实时语音”返回文字模式",
+            "实时语音已开启（轮流对话）\n麦克风: {}\n音色: {}\n扬声器: {}\n直接说完一句即可；云熙回复时暂停收音，回复结束后继续听下一句；说“关闭实时语音”返回文字模式",
             devices.default_input.as_deref().unwrap_or("不可用"),
             DEFAULT_PRESET_VOICE,
             devices.default_output.as_deref().unwrap_or("不可用"),
@@ -228,7 +246,7 @@ async fn run_realtime_voice_mode(
         let mut control_error = None;
         let captured = match recording.capture_until_silence_with_control(
             client.config().max_input_bytes,
-            VoiceActivityConfig::default(),
+            REALTIME_ACTIVITY_CONFIG,
             || match renderer.poll_realtime_voice_stop() {
                 Ok(true) => {
                     stop_requested = true;
@@ -255,7 +273,16 @@ async fn run_realtime_voice_mode(
                 continue;
             }
         };
-        if process_captured_audio(session, input, renderer, &client, captured, true).await?
+
+        if process_captured_audio(
+            session,
+            input,
+            renderer,
+            &client,
+            captured,
+            true,
+        )
+        .await?
             == VoiceTurnOutcome::StopRealtime
         {
             break;
@@ -295,7 +322,8 @@ async fn process_captured_audio(
     )?;
 
     let stt_started = Instant::now();
-    let transcript = match client.transcribe(captured.input, None).await {
+    let language = realtime.then_some("zh");
+    let transcript = match client.transcribe(captured.input, language).await {
         Ok(transcript) => transcript,
         Err(error) => {
             renderer.error(&format!("语音识别失败: {error}"))?;
@@ -308,33 +336,86 @@ async fn process_captured_audio(
         renderer.warning("没有识别到有效语音内容")?;
         return Ok(VoiceTurnOutcome::Continue);
     }
-    renderer.user_message(transcript)?;
     if realtime && voice_realtime_stop_command(transcript) {
+        renderer.user_message(transcript)?;
         session.realtime_voice_enabled = false;
         return Ok(VoiceTurnOutcome::StopRealtime);
     }
+    renderer.user_message(transcript)?;
 
     let runtime_started = Instant::now();
-    let response = match session
-        .run_turn_with_modality(
-            transcript.to_string(),
-            AgentInputModality::Voice,
-            input,
-            renderer,
-        )
-        .await
-    {
+    let streaming = realtime.then(|| {
+        let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancellation = PlaybackCancellationToken::new();
+        let task = tokio::spawn(run_streaming_speech_pipeline(
+            client.clone(),
+            event_rx,
+            true,
+            cancellation.clone(),
+        ));
+        (event_tx, cancellation, task)
+    });
+    let response_result = match streaming.as_ref() {
+        Some((event_tx, _, _)) => {
+            session
+                .run_turn_with_modality_observed(
+                    transcript.to_string(),
+                    AgentInputModality::Voice,
+                    input,
+                    renderer,
+                    Some(event_tx),
+                )
+                .await
+        }
+        None => {
+            session
+                .run_turn_with_modality(
+                    transcript.to_string(),
+                    AgentInputModality::Voice,
+                    input,
+                    renderer,
+                )
+                .await
+        }
+    };
+    let response = match response_result {
         Ok(response) => response,
         Err(error) => {
+            if let Some((event_tx, cancellation, task)) = streaming {
+                cancellation.cancel();
+                drop(event_tx);
+                let _ = task.await;
+            }
             renderer.error(&format!("语音这一轮没有完成: {error:#}"))?;
             return Ok(VoiceTurnOutcome::Continue);
         }
     };
     let runtime_ms = runtime_started.elapsed().as_millis();
     let Some(response) = response else {
+        if let Some((event_tx, cancellation, task)) = streaming {
+            cancellation.cancel();
+            drop(event_tx);
+            let _ = task.await;
+        }
         renderer.notice("voice", &format!("本轮没有最终回复（识别 {stt_ms}ms）"))?;
         return Ok(VoiceTurnOutcome::Continue);
     };
+
+    if let Some((event_tx, cancellation, task)) = streaming {
+        let _ = event_tx.send(AgentEvent::Message {
+            content: response,
+            stream: None,
+        });
+        drop(event_tx);
+        return finish_streaming_speech(
+            renderer,
+            task,
+            cancellation,
+            stt_ms,
+            runtime_ms,
+        )
+        .await;
+    }
 
     let outcome = match synthesize_and_play_response(
         renderer,
@@ -356,6 +437,70 @@ async fn process_captured_audio(
         session.realtime_voice_enabled = false;
     }
     Ok(outcome)
+}
+
+async fn finish_streaming_speech(
+    renderer: &mut dyn InteractiveRenderer,
+    task: tokio::task::JoinHandle<StreamingSpeechReport>,
+    cancellation: PlaybackCancellationToken,
+    stt_ms: u128,
+    runtime_ms: u128,
+) -> Result<VoiceTurnOutcome> {
+    let mut task = Box::pin(task);
+    let mut stop_requested = false;
+    let mut control_error = None;
+    let report = loop {
+        tokio::select! {
+            result = &mut task => {
+                break match result {
+                    Ok(report) => report,
+                    Err(error) => StreamingSpeechReport {
+                        error: Some(format!("流式语音任务失败: {error}")),
+                        ..StreamingSpeechReport::default()
+                    },
+                };
+            }
+            _ = tokio::time::sleep(PLAYBACK_CONTROL_POLL), if !stop_requested => {
+                match renderer.poll_realtime_voice_stop() {
+                    Ok(true) => {
+                        stop_requested = true;
+                        cancellation.cancel();
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        control_error = Some(error);
+                        stop_requested = true;
+                        cancellation.cancel();
+                    }
+                }
+            }
+        }
+    };
+    if let Some(error) = control_error {
+        return Err(error);
+    }
+    if let Some(error) = report.error {
+        renderer.warning(&format!("语音播放未完整完成，文字回复已保留: {error}"))?;
+    } else if report.chunks > 0 {
+        renderer.notice(
+            "voice",
+            &format!(
+                "流式语音完成（识别 {stt_ms}ms · 完整回复 {runtime_ms}ms · 首句 {}ms · 首段合成 {}ms · 首声 {}ms · {} 段）",
+                report.first_sentence_ms.unwrap_or_default(),
+                report.first_tts_ms.unwrap_or_default(),
+                report
+                    .first_audio_ms
+                    .unwrap_or_default()
+                    .saturating_add(stt_ms),
+                report.chunks,
+            ),
+        )?;
+    }
+    if stop_requested {
+        return Ok(VoiceTurnOutcome::StopRealtime);
+    }
+    tokio::time::sleep(PLAYBACK_REARM_DELAY).await;
+    Ok(VoiceTurnOutcome::Continue)
 }
 
 async fn synthesize_and_play_response(
@@ -471,6 +616,9 @@ async fn synthesize_and_play_response(
             }
             None => break,
         }
+    }
+    if realtime {
+        tokio::time::sleep(PLAYBACK_REARM_DELAY).await;
     }
     Ok(VoiceTurnOutcome::Continue)
 }
@@ -622,6 +770,16 @@ mod tests {
             playback_status(1, 3, 62, 1_800, 320),
             "正在播放云熙的回复 2/3（本段预取合成 320ms）"
         );
+    }
+
+    #[test]
+    fn realtime_activity_config_accepts_short_phrases_and_ends_promptly() {
+        assert_eq!(REALTIME_ACTIVITY_CONFIG.rms_threshold, 650);
+        assert_eq!(REALTIME_ACTIVITY_CONFIG.minimum_speech_ms, 180);
+        assert_eq!(REALTIME_ACTIVITY_CONFIG.trailing_silence_ms, 550);
+        assert_eq!(REALTIME_ACTIVITY_CONFIG.pre_roll_ms, 300);
+        assert_eq!(REALTIME_ACTIVITY_CONFIG.tail_ms, 220);
+        assert_eq!(PLAYBACK_REARM_DELAY, Duration::from_millis(180));
     }
 
     #[test]

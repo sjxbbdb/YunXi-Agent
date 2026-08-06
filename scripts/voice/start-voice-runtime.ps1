@@ -38,6 +38,10 @@ if ([string]::IsNullOrWhiteSpace($env:YUNXI_VOICE_DEVICE)) {
 if ([string]::IsNullOrWhiteSpace($env:YUNXI_VOICE_DEFAULT_LANGUAGE)) {
     $env:YUNXI_VOICE_DEFAULT_LANGUAGE = "zh"
 }
+if ([string]::IsNullOrWhiteSpace($env:YUNXI_VOICE_QUALITY_WARMUP)) {
+    $env:YUNXI_VOICE_QUALITY_WARMUP = "1"
+}
+$qualityWarmupEnabled = $env:YUNXI_VOICE_QUALITY_WARMUP -in @("1", "true", "yes", "on")
 if ([string]::IsNullOrWhiteSpace($env:YUNXI_VOICE_STT_MODEL_DIR)) {
     $env:YUNXI_VOICE_STT_MODEL_DIR = Join-Path $RuntimeRoot "models\SenseVoiceSmall"
 }
@@ -70,8 +74,8 @@ if (-not $Mock -and $Mode -in @("quality", "auto")) {
     if ((Test-Path -LiteralPath $qualityPython -PathType Leaf) -and (Test-Path -LiteralPath $QualityServerScript -PathType Leaf)) {
         $qualityReady = $false
         try {
-            Invoke-RestMethod -Uri "$env:YUNXI_VOICE_QUALITY_URL/health" -TimeoutSec 2 | Out-Null
-            $qualityReady = $true
+            $qualityProbe = Invoke-RestMethod -Uri "$env:YUNXI_VOICE_QUALITY_URL/health" -TimeoutSec 2
+            $qualityReady = -not $qualityWarmupEnabled -or $null -eq $qualityProbe.warmup -or $qualityProbe.warmup.complete
         } catch {
             $qualityReady = $false
         }
@@ -83,14 +87,17 @@ if (-not $Mock -and $Mode -in @("quality", "auto")) {
                 -RedirectStandardOutput (Join-Path $logRoot "quality-runtime.stdout.log") `
                 -RedirectStandardError (Join-Path $logRoot "quality-runtime.stderr.log")
             $qualityWasStarted = $true
-            for ($attempt = 0; $attempt -lt 50; $attempt++) {
+            for ($attempt = 0; $attempt -lt 600; $attempt++) {
                 try {
-                    Invoke-RestMethod -Uri "$env:YUNXI_VOICE_QUALITY_URL/health" -TimeoutSec 2 | Out-Null
+                    $qualityHealth = Invoke-RestMethod -Uri "$env:YUNXI_VOICE_QUALITY_URL/health" -TimeoutSec 2
                     $qualityReady = $true
-                    break
+                    if (-not $qualityWarmupEnabled -or $null -eq $qualityHealth.warmup -or $qualityHealth.warmup.complete) {
+                        break
+                    }
                 } catch {
-                    Start-Sleep -Milliseconds 200
+                    $qualityReady = $false
                 }
+                Start-Sleep -Milliseconds 200
             }
             if (-not $qualityReady) {
                 Write-Warning "quality voice worker did not become ready; stable fallback remains available"

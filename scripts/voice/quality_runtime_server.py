@@ -20,6 +20,7 @@ from typing import Any
 
 from runtime_server import (
     VoiceHttpServer,
+    env_enabled,
     configured_voice_language,
     normalize_yunxi_brand_transcript,
     resolve_voice_language,
@@ -152,6 +153,9 @@ class QualityVoiceModels:
     def health(self) -> dict[str, Any]:
         stt_ready = self._stt_configured()
         tts_ready = self._tts_configured()
+        warmup_complete = (not stt_ready or self._stt is not None) and (
+            not tts_ready or self._tts is not None
+        )
         return {
             "schema_version": 1,
             "status": "ok" if stt_ready or tts_ready else "unavailable",
@@ -184,7 +188,26 @@ class QualityVoiceModels:
                 "stt": self._stt_error,
                 "tts": self._tts_error or self.profile_error,
             },
+            "warmup": {
+                "enabled": env_enabled("YUNXI_VOICE_QUALITY_WARMUP"),
+                "complete": warmup_complete,
+                "stt_loaded": self._stt is not None,
+                "tts_loaded": self._tts is not None,
+            },
         }
+
+    def warmup(self) -> None:
+        """Load configured models before the first user turn pays the cold-start cost."""
+        if self._stt_configured():
+            try:
+                self._load_stt()
+            except Exception:
+                logging.warning("quality STT warmup failed; stable fallback remains available")
+        if self._tts_configured():
+            try:
+                self._load_tts()
+            except Exception:
+                logging.warning("quality TTS warmup failed; stable fallback remains available")
 
     def transcribe(self, audio: bytes, language: str | None) -> dict[str, Any]:
         model = self._load_stt()
@@ -271,7 +294,10 @@ def main() -> int:
     if args.bind not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("quality voice runtime refuses non-loopback bind addresses")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    server = VoiceHttpServer((args.bind, args.port), QualityVoiceModels())
+    models = QualityVoiceModels()
+    if env_enabled("YUNXI_VOICE_QUALITY_WARMUP"):
+        models.warmup()
+    server = VoiceHttpServer((args.bind, args.port), models)
     logging.info("YunXi quality voice runtime listening on http://%s:%s", args.bind, args.port)
     try:
         server.serve_forever(poll_interval=0.25)

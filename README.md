@@ -36,7 +36,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 - **行动必须可控。** 工具调用经过明确策略与审批，不因“陪伴”而绕过工作区、安全或隐私边界。
 - **能力必须诚实。** 没有在线凭证时明确进入离线模式；失败、降级和未验证状态不会被包装成成功。
 
-当前稳定版本为 `v2.3.3-hotfix.21`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
+当前稳定版本为 `v2.3.3-hotfix.22`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
 
 > [!NOTE]
 > 默认人格开启；长期记忆、主动陪伴和情书生成默认关闭。YunXi 会在没有 Provider 凭证时使用带明确标记的离线 Runtime，不会伪造在线模型回复。
@@ -584,7 +584,7 @@ target\release\yunxi.exe
 
 ## 版本与许可
 
-- 当前版本：`v2.3.3-hotfix.21`
+- 当前版本：`v2.3.3-hotfix.22`
 - 主要目标：`x86_64-pc-windows-msvc`
 - Rust edition：`2024`
 - Workspace license：`Apache-2.0`

@@ -63,3 +63,9 @@ IndexTTS2 使用其官方 `bilibili Model Use License Agreement`。源码、权�
 ## 尚未宣称的能力
 
 当前质量链仍是半双工 HTTP v1，不宣称流式 STT、服务端流式 TTS、全双工插话或语音打断。下一阶段应在不改变 v1 的前提下设计 WebSocket v2，并继续保留本双链路作为 fallback。
+
+## hotfix.21 / hotfix.22 跟进
+
+- 中文短片段默认锁定 `zh`，只有显式设置 `YUNXI_VOICE_DEFAULT_LANGUAGE=auto` 才启用自动语言检测，减少中文被判成其他语言的问题。
+- 质量 worker 默认在启动阶段预热已配置的 STT/TTS；启动器等待 `warmup.complete` 后再进入测试窗口。
+- 预热实测等待约 15.6 秒，预热后首句合成约 6.0 秒，避免把 IndexTTS2 的 20～30 秒冷加载时间算进第一句回复。

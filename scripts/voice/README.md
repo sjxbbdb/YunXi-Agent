@@ -225,6 +225,7 @@ yunxi voice doctor
 | `YUNXI_VOICE_PROFILE` | 本机 VoiceProfile JSON 的绝对路径 |
 | `YUNXI_VOICE_QUALITY_URL` | 隔离质量 worker 地址；默认 `http://127.0.0.1:17864` |
 | `YUNXI_VOICE_QUALITY_TIMEOUT_SECONDS` | 单次质量 STT/TTS 超时；默认 45 秒 |
+| `YUNXI_VOICE_QUALITY_WARMUP` | 启动时预加载质量模型，默认 `1`；设为 `0` 可恢复首请求惰性加载 |
 | `YUNXI_VOICE_QUALITY_FAILURE_THRESHOLD` | 按端熔断阈值；默认 3 次 |
 | `YUNXI_VOICE_QUALITY_CIRCUIT_COOLDOWN_SECONDS` | 熔断冷却；默认 120 秒 |
 | `YUNXI_VOICE_AUTH_TOKEN` | 可选本地 Bearer Token；两端值必须相同 |

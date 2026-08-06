@@ -18,7 +18,13 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from runtime_server import VoiceHttpServer, normalize_yunxi_brand_transcript, safe_int_env
+from runtime_server import (
+    VoiceHttpServer,
+    configured_voice_language,
+    normalize_yunxi_brand_transcript,
+    resolve_voice_language,
+    safe_int_env,
+)
 from voice_profile import VoiceProfile, VoiceProfileError
 
 
@@ -29,6 +35,7 @@ def _path_env(name: str, default: str) -> Path:
 class QualityVoiceModels:
     def __init__(self) -> None:
         self.device = os.environ.get("YUNXI_VOICE_QUALITY_DEVICE", "cuda:0").strip() or "cuda:0"
+        self.default_language = configured_voice_language()
         self.stt_model_dir = _path_env(
             "YUNXI_VOICE_QUALITY_STT_MODEL_DIR", "D:\\YunXi Voice Runtime\\models\\faster-whisper-large-v3"
         )
@@ -154,6 +161,7 @@ class QualityVoiceModels:
                 "device": self.device,
                 "ready": stt_ready,
                 "loaded": self._stt is not None,
+                "language": self.default_language,
             },
             "tts": {
                 "provider": "IndexTTS2",
@@ -186,12 +194,14 @@ class QualityVoiceModels:
                 temporary.write(audio)
                 temporary_path = temporary.name
             with self._model_io_lock, self._stt_lock:
+                effective_language = resolve_voice_language(language, self.default_language)
                 segments, info = model.transcribe(
                     temporary_path,
-                    language=None if not language or language == "auto" else language,
+                    language=None if effective_language == "auto" else effective_language,
                     beam_size=5,
                     vad_filter=True,
                     condition_on_previous_text=False,
+                    initial_prompt="这是中文对话。助手名为云熙。" if effective_language == "zh" else None,
                 )
                 text = normalize_yunxi_brand_transcript(
                     "".join(segment.text for segment in segments).strip()
@@ -200,7 +210,7 @@ class QualityVoiceModels:
                 raise RuntimeError("faster-whisper returned an empty transcription")
             return {
                 "text": text,
-                "language": getattr(info, "language", None) or language,
+                "language": getattr(info, "language", None) or effective_language,
                 "emotion": None,
                 "audio_events": [],
             }

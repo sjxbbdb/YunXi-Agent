@@ -32,6 +32,7 @@ DEFAULT_PRESET = "中文女"
 DEFAULT_MAX_AUDIO_BYTES = 25 * 1024 * 1024
 DEFAULT_MAX_JSON_BYTES = 512 * 1024
 DEFAULT_MAX_TEXT_CHARS = 2_000
+DEFAULT_VOICE_LANGUAGE = "zh"
 YUNXI_BRAND_ALIASES = (
     "云希",
     "云溪",
@@ -70,6 +71,23 @@ def safe_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
     except ValueError:
         return default
     return min(maximum, max(minimum, value))
+
+
+def configured_voice_language() -> str:
+    """Use Chinese for short clips unless multilingual detection is explicit."""
+    value = os.environ.get("YUNXI_VOICE_DEFAULT_LANGUAGE", DEFAULT_VOICE_LANGUAGE).strip().lower()
+    if not value:
+        return DEFAULT_VOICE_LANGUAGE
+    if value == "auto" or re.fullmatch(r"[a-z]{2,3}(?:[-_][a-z0-9]{2,8})?", value):
+        return value
+    return DEFAULT_VOICE_LANGUAGE
+
+
+def resolve_voice_language(language: str | None, default: str | None = None) -> str:
+    value = (language or "").strip().lower()
+    if value in {"", "auto"}:
+        return (default or configured_voice_language()).strip().lower()
+    return value
 
 
 def normalize_yunxi_brand_transcript(text: str) -> str:
@@ -133,7 +151,7 @@ class MockVoiceModels:
             raise VoiceRequestError(HTTPStatus.INTERNAL_SERVER_ERROR, "mock transcript is empty")
         return {
             "text": normalize_yunxi_brand_transcript(text),
-            "language": None if not language or language == "auto" else language,
+            "language": resolve_voice_language(language),
             "emotion": None,
             "audio_events": [],
         }
@@ -147,6 +165,7 @@ class MockVoiceModels:
 class LocalVoiceModels:
     def __init__(self) -> None:
         self.device = os.environ.get("YUNXI_VOICE_DEVICE", "cuda:0").strip() or "cuda:0"
+        self.default_language = configured_voice_language()
         self.stt_model_dir = os.environ.get(
             "YUNXI_VOICE_STT_MODEL_DIR", "iic/SenseVoiceSmall"
         ).strip()
@@ -223,7 +242,7 @@ class LocalVoiceModels:
                 result = self._stt.generate(
                     input=temporary_path,
                     cache={},
-                    language=language or "auto",
+                    language=resolve_voice_language(language, self.default_language),
                     use_itn=True,
                     batch_size_s=60,
                 )
@@ -236,7 +255,7 @@ class LocalVoiceModels:
             detected_language = result[0].get("language")
             return {
                 "text": text,
-                "language": str(detected_language) if detected_language else language,
+                "language": str(detected_language) if detected_language else resolve_voice_language(language, self.default_language),
                 "emotion": None,
                 "audio_events": [],
             }

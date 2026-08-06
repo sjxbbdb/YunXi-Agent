@@ -1,7 +1,11 @@
 import unittest
 import logging
 
-from runtime_server import VoiceModelPrivacyFilter, normalize_yunxi_brand_transcript
+from runtime_server import (
+    VoiceModelPrivacyFilter,
+    normalize_yunxi_brand_transcript,
+    resolve_voice_language,
+)
 
 
 class YunXiBrandTranscriptTests(unittest.TestCase):
@@ -35,6 +39,11 @@ class YunXiBrandTranscriptTests(unittest.TestCase):
         )
         self.assertFalse(privacy_filter.filter(sensitive))
         self.assertTrue(privacy_filter.filter(diagnostic))
+
+    def test_auto_language_defaults_to_chinese_for_short_clips(self) -> None:
+        self.assertEqual(resolve_voice_language("auto", "zh"), "zh")
+        self.assertEqual(resolve_voice_language(None, "zh"), "zh")
+        self.assertEqual(resolve_voice_language("en", "zh"), "en")
 
 
 if __name__ == "__main__":

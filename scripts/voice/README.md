@@ -217,6 +217,7 @@ yunxi voice doctor
 | `YUNXI_VOICE_STT_URL` | 单独覆盖 STT 地址 |
 | `YUNXI_VOICE_TTS_URL` | 单独覆盖 TTS 地址 |
 | `YUNXI_VOICE_DEVICE` | 默认 `cuda:0` |
+| `YUNXI_VOICE_DEFAULT_LANGUAGE` | 未指定语言时的识别语言，默认 `zh`；需要多语言自动检测时显式设为 `auto` |
 | `YUNXI_VOICE_STT_MODEL_DIR` | SenseVoiceSmall 本地路径或模型 ID |
 | `YUNXI_VOICE_TTS_MODEL_DIR` | CosyVoice 本地路径或模型 ID |
 | `YUNXI_COSYVOICE_REPO` | CosyVoice 源码目录 |

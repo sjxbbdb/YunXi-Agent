@@ -4,7 +4,7 @@
 
 协议版本：`1.0`
 
-目标版本：`v2.3.3-hotfix.20`
+目标版本：`v2.3.3-hotfix.21`
 
 目标平台：`x86_64-pc-windows-msvc`
 
@@ -253,7 +253,7 @@ git describe --tags --always --dirty
 全新 clone 示例：
 
 ```powershell
-git clone --branch v2.3.3-hotfix.20 --depth 1 https://github.com/sjxbbdb/YunXi-Agent.git YunXi-Agent
+git clone --branch v2.3.3-hotfix.21 --depth 1 https://github.com/sjxbbdb/YunXi-Agent.git YunXi-Agent
 Set-Location .\YunXi-Agent
 ```
 

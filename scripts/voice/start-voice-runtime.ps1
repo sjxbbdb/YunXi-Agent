@@ -35,6 +35,9 @@ if (-not (Test-Path -LiteralPath $ServerScript -PathType Leaf)) {
 if ([string]::IsNullOrWhiteSpace($env:YUNXI_VOICE_DEVICE)) {
     $env:YUNXI_VOICE_DEVICE = "cuda:0"
 }
+if ([string]::IsNullOrWhiteSpace($env:YUNXI_VOICE_DEFAULT_LANGUAGE)) {
+    $env:YUNXI_VOICE_DEFAULT_LANGUAGE = "zh"
+}
 if ([string]::IsNullOrWhiteSpace($env:YUNXI_VOICE_STT_MODEL_DIR)) {
     $env:YUNXI_VOICE_STT_MODEL_DIR = Join-Path $RuntimeRoot "models\SenseVoiceSmall"
 }

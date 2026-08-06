@@ -12,6 +12,7 @@
 - [Sandbox 协议事件](protocol/sandbox-events.md)：执行策略与协议事件说明。
 - [微信接入边界](weixin.md)：v2.2.0 合并开发线状态、QR 登录、安全凭证引用、状态持久化、旧 metadata 初始化、账户锁、pair 生命周期、前台私聊长轮询接纳、认证加密 pending inbound、Runtime session binding、parent history、QueueFull Ready pending 恢复、slash-command AgentRunControl、远程控制 outbound、final-text-only AgentEvent 观察过滤、后台 runtime dispatch lease 恢复、最终文本 delivery spool、session reset、logout 安全边界和仍未开放能力。
 - [微信评估套件](../evals/weixin/README.md)：`yunxi eval weixin` 的离线协议 Mock、状态迁移、配对、远程控制、回信分段、重启恢复、安全诊断和真实联调 manual gate 清单。
+- [语音质量双链升级记录](reports/development/2026-08-06-voice-quality-upgrade.md)：稳定/质量模型隔离、按端降级、VoiceProfile、健康协议与真实 GPU 验证证据。
 
 ## 规格与路线图
 

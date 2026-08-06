@@ -36,7 +36,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 - **行动必须可控。** 工具调用经过明确策略与审批，不因“陪伴”而绕过工作区、安全或隐私边界。
 - **能力必须诚实。** 没有在线凭证时明确进入离线模式；失败、降级和未验证状态不会被包装成成功。
 
-当前稳定版本为 `v2.3.3-hotfix.19`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
+当前稳定版本为 `v2.3.3-hotfix.20`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
 
 > [!NOTE]
 > 默认人格开启；长期记忆、主动陪伴和情书生成默认关闭。YunXi 会在没有 Provider 凭证时使用带明确标记的离线 Runtime，不会伪造在线模型回复。
@@ -251,7 +251,7 @@ Token 与数据密钥通过 Windows Credential Manager 保存；工作区只保�
 
 ### 5. 可选：本地语音闭环
 
-语音 MVP 使用 `SenseVoiceSmall → YunXi Runtime → CosyVoice-300M-SFT`。它不是另一套聊天逻辑：转写文本仍进入现有 Provider、人格、记忆、陪伴和工具审批链路，成功回复再合成为 WAV。
+语音链保留 `SenseVoiceSmall + CosyVoice-300M-SFT` 作为永久稳定兜底，并可选升级为 `faster-whisper large-v3 + IndexTTS2`。它不是另一套聊天逻辑：无论使用哪组模型，转写文本都进入同一个 YunXi Runtime、Provider、人格、记忆、陪伴和工具审批链路，成功回复再合成为 WAV。
 
 > [!IMPORTANT]
 > 语音 sidecar 的独立部署仓库是 [sjxbbdb/YunXi-Voice-Runtime](https://github.com/sjxbbdb/YunXi-Voice-Runtime)。该仓库当前为 **Private**，克隆账户必须具有访问权限。`YunXi-Agent` 主仓库负责 Rust 客户端与 Agent 逻辑；语音仓库负责 Python 服务、模型安装与本地推理。
@@ -261,7 +261,7 @@ Token 与数据密钥通过 Windows Credential Manager 保存；工作区只保�
 | 仓库 | 负责内容 | 依赖关系 |
 | --- | --- | --- |
 | `YunXi-Agent` | 麦克风、VAD、播放、CLI/TUI、对话、人格、记忆、陪伴、工具与审批 | 可独立运行文字功能；启用语音时依赖 sidecar HTTP 服务 |
-| `YunXi-Voice-Runtime` | SenseVoiceSmall、CosyVoice、本地 Python sidecar、安装与启动脚本 | 不包含 Agent 逻辑；只向 YunXi Agent 提供 STT/TTS |
+| `YunXi-Voice-Runtime` | 稳定/质量双链模型、本地 Python sidecar、隔离质量 worker、安装与启动脚本 | 不包含 Agent 逻辑；只向 YunXi Agent 提供 STT/TTS |
 
 两者没有 Cargo、Python import、Git submodule 或共享状态目录依赖。运行时只通过本机回环 HTTP 连接：
 
@@ -289,6 +289,8 @@ flowchart LR
 - FunAudioLLM/CosyVoice 与 Matcha-TTS 源码
 - uv、ModelScope 和 Hugging Face 缓存
 
+质量链额外下载独立 Python 3.11 环境、`Systran/faster-whisper-large-v3`、固定 revision 的 `IndexTeam/IndexTTS-2`，以及固定 commit 的 IndexTTS2 官方源码。两套环境物理隔离，质量依赖不会覆盖稳定链。
+
 #### 本地部署
 
 先获取主仓库和已授权的私有语音仓库：
@@ -307,6 +309,12 @@ Set-Location "D:\YunXi Voice Runtime Source"
 .\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
 ```
 
+安装质量链时显式增加 `-IncludeQuality`；现有稳定模型不会被删除：
+
+```powershell
+.\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -IncludeQuality
+```
+
 源码 checkout `D:\YunXi Voice Runtime Source` 与运行数据目录 `D:\YunXi Voice Runtime` 必须分开。后者包含模型、虚拟环境和缓存，不得加入 Git。
 
 启动本地 sidecar：
@@ -314,6 +322,18 @@ Set-Location "D:\YunXi Voice Runtime Source"
 ```powershell
 .\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
 ```
+
+默认模式仍是 `stable`。配置本机 VoiceProfile 后可启用质量模式或自动模式：
+
+```powershell
+.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -Mode quality `
+  -VoiceProfile "D:\YunXi Voice Runtime\profiles\yunxi-primary\profile.json"
+
+.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -Mode auto `
+  -VoiceProfile "D:\YunXi Voice Runtime\profiles\yunxi-primary\profile.json"
+```
+
+质量 STT/TTS 的导入、缺文件、超时、空结果、无效 WAV 或推理错误只会回退当前语音端，不会重跑 Agent turn。连续质量故障会触发按端熔断；`voice doctor --json` 可查看 `mode`、`active`、`fallback`、`circuit_breaker` 和 `capabilities`。VoiceProfile 模板位于语音仓库的 `voice-profile.example.json`，参考音频、原文和生成文件只保存在被 Git 忽略的本机运行目录。
 
 YunXi Agent 默认连接 `http://127.0.0.1:17862`，无需额外配置。另开 PowerShell 验证：
 
@@ -513,6 +533,7 @@ cargo run -q -p yunxi-agent-cli --bin yunxi -- --json eval weixin
 - [微信接入边界](docs/weixin.md)
 - [TUI 表现与终端生命周期](docs/tui-presentation.md)
 - [Companion Mailbox Protocol](docs/protocol/companion-mailbox.md)
+- [语音质量双链升级记录](docs/reports/development/2026-08-06-voice-quality-upgrade.md)
 - [提取状态与能力边界](docs/extraction-status.md)
 - [开发日志](docs/development-log.md)
 - [报告与可复核证据](docs/reports/README.md)
@@ -563,7 +584,7 @@ target\release\yunxi.exe
 
 ## 版本与许可
 
-- 当前版本：`v2.3.3-hotfix.19`
+- 当前版本：`v2.3.3-hotfix.20`
 - 主要目标：`x86_64-pc-windows-msvc`
 - Rust edition：`2024`
 - Workspace license：`Apache-2.0`

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -14,21 +15,23 @@ from pathlib import Path
 from runtime_server import MockVoiceModels, VoiceHttpServer
 
 
-def run(repo: Path, env: dict[str, str], *arguments: str) -> dict:
-    command = [
-        "cargo",
-        "run",
-        "-q",
-        "-p",
-        "yunxi-agent-cli",
-        "--bin",
-        "yunxi",
-        "--",
-        *arguments,
-    ]
+def resolve_yunxi() -> str:
+    configured = os.environ.get("YUNXI_EXE", "").strip()
+    if configured:
+        executable = Path(configured).expanduser().resolve()
+        if not executable.is_file():
+            raise RuntimeError(f"YUNXI_EXE does not exist: {executable}")
+        return str(executable)
+    executable = shutil.which("yunxi") or shutil.which("yunxi.exe")
+    if not executable:
+        raise RuntimeError("yunxi is not on PATH; set YUNXI_EXE to yunxi.exe")
+    return executable
+
+
+def run(yunxi: str, env: dict[str, str], *arguments: str) -> dict:
+    command = [yunxi, *arguments]
     completed = subprocess.run(
         command,
-        cwd=repo,
         env=env,
         capture_output=True,
         text=True,
@@ -55,7 +58,7 @@ def is_wav(path: Path) -> bool:
 
 
 def main() -> int:
-    repo = Path(__file__).resolve().parents[2]
+    yunxi = resolve_yunxi()
     server = VoiceHttpServer(("127.0.0.1", 0), MockVoiceModels())
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -74,9 +77,9 @@ def main() -> int:
             env["YUNXI_VOICE_RUNTIME_URL"] = f"http://127.0.0.1:{port}"
             env["YUNXI_VOICE_MOCK_TRANSCRIPT"] = "请用一句温暖的话回应我。"
 
-            doctor = run(repo, env, "--json", "voice", "doctor")
+            doctor = run(yunxi, env, "--json", "voice", "doctor")
             speak = run(
-                repo,
+                yunxi,
                 env,
                 "--json",
                 "voice",
@@ -86,7 +89,7 @@ def main() -> int:
                 str(question),
             )
             chat = run(
-                repo,
+                yunxi,
                 env,
                 "--offline",
                 "--json",

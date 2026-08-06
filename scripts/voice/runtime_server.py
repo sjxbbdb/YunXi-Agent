@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hmac
 import io
 import json
@@ -20,6 +21,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+from voice_router import QualityVoiceHttpClient, VoiceBackendRouter
 
 
 SCHEMA_VERSION = 1
@@ -49,6 +52,12 @@ class VoiceRequestError(Exception):
     def __init__(self, status: HTTPStatus, message: str) -> None:
         super().__init__(message)
         self.status = status
+
+
+class VoiceModelPrivacyFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage().lower()
+        return not message.startswith("synthesis text ")
 
 
 def env_enabled(name: str) -> bool:
@@ -129,7 +138,7 @@ class MockVoiceModels:
             "audio_events": [],
         }
 
-    def synthesize(self, text: str, voice_id: str) -> bytes:
+    def synthesize(self, text: str, voice_id: str, _emotion: str | None = None) -> bytes:
         if voice_id not in self.preset_voices:
             raise VoiceRequestError(HTTPStatus.BAD_REQUEST, "unknown preset voice")
         return mock_wav(text)
@@ -163,6 +172,8 @@ class LocalVoiceModels:
         self._postprocess = rich_transcription_postprocess
         self._stt_lock = threading.Lock()
         self._tts_lock = threading.Lock()
+        self._model_io_lock = threading.Lock()
+        logging.getLogger().addFilter(VoiceModelPrivacyFilter())
         logging.info("loading SenseVoice model=%s device=%s", self.stt_model_dir, self.device)
         self._stt = AutoModel(
             model=self.stt_model_dir,
@@ -208,7 +219,7 @@ class LocalVoiceModels:
             ) as temporary:
                 temporary.write(audio)
                 temporary_path = temporary.name
-            with self._stt_lock:
+            with self._model_io_lock, self._stt_lock:
                 result = self._stt.generate(
                     input=temporary_path,
                     cache={},
@@ -236,17 +247,20 @@ class LocalVoiceModels:
                 except FileNotFoundError:
                     pass
 
-    def synthesize(self, text: str, voice_id: str) -> bytes:
+    def synthesize(self, text: str, voice_id: str, _emotion: str | None = None) -> bytes:
         if voice_id not in self.preset_voices:
             raise VoiceRequestError(HTTPStatus.BAD_REQUEST, "unknown preset voice")
         chunks = []
-        with self._tts_lock:
-            for result in self._tts.inference_sft(
-                text, voice_id, stream=False, speed=1.0
-            ):
-                speech = result.get("tts_speech")
-                if speech is not None:
-                    chunks.append(speech.detach().cpu())
+        with self._model_io_lock, self._tts_lock:
+            # CosyVoice prints the input sentence and progress directly. Keep
+            # those model-internal diagnostics out of local request logs.
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                for result in self._tts.inference_sft(
+                    text, voice_id, stream=False, speed=1.0
+                ):
+                    speech = result.get("tts_speech")
+                    if speech is not None:
+                        chunks.append(speech.detach().cpu())
         if not chunks:
             raise RuntimeError("CosyVoice returned no audio")
         speech = self._torch.cat(chunks, dim=1).squeeze(0).numpy()
@@ -361,7 +375,8 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
             raise VoiceRequestError(
                 HTTPStatus.BAD_REQUEST, "the MVP supports WAV output only"
             )
-        audio = self.voice_server.models.synthesize(text, voice_id)
+        emotion = str(payload.get("emotion", "")).strip() or None
+        audio = self.voice_server.models.synthesize(text, voice_id, emotion)
         self._bytes(HTTPStatus.OK, "audio/wav", audio)
 
     def _json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
@@ -383,7 +398,7 @@ class VoiceHttpServer(ThreadingHTTPServer):
     def __init__(
         self,
         address: tuple[str, int],
-        models: MockVoiceModels | LocalVoiceModels,
+        models: Any,
     ) -> None:
         super().__init__(address, VoiceRequestHandler)
         self.models = models
@@ -428,12 +443,20 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    models: MockVoiceModels | LocalVoiceModels
+    models: Any
     if args.mock:
         models = MockVoiceModels()
         logging.info("starting mock voice runtime")
     else:
-        models = LocalVoiceModels()
+        stable = LocalVoiceModels()
+        quality: QualityVoiceHttpClient | None = None
+        mode = os.environ.get("YUNXI_VOICE_MODE", "stable").strip().lower()
+        if mode in {"quality", "auto"}:
+            quality = QualityVoiceHttpClient(
+                os.environ.get("YUNXI_VOICE_QUALITY_URL", "http://127.0.0.1:17864"),
+                os.environ.get("YUNXI_VOICE_AUTH_TOKEN", "").strip(),
+            )
+        models = VoiceBackendRouter(stable, quality, mode)
     server = VoiceHttpServer((args.bind, args.port), models)
     logging.info("YunXi voice runtime listening on http://%s:%s", args.bind, args.port)
     try:

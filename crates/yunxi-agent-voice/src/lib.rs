@@ -167,6 +167,47 @@ pub struct VoiceRuntimeHealth {
     pub tts: VoiceComponentHealth,
     #[serde(default)]
     pub preset_voices: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<VoiceActiveBackends>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<VoiceFallbackHealth>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circuit_breaker: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<VoiceCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backends: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VoiceActiveBackends {
+    pub stt: String,
+    pub tts: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VoiceFallbackHealth {
+    pub count: u64,
+    #[serde(default)]
+    pub last: Option<VoiceFallbackEvent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VoiceFallbackEvent {
+    pub component: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VoiceCapabilities {
+    #[serde(default)]
+    pub streaming: bool,
+    #[serde(default)]
+    pub voice_clone: bool,
+    #[serde(default)]
+    pub emotion_control: bool,
 }
 
 impl VoiceRuntimeHealth {
@@ -1078,6 +1119,12 @@ mod tests {
                 ready: true,
             },
             preset_voices: vec![DEFAULT_PRESET_VOICE.to_string()],
+            mode: None,
+            active: None,
+            fallback: None,
+            circuit_breaker: None,
+            capabilities: None,
+            backends: None,
         };
         Mock::given(method("GET"))
             .and(path("/health"))

@@ -3,7 +3,9 @@ param(
     [string]$RuntimeRoot = $env:YUNXI_VOICE_RUNTIME_ROOT,
     [string]$Uv,
     [switch]$SkipSource,
-    [switch]$SkipModels
+    [switch]$SkipModels,
+    [switch]$IncludeQuality,
+    [switch]$SkipQualityModels
 )
 
 $ErrorActionPreference = "Stop"
@@ -33,6 +35,14 @@ function Invoke-UvPip {
     & $script:Uv pip install --python $script:Python @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "uv pip install failed"
+    }
+}
+
+function Invoke-QualityUvPip {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    & $script:Uv pip install --python $script:QualityPython @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "quality uv pip install failed"
     }
 }
 
@@ -83,6 +93,7 @@ function Expand-GitHubArchive {
 $Uv = Resolve-UvExecutable
 $env:UV_CACHE_DIR = Join-Path $RuntimeRoot "cache\uv"
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $RuntimeRoot "python"
+$env:UV_HTTP_TIMEOUT = "600"
 $env:MODELSCOPE_CACHE = Join-Path $RuntimeRoot "cache\modelscope"
 $env:HF_HOME = Join-Path $RuntimeRoot "cache\huggingface"
 
@@ -157,10 +168,53 @@ if (-not $SkipModels) {
     if ($LASTEXITCODE -ne 0) { throw "voice model download failed" }
 }
 
+if ($IncludeQuality) {
+    $IndexTtsCommit = "90ca4d608209584bad3a5bd5becc0b80c146e60f"
+    $indexTtsRoot = Join-Path $RuntimeRoot "sources\index-tts"
+    if (-not $SkipSource) {
+        $IndexTtsArchive = @{
+            Url = "https://codeload.github.com/index-tts/index-tts/zip/$IndexTtsCommit"
+            Archive = Join-Path $RuntimeRoot "cache\index-tts-$IndexTtsCommit.zip"
+            ExpandedRoot = "index-tts-$IndexTtsCommit"
+            Destination = $indexTtsRoot
+            RequiredFile = "indextts\infer_v2.py"
+        }
+        Expand-GitHubArchive @IndexTtsArchive
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $indexTtsRoot "pyproject.toml") -PathType Leaf)) {
+        throw "pinned IndexTTS2 source is required for the quality runtime"
+    }
+
+    $qualityVenv = Join-Path $RuntimeRoot "quality-venv"
+    $QualityPython = Join-Path $qualityVenv "Scripts\python.exe"
+    $previousProjectEnvironment = $env:UV_PROJECT_ENVIRONMENT
+    try {
+        $env:UV_PROJECT_ENVIRONMENT = $qualityVenv
+        & $Uv sync --project $indexTtsRoot --no-dev
+        if ($LASTEXITCODE -ne 0) { throw "failed to install the pinned IndexTTS2 environment" }
+    } finally {
+        $env:UV_PROJECT_ENVIRONMENT = $previousProjectEnvironment
+    }
+    Invoke-QualityUvPip "faster-whisper==1.2.1" "huggingface-hub[hf-xet]"
+
+    if (-not $SkipModels -and -not $SkipQualityModels) {
+        $env:YUNXI_INSTALL_WHISPER_DIR = Join-Path $RuntimeRoot "models\faster-whisper-large-v3"
+        $env:YUNXI_INSTALL_INDEXTTS_DIR = Join-Path $RuntimeRoot "models\IndexTTS-2"
+        & $QualityPython -c "import os; from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-large-v3', local_dir=os.environ['YUNXI_INSTALL_WHISPER_DIR']); snapshot_download('IndexTeam/IndexTTS-2', revision='740dcaff396282ffb241903d150ac011cd4b1ede', local_dir=os.environ['YUNXI_INSTALL_INDEXTTS_DIR'])"
+        if ($LASTEXITCODE -ne 0) { throw "quality voice model download failed" }
+    }
+
+    & $QualityPython -c "import torch, torchaudio, faster_whisper; assert torch.cuda.is_available(); print(torch.__version__, torchaudio.__version__, torch.cuda.get_device_name(0), faster_whisper.__version__)"
+    if ($LASTEXITCODE -ne 0) { throw "quality voice runtime verification failed" }
+}
+
 $env:YUNXI_COSYVOICE_REPO = Join-Path $RuntimeRoot "sources\CosyVoice"
 $env:PYTHONPATH = "$env:YUNXI_COSYVOICE_REPO;$env:YUNXI_COSYVOICE_REPO\third_party\Matcha-TTS"
 & $Python -c "import torch, torchaudio; from funasr import AutoModel; from cosyvoice.cli.cosyvoice import CosyVoice; assert torch.cuda.is_available(); value=(torch.tensor([2.0], device='cuda')*3).item(); assert value == 6.0; print(torch.__version__, torchaudio.__version__, torch.cuda.get_device_name(0))"
 if ($LASTEXITCODE -ne 0) { throw "voice runtime verification failed" }
 
 Write-Output "Voice runtime installed at $RuntimeRoot"
-Write-Output "Start it with: .\scripts\voice\start-voice-runtime.ps1 -RuntimeRoot `"$RuntimeRoot`""
+Write-Output "Start it with: .\start-voice-runtime.ps1 -RuntimeRoot `"$RuntimeRoot`""
+if ($IncludeQuality) {
+    Write-Output "Quality runtime installed. Keep YUNXI_VOICE_MODE=stable until a local VoiceProfile is configured."
+}

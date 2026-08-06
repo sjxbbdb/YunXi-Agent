@@ -237,6 +237,15 @@ async fn run_doctor(client: &VoiceRuntimeClient, json: bool) -> Result<()> {
             "tts: {} / {} / {}",
             output.health.tts.provider, output.health.tts.model, output.health.tts.device
         );
+        if let Some(mode) = output.health.mode.as_deref() {
+            println!("mode: {mode}");
+        }
+        if let Some(active) = output.health.active.as_ref() {
+            println!("active: stt={} / tts={}", active.stt, active.tts);
+        }
+        if let Some(fallback) = output.health.fallback.as_ref() {
+            println!("fallback_count: {}", fallback.count);
+        }
         println!("preset_voices: {}", output.health.preset_voices.join(", "));
     })
 }

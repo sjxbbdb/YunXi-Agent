@@ -4,7 +4,7 @@
 
 协议版本：`1.0`
 
-目标版本：`v2.3.3-hotfix.19`
+目标版本：`v2.3.3-hotfix.20`
 
 目标平台：`x86_64-pc-windows-msvc`
 
@@ -253,7 +253,7 @@ git describe --tags --always --dirty
 全新 clone 示例：
 
 ```powershell
-git clone --branch v2.3.3-hotfix.19 --depth 1 https://github.com/sjxbbdb/YunXi-Agent.git YunXi-Agent
+git clone --branch v2.3.3-hotfix.20 --depth 1 https://github.com/sjxbbdb/YunXi-Agent.git YunXi-Agent
 Set-Location .\YunXi-Agent
 ```
 
@@ -465,7 +465,7 @@ $env:YUNXI_AGENT_MODEL = "deepseek-v4-flash"
 
 ### 11.6 本地语音（可选）
 
-只有用户明确要求本地语音且接受额外磁盘、Python 与模型依赖时才能安装。不得把语音模型放进源码仓库或 Release 安装目录。先确认 NVIDIA GPU、驱动和至少 30 GB 可用空间，再从私有仓库 `https://github.com/sjxbbdb/YunXi-Voice-Runtime` 建立独立源码 checkout：
+只有用户明确要求本地语音且接受额外磁盘、Python 与模型依赖时才能安装。不得把语音模型放进源码仓库或 Release 安装目录。稳定链至少确认 30 GB 可用空间；同时安装 faster-whisper large-v3 与 IndexTTS2 时至少确认 50 GB。再从私有仓库 `https://github.com/sjxbbdb/YunXi-Voice-Runtime` 建立独立源码 checkout：
 
 ```powershell
 gh repo clone sjxbbdb/YunXi-Voice-Runtime "D:\YunXi Voice Runtime Source"
@@ -475,7 +475,17 @@ Set-Location "D:\YunXi Voice Runtime Source"
 & $YunXiExe voice doctor --json
 ```
 
-验收至少覆盖 `voice speak`、`voice transcribe`、一次 `voice chat`、`voice devices`，以及在真实交互终端内完成两轮 `voice talk`。还必须在已经运行的 CLI/TUI 中验证 `/voice status`、`/voice devices` 和两轮 `/voice`：语音文本必须进入当前 `InteractiveSession`，与此前文字轮次共享会话，并继续显示原有流式事件与工具审批。第二轮必须能沿用第一轮会话上下文，默认输出设备必须能播放合成结果。实时模式还要验证 `/voice realtime on|off|status`、TUI `voice=live` 状态、VAD 自动收音、自然短句分段、播放时预合成下一段、键盘停止当前播放、语音口令“关闭实时语音”以及关闭后释放麦克风。不得用 mock health 代替真实模型验收；不得把语音内容视为自动批准工具的指令；测试输入不得污染用户长期记忆。当前实时模式是免按键半双工，只能描述为支持键盘停止播放，不得描述成全双工、服务端流式或支持语音插话打断。
+质量链必须作为稳定链的增量安装，禁止删除 SenseVoiceSmall 或 CosyVoice：
+
+```powershell
+.\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -IncludeQuality
+.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -Mode auto `
+  -VoiceProfile "D:\YunXi Voice Runtime\profiles\yunxi-primary\profile.json"
+```
+
+VoiceProfile 必须从 `voice-profile.example.json` 建立在本机被忽略目录中，参考音频必须由用户拥有或授权。不得把 profile、参考音频、转写、embedding、生成 WAV 或其绝对路径写进 Git、普通日志或公开健康信息。IndexTTS2 源码和模型必须保持安装器固定的 commit/revision，不得静默跟随上游 `main`。
+
+验收至少覆盖 `voice speak`、`voice transcribe`、一次 `voice chat`、`voice devices`，以及在真实交互终端内完成两轮 `voice talk`。质量链还必须分别实测 faster-whisper 与 IndexTTS2、热态延迟、有效 WAV、VoiceProfile 缺失、质量 worker 强制退出后的双端稳定降级、`voice doctor --json` 扩展字段，以及稳定/质量模型同时驻留时的显存峰值。任何质量失败都只能重试对应 STT/TTS，不得重跑 Agent turn。还必须在已经运行的 CLI/TUI 中验证 `/voice status`、`/voice devices` 和两轮 `/voice`：语音文本必须进入当前 `InteractiveSession`，与此前文字轮次共享会话，并继续显示原有流式事件与工具审批。第二轮必须能沿用第一轮会话上下文，默认输出设备必须能播放合成结果。实时模式还要验证 `/voice realtime on|off|status`、TUI `voice=live` 状态、VAD 自动收音、自然短句分段、播放时预合成下一段、键盘停止当前播放、语音口令“关闭实时语音”以及关闭后释放麦克风。不得用 mock health 代替真实模型验收；不得把语音内容视为自动批准工具的指令；测试输入不得污染用户长期记忆。当前实时模式是免按键半双工，只能描述为支持键盘停止播放，不得描述成全双工、服务端流式或支持语音插话打断；未来流式能力必须新增协议 v2，不能破坏 HTTP v1。
 
 ## 12. 失败处理与回滚
 

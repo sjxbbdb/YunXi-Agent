@@ -1,6 +1,7 @@
 import unittest
+import logging
 
-from runtime_server import normalize_yunxi_brand_transcript
+from runtime_server import VoiceModelPrivacyFilter, normalize_yunxi_brand_transcript
 
 
 class YunXiBrandTranscriptTests(unittest.TestCase):
@@ -23,6 +24,17 @@ class YunXiBrandTranscriptTests(unittest.TestCase):
             normalize_yunxi_brand_transcript("这是云系架构，旁边有一条云溪。"),
             "这是云系架构，旁边有一条云溪。",
         )
+
+    def test_model_privacy_filter_drops_cosyvoice_input_text(self) -> None:
+        privacy_filter = VoiceModelPrivacyFilter()
+        sensitive = logging.LogRecord(
+            "root", logging.INFO, __file__, 1, "synthesis text private sentence", (), None
+        )
+        diagnostic = logging.LogRecord(
+            "root", logging.INFO, __file__, 1, "loading model", (), None
+        )
+        self.assertFalse(privacy_filter.filter(sensitive))
+        self.assertTrue(privacy_filter.filter(diagnostic))
 
 
 if __name__ == "__main__":

@@ -1,15 +1,10 @@
 {
   "schema_version": 1,
   "id": "yunxi-primary",
-  "backend": "indextts2",
+  "backend": "cosyvoice3",
   "reference_audio": "references/neutral.wav",
   "reference_transcript": "请填写与参考音频逐字一致的文字。",
-  "emotion_references": {
-    "gentle": "references/gentle.wav",
-    "happy": "references/happy.wav",
-    "concerned": "references/concerned.wav",
-    "serious": "references/serious.wav"
-  },
+  "emotion_references": {},
   "speed": 1.0,
   "fallback_voice": "中文女"
 }

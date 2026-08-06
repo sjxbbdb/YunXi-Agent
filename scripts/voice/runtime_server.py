@@ -22,7 +22,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from voice_router import QualityVoiceHttpClient, VoiceBackendRouter
+from voice_profile import VoiceProfile, VoiceProfileError
+from voice_style import VOICE_INSTRUCTIONS, instruction_for_reply
 
 
 SCHEMA_VERSION = 1
@@ -47,6 +48,7 @@ YUNXI_BRAND_ALIASES = (
 )
 YUNXI_BRAND_SUFFIXES = ("智能体", "助手")
 YUNXI_SELF_REFERENCE_PREFIXES = ("我是", "我叫", "叫我", "这里是")
+DEFAULT_HOTWORDS: tuple[str, ...] = ()
 
 
 class VoiceRequestError(Exception):
@@ -71,6 +73,25 @@ def safe_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
     except ValueError:
         return default
     return min(maximum, max(minimum, value))
+
+
+def safe_float_env(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return min(maximum, max(minimum, value))
+
+
+def configured_hotwords(value: str | None = None) -> list[str]:
+    raw = os.environ.get("YUNXI_VOICE_HOTWORDS", "") if value is None else value
+    words = [*DEFAULT_HOTWORDS, *re.split(r"[,，;；\n]+", raw)]
+    result: list[str] = []
+    for word in words:
+        normalized = word.strip()
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
 
 
 def configured_voice_language() -> str:
@@ -138,11 +159,19 @@ class MockVoiceModels:
             },
             "tts": {
                 "provider": "mock",
-                "model": "mock-cosyvoice-sft",
+                "model": "mock-cosyvoice3",
                 "device": self.device,
                 "ready": True,
             },
             "preset_voices": self.preset_voices,
+            "mode": "single",
+            "active": {"stt": "sensevoice", "tts": "cosyvoice3"},
+            "fallback": {"count": 0, "last": None},
+            "capabilities": {
+                "streaming": False,
+                "voice_clone": True,
+                "emotion_control": True,
+            },
         }
 
     def transcribe(self, _audio: bytes, language: str | None) -> dict[str, Any]:
@@ -170,14 +199,29 @@ class MockVoiceModels:
 
 class LocalVoiceModels:
     def __init__(self) -> None:
-        self.device = os.environ.get("YUNXI_VOICE_DEVICE", "cuda:0").strip() or "cuda:0"
+        legacy_device = os.environ.get("YUNXI_VOICE_DEVICE", "cuda:0").strip() or "cuda:0"
+        self.stt_device = os.environ.get("YUNXI_VOICE_STT_DEVICE", "cpu").strip() or "cpu"
+        self.tts_device = (
+            os.environ.get("YUNXI_VOICE_TTS_DEVICE", legacy_device).strip() or "cuda:0"
+        )
         self.default_language = configured_voice_language()
         self.stt_model_dir = os.environ.get(
             "YUNXI_VOICE_STT_MODEL_DIR", "iic/SenseVoiceSmall"
         ).strip()
         self.tts_model_dir = os.environ.get(
-            "YUNXI_VOICE_TTS_MODEL_DIR", "iic/CosyVoice-300M-SFT"
+            "YUNXI_VOICE_TTS_MODEL_DIR", "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
         ).strip()
+        profile_path = os.environ.get("YUNXI_VOICE_PROFILE", "").strip()
+        if not profile_path:
+            raise RuntimeError("YUNXI_VOICE_PROFILE is required for CosyVoice3")
+        try:
+            self.profile = VoiceProfile.load(profile_path)
+        except VoiceProfileError as error:
+            raise RuntimeError("CosyVoice3 voice profile is unavailable") from error
+        self.hotwords = configured_hotwords()
+        self.hotword_threshold = safe_float_env(
+            "YUNXI_VOICE_HOTWORD_THRESHOLD", 0.95, 0.5, 1.0
+        )
         cosyvoice_repo = os.environ.get("YUNXI_COSYVOICE_REPO", "").strip()
         if cosyvoice_repo:
             cosyvoice_root = Path(cosyvoice_repo).resolve()
@@ -189,9 +233,9 @@ class LocalVoiceModels:
         import torch
         from funasr import AutoModel
         from funasr.utils.postprocess_utils import rich_transcription_postprocess
-        from cosyvoice.cli.cosyvoice import CosyVoice
+        from cosyvoice.cli.cosyvoice import AutoModel as CosyVoiceAutoModel
 
-        if self.device.startswith("cuda") and not torch.cuda.is_available():
+        if self.tts_device.startswith("cuda") and not torch.cuda.is_available():
             raise RuntimeError("CUDA was requested but PyTorch cannot access the NVIDIA GPU")
         self._torch = torch
         self._postprocess = rich_transcription_postprocess
@@ -199,23 +243,25 @@ class LocalVoiceModels:
         self._tts_lock = threading.Lock()
         self._model_io_lock = threading.Lock()
         logging.getLogger().addFilter(VoiceModelPrivacyFilter())
-        logging.info("loading SenseVoice model=%s device=%s", self.stt_model_dir, self.device)
+        logging.info(
+            "loading SenseVoice model=%s device=%s", self.stt_model_dir, self.stt_device
+        )
         self._stt = AutoModel(
             model=self.stt_model_dir,
             trust_remote_code=True,
-            device=self.device,
+            device=self.stt_device,
             disable_update=True,
         )
         logging.info("loading CosyVoice model=%s", self.tts_model_dir)
-        self._tts = CosyVoice(
-            self.tts_model_dir,
-            load_jit=False,
+        self._tts = CosyVoiceAutoModel(
+            model_dir=self.tts_model_dir,
             load_trt=False,
-            fp16=self.device.startswith("cuda"),
+            load_vllm=False,
+            fp16=self.tts_device.startswith("cuda"),
         )
-        self.preset_voices = list(self._tts.list_available_spks())
-        if not self.preset_voices:
-            raise RuntimeError("CosyVoice SFT model did not expose any preset voices")
+        self.preset_voices = list(
+            dict.fromkeys((DEFAULT_PRESET, self.profile.profile_id))
+        )
 
     def health(self) -> dict[str, Any]:
         return {
@@ -224,16 +270,35 @@ class LocalVoiceModels:
             "stt": {
                 "provider": "local",
                 "model": Path(self.stt_model_dir).name or self.stt_model_dir,
-                "device": self.device,
+                "device": self.stt_device,
                 "ready": True,
             },
             "tts": {
                 "provider": "local",
                 "model": Path(self.tts_model_dir).name or self.tts_model_dir,
-                "device": self.device,
+                "device": self.tts_device,
                 "ready": True,
             },
             "preset_voices": self.preset_voices,
+            "mode": "single",
+            "active": {"stt": "sensevoice", "tts": "cosyvoice3"},
+            "fallback": {"count": 0, "last": None},
+            "capabilities": {
+                # The model streams internally, but HTTP v1 still returns one WAV.
+                "streaming": False,
+                "voice_clone": True,
+                "emotion_control": True,
+            },
+            "backends": {
+                "single": {
+                    "stt": "SenseVoiceSmall",
+                    "tts": "Fun-CosyVoice3-0.5B-2512",
+                    "profile": self.profile.public_health(),
+                    "model_streaming": True,
+                    "hotword_count": len(self.hotwords),
+                    "emotion_controls": sorted(VOICE_INSTRUCTIONS),
+                }
+            },
         }
 
     def transcribe(self, audio: bytes, language: str | None) -> dict[str, Any]:
@@ -251,6 +316,9 @@ class LocalVoiceModels:
                     language=resolve_voice_language(language, self.default_language),
                     use_itn=True,
                     batch_size_s=60,
+                    postprocess_hotwords=self.hotwords,
+                    postprocess_hotword_fuzzy=True,
+                    postprocess_hotword_threshold=self.hotword_threshold,
                 )
             if not result or not isinstance(result[0], dict):
                 raise RuntimeError("SenseVoice returned no transcription result")
@@ -276,18 +344,23 @@ class LocalVoiceModels:
         self,
         text: str,
         voice_id: str,
-        _emotion: str | None = None,
-        _realtime: bool = False,
+        emotion: str | None = None,
+        realtime: bool = False,
     ) -> bytes:
         if voice_id not in self.preset_voices:
             raise VoiceRequestError(HTTPStatus.BAD_REQUEST, "unknown preset voice")
+        _selected_emotion, instruction = instruction_for_reply(text, emotion)
         chunks = []
         with self._model_io_lock, self._tts_lock:
             # CosyVoice prints the input sentence and progress directly. Keep
             # those model-internal diagnostics out of local request logs.
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                for result in self._tts.inference_sft(
-                    text, voice_id, stream=False, speed=1.0
+                for result in self._tts.inference_instruct2(
+                    text,
+                    instruction,
+                    str(self.profile.reference_audio),
+                    stream=realtime,
+                    speed=self.profile.speed,
                 ):
                     speech = result.get("tts_speech")
                     if speech is not None:
@@ -486,15 +559,7 @@ def main() -> int:
         models = MockVoiceModels()
         logging.info("starting mock voice runtime")
     else:
-        stable = LocalVoiceModels()
-        quality: QualityVoiceHttpClient | None = None
-        mode = os.environ.get("YUNXI_VOICE_MODE", "stable").strip().lower()
-        if mode in {"quality", "auto"}:
-            quality = QualityVoiceHttpClient(
-                os.environ.get("YUNXI_VOICE_QUALITY_URL", "http://127.0.0.1:17864"),
-                os.environ.get("YUNXI_VOICE_AUTH_TOKEN", "").strip(),
-            )
-        models = VoiceBackendRouter(stable, quality, mode)
+        models = LocalVoiceModels()
     server = VoiceHttpServer((args.bind, args.port), models)
     logging.info("YunXi voice runtime listening on http://%s:%s", args.bind, args.port)
     try:

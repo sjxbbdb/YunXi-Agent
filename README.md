@@ -36,7 +36,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 - **行动必须可控。** 工具调用经过明确策略与审批，不因“陪伴”而绕过工作区、安全或隐私边界。
 - **能力必须诚实。** 没有在线凭证时明确进入离线模式；失败、降级和未验证状态不会被包装成成功。
 
-当前稳定版本为 `v2.3.3-hotfix.23`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
+当前稳定版本为 `v2.3.3-hotfix.24`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
 
 > [!NOTE]
 > 默认人格开启；长期记忆、主动陪伴和情书生成默认关闭。YunXi 会在没有 Provider 凭证时使用带明确标记的离线 Runtime，不会伪造在线模型回复。
@@ -53,7 +53,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 | 关系与信箱 | 从有效记忆派生关系阶段；按人格和记忆生成情书并写入本地加密信箱 |
 | 微信接入 | 二维码登录、私聊接入、配对、远程审批、会话绑定、投递恢复和自动拉起 |
 | 本地 Web | 聊天、记忆气泡、人格卡片、关系档案“她”和情书信箱，共享同一工作区状态 |
-| 本地语音 | Rust 语音客户端连接独立的 [YunXi Voice Runtime](https://github.com/sjxbbdb/YunXi-Voice-Runtime) 私有 sidecar，使用 SenseVoiceSmall 输入与 CosyVoice 输出 |
+| 本地语音 | Rust 语音客户端连接独立的 [YunXi Voice Runtime](https://github.com/sjxbbdb/YunXi-Voice-Runtime) 私有 sidecar，使用 SenseVoiceSmall CPU 识别与 Fun-CosyVoice3 GPU 定制音色/情绪输出 |
 | 工程验证 | 离线评估、CLI/TUI/微信回归、Windows ConPTY 证据、脱敏检查和完整发布门禁 |
 
 ### 多入口协同
@@ -251,7 +251,7 @@ Token 与数据密钥通过 Windows Credential Manager 保存；工作区只保�
 
 ### 5. 可选：本地语音闭环
 
-语音链保留 `SenseVoiceSmall + CosyVoice-300M-SFT` 作为永久稳定兜底，并可选升级为 `faster-whisper large-v3 + IndexTTS2`。它不是另一套聊天逻辑：无论使用哪组模型，转写文本都进入同一个 YunXi Runtime、Provider、人格、记忆、陪伴和工具审批链路，成功回复再合成为 WAV。
+语音运行时只保留一条模型链：`SenseVoiceSmall + Fun-CosyVoice3-0.5B-2512`。SenseVoiceSmall 在 CPU 上完成中文识别和热词模糊纠正，把 GPU 完整留给 CosyVoice3 的定制音色、情绪指令与模型内分块合成。语音不是另一套聊天逻辑：确认后的转写文本仍进入同一个 YunXi Runtime、Provider、人格、记忆、陪伴和工具审批链路，成功回复再合成为 WAV。
 
 > [!IMPORTANT]
 > 语音 sidecar 的独立部署仓库是 [sjxbbdb/YunXi-Voice-Runtime](https://github.com/sjxbbdb/YunXi-Voice-Runtime)。该仓库当前为 **Private**，克隆账户必须具有访问权限。`YunXi-Agent` 主仓库负责 Rust 客户端与 Agent 逻辑；语音仓库负责 Python 服务、模型安装与本地推理。
@@ -261,7 +261,7 @@ Token 与数据密钥通过 Windows Credential Manager 保存；工作区只保�
 | 仓库 | 负责内容 | 依赖关系 |
 | --- | --- | --- |
 | `YunXi-Agent` | 麦克风、VAD、播放、CLI/TUI、对话、人格、记忆、陪伴、工具与审批 | 可独立运行文字功能；启用语音时依赖 sidecar HTTP 服务 |
-| `YunXi-Voice-Runtime` | 稳定/质量双链模型、本地 Python sidecar、隔离质量 worker、安装与启动脚本 | 不包含 Agent 逻辑；只向 YunXi Agent 提供 STT/TTS |
+| `YunXi-Voice-Runtime` | 单链本地 Python sidecar、SenseVoiceSmall、Fun-CosyVoice3、VoiceProfile、安装与启动脚本 | 不包含 Agent 逻辑；只向 YunXi Agent 提供 STT/TTS |
 
 两者没有 Cargo、Python import、Git submodule 或共享状态目录依赖。运行时只通过本机回环 HTTP 连接：
 
@@ -285,11 +285,11 @@ flowchart LR
 - uv 管理的 Python 3.10 与独立 `venv`
 - PyTorch `2.8.0+cu129`、torchaudio 和 STT/TTS 依赖
 - `iic/SenseVoiceSmall`
-- `iic/CosyVoice-300M-SFT`
+- `FunAudioLLM/Fun-CosyVoice3-0.5B-2512`
 - FunAudioLLM/CosyVoice 与 Matcha-TTS 源码
 - uv、ModelScope 和 Hugging Face 缓存
 
-质量链额外下载独立 Python 3.11 环境、`Systran/faster-whisper-large-v3`、固定 revision 的 `IndexTeam/IndexTTS-2`，以及固定 commit 的 IndexTTS2 官方源码。两套环境物理隔离，质量依赖不会覆盖稳定链。
+`faster-whisper large-v3`、`IndexTTS2` 和 `CosyVoice-300M-SFT` 不再属于当前运行链，也不会由安装器下载或加载。升级前遗留的权重可以暂时保留在本机磁盘用于回滚，但不会占用显存。
 
 #### 本地部署
 
@@ -309,12 +309,6 @@ Set-Location "D:\YunXi Voice Runtime Source"
 .\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
 ```
 
-安装质量链时显式增加 `-IncludeQuality`；现有稳定模型不会被删除：
-
-```powershell
-.\install-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -IncludeQuality
-```
-
 源码 checkout `D:\YunXi Voice Runtime Source` 与运行数据目录 `D:\YunXi Voice Runtime` 必须分开。后者包含模型、虚拟环境和缓存，不得加入 Git。
 
 启动本地 sidecar：
@@ -323,19 +317,16 @@ Set-Location "D:\YunXi Voice Runtime Source"
 .\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime"
 ```
 
-默认模式仍是 `stable`。配置本机 VoiceProfile 后可启用质量模式或自动模式：
+CosyVoice3 必须使用本机 VoiceProfile。默认读取 `D:\YunXi Voice Runtime\profiles\yunxi-primary\profile.json`，也可以显式指定：
 
 ```powershell
-.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -Mode quality `
-  -VoiceProfile "D:\YunXi Voice Runtime\profiles\yunxi-primary\profile.json"
-
-.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -Mode auto `
+.\start-voice-runtime.ps1 -RuntimeRoot "D:\YunXi Voice Runtime" -Mode single `
   -VoiceProfile "D:\YunXi Voice Runtime\profiles\yunxi-primary\profile.json"
 ```
 
-质量 STT/TTS 的导入、缺文件、超时、空结果、无效 WAV 或推理错误只会回退当前语音端，不会重跑 Agent turn。连续质量故障会触发按端熔断；`voice doctor --json` 可查看 `mode`、`active`、`fallback`、`circuit_breaker` 和 `capabilities`。VoiceProfile 模板位于语音仓库的 `voice-profile.example.json`，参考音频、原文和生成文件只保存在被 Git 忽略的本机运行目录。
+`stable`、`quality` 和 `auto` 仅作为旧启动脚本的兼容参数接受，并统一映射到 `single`，不会加载旧模型。`voice doctor --json` 应显示 `mode: single`、`stt.device: cpu`、`tts.model: Fun-CosyVoice3-0.5B-2512`、`voice_clone: true` 和 `emotion_control: true`。VoiceProfile 模板位于语音仓库的 `voice-profile.example.json`；参考音频、逐字转写和生成 WAV 只保存在被 Git 忽略的本机运行目录。
 
-实时会话与高质量朗读采用不同的延迟策略：即使 sidecar 运行在 `quality` 或 `auto` 模式，`/voice realtime on` 的转写仍可使用 faster-whisper，但分段 TTS 会明确走稳定的 CosyVoice，避免 IndexTTS2 每个短句数秒的推理延迟。非实时 `voice speak`、`voice chat` 和普通按键对讲仍可使用 IndexTTS2；没有显式情绪标签时，质量 worker 会从回复文本中确定性选择温柔、开心、关心、难过、严肃、惊讶或生气的情绪向量，不会为情绪判断额外调用模型。
+SenseVoice 的模糊纠正使用 `YUNXI_VOICE_HOTWORDS` 显式配置的用户称呼、项目名或专有词，并采用高阈值拼音近似匹配。云熙名称继续使用受上下文约束的品牌规则，避免把普通语义中的“云溪”误改成名字。CosyVoice3 会从显式 emotion 或回复文本确定性选择温柔、开心、关心、难过、严肃、惊讶或克制坚定的语气，不为语气判断额外调用模型。
 
 YunXi Agent 默认连接 `http://127.0.0.1:17862`，无需额外配置。另开 PowerShell 验证：
 
@@ -381,7 +372,7 @@ yunxi> /voice realtime off
 
 `voice talk` 提供独立终端中的同类按键对讲。两种模式的录音都只保存在内存中，识别后进入同一套 YunXi Runtime，并在合成完成后通过默认扬声器播放。单次文件命令仍使用 WAV。
 
-当前实时模式是 VAD 驱动的免按键半双工对话，不是全双工通话；支持键盘停止播放，但暂不支持用语音插话打断、流式 STT、服务端流式 TTS、质量链音色克隆、JSONL 或语音直接批准工具。工具审批继续使用现有交互，语音内容不会自动放宽权限。
+当前实时模式是 VAD 驱动的免按键半双工对话，不是全双工通话；支持键盘停止播放和 CosyVoice3 模型内分块推理，但 HTTP v1 仍返回完整 WAV，暂不支持用语音插话打断、流式 STT、服务端流式播放、JSONL 或语音直接批准工具。工具审批继续使用现有交互，语音内容不会自动放宽权限。
 
 ## 使用方式
 
@@ -536,6 +527,7 @@ cargo run -q -p yunxi-agent-cli --bin yunxi -- --json eval weixin
 - [TUI 表现与终端生命周期](docs/tui-presentation.md)
 - [Companion Mailbox Protocol](docs/protocol/companion-mailbox.md)
 - [语音质量双链升级记录](docs/reports/development/2026-08-06-voice-quality-upgrade.md)
+- [语音单链迁移记录](docs/reports/development/2026-08-06-voice-single-chain-migration.md)
 - [提取状态与能力边界](docs/extraction-status.md)
 - [开发日志](docs/development-log.md)
 - [报告与可复核证据](docs/reports/README.md)
@@ -586,7 +578,7 @@ target\release\yunxi.exe
 
 ## 版本与许可
 
-- 当前版本：`v2.3.3-hotfix.23`
+- 当前版本：`v2.3.3-hotfix.24`
 - 主要目标：`x86_64-pc-windows-msvc`
 - Rust edition：`2024`
 - Workspace license：`Apache-2.0`

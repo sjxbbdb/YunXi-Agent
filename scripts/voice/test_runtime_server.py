@@ -3,10 +3,11 @@ import logging
 
 from runtime_server import (
     VoiceModelPrivacyFilter,
+    configured_hotwords,
     normalize_yunxi_brand_transcript,
     resolve_voice_language,
 )
-from quality_runtime_server import infer_reply_emotion
+from voice_style import infer_reply_emotion, instruction_for_reply
 
 
 class YunXiBrandTranscriptTests(unittest.TestCase):
@@ -51,6 +52,19 @@ class YunXiBrandTranscriptTests(unittest.TestCase):
         self.assertEqual(infer_reply_emotion("听起来很难过，我有点心疼你。"), "sad")
         self.assertEqual(infer_reply_emotion("我在这里，慢慢说。"), "gentle")
         self.assertEqual(infer_reply_emotion("普通内容", "serious"), "serious")
+
+    def test_cosyvoice3_instruction_is_bounded_and_explicit(self) -> None:
+        emotion, instruction = instruction_for_reply("太好了，我真的很开心。")
+        self.assertEqual(emotion, "happy")
+        self.assertIn("开心", instruction)
+        self.assertTrue(instruction.endswith("<|endofprompt|>"))
+
+    def test_hotwords_include_brand_and_deduplicate_configuration(self) -> None:
+        self.assertEqual(
+            configured_hotwords("云熙,蓝色回声；YunXi Agent,云熙"),
+            ["云熙", "蓝色回声", "YunXi Agent"],
+        )
+        self.assertEqual(configured_hotwords(""), [])
 
 
 if __name__ == "__main__":

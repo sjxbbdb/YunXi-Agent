@@ -1,4 +1,4 @@
-"""Local-only voice profile validation for the optional quality TTS backend."""
+"""Local-only voice profile validation for the CosyVoice3 TTS backend."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ class VoiceProfile:
         backend = str(payload.get("backend", "")).strip().lower()
         transcript = str(payload.get("reference_transcript", "")).strip()
         fallback_voice = str(payload.get("fallback_voice", "中文女")).strip() or "中文女"
-        if schema_version != 1 or not profile_id or backend != "indextts2":
+        if schema_version != 1 or not profile_id or backend != "cosyvoice3":
             raise VoiceProfileError("unsupported voice profile schema or backend")
         if not transcript:
             raise VoiceProfileError("reference_transcript is required")
@@ -49,7 +49,6 @@ class VoiceProfile:
             speed = float(payload.get("speed", 1.0))
         except (TypeError, ValueError) as error:
             raise VoiceProfileError("voice profile speed is invalid") from error
-        # IndexTTS2 currently has no stable speed parameter in its public API.
         if not 0.5 <= speed <= 2.0:
             raise VoiceProfileError("voice profile speed must be between 0.5 and 2.0")
 

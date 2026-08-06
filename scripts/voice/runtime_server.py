@@ -156,7 +156,13 @@ class MockVoiceModels:
             "audio_events": [],
         }
 
-    def synthesize(self, text: str, voice_id: str, _emotion: str | None = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        voice_id: str,
+        _emotion: str | None = None,
+        _realtime: bool = False,
+    ) -> bytes:
         if voice_id not in self.preset_voices:
             raise VoiceRequestError(HTTPStatus.BAD_REQUEST, "unknown preset voice")
         return mock_wav(text)
@@ -266,7 +272,13 @@ class LocalVoiceModels:
                 except FileNotFoundError:
                     pass
 
-    def synthesize(self, text: str, voice_id: str, _emotion: str | None = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        voice_id: str,
+        _emotion: str | None = None,
+        _realtime: bool = False,
+    ) -> bytes:
         if voice_id not in self.preset_voices:
             raise VoiceRequestError(HTTPStatus.BAD_REQUEST, "unknown preset voice")
         chunks = []
@@ -395,7 +407,14 @@ class VoiceRequestHandler(BaseHTTPRequestHandler):
                 HTTPStatus.BAD_REQUEST, "the MVP supports WAV output only"
             )
         emotion = str(payload.get("emotion", "")).strip() or None
-        audio = self.voice_server.models.synthesize(text, voice_id, emotion)
+        realtime_value = payload.get("realtime", False)
+        realtime = realtime_value is True or str(realtime_value).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        audio = self.voice_server.models.synthesize(text, voice_id, emotion, realtime)
         self._bytes(HTTPStatus.OK, "audio/wav", audio)
 
     def _json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:

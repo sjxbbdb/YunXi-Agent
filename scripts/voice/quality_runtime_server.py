@@ -33,6 +33,35 @@ def _path_env(name: str, default: str) -> Path:
     return Path(os.environ.get(name, default).strip() or default).expanduser().resolve()
 
 
+EMOTION_VECTORS: dict[str, list[float]] = {
+    "happy": [0.85, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1, 0.05],
+    "angry": [0.0, 0.9, 0.0, 0.0, 0.05, 0.0, 0.0, 0.05],
+    "sad": [0.0, 0.0, 0.75, 0.0, 0.0, 0.2, 0.0, 0.05],
+    "concerned": [0.0, 0.0, 0.2, 0.15, 0.0, 0.2, 0.0, 0.45],
+    "serious": [0.0, 0.15, 0.0, 0.0, 0.0, 0.0, 0.0, 0.85],
+    "surprised": [0.15, 0.0, 0.0, 0.1, 0.0, 0.0, 0.7, 0.05],
+    "gentle": [0.1, 0.0, 0.05, 0.0, 0.0, 0.05, 0.0, 0.8],
+}
+
+
+def infer_reply_emotion(text: str, explicit: str | None = None) -> str:
+    requested = (explicit or "").strip().lower()
+    if requested in EMOTION_VECTORS:
+        return requested
+    rules = (
+        ("angry", ("气死", "生气", "愤怒", "讨厌", "烦死", "太过分")),
+        ("sad", ("难过", "伤心", "哭", "失落", "遗憾", "心疼")),
+        ("concerned", ("担心", "不舒服", "还好吗", "没事吧", "注意休息", "抱抱")),
+        ("happy", ("开心", "高兴", "太好了", "哈哈", "真棒", "喜欢")),
+        ("surprised", ("没想到", "竟然", "真的吗", "居然", "天哪")),
+        ("serious", ("必须", "认真", "重要", "风险", "警告", "不能")),
+    )
+    for emotion, markers in rules:
+        if any(marker in text for marker in markers):
+            return emotion
+    return "gentle"
+
+
 class QualityVoiceModels:
     def __init__(self) -> None:
         self.device = os.environ.get("YUNXI_VOICE_QUALITY_DEVICE", "cuda:0").strip() or "cuda:0"
@@ -182,7 +211,7 @@ class QualityVoiceModels:
             "capabilities": {
                 "streaming": False,
                 "voice_clone": tts_ready,
-                "emotion_control": bool(self.profile and self.profile.emotion_references),
+                "emotion_control": tts_ready,
             },
             "errors": {
                 "stt": self._stt_error,
@@ -244,7 +273,13 @@ class QualityVoiceModels:
                 except FileNotFoundError:
                     pass
 
-    def synthesize(self, text: str, voice_id: str, emotion: str | None = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        voice_id: str,
+        emotion: str | None = None,
+        _realtime: bool = False,
+    ) -> bytes:
         if self.profile is None:
             raise RuntimeError("voice profile is unavailable")
         if voice_id not in {"中文女", self.profile.profile_id, self.profile.fallback_voice}:
@@ -255,6 +290,8 @@ class QualityVoiceModels:
             with tempfile.NamedTemporaryFile(prefix="yunxi-quality-", suffix=".wav", delete=False) as output:
                 output_path = output.name
             emotion_audio = self.profile.emotion_audio(emotion)
+            inferred_emotion = infer_reply_emotion(text, emotion)
+            emotion_vector = None if emotion_audio else EMOTION_VECTORS[inferred_emotion]
             with self._model_io_lock, self._tts_lock:
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
                     io.StringIO()
@@ -264,6 +301,8 @@ class QualityVoiceModels:
                         text=text,
                         output_path=output_path,
                         emo_audio_prompt=str(emotion_audio) if emotion_audio else None,
+                        emo_vector=emotion_vector,
+                        emo_alpha=0.8,
                         verbose=False,
                     )
             data = Path(output_path).read_bytes()

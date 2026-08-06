@@ -313,6 +313,7 @@ async fn run_speak(
             text: speech.text.clone(),
             voice: voice.to_string(),
             format: "wav".to_string(),
+            realtime: false,
         })
         .await
         .context("voice synthesis failed")?;
@@ -459,6 +460,7 @@ async fn execute_voice_turn(
             text: speech.text.clone(),
             voice: voice.to_string(),
             format: "wav".to_string(),
+            realtime: false,
         })
         .await
     {

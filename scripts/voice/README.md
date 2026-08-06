@@ -40,6 +40,8 @@ flowchart LR
 
 稳定 sidecar 与质量 worker 使用独立 Python 环境。质量端的导入失败、模型缺失、超时、空转写、无效 WAV、VoiceProfile 错误或推理异常，只会让当前 STT/TTS 端回退到稳定模型；不会重跑 YunXi Agent 对话，也不会跳过人格、记忆、陪伴、工具或审批。连续质量故障会触发按端熔断，冷却后再试。
 
+实时会话有单独的延迟策略：当请求包含 `realtime: true` 时，STT 仍可使用 faster-whisper，但 TTS 固定走 CosyVoice，避免 IndexTTS2 对每个回复短句重复产生数秒等待。普通按键对讲、`voice speak` 和 `voice chat` 不设置该字段，仍按 `quality` / `auto` 规则使用 IndexTTS2。IndexTTS2 没有收到显式情绪标签时，会直接从回复文本确定性选择情绪向量，不会增加一次模型调用。
+
 ```mermaid
 flowchart LR
     AUDIO["同一份内存音频"] --> ROUTER["VoiceBackendRouter"]
@@ -237,11 +239,11 @@ yunxi voice doctor
 | --- | --- | --- | --- |
 | `GET` | `/health` | 无 | JSON 健康状态与 `schema_version` |
 | `POST` | `/v1/transcribe` | `audio/wav` 请求体 | JSON 转写结果 |
-| `POST` | `/v1/synthesize` | `{text, voice, format:"wav"}` | `audio/wav` |
+| `POST` | `/v1/synthesize` | `{text, voice, format:"wav", realtime?:boolean}` | `audio/wav` |
 
 主仓库中的 `yunxi-agent-voice` 会校验 schema、输入输出大小、URL 范围和可选 Bearer Token。协议变更必须先保持两个仓库兼容，再分别发布。
 
-`GET /health` 保持 schema v1，并向后兼容地增加 `mode`、`backends`、`active`、`fallback`、`circuit_breaker` 与 `capabilities`。未来全双工/低延迟流式能力会新增 WebSocket API v2，不会破坏现有 HTTP v1。
+`GET /health` 保持 schema v1，并向后兼容地增加 `mode`、`backends`、`active`、`realtime`、`fallback`、`circuit_breaker` 与 `capabilities`。未来全双工/低延迟流式能力会新增 WebSocket API v2，不会破坏现有 HTTP v1。
 
 ## 测试
 
@@ -275,4 +277,4 @@ python .\smoke_mock.py
 - VoiceProfile 的参考音频路径和原文不出现在公开健康信息或普通请求日志中。
 - 不要把 Token 写入仓库、README、脚本或截图。
 - 语音不会自动批准工具调用，所有审批仍由 YunXi Agent 控制。
-- 当前质量模式已支持 VoiceProfile 驱动的音色克隆；实时模式仍是半双工，尚不包含流式 STT、服务端流式 TTS 或语音插话。
+- 当前质量模式已支持 VoiceProfile 驱动的音色克隆和文本情绪向量；实时模式优先低延迟的稳定 TTS，仍是半双工，尚不包含流式 STT、服务端流式 TTS 或语音插话。

@@ -269,6 +269,12 @@ pub struct SynthesisRequest {
     pub text: String,
     pub voice: String,
     pub format: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub realtime: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1169,6 +1175,7 @@ mod tests {
                 text: "你好。".to_string(),
                 voice: DEFAULT_PRESET_VOICE.to_string(),
                 format: "wav".to_string(),
+                realtime: false,
             })
             .await
             .expect("synthesize");

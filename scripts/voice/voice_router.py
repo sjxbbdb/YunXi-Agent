@@ -18,7 +18,13 @@ class VoiceBackend(Protocol):
 
     def transcribe(self, audio: bytes, language: str | None) -> dict[str, Any]: ...
 
-    def synthesize(self, text: str, voice_id: str, emotion: str | None = None) -> bytes: ...
+    def synthesize(
+        self,
+        text: str,
+        voice_id: str,
+        emotion: str | None = None,
+        realtime: bool = False,
+    ) -> bytes: ...
 
 
 def env_float(name: str, default: float, minimum: float, maximum: float) -> float:
@@ -151,9 +157,20 @@ class QualityVoiceHttpClient:
             raise RuntimeError("quality voice returned an empty transcription")
         return payload
 
-    def synthesize(self, text: str, voice_id: str, emotion: str | None = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        voice_id: str,
+        emotion: str | None = None,
+        realtime: bool = False,
+    ) -> bytes:
         payload = json.dumps(
-            {"text": text, "voice": voice_id, "format": "wav", "emotion": emotion},
+            {
+                "text": text,
+                "voice": voice_id,
+                "format": "wav",
+                "emotion": emotion,
+            },
             ensure_ascii=False,
         ).encode("utf-8")
         _content_type, body = self._request(
@@ -223,11 +240,20 @@ class VoiceBackendRouter:
                 self._record_failure("stt", error)
         return self.stable.transcribe(audio, language)
 
-    def synthesize(self, text: str, voice_id: str, emotion: str | None = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        voice_id: str,
+        emotion: str | None = None,
+        realtime: bool = False,
+    ) -> bytes:
+        if realtime:
+            # Real-time turns prioritize continuity and interruption latency.
+            return self.stable.synthesize(text, voice_id, emotion, True)
         if self._quality_allowed("tts"):
             try:
                 result = run_with_timeout(
-                    lambda: self.quality.synthesize(text, voice_id, emotion),  # type: ignore[union-attr]
+                    lambda: self.quality.synthesize(text, voice_id, emotion, False),  # type: ignore[union-attr]
                     self.timeout,
                 )
                 if len(result) < 44 or result[0:4] != b"RIFF" or result[8:12] != b"WAVE":
@@ -236,7 +262,7 @@ class VoiceBackendRouter:
                 return result
             except Exception as error:
                 self._record_failure("tts", error)
-        return self.stable.synthesize(text, voice_id, emotion)
+        return self.stable.synthesize(text, voice_id, emotion, False)
 
     @staticmethod
     def _safe_health(backend: VoiceBackend | None) -> dict[str, Any]:
@@ -271,6 +297,7 @@ class VoiceBackendRouter:
                 "stt": "quality" if stt_quality else "stable",
                 "tts": "quality" if tts_quality else "stable",
             },
+            "realtime": {"stt": "quality" if stt_quality else "stable", "tts": "stable"},
             "fallback": {"count": self._fallback_count, "last": self._last_fallback},
             "circuit_breaker": {name: circuit.health() for name, circuit in self._circuits.items()},
             "capabilities": {

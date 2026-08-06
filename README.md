@@ -36,7 +36,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 - **行动必须可控。** 工具调用经过明确策略与审批，不因“陪伴”而绕过工作区、安全或隐私边界。
 - **能力必须诚实。** 没有在线凭证时明确进入离线模式；失败、降级和未验证状态不会被包装成成功。
 
-当前稳定版本为 `v2.3.3-hotfix.22`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
+当前稳定版本为 `v2.3.3-hotfix.23`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
 
 > [!NOTE]
 > 默认人格开启；长期记忆、主动陪伴和情书生成默认关闭。YunXi 会在没有 Provider 凭证时使用带明确标记的离线 Runtime，不会伪造在线模型回复。
@@ -335,6 +335,8 @@ Set-Location "D:\YunXi Voice Runtime Source"
 
 质量 STT/TTS 的导入、缺文件、超时、空结果、无效 WAV 或推理错误只会回退当前语音端，不会重跑 Agent turn。连续质量故障会触发按端熔断；`voice doctor --json` 可查看 `mode`、`active`、`fallback`、`circuit_breaker` 和 `capabilities`。VoiceProfile 模板位于语音仓库的 `voice-profile.example.json`，参考音频、原文和生成文件只保存在被 Git 忽略的本机运行目录。
 
+实时会话与高质量朗读采用不同的延迟策略：即使 sidecar 运行在 `quality` 或 `auto` 模式，`/voice realtime on` 的转写仍可使用 faster-whisper，但分段 TTS 会明确走稳定的 CosyVoice，避免 IndexTTS2 每个短句数秒的推理延迟。非实时 `voice speak`、`voice chat` 和普通按键对讲仍可使用 IndexTTS2；没有显式情绪标签时，质量 worker 会从回复文本中确定性选择温柔、开心、关心、难过、严肃、惊讶或生气的情绪向量，不会为情绪判断额外调用模型。
+
 YunXi Agent 默认连接 `http://127.0.0.1:17862`，无需额外配置。另开 PowerShell 验证：
 
 ```powershell
@@ -379,7 +381,7 @@ yunxi> /voice realtime off
 
 `voice talk` 提供独立终端中的同类按键对讲。两种模式的录音都只保存在内存中，识别后进入同一套 YunXi Runtime，并在合成完成后通过默认扬声器播放。单次文件命令仍使用 WAV。
 
-当前实时模式是 VAD 驱动的免按键半双工对话，不是全双工通话；支持键盘停止播放，但暂不支持用语音插话打断、流式 STT、服务端流式 TTS、音色克隆、JSONL 或语音直接批准工具。工具审批继续使用现有交互，语音内容不会自动放宽权限。
+当前实时模式是 VAD 驱动的免按键半双工对话，不是全双工通话；支持键盘停止播放，但暂不支持用语音插话打断、流式 STT、服务端流式 TTS、质量链音色克隆、JSONL 或语音直接批准工具。工具审批继续使用现有交互，语音内容不会自动放宽权限。
 
 ## 使用方式
 
@@ -584,7 +586,7 @@ target\release\yunxi.exe
 
 ## 版本与许可
 
-- 当前版本：`v2.3.3-hotfix.22`
+- 当前版本：`v2.3.3-hotfix.23`
 - 主要目标：`x86_64-pc-windows-msvc`
 - Rust edition：`2024`
 - Workspace license：`Apache-2.0`

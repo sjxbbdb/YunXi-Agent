@@ -377,7 +377,7 @@ async fn synthesize_and_play_response(
         .first()
         .expect("speakable text always produces at least one chunk");
     let first_tts_started = Instant::now();
-    let mut current_audio = synthesize_chunk(client, first_chunk.clone()).await?;
+    let mut current_audio = synthesize_chunk(client, first_chunk.clone(), realtime).await?;
     let first_tts_ms = first_tts_started.elapsed().as_millis();
     let mut current_tts_ms = first_tts_ms;
 
@@ -398,11 +398,12 @@ async fn synthesize_and_play_response(
         }));
         let next_chunk = speech.chunks.get(index + 1).cloned();
         let next_client = client.clone();
+        let next_realtime = realtime;
         let mut next_synthesis = Box::pin(async move {
             match next_chunk {
                 Some(chunk) => {
                     let started = Instant::now();
-                    let result = synthesize_chunk(&next_client, chunk).await;
+                    let result = synthesize_chunk(&next_client, chunk, next_realtime).await;
                     Some((result, started.elapsed().as_millis()))
                 }
                 None => None,
@@ -497,12 +498,14 @@ fn playback_status(
 async fn synthesize_chunk(
     client: &VoiceRuntimeClient,
     text: String,
+    realtime: bool,
 ) -> yunxi_agent_voice::VoiceResult<SynthesizedAudio> {
     client
         .synthesize(SynthesisRequest {
             text,
             voice: DEFAULT_PRESET_VOICE.to_string(),
             format: "wav".to_string(),
+            realtime,
         })
         .await
 }

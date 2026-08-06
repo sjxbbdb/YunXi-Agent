@@ -49,7 +49,13 @@ class FakeBackend:
             raise self.transcribe_error
         return self.transcript
 
-    def synthesize(self, text: str, voice: str, emotion: str | None = None) -> bytes:
+    def synthesize(
+        self,
+        text: str,
+        voice: str,
+        emotion: str | None = None,
+        _realtime: bool = False,
+    ) -> bytes:
         self.synthesize_inputs.append((text, voice, emotion))
         if self.synthesize_delay:
             time.sleep(self.synthesize_delay)
@@ -115,6 +121,12 @@ class VoiceBackendRouterTests(unittest.TestCase):
         self.quality.audio = b"not a wav"
         router = VoiceBackendRouter(self.stable, self.quality, "quality")
         self.assertIs(router.synthesize("reply", "中文女"), self.stable.audio)
+
+    def test_realtime_tts_uses_stable_backend_without_calling_quality(self) -> None:
+        router = VoiceBackendRouter(self.stable, self.quality, "quality")
+        self.assertIs(router.synthesize("reply", "中文女", realtime=True), self.stable.audio)
+        self.assertEqual(self.quality.synthesize_inputs, [])
+        self.assertEqual(router.health()["realtime"]["tts"], "stable")
 
     def test_quality_timeout_falls_back_without_waiting_for_worker(self) -> None:
         self.quality.transcribe_delay = 0.2

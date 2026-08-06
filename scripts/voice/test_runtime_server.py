@@ -6,6 +6,7 @@ from runtime_server import (
     normalize_yunxi_brand_transcript,
     resolve_voice_language,
 )
+from quality_runtime_server import infer_reply_emotion
 
 
 class YunXiBrandTranscriptTests(unittest.TestCase):
@@ -44,6 +45,12 @@ class YunXiBrandTranscriptTests(unittest.TestCase):
         self.assertEqual(resolve_voice_language("auto", "zh"), "zh")
         self.assertEqual(resolve_voice_language(None, "zh"), "zh")
         self.assertEqual(resolve_voice_language("en", "zh"), "en")
+
+    def test_reply_emotion_is_deterministic_without_an_extra_model(self) -> None:
+        self.assertEqual(infer_reply_emotion("太好了，我真的很开心。"), "happy")
+        self.assertEqual(infer_reply_emotion("听起来很难过，我有点心疼你。"), "sad")
+        self.assertEqual(infer_reply_emotion("我在这里，慢慢说。"), "gentle")
+        self.assertEqual(infer_reply_emotion("普通内容", "serious"), "serious")
 
 
 if __name__ == "__main__":

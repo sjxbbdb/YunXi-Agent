@@ -1,17 +1,19 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::ilink::WeixinMessage;
+use crate::ilink::{VoiceItem, WeixinMessage};
 use crate::redaction::redacted_identifier;
 use crate::{SecretString, WeixinPeerId};
 
 const TEXT_ITEM_TYPE: u32 = 1;
+const VOICE_ITEM_TYPE: u32 = 3;
 pub const WEIXIN_PENDING_PAYLOAD_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WeixinInboundKind {
     Text,
+    Voice,
     UnsupportedAttachment,
     GroupMessage,
     SelfMessage,
@@ -23,9 +25,14 @@ impl WeixinInboundKind {
         matches!(self, Self::Text)
     }
 
+    pub fn is_pairable_private(self) -> bool {
+        matches!(self, Self::Text | Self::Voice)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Text => "text",
+            Self::Voice => "voice",
             Self::UnsupportedAttachment => "unsupported_attachment",
             Self::GroupMessage => "group_message",
             Self::SelfMessage => "self_message",
@@ -98,13 +105,23 @@ impl WeixinInboundEnvelope {
         message: &WeixinMessage,
         item_id: &str,
     ) -> Option<WeixinPendingInboundPayload> {
-        if self.kind != WeixinInboundKind::Text {
-            return None;
-        }
-        let text = first_text_item(message)?;
+        self.recoverable_payload(message, item_id)
+            .filter(|payload| payload.payload_kind == WeixinInboundKind::Text)
+    }
+
+    pub fn recoverable_payload(
+        &self,
+        message: &WeixinMessage,
+        item_id: &str,
+    ) -> Option<WeixinPendingInboundPayload> {
+        let (text, voice) = match self.kind {
+            WeixinInboundKind::Text => (Some(first_text_item(message)?), None),
+            WeixinInboundKind::Voice => (None, Some(first_voice_item(message)?)),
+            _ => return None,
+        };
         Some(WeixinPendingInboundPayload {
             schema_version: WEIXIN_PENDING_PAYLOAD_SCHEMA_VERSION,
-            payload_kind: WeixinInboundKind::Text,
+            payload_kind: self.kind,
             account_id: self.account_id.clone(),
             peer_id_hash: self.peer_id_hash.clone(),
             message_id_hash: self.message_id_hash.clone(),
@@ -114,7 +131,8 @@ impl WeixinInboundEnvelope {
             context_reference_id: self.context_reference_id.clone(),
             reply_to_user_id: Some(message.reply_target_id()),
             reply_context_token: message.context_token.clone(),
-            text: Some(text),
+            text,
+            voice,
         })
     }
 }
@@ -136,6 +154,40 @@ pub struct WeixinPendingInboundPayload {
     pub reply_context_token: Option<SecretString>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<SecretString>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<WeixinInboundVoice>,
+}
+
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct WeixinInboundVoice {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypt_query_param: Option<SecretString>,
+    pub aes_key: SecretString,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_url: Option<SecretString>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encode_type: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playtime: Option<u64>,
+}
+
+impl fmt::Debug for WeixinInboundVoice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("WeixinInboundVoice")
+            .field(
+                "encrypt_query_param",
+                &self.encrypt_query_param.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("aes_key", &"[REDACTED]")
+            .field("full_url", &self.full_url.as_ref().map(|_| "[REDACTED]"))
+            .field("encode_type", &self.encode_type)
+            .field("sample_rate", &self.sample_rate)
+            .field("playtime", &self.playtime)
+            .finish()
+    }
 }
 
 impl fmt::Debug for WeixinPendingInboundPayload {
@@ -160,6 +212,7 @@ impl fmt::Debug for WeixinPendingInboundPayload {
                 &self.reply_context_token.as_ref().map(|_| "[REDACTED]"),
             )
             .field("text", &self.text.as_ref().map(|_| "[REDACTED]"))
+            .field("voice", &self.voice)
             .finish()
     }
 }
@@ -216,6 +269,11 @@ fn classify_message(
     }) {
         return WeixinInboundKind::Text;
     }
+    if message.item_list.iter().any(|item| {
+        item.item_type == VOICE_ITEM_TYPE && item.voice_item.as_ref().is_some_and(valid_voice_item)
+    }) {
+        return WeixinInboundKind::Voice;
+    }
     WeixinInboundKind::UnsupportedAttachment
 }
 
@@ -234,11 +292,49 @@ fn first_text_item(message: &WeixinMessage) -> Option<SecretString> {
     })
 }
 
+fn first_voice_item(message: &WeixinMessage) -> Option<WeixinInboundVoice> {
+    message.item_list.iter().find_map(|item| {
+        if item.item_type != VOICE_ITEM_TYPE {
+            return None;
+        }
+        let voice = item
+            .voice_item
+            .as_ref()
+            .filter(|voice| valid_voice_item(voice))?;
+        Some(WeixinInboundVoice {
+            encrypt_query_param: voice.media.as_ref()?.encrypt_query_param.clone(),
+            aes_key: voice.media.as_ref()?.aes_key.clone()?,
+            full_url: voice.media.as_ref()?.full_url.clone(),
+            encode_type: voice.encode_type,
+            sample_rate: voice.sample_rate,
+            playtime: voice.playtime,
+        })
+    })
+}
+
+fn valid_voice_item(voice: &VoiceItem) -> bool {
+    let Some(media) = voice.media.as_ref() else {
+        return false;
+    };
+    media
+        .aes_key
+        .as_ref()
+        .is_some_and(|value| !value.is_empty())
+        && (media
+            .encrypt_query_param
+            .as_ref()
+            .is_some_and(|value| !value.is_empty())
+            || media
+                .full_url
+                .as_ref()
+                .is_some_and(|value| !value.is_empty()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::WeixinMessageId;
-    use crate::ilink::{MessageItem, TextItem};
+    use crate::ilink::{CdnMedia, MessageItem, TextItem, VoiceItem};
 
     fn message() -> WeixinMessage {
         WeixinMessage {
@@ -256,11 +352,36 @@ mod tests {
                 text_item: Some(TextItem {
                     text: SecretString::new("raw message body"),
                 }),
+                voice_item: None,
                 is_completed: Some(true),
                 msg_id: None,
             }],
             context_token: Some(SecretString::new("context-token-secret")),
         }
+    }
+
+    fn voice_message() -> WeixinMessage {
+        let mut message = message();
+        message.item_list = vec![MessageItem {
+            item_type: VOICE_ITEM_TYPE,
+            text_item: None,
+            voice_item: Some(VoiceItem {
+                media: Some(CdnMedia {
+                    encrypt_query_param: Some(SecretString::new("private-download-param")),
+                    aes_key: Some(SecretString::new("private-aes-key")),
+                    encrypt_type: Some(1),
+                    full_url: None,
+                }),
+                encode_type: Some(6),
+                bits_per_sample: Some(16),
+                sample_rate: Some(24_000),
+                playtime: Some(1_500),
+                text: Some(SecretString::new("untrusted-weixin-transcript")),
+            }),
+            is_completed: Some(true),
+            msg_id: None,
+        }];
+        message
     }
 
     #[test]
@@ -312,6 +433,33 @@ mod tests {
         }
         let plaintext = payload.to_plaintext_bytes().expect("plaintext bytes");
         assert!(String::from_utf8_lossy(&plaintext).contains("raw message body"));
+    }
+
+    #[test]
+    fn recoverable_voice_payload_redacts_media_secrets_and_ignores_remote_transcript() {
+        let message = voice_message();
+        let envelope = WeixinInboundEnvelope::from_message("account#933b5bde", None, &message, 7);
+        assert_eq!(envelope.kind, WeixinInboundKind::Voice);
+        let payload = envelope
+            .recoverable_payload(&message, &envelope.pending_item_id())
+            .expect("voice payload");
+        assert_eq!(payload.payload_kind, WeixinInboundKind::Voice);
+        assert!(payload.text.is_none());
+        let voice = payload.voice.as_ref().expect("voice metadata");
+        assert_eq!(voice.encode_type, Some(6));
+        let rendered = format!("{payload:?}");
+        for forbidden in [
+            "private-download-param",
+            "private-aes-key",
+            "untrusted-weixin-transcript",
+        ] {
+            assert!(!rendered.contains(forbidden));
+        }
+        let plaintext =
+            String::from_utf8(payload.to_plaintext_bytes().expect("plaintext")).expect("utf8");
+        assert!(plaintext.contains("private-download-param"));
+        assert!(plaintext.contains("private-aes-key"));
+        assert!(!plaintext.contains("untrusted-weixin-transcript"));
     }
 
     #[test]

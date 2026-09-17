@@ -27,7 +27,7 @@ pub use event::{
     FileChangeKind, McpToolStatus, OutputIntegrity, PatchStatus, ThreadRuntimeState, TodoStatus,
     TokenUsage, TurnRuntimeMetadata, TurnRuntimeState,
 };
-pub use input::{AgentInput, AgentInputModality};
+pub use input::{AgentInput, AgentInputChannel, AgentInputModality};
 pub use runner::Agent;
 pub use stream::{
     AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunControl, AgentRunStreamReceiver,

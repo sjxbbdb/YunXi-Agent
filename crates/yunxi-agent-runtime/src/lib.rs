@@ -26,12 +26,12 @@ use yunxi_agent_context::{
 };
 use yunxi_agent_core::{
     AgentBackend, AgentCancellationToken, AgentConfig, AgentError, AgentEvent, AgentInput,
-    AgentInputModality, AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase,
-    AgentResult, AgentRunApprovalDecision, AgentRunControl, AgentRunResult, AgentRunStatus,
-    CommandExecutionDetails, CommandStatus, CompanionHistoryRecord, ControlScope,
-    ControlScopeSnapshot, ControlSnapshot, ControlSource, DecodedExecOutput, FileChangeKind,
-    MemoryExtractionMode, OutputIntegrity, ThreadRuntimeState, TokenUsage, TurnRuntimeMetadata,
-    TurnRuntimeState,
+    AgentInputChannel, AgentInputModality, AgentMessageSequence, AgentMessageStream,
+    AgentMessageStreamPhase, AgentResult, AgentRunApprovalDecision, AgentRunControl,
+    AgentRunResult, AgentRunStatus, CommandExecutionDetails, CommandStatus, CompanionHistoryRecord,
+    ControlScope, ControlScopeSnapshot, ControlSnapshot, ControlSource, DecodedExecOutput,
+    FileChangeKind, MemoryExtractionMode, OutputIntegrity, ThreadRuntimeState, TokenUsage,
+    TurnRuntimeMetadata, TurnRuntimeState,
 };
 use yunxi_agent_exec::{ExecLifecycleEvent, ExecOutputStream};
 use yunxi_agent_multi_agent::{
@@ -39,7 +39,8 @@ use yunxi_agent_multi_agent::{
     InMemoryAgentRegistry, MultiAgentCommand, MultiAgentCommandResult,
 };
 use yunxi_agent_persona::{
-    CompiledPersonaContext, HumanProfile, MemoryKind, MemoryPipeline, MemoryPipelineInput,
+    CompiledPersonaContext, ConversationState, HumanProfile, HumanProfileStore,
+    LocalChargramEmbedding, MemoryKind, MemoryPipeline, MemoryPipelineInput,
     MemoryRecallExplanation, MemoryRecallResult, MemoryRecallRouter, MemoryRecallRouterRequest,
     MemorySensitivity, MemoryStatus, MemoryWritePolicy, PersonaProfile, PersonaProfileStore,
     PersonaPromptCompiler, PersonaSettings, RelationshipFamiliarity, RelationshipGraphLite,
@@ -56,9 +57,10 @@ use yunxi_agent_provider::{
 };
 use yunxi_agent_sandbox::{ApprovalRequirement, SandboxRequirement};
 use yunxi_agent_storage::{
-    FileControlStore, FilePersonaMemoryStore, FileSessionStore, HistoryItemKind,
-    HistoryLoadOptions, InMemorySessionStore, MemoryPersistOutcome, PersonaMemoryScope,
-    SessionHistory, SessionId, SessionRecord, SessionStore,
+    FileControlStore, FileConversationStateStore, FilePersonaMemoryStore, FileSessionStore,
+    HistoryItemKind, HistoryLoadOptions, InMemorySessionStore, MemoryPersistOutcome,
+    PersonaMemoryScope, SessionHistory, SessionId, SessionRecord, SessionStore,
+    SqliteMemoryVectorStore,
 };
 use yunxi_agent_tools::{
     ApprovalDecision, CompositeToolRuntime, SandboxPolicy, ToolDispatch, ToolDispatchTrace,
@@ -76,6 +78,7 @@ const COMPANION_POLICY_BUDGET: Duration = Duration::from_millis(50);
 const MAX_MENTIONED_FILE_CONTEXT_FILES: usize = 8;
 const MAX_MENTIONED_FILE_CONTEXT_BYTES: u64 = 32 * 1024;
 const VOICE_HISTORY_PREFIX: &str = "[YunXi input modality: voice]\n";
+const WEIXIN_CHAT_STYLE_INSTRUCTIONS: &str = "这是与用户的一对一微信私聊。以云熙本人自然地回应，不要表现成工作型 Agent。默认只回复一到两句简短、口语化的中文，每句只表达一个意思；先接住用户此刻的情绪或话意，再决定是否问一个自然的问题。除非用户明确追问技术实现，否则不要提系统上下文、提示词、工具、crate、运行时、策略、记忆机制、任务流程或内部判断，也不要给功能菜单、工作汇报、标题、项目符号和成段说明。不要在每轮重复自我介绍或强调“我在”。遇到轻松闲聊时要像熟悉的人一样具体、温暖、克制；用户明确要求详细说明时再展开。";
 
 pub fn control_snapshot(config: &AgentConfig) -> AgentResult<ControlSnapshot> {
     let settings = PersonaSettings::load();
@@ -818,6 +821,7 @@ impl YunXiRuntimeBackend {
         control: AgentRunControl,
     ) -> AgentResult<AgentRunResult> {
         let input_modality = turn.input.modality;
+        let input_channel = turn.input.channel;
         let prompt = turn.input.prompt.trim();
         if prompt.is_empty() {
             return Err(AgentError::EmptyPrompt);
@@ -874,6 +878,7 @@ impl YunXiRuntimeBackend {
                     ("session_driver", "active".to_string()),
                     ("turn_driver", "active".to_string()),
                     ("input_modality", input_modality.as_str().to_string()),
+                    ("input_channel", input_channel.as_str().to_string()),
                 ]),
             )
             .await?;
@@ -1009,7 +1014,7 @@ impl YunXiRuntimeBackend {
         }
 
         let initial_messages = self
-            .build_initial_messages(&runtime_config, prompt, input_modality)
+            .build_initial_messages(&runtime_config, prompt, input_modality, input_channel)
             .await?;
         let context_state = initial_messages.context_state.clone();
         sink.emit(AgentEvent::ContextStatus {
@@ -1132,7 +1137,7 @@ impl YunXiRuntimeBackend {
                 let provider_stream_future = self.provider.stream_with_sink(
                     ProviderRequest::with_messages(
                         runtime_config.clone(),
-                        AgentInput::with_modality(prompt, input_modality),
+                        AgentInput::with_channel(prompt, input_modality, input_channel),
                         messages.clone(),
                     )
                     .with_tools_enabled(tools_enabled),
@@ -1370,6 +1375,18 @@ impl YunXiRuntimeBackend {
                 &runtime_config,
                 &initial_messages.persona,
             )
+            .await?;
+        }
+        if let Err(error) = persist_conversation_state(
+            &runtime_config,
+            &session_id,
+            prompt,
+            &final_response,
+            initial_messages.persona.conversation_state.as_ref(),
+        ) {
+            sink.emit(AgentEvent::Warning {
+                message: format!("short-term conversation state was not saved: {error}"),
+            })
             .await?;
         }
         sink.emit(AgentEvent::Completed {
@@ -1939,6 +1956,7 @@ struct PersonaTurnContext {
     display_name: String,
     workspace_fingerprint: String,
     relationship: RelationshipState,
+    conversation_state: Option<ConversationState>,
     companion_persona_style: CompanionPersonaStyle,
     companion_consistency_key: Option<String>,
     compiled_context: Option<CompiledPersonaContext>,
@@ -2401,6 +2419,7 @@ impl YunXiRuntimeBackend {
         config: &AgentConfig,
         prompt: &str,
         input_modality: AgentInputModality,
+        input_channel: AgentInputChannel,
     ) -> AgentResult<InitialMessages> {
         let mut messages = Vec::new();
         let agents = load_agents_md_hierarchy(&config.cwd)?;
@@ -2436,6 +2455,9 @@ impl YunXiRuntimeBackend {
         let persona = build_persona_turn_context(config, &recall_query, restored_history.is_none());
         if let Some(compiled_context) = &persona.compiled_context {
             messages.push(ProviderMessage::system(compiled_context.content.clone()));
+        }
+        if let Some(instructions) = channel_style_instructions(input_channel) {
+            messages.push(ProviderMessage::system(instructions));
         }
 
         let mentioned_context = load_mentioned_file_context(&config.cwd, prompt)?;
@@ -2524,6 +2546,13 @@ impl YunXiRuntimeBackend {
     }
 }
 
+fn channel_style_instructions(channel: AgentInputChannel) -> Option<&'static str> {
+    match channel {
+        AgentInputChannel::Local => None,
+        AgentInputChannel::Weixin => Some(WEIXIN_CHAT_STYLE_INSTRUCTIONS),
+    }
+}
+
 fn build_persona_turn_context(
     config: &AgentConfig,
     recall_query: &str,
@@ -2533,6 +2562,22 @@ fn build_persona_turn_context(
     let profile = PersonaProfileStore::load_active(&settings);
     let store = FilePersonaMemoryStore::for_workspace(&config.cwd);
     let mut memory_warnings = Vec::new();
+    let conversation_store = FileConversationStateStore::for_workspace(&config.cwd);
+    let conversation_state = config
+        .parent_session_id
+        .as_deref()
+        .or(config.session_id.as_deref())
+        .and_then(|session_id| {
+            match conversation_store.load_active(session_id, persona_now_millis()) {
+                Ok(state) => state,
+                Err(error) => {
+                    memory_warnings.push(format!(
+                        "conversation state loading skipped for {session_id}: {error}"
+                    ));
+                    None
+                }
+            }
+        });
     let mut boot_context = MemoryRecallResult::default();
     let mut dynamic_recall = MemoryRecallResult::default();
     let mut recall_explanations = Vec::new();
@@ -2540,10 +2585,29 @@ fn build_persona_turn_context(
 
     if settings.memory_enabled {
         let loaded = store.list(PersonaMemoryScope::All);
-        memory_warnings = loaded.warnings;
+        memory_warnings.extend(loaded.warnings);
         memory_records = loaded.records;
         let mut request = MemoryRecallRouterRequest::new(recall_query);
         request.workspace_fingerprint = Some(store.workspace_fingerprint().to_string());
+        let vector_store = SqliteMemoryVectorStore::for_workspace(&config.cwd);
+        let embedding_provider = LocalChargramEmbedding::default();
+        if let Err(error) = vector_store.sync_records(&memory_records, &embedding_provider) {
+            memory_warnings.push(format!(
+                "long-term vector index sync skipped; lexical recall remains available: {error}"
+            ));
+        } else {
+            match vector_store.search(recall_query, 32, &embedding_provider) {
+                Ok(search) => {
+                    for item in search.matches {
+                        request.set_semantic_score(item.memory_id, item.score);
+                    }
+                    memory_warnings.extend(search.warnings);
+                }
+                Err(error) => memory_warnings.push(format!(
+                    "long-term vector recall skipped; lexical recall remains available: {error}"
+                )),
+            }
+        }
         if !include_boot_context {
             request.boot_max_records = 0;
             request.boot_budget_chars = 0;
@@ -2553,6 +2617,19 @@ fn build_persona_turn_context(
         dynamic_recall = routed.dynamic_recall;
         recall_explanations = routed.explanations;
     }
+
+    let human_profile_store = HumanProfileStore::default();
+    let human_profile = match if settings.memory_enabled {
+        human_profile_store.load_with_memory_overlay(&memory_records)
+    } else {
+        human_profile_store.load()
+    } {
+        Ok(profile) => profile,
+        Err(error) => {
+            memory_warnings.push(format!("human profile loading fell back to empty: {error}"));
+            HumanProfile::default()
+        }
+    };
 
     let relationship = derive_relationship_state(&memory_records);
     let companion_persona_style = if settings.persona_enabled {
@@ -2566,10 +2643,11 @@ fn build_persona_turn_context(
 
     let compiled_context = if settings.persona_enabled {
         Some(
-            PersonaPromptCompiler::for_profile(&profile).compile_routed_for_turn(
+            PersonaPromptCompiler::for_profile(&profile).compile_routed_with_conversation_for_turn(
                 &profile,
-                &HumanProfile::default(),
+                &human_profile,
                 &relationship,
+                conversation_state.as_ref(),
                 &boot_context.records,
                 &dynamic_recall.records,
                 include_boot_context,
@@ -2596,6 +2674,7 @@ fn build_persona_turn_context(
         display_name: profile.display_name,
         workspace_fingerprint: store.workspace_fingerprint().to_string(),
         relationship,
+        conversation_state,
         companion_persona_style,
         companion_consistency_key,
         compiled_context,
@@ -2604,6 +2683,24 @@ fn build_persona_turn_context(
         recall_explanations,
         memory_warnings,
     }
+}
+
+fn persist_conversation_state(
+    config: &AgentConfig,
+    session_id: &SessionId,
+    prompt: &str,
+    final_response: &str,
+    previous: Option<&ConversationState>,
+) -> AgentResult<()> {
+    let state = ConversationState::carry_turn(
+        previous,
+        session_id.0.clone(),
+        config.parent_session_id.clone(),
+        prompt,
+        final_response,
+        persona_now_millis(),
+    );
+    FileConversationStateStore::for_workspace(&config.cwd).save(&state)
 }
 
 fn memory_recall_query(prompt: &str, restored_history: Option<&RestoredHistory>) -> String {
@@ -3155,6 +3252,25 @@ async fn emit_memory_extraction_events(
                 .await?;
             }
         }
+    }
+    let loaded = store.list(PersonaMemoryScope::All);
+    for warning in loaded.warnings {
+        sink.emit(AgentEvent::MemoryWarning {
+            schema_version: SCHEMA_VERSION,
+            warning: format!("long-term vector index read skipped one record: {warning}"),
+        })
+        .await?;
+    }
+    if let Err(error) = SqliteMemoryVectorStore::for_workspace(&config.cwd)
+        .sync_records(&loaded.records, &LocalChargramEmbedding::default())
+    {
+        sink.emit(AgentEvent::MemoryWarning {
+            schema_version: SCHEMA_VERSION,
+            warning: format!(
+                "long-term memory was saved, but vector index refresh was deferred: {error}"
+            ),
+        })
+        .await?;
     }
     Ok(())
 }
@@ -5675,6 +5791,16 @@ mod companion_input_tests {
         MemoryGraphRelation, MemoryKind, MemoryLayer, MemoryRecallRoute, MemoryRecord,
     };
 
+    #[test]
+    fn weixin_channel_adds_private_chat_style_without_affecting_local_runs() {
+        assert!(channel_style_instructions(AgentInputChannel::Local).is_none());
+        let instructions =
+            channel_style_instructions(AgentInputChannel::Weixin).expect("weixin instructions");
+        assert!(instructions.contains("一到两句"));
+        assert!(instructions.contains("不要提系统上下文"));
+        assert!(instructions.contains("像熟悉的人"));
+    }
+
     fn persona_with_relationship_explanation(selected: bool) -> PersonaTurnContext {
         PersonaTurnContext {
             settings: PersonaSettings::default(),
@@ -5682,6 +5808,7 @@ mod companion_input_tests {
             display_name: "Test".to_string(),
             workspace_fingerprint: "workspace".to_string(),
             relationship: RelationshipState::default(),
+            conversation_state: None,
             companion_persona_style: CompanionPersonaStyle::default(),
             companion_consistency_key: None,
             compiled_context: None,

@@ -14,9 +14,16 @@ const nodes = {
   navItems: Array.from(document.querySelectorAll("[data-nav]")),
   views: Array.from(document.querySelectorAll("[data-view]")),
   runtimeStrip: document.querySelector("#runtime-strip"),
+  voiceScene: document.querySelector("#voice-chat-scene"),
+  chatOrbit: document.querySelector(".chat-orbit"),
   chatLog: document.querySelector("#chat-log"),
   composer: document.querySelector("#composer"),
   prompt: document.querySelector("#prompt"),
+  voiceButton: document.querySelector("#voice-button"),
+  voiceOrbCanvas: document.querySelector("#voice-orb-canvas"),
+  voiceCharacterLight: document.querySelector("#voice-character-light"),
+  voiceStatus: document.querySelector("#voice-status"),
+  voiceStatusLabel: document.querySelector("#voice-status-label"),
   send: document.querySelector("#send-button"),
   memoryField: document.querySelector("#memory-field"),
   memoryReveal: document.querySelector("#memory-reveal"),
@@ -116,6 +123,26 @@ const state = {
   herArtSwapSequence: 0,
   herRevealTimer: 0,
   sending: false,
+  voiceAvailable: false,
+  voiceState: "checking",
+  voiceRecorder: null,
+  voiceStream: null,
+  voiceChunks: [],
+  voiceStartedAt: 0,
+  voiceTimer: 0,
+  voiceSequence: 0,
+  voiceAudioContext: null,
+  voicePlaybackSource: null,
+  voiceAnalyser: null,
+  voicePlaybackAnalyser: null,
+  voiceLevel: 0,
+  voiceVisualLevel: 0,
+  voiceMeterFrame: 0,
+  voiceRequestController: null,
+  voiceErrorTimer: 0,
+  voiceOrbRenderer: null,
+  voiceOrbPointer: 0,
+  chatOrbitTimeline: null,
 };
 
 function prefersReducedMotion() {
@@ -252,8 +279,859 @@ async function api(path, options = {}) {
   return data;
 }
 
+const VOICE_STATES = Object.freeze({
+  checking: { status: "正在检查语音", action: "正在检查语音" },
+  unavailable: { status: "语音服务未启动", action: "语音服务不可用" },
+  idle: { status: "", action: "开始语音输入" },
+  preparing: { status: "正在连接麦克风", action: "取消连接麦克风" },
+  recording: { status: "正在听", action: "结束录音" },
+  transcribing: { status: "正在识别", action: "正在识别语音" },
+  thinking: { status: "正在思考", action: "正在生成回复" },
+  synthesizing: { status: "正在生成语音", action: "正在生成语音" },
+  playing: { status: "正在播放", action: "停止播放" },
+  error: { status: "语音暂不可用", action: "重新开始语音输入" },
+});
+
+const VOICE_ORB_PROFILES = Object.freeze({
+  checking: { hue: 0, activity: 0.12, speed: 0.16, pulse: 0.02 },
+  unavailable: { hue: -18, activity: 0.04, speed: 0.04, pulse: 0 },
+  idle: { hue: 0, activity: 0.08, speed: 0.12, pulse: 0.025 },
+  preparing: { hue: -8, activity: 0.2, speed: 0.32, pulse: 0.04 },
+  recording: { hue: 0, activity: 0.18, speed: 0.46, pulse: 0.025 },
+  transcribing: { hue: 18, activity: 0.34, speed: 0.82, pulse: 0.065 },
+  thinking: { hue: 26, activity: 0.48, speed: 1.08, pulse: 0.09 },
+  synthesizing: { hue: -12, activity: 0.36, speed: 0.72, pulse: 0.055 },
+  playing: { hue: 0, activity: 0.22, speed: 0.54, pulse: 0.035 },
+  error: { hue: 88, activity: 0.16, speed: 0.14, pulse: 0.02 },
+});
+
+const VOICE_ORB_VERTEX_SHADER = `
+  precision highp float;
+  attribute vec2 position;
+  varying vec2 vUv;
+  void main() {
+    vUv = position * 0.5 + 0.5;
+    gl_Position = vec4(position, 0.0, 1.0);
+  }
+`;
+
+const VOICE_ORB_FRAGMENT_SHADER = `
+  precision highp float;
+
+  uniform float iTime;
+  uniform vec3 iResolution;
+  uniform float hue;
+  uniform float hover;
+  uniform float rot;
+  uniform float hoverIntensity;
+  uniform float activity;
+  varying vec2 vUv;
+
+  vec3 rgb2yiq(vec3 c) {
+    float y = dot(c, vec3(0.299, 0.587, 0.114));
+    float i = dot(c, vec3(0.596, -0.274, -0.322));
+    float q = dot(c, vec3(0.211, -0.523, 0.312));
+    return vec3(y, i, q);
+  }
+
+  vec3 yiq2rgb(vec3 c) {
+    float r = c.x + 0.956 * c.y + 0.621 * c.z;
+    float g = c.x - 0.272 * c.y - 0.647 * c.z;
+    float b = c.x - 1.106 * c.y + 1.703 * c.z;
+    return vec3(r, g, b);
+  }
+
+  vec3 adjustHue(vec3 color, float hueDeg) {
+    float hueRad = hueDeg * 3.14159265 / 180.0;
+    vec3 yiq = rgb2yiq(color);
+    float cosA = cos(hueRad);
+    float sinA = sin(hueRad);
+    float i = yiq.y * cosA - yiq.z * sinA;
+    float q = yiq.y * sinA + yiq.z * cosA;
+    yiq.y = i;
+    yiq.z = q;
+    return yiq2rgb(yiq);
+  }
+
+  vec3 hash33(vec3 p3) {
+    p3 = fract(p3 * vec3(0.1031, 0.11369, 0.13787));
+    p3 += dot(p3, p3.yxz + 19.19);
+    return -1.0 + 2.0 * fract(vec3(
+      p3.x + p3.y,
+      p3.x + p3.z,
+      p3.y + p3.z
+    ) * p3.zyx);
+  }
+
+  float snoise3(vec3 p) {
+    const float K1 = 0.333333333;
+    const float K2 = 0.166666667;
+    vec3 i = floor(p + (p.x + p.y + p.z) * K1);
+    vec3 d0 = p - (i - (i.x + i.y + i.z) * K2);
+    vec3 e = step(vec3(0.0), d0 - d0.yzx);
+    vec3 i1 = e * (1.0 - e.zxy);
+    vec3 i2 = 1.0 - e.zxy * (1.0 - e);
+    vec3 d1 = d0 - (i1 - K2);
+    vec3 d2 = d0 - (i2 - K1);
+    vec3 d3 = d0 - 0.5;
+    vec4 h = max(0.6 - vec4(
+      dot(d0, d0),
+      dot(d1, d1),
+      dot(d2, d2),
+      dot(d3, d3)
+    ), 0.0);
+    vec4 n = h * h * h * h * vec4(
+      dot(d0, hash33(i)),
+      dot(d1, hash33(i + i1)),
+      dot(d2, hash33(i + i2)),
+      dot(d3, hash33(i + 1.0))
+    );
+    return dot(vec4(31.316), n);
+  }
+
+  vec4 extractAlpha(vec3 colorIn) {
+    float a = max(max(colorIn.r, colorIn.g), colorIn.b);
+    return vec4(colorIn.rgb / (a + 1e-5), a);
+  }
+
+  const vec3 baseColor1 = vec3(0.611765, 0.262745, 0.996078);
+  const vec3 baseColor2 = vec3(0.298039, 0.760784, 0.913725);
+  const vec3 baseColor3 = vec3(0.062745, 0.078431, 0.600000);
+  const float innerRadius = 0.66;
+  const float noiseScale = 0.65;
+
+  float light1(float intensity, float attenuation, float dist) {
+    return intensity / (1.0 + dist * attenuation);
+  }
+
+  float light2(float intensity, float attenuation, float dist) {
+    return intensity / (1.0 + dist * dist * attenuation);
+  }
+
+  vec4 draw(vec2 uv) {
+    vec3 color1 = adjustHue(baseColor1, hue);
+    vec3 color2 = adjustHue(baseColor2, hue);
+    vec3 color3 = adjustHue(baseColor3, hue);
+
+    float ang = atan(uv.y, uv.x);
+    float len = length(uv);
+    float invLen = len > 0.0 ? 1.0 / len : 0.0;
+    float dynamicScale = noiseScale + activity * 0.08;
+    float n0 = snoise3(vec3(uv * dynamicScale, iTime * (0.42 + activity * 0.36))) * 0.5 + 0.5;
+    float r0 = mix(mix(innerRadius, 1.0, 0.4), mix(innerRadius, 1.0, 0.6), n0);
+    r0 += (n0 - 0.5) * activity * 0.075;
+    float d0 = distance(uv, (r0 * invLen) * uv);
+    float v0 = light1(1.0 + activity * 0.45, 10.0, d0);
+    v0 *= smoothstep(r0 * 1.05, r0, len);
+    float cl = cos(ang + iTime * (1.45 + activity * 1.25)) * 0.5 + 0.5;
+
+    float a = iTime * (-0.72 - activity * 0.58);
+    vec2 pos = vec2(cos(a), sin(a)) * r0;
+    float d = distance(uv, pos);
+    float v1 = light2(1.35 + activity * 1.7, 5.0, d);
+    v1 *= light1(1.0, 50.0, d0);
+
+    float v2 = smoothstep(1.0, mix(innerRadius, 1.0, n0 * 0.5), len);
+    float v3 = smoothstep(innerRadius, mix(innerRadius, 1.0, 0.5), len);
+    vec3 col = mix(color1, color2, cl);
+    col = mix(color3, col, v0);
+    col = (col + v1) * v2 * v3 * (0.82 + activity * 0.52);
+    col = clamp(col, 0.0, 1.0);
+    return extractAlpha(col);
+  }
+
+  vec4 mainImage(vec2 fragCoord) {
+    vec2 center = iResolution.xy * 0.5;
+    float size = min(iResolution.x, iResolution.y);
+    vec2 uv = (fragCoord - center) / size * 2.0;
+    float s = sin(rot);
+    float c = cos(rot);
+    uv = vec2(c * uv.x - s * uv.y, s * uv.x + c * uv.y);
+    uv.x += hover * hoverIntensity * 0.1 * sin(uv.y * 10.0 + iTime);
+    uv.y += hover * hoverIntensity * 0.1 * sin(uv.x * 10.0 + iTime);
+    return draw(uv);
+  }
+
+  void main() {
+    vec2 fragCoord = vUv * iResolution.xy;
+    vec4 col = mainImage(fragCoord);
+    gl_FragColor = vec4(col.rgb * col.a, col.a);
+  }
+`;
+
+function compileVoiceOrbShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const message = gl.getShaderInfoLog(shader) || "语音球着色器编译失败";
+    gl.deleteShader(shader);
+    throw new Error(message);
+  }
+  return shader;
+}
+
+function createVoiceOrbProgram(gl) {
+  const program = gl.createProgram();
+  const vertex = compileVoiceOrbShader(gl, gl.VERTEX_SHADER, VOICE_ORB_VERTEX_SHADER);
+  const fragment = compileVoiceOrbShader(gl, gl.FRAGMENT_SHADER, VOICE_ORB_FRAGMENT_SHADER);
+  gl.attachShader(program, vertex);
+  gl.attachShader(program, fragment);
+  gl.linkProgram(program);
+  gl.deleteShader(vertex);
+  gl.deleteShader(fragment);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const message = gl.getProgramInfoLog(program) || "语音球程序链接失败";
+    gl.deleteProgram(program);
+    throw new Error(message);
+  }
+  return program;
+}
+
+function sampleVoiceAnalyser(entry) {
+  if (!entry?.analyser || !entry?.samples) return 0;
+  entry.analyser.getByteFrequencyData(entry.samples);
+  let sum = 0;
+  for (const value of entry.samples) {
+    const normalized = value / 255;
+    sum += normalized * normalized;
+  }
+  const rms = Math.sqrt(sum / Math.max(1, entry.samples.length));
+  return clampNumber((rms - 0.018) * 3.8, 0, 1);
+}
+
+function setVoiceVisualLevel(value) {
+  const next = clampNumber(Number(value) || 0, 0, 1);
+  state.voiceLevel = next;
+  if (Math.abs(next - state.voiceVisualLevel) < 0.008) return;
+  state.voiceVisualLevel = next;
+  const formatted = next.toFixed(3);
+  nodes.voiceButton?.style.setProperty("--voice-level", formatted);
+  nodes.voiceScene?.style.setProperty("--voice-level", formatted);
+}
+
+function initVoiceOrb() {
+  const container = nodes.voiceOrbCanvas;
+  if (!container || state.voiceOrbRenderer) return state.voiceOrbRenderer;
+  const canvas = document.createElement("canvas");
+  canvas.setAttribute("aria-hidden", "true");
+  let gl;
+  try {
+    gl = canvas.getContext("webgl", {
+      alpha: true,
+      antialias: true,
+      premultipliedAlpha: true,
+      powerPreference: "high-performance",
+    });
+    if (!gl) throw new Error("WebGL unavailable");
+    const program = createVoiceOrbProgram(gl);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const position = gl.getAttribLocation(program, "position");
+    const uniforms = {
+      time: gl.getUniformLocation(program, "iTime"),
+      resolution: gl.getUniformLocation(program, "iResolution"),
+      hue: gl.getUniformLocation(program, "hue"),
+      hover: gl.getUniformLocation(program, "hover"),
+      rotation: gl.getUniformLocation(program, "rot"),
+      hoverIntensity: gl.getUniformLocation(program, "hoverIntensity"),
+      activity: gl.getUniformLocation(program, "activity"),
+    };
+    gl.useProgram(program);
+    gl.enableVertexAttribArray(position);
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
+    gl.clearColor(0, 0, 0, 0);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    container.replaceChildren(canvas);
+
+    const resize = () => {
+      const rect = container.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+      const width = Math.max(1, Math.round(rect.width * dpr));
+      const height = Math.max(1, Math.round(rect.height * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        canvas.style.width = `${rect.width}px`;
+        canvas.style.height = `${rect.height}px`;
+        gl.viewport(0, 0, width, height);
+      }
+    };
+    const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(resize) : null;
+    resizeObserver?.observe(container);
+    if (!resizeObserver) window.addEventListener("resize", resize);
+    resize();
+
+    let frame = 0;
+    let lastTime = performance.now();
+    let rotation = 0;
+    let currentHue = 0;
+    let currentActivity = 0.08;
+    let currentHover = 0.08;
+    const render = (now) => {
+      frame = window.requestAnimationFrame(render);
+      if (document.hidden || document.querySelector("#view-chat")?.hidden) {
+        lastTime = now;
+        return;
+      }
+      resize();
+      const reduced = prefersReducedMotion();
+      const dt = Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
+      lastTime = now;
+      const profile = VOICE_ORB_PROFILES[state.voiceState] || VOICE_ORB_PROFILES.idle;
+      if (state.voiceState === "playing" && state.voicePlaybackAnalyser) {
+        const sampled = sampleVoiceAnalyser(state.voicePlaybackAnalyser);
+        setVoiceVisualLevel(state.voiceLevel + (sampled - state.voiceLevel) * 0.34);
+      } else if (!['recording', 'playing'].includes(state.voiceState) && state.voiceLevel > 0.002) {
+        setVoiceVisualLevel(state.voiceLevel * 0.88);
+      }
+      const time = reduced ? 0 : now * 0.001;
+      const pulse = reduced ? 0 : Math.sin(time * 2.15) * profile.pulse;
+      const targetActivity = clampNumber(
+        profile.activity + pulse + state.voiceLevel * (state.voiceState === "playing" ? 0.95 : 0.78),
+        0.02,
+        1,
+      );
+      const targetHover = clampNumber(
+        targetActivity * 0.82 + state.voiceLevel * 0.72 + state.voiceOrbPointer * 0.16,
+        0,
+        1,
+      );
+      currentHue += (profile.hue - currentHue) * Math.min(1, dt * 3.4);
+      currentActivity += (targetActivity - currentActivity) * Math.min(1, dt * 5.2);
+      currentHover += (targetHover - currentHover) * Math.min(1, dt * 6.4);
+      if (!reduced) rotation += dt * (profile.speed + state.voiceLevel * 1.65);
+
+      gl.useProgram(program);
+      gl.uniform1f(uniforms.time, time);
+      gl.uniform3f(uniforms.resolution, canvas.width, canvas.height, canvas.width / canvas.height);
+      gl.uniform1f(uniforms.hue, currentHue);
+      gl.uniform1f(uniforms.hover, currentHover);
+      gl.uniform1f(uniforms.rotation, rotation);
+      gl.uniform1f(uniforms.hoverIntensity, 0.42 + currentActivity * 0.38);
+      gl.uniform1f(uniforms.activity, currentActivity);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      nodes.voiceScene?.style.setProperty(
+        "--orb-energy",
+        clampNumber(currentActivity + state.voiceLevel * 0.45, 0.06, 1).toFixed(3),
+      );
+    };
+    frame = window.requestAnimationFrame(render);
+    state.voiceOrbRenderer = {
+      destroy() {
+        window.cancelAnimationFrame(frame);
+        resizeObserver?.disconnect();
+        if (!resizeObserver) window.removeEventListener("resize", resize);
+        gl.deleteBuffer(buffer);
+        gl.deleteProgram(program);
+        gl.getExtension("WEBGL_lose_context")?.loseContext();
+        canvas.remove();
+        state.voiceOrbRenderer = null;
+      },
+    };
+    nodes.voiceScene?.classList.remove("is-orb-fallback");
+    return state.voiceOrbRenderer;
+  } catch (error) {
+    console.warn("Voice orb fallback enabled:", error);
+    canvas.remove();
+    nodes.voiceScene?.classList.add("is-orb-fallback");
+    return null;
+  }
+}
+
+function setVoiceState(next, detail = "") {
+  const definition = VOICE_STATES[next] || VOICE_STATES.idle;
+  state.voiceState = next;
+  if (nodes.voiceButton) {
+    nodes.voiceButton.dataset.state = next;
+    nodes.voiceButton.setAttribute("aria-label", definition.action);
+    nodes.voiceButton.disabled =
+      !state.voiceAvailable ||
+      !["idle", "preparing", "recording", "playing", "error"].includes(next) ||
+      (state.sending && next !== "playing");
+  }
+  if (nodes.composer) nodes.composer.dataset.voiceState = next;
+  if (nodes.voiceScene) nodes.voiceScene.dataset.voiceState = next;
+  if (nodes.voiceStatus) nodes.voiceStatus.dataset.state = next;
+  const status = detail || definition.status;
+  if (nodes.voiceStatus) nodes.voiceStatus.hidden = !status;
+  setNodeText(nodes.voiceStatusLabel, status);
+  animateVoiceControl(next);
+}
+
+function animateVoiceControl(expectedState) {
+  const button = nodes.voiceButton;
+  if (!button || prefersReducedMotion()) return;
+  ensureGsap().then((gsap) => {
+    if (!gsap || state.voiceState !== expectedState) return;
+    const aura = button.querySelector(".voice-orb-aura");
+    gsap.killTweensOf([button, aura]);
+    gsap
+      .timeline({ defaults: { ease: "power3.out", overwrite: "auto" } })
+      .fromTo(
+        button,
+        { scale: expectedState === "recording" ? 0.94 : 0.975 },
+        { scale: 1, duration: 0.42, clearProps: "transform" },
+      )
+      .fromTo(
+        aura,
+        { scale: 0.82, autoAlpha: 0 },
+        {
+          scale: 1,
+          autoAlpha: ["recording", "thinking", "synthesizing", "playing"].includes(expectedState)
+            ? 0.72
+            : 0.32,
+          duration: 0.58,
+          clearProps: "transform,opacity,visibility",
+        },
+        "<",
+      );
+  });
+}
+
+function setVoiceError(message) {
+  window.clearTimeout(state.voiceErrorTimer);
+  setVoiceState("error", message || VOICE_STATES.error.status);
+  state.voiceErrorTimer = window.setTimeout(() => {
+    if (state.voiceState === "error" && state.voiceAvailable) setVoiceState("idle");
+  }, 4800);
+}
+
+async function loadVoiceStatus() {
+  const browserReady =
+    Boolean(navigator.mediaDevices?.getUserMedia) &&
+    typeof window.MediaRecorder === "function" &&
+    Boolean(window.AudioContext || window.webkitAudioContext);
+  if (!browserReady) {
+    state.voiceAvailable = false;
+    setVoiceState("unavailable", "当前浏览器不支持麦克风录音");
+    return;
+  }
+  try {
+    const result = await api("/api/voice/status");
+    state.voiceAvailable = Boolean(result?.available && result?.sttReady && result?.ttsReady);
+    if (nodes.voiceButton && state.voiceAvailable) {
+      nodes.voiceButton.title = "语音输入";
+    }
+    setVoiceState(state.voiceAvailable ? "idle" : "unavailable");
+  } catch {
+    state.voiceAvailable = false;
+    setVoiceState("unavailable");
+  }
+}
+
+async function ensureVoiceAudioContext() {
+  const VoiceAudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!VoiceAudioContext) throw new Error("当前浏览器不支持音频处理");
+  if (!state.voiceAudioContext || state.voiceAudioContext.state === "closed") {
+    state.voiceAudioContext = new VoiceAudioContext();
+  }
+  if (state.voiceAudioContext.state === "suspended") {
+    let timer = 0;
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(() => reject(new Error("音频设备启动超时，请刷新页面后重试")), 5000);
+    });
+    try {
+      await Promise.race([state.voiceAudioContext.resume(), timeout]);
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
+  return state.voiceAudioContext;
+}
+
+async function microphonePermissionState() {
+  if (!navigator.permissions?.query) return "unknown";
+  try {
+    return (await navigator.permissions.query({ name: "microphone" })).state;
+  } catch {
+    return "unknown";
+  }
+}
+
+async function requestMicrophoneStream(constraints, timeoutMs = 12000) {
+  let timer = 0;
+  let timedOut = false;
+  const request = navigator.mediaDevices.getUserMedia(constraints);
+  request
+    .then((stream) => {
+      if (timedOut) stream.getTracks().forEach((track) => track.stop());
+    })
+    .catch(() => {});
+  const timeout = new Promise((_, reject) => {
+    timer = window.setTimeout(() => {
+      timedOut = true;
+      const error = new Error("麦克风授权超时，请允许此网站使用麦克风后重试");
+      error.name = "MicrophoneTimeoutError";
+      reject(error);
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([request, timeout]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+function preferredRecorderMimeType() {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+  return candidates.find((type) => window.MediaRecorder.isTypeSupported?.(type)) || "";
+}
+
+function stopVoiceMeter() {
+  if (state.voiceMeterFrame) window.cancelAnimationFrame(state.voiceMeterFrame);
+  state.voiceMeterFrame = 0;
+  state.voiceAnalyser?.source?.disconnect?.();
+  state.voiceAnalyser = null;
+  if (state.voiceState !== "playing") setVoiceVisualLevel(0);
+}
+
+function startVoiceMeter(stream) {
+  if (prefersReducedMotion() || !state.voiceAudioContext) return;
+  const source = state.voiceAudioContext.createMediaStreamSource(stream);
+  const analyser = state.voiceAudioContext.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.72;
+  source.connect(analyser);
+  const samples = new Uint8Array(analyser.frequencyBinCount);
+  state.voiceAnalyser = { source, analyser, samples };
+
+  const update = () => {
+    if (state.voiceState !== "recording" || state.voiceAnalyser?.analyser !== analyser) return;
+    analyser.getByteFrequencyData(samples);
+    const average = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+    const level = clampNumber((average - 4) / 72, 0.08, 1);
+    setVoiceVisualLevel(level);
+    state.voiceMeterFrame = window.requestAnimationFrame(update);
+  };
+  state.voiceMeterFrame = window.requestAnimationFrame(update);
+}
+
+function cleanupVoiceCapture() {
+  window.clearTimeout(state.voiceTimer);
+  state.voiceTimer = 0;
+  stopVoiceMeter();
+  state.voiceStream?.getTracks?.().forEach((track) => track.stop());
+  state.voiceStream = null;
+  state.voiceRecorder = null;
+}
+
+async function startVoiceRecording() {
+  if (!state.voiceAvailable || state.sending || state.voiceState === "recording") return;
+  stopVoicePlayback(false);
+  window.clearTimeout(state.voiceErrorTimer);
+  setVoiceState("preparing");
+  const sequence = ++state.voiceSequence;
+  try {
+    if ((await microphonePermissionState()) === "denied") {
+      const error = new Error("请在浏览器站点设置中允许麦克风后重试");
+      error.name = "MicrophonePermissionDeniedError";
+      throw error;
+    }
+    await ensureVoiceAudioContext();
+    const stream = await requestMicrophoneStream({
+      video: false,
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    if (sequence !== state.voiceSequence) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    const mimeType = preferredRecorderMimeType();
+    const recorder = new MediaRecorder(stream, {
+      ...(mimeType ? { mimeType } : {}),
+      audioBitsPerSecond: 64000,
+    });
+    state.voiceChunks = [];
+    state.voiceStream = stream;
+    state.voiceRecorder = recorder;
+    state.voiceStartedAt = Date.now();
+    recorder.addEventListener("dataavailable", (event) => {
+      if (event.data?.size) state.voiceChunks.push(event.data);
+    });
+    recorder.addEventListener(
+      "stop",
+      () => {
+        finishVoiceRecording(sequence, recorder.mimeType).catch((error) => {
+          if (sequence === state.voiceSequence) setVoiceError(voiceErrorMessage(error));
+        });
+      },
+      { once: true },
+    );
+    recorder.addEventListener(
+      "error",
+      () => {
+        if (sequence === state.voiceSequence) setVoiceError("录音中断，请重新试一次");
+        cleanupVoiceCapture();
+      },
+      { once: true },
+    );
+    recorder.start(250);
+    setVoiceState("recording", "正在听  00:00");
+    startVoiceMeter(stream);
+    updateRecordingClock(sequence);
+    state.voiceTimer = window.setTimeout(() => stopVoiceRecording(), 60000);
+  } catch (error) {
+    cleanupVoiceCapture();
+    if (sequence === state.voiceSequence) setVoiceError(voiceErrorMessage(error));
+  }
+}
+
+function updateRecordingClock(sequence) {
+  if (sequence !== state.voiceSequence || state.voiceState !== "recording") return;
+  const elapsedSeconds = Math.floor((Date.now() - state.voiceStartedAt) / 1000);
+  const minutes = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0");
+  const seconds = String(elapsedSeconds % 60).padStart(2, "0");
+  setNodeText(nodes.voiceStatusLabel, `正在听  ${minutes}:${seconds}`);
+  window.setTimeout(() => updateRecordingClock(sequence), 500);
+}
+
+function stopVoiceRecording(discard = false) {
+  const recorder = state.voiceRecorder;
+  if (!recorder || recorder.state === "inactive") return;
+  if (discard) state.voiceSequence += 1;
+  window.clearTimeout(state.voiceTimer);
+  state.voiceTimer = 0;
+  stopVoiceMeter();
+  if (!discard) setVoiceState("transcribing");
+  recorder.stop();
+  state.voiceStream?.getTracks?.().forEach((track) => track.stop());
+}
+
+async function finishVoiceRecording(sequence, mimeType) {
+  const duration = Date.now() - state.voiceStartedAt;
+  const chunks = state.voiceChunks.slice();
+  state.voiceChunks = [];
+  cleanupVoiceCapture();
+  if (sequence !== state.voiceSequence) return;
+  if (duration < 450 || chunks.length === 0) {
+    setVoiceError("录音太短，请再说一次");
+    return;
+  }
+
+  const recording = new Blob(chunks, { type: mimeType || "audio/webm" });
+  const wav = await recordingToWav(recording);
+  if (sequence !== state.voiceSequence) return;
+  state.voiceRequestController?.abort?.();
+  state.voiceRequestController = new AbortController();
+  const transcript = await api("/api/voice/transcribe", {
+    method: "POST",
+    headers: { "content-type": "audio/wav" },
+    body: wav,
+    signal: state.voiceRequestController.signal,
+  });
+  const spoken = text(transcript?.text).trim();
+  if (!spoken) {
+    setVoiceError("没有听清，请再说一次");
+    return;
+  }
+
+  setVoiceState("thinking");
+  const result = await sendPrompt(spoken, { source: "voice" });
+  if (sequence !== state.voiceSequence) return;
+  const response = text(result?.finalResponse).trim();
+  if (!response) {
+    setVoiceState("idle");
+    return;
+  }
+
+  setVoiceState("synthesizing");
+  state.voiceRequestController = new AbortController();
+  const audio = await requestVoiceSynthesis(response, state.voiceRequestController.signal);
+  state.voiceRequestController = null;
+  if (sequence !== state.voiceSequence) return;
+  await playVoiceResponse(audio, sequence);
+}
+
+async function recordingToWav(recording) {
+  const context = await ensureVoiceAudioContext();
+  let decoded;
+  try {
+    const bytes = await recording.arrayBuffer();
+    decoded = await context.decodeAudioData(bytes.slice(0));
+  } catch {
+    throw new Error("浏览器没有正确解码录音");
+  }
+  const mono = new Float32Array(decoded.length);
+  for (let channel = 0; channel < decoded.numberOfChannels; channel += 1) {
+    const samples = decoded.getChannelData(channel);
+    const weight = 1 / decoded.numberOfChannels;
+    for (let index = 0; index < samples.length; index += 1) {
+      mono[index] += samples[index] * weight;
+    }
+  }
+  const sampleRate = 16000;
+  const resampled = resampleAudio(mono, decoded.sampleRate, sampleRate);
+  return encodePcmWav(resampled, sampleRate);
+}
+
+function resampleAudio(samples, sourceRate, targetRate) {
+  if (sourceRate === targetRate) return samples;
+  const ratio = sourceRate / targetRate;
+  const length = Math.max(1, Math.round(samples.length / ratio));
+  const output = new Float32Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const position = index * ratio;
+    const left = Math.floor(position);
+    const right = Math.min(left + 1, samples.length - 1);
+    const mix = position - left;
+    output[index] = samples[left] * (1 - mix) + samples[right] * mix;
+  }
+  return output;
+}
+
+function encodePcmWav(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeAscii = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) {
+      view.setUint8(offset + index, value.charCodeAt(index));
+    }
+  };
+  writeAscii(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeAscii(8, "WAVE");
+  writeAscii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let index = 0; index < samples.length; index += 1) {
+    const value = clampNumber(samples[index], -1, 1);
+    view.setInt16(44 + index * 2, value < 0 ? value * 32768 : value * 32767, true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+async function requestVoiceSynthesis(message, signal) {
+  const response = await fetch("/api/voice/synthesize", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text: message }),
+    signal,
+  });
+  if (!response.ok) {
+    let error = "语音生成失败";
+    try {
+      const body = await response.json();
+      error = body?.error || error;
+    } catch {
+      // Keep the bounded public error message.
+    }
+    throw new Error(error);
+  }
+  return response.arrayBuffer();
+}
+
+async function playVoiceResponse(bytes, sequence) {
+  const context = await ensureVoiceAudioContext();
+  const buffer = await context.decodeAudioData(bytes.slice(0));
+  if (sequence !== state.voiceSequence) return;
+  stopVoicePlayback(false);
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  const analyser = context.createAnalyser();
+  analyser.fftSize = 256;
+  analyser.smoothingTimeConstant = 0.78;
+  const samples = new Uint8Array(analyser.frequencyBinCount);
+  source.connect(analyser);
+  analyser.connect(context.destination);
+  state.voicePlaybackAnalyser = { analyser, samples };
+  state.voicePlaybackSource = source;
+  setVoiceState("playing");
+  source.addEventListener(
+    "ended",
+    () => {
+      if (state.voicePlaybackSource !== source) return;
+      state.voicePlaybackSource = null;
+      state.voicePlaybackAnalyser = null;
+      if (sequence === state.voiceSequence) setVoiceState("idle");
+    },
+    { once: true },
+  );
+  source.start();
+}
+
+function stopVoicePlayback(invalidate = true) {
+  const source = state.voicePlaybackSource;
+  state.voicePlaybackSource = null;
+  state.voicePlaybackAnalyser = null;
+  if (!source) return;
+  if (invalidate) state.voiceSequence += 1;
+  try {
+    source.stop();
+  } catch {
+    // Playback may already have reached its natural end.
+  }
+  setVoiceVisualLevel(0);
+  if (state.voiceAvailable) setVoiceState("idle");
+}
+
+function voiceErrorMessage(error) {
+  if (error?.name === "MicrophonePermissionDeniedError") return error.message;
+  if (error?.name === "MicrophoneTimeoutError") return error.message;
+  if (error?.name === "NotAllowedError") return "请允许浏览器使用麦克风";
+  if (error?.name === "NotFoundError") return "没有找到可用的麦克风";
+  if (error?.name === "NotReadableError") return "麦克风正在被其他程序占用";
+  if (error?.name === "AbortError") return "语音操作已停止";
+  return text(error?.message, "语音暂不可用");
+}
+
+function handleVoiceButton() {
+  if (state.voiceState === "preparing") {
+    cancelVoiceInteraction();
+    return;
+  }
+  if (state.voiceState === "recording") {
+    stopVoiceRecording();
+    return;
+  }
+  if (state.voiceState === "playing") {
+    stopVoicePlayback();
+    return;
+  }
+  if (["idle", "error"].includes(state.voiceState)) startVoiceRecording();
+}
+
+function cancelVoiceInteraction() {
+  if (state.voiceState === "recording") {
+    stopVoiceRecording(true);
+  } else if (state.voiceState === "playing") {
+    stopVoicePlayback();
+    return;
+  } else {
+    state.voiceSequence += 1;
+    state.voiceRequestController?.abort?.();
+    state.voiceRequestController = null;
+    cleanupVoiceCapture();
+  }
+  if (state.voiceAvailable) setVoiceState("idle");
+}
+
 function showView(name) {
   const target = ["chat", "memory", "persona", "her", "mailbox"].includes(name) ? name : "chat";
+  if (
+    target !== "chat" &&
+    ["preparing", "recording", "transcribing", "thinking", "synthesizing", "playing"].includes(
+      state.voiceState,
+    )
+  ) {
+    cancelVoiceInteraction();
+  }
   document.documentElement.dataset.activeView = target;
   document.body.dataset.activeView = target;
   nodes.views.forEach((view) => {
@@ -275,7 +1153,10 @@ function showView(name) {
   if (target === "her") loadHer();
   if (target === "mailbox") loadMailbox();
   if (target === "chat") {
-    window.requestAnimationFrame(() => nodes.prompt?.focus());
+    window.requestAnimationFrame(() => {
+      layoutChatOrbit(false);
+      nodes.prompt?.focus();
+    });
   }
   window.requestAnimationFrame(() => animateViewEntrance(target));
   const nextHash = target === "chat" ? "" : `#${target}`;
@@ -520,9 +1401,96 @@ function autoResize() {
   if (state.autoResizeFrame) return;
   state.autoResizeFrame = window.requestAnimationFrame(() => {
     state.autoResizeFrame = 0;
+    const compact = nodes.composer?.classList.contains("voice-composer");
+    const minimum = compact ? 44 : 64;
+    const maximum = compact ? 120 : 208;
     node.style.height = "auto";
-    node.style.height = `${Math.max(64, Math.min(node.scrollHeight, 208))}px`;
+    node.style.height = `${Math.max(minimum, Math.min(node.scrollHeight, maximum))}px`;
   });
+}
+
+const CHAT_ORBIT_ANGLES = Object.freeze([180, 168, 192, 156, 204, 144, 216]);
+const CHAT_ORBIT_SCALE = Object.freeze([1, 0.92, 0.92, 0.82, 0.82, 0.72, 0.72]);
+const CHAT_ORBIT_OPACITY = Object.freeze([1, 0.8, 0.8, 0.58, 0.58, 0.34, 0.34]);
+
+function layoutChatOrbit(animate = false) {
+  if (!nodes.chatLog || !nodes.voiceScene) return;
+  const articles = Array.from(nodes.chatLog.querySelectorAll(".message"));
+  if (articles.length === 0) return;
+  const mobile = window.matchMedia("(max-width: 620px)").matches;
+  state.chatOrbitTimeline?.kill?.();
+  state.chatOrbitTimeline = null;
+  if (mobile) {
+    if (window.gsap) {
+      window.gsap.set(articles, { clearProps: "transform,opacity,visibility" });
+    } else {
+      for (const article of articles) {
+        article.style.removeProperty("transform");
+        article.style.removeProperty("opacity");
+      }
+    }
+    return;
+  }
+
+  const rect = nodes.voiceScene.getBoundingClientRect();
+  const centerX = rect.width * 0.65;
+  const centerY = rect.height * 0.51;
+  const radiusX = clampNumber(rect.width * 0.48, 300, 720);
+  const radiusY = clampNumber(rect.height * 0.48, 230, 470);
+  const placements = articles.map((article) => {
+    const depth = clampNumber(Number(article.dataset.orbitDepth) || 0, 0, CHAT_ORBIT_ANGLES.length - 1);
+    const radians = (CHAT_ORBIT_ANGLES[depth] * Math.PI) / 180;
+    return {
+      article,
+      x: centerX + Math.cos(radians) * radiusX,
+      y: centerY + Math.sin(radians) * radiusY,
+      scale: CHAT_ORBIT_SCALE[depth],
+      opacity: CHAT_ORBIT_OPACITY[depth],
+      zIndex: 20 - depth,
+    };
+  });
+
+  if (window.gsap) {
+    if (!animate || prefersReducedMotion()) {
+      for (const placement of placements) {
+        window.gsap.set(placement.article, {
+          x: placement.x,
+          y: placement.y,
+          xPercent: -50,
+          yPercent: -50,
+          scale: placement.scale,
+          autoAlpha: placement.opacity,
+          zIndex: placement.zIndex,
+        });
+      }
+      return;
+    }
+    state.chatOrbitTimeline = window.gsap.timeline({
+      defaults: { duration: 0.62, ease: "power3.out", overwrite: "auto" },
+    });
+    for (const placement of placements) {
+      state.chatOrbitTimeline.to(
+        placement.article,
+        {
+          x: placement.x,
+          y: placement.y,
+          xPercent: -50,
+          yPercent: -50,
+          scale: placement.scale,
+          autoAlpha: placement.opacity,
+          zIndex: placement.zIndex,
+        },
+        0,
+      );
+    }
+    return;
+  }
+
+  for (const placement of placements) {
+    placement.article.style.zIndex = String(placement.zIndex);
+    placement.article.style.opacity = String(placement.opacity);
+    placement.article.style.transform = `translate3d(${placement.x}px, ${placement.y}px, 0) translate(-50%, -50%) scale(${placement.scale})`;
+  }
 }
 
 function renderMessages() {
@@ -533,9 +1501,13 @@ function renderMessages() {
     : "";
   const shouldAnimateLatest = latestSignature !== state.lastMessageSignature;
   nodes.chatLog.innerHTML = "";
-  for (const message of state.messages) {
+  const visibleMessages = state.messages.slice(-CHAT_ORBIT_ANGLES.length);
+  for (const [index, message] of visibleMessages.entries()) {
     const article = document.createElement("article");
     article.className = `message ${message.role}${message.kind ? ` ${message.kind}` : ""}`;
+    article.dataset.orbitDepth = String(visibleMessages.length - 1 - index);
+    article.tabIndex = 0;
+    article.setAttribute("aria-label", `${message.role === "user" ? "你" : "云熙"}：${text(message.text)}`);
 
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
@@ -547,15 +1519,20 @@ function renderMessages() {
     if (message.meta) {
       const meta = document.createElement("div");
       meta.className = "message-meta";
-      meta.textContent = message.meta;
+      if (message.role === "assistant") {
+        const elapsed = text(message.meta).match(/(\d+)\s*ms/i)?.[1];
+        meta.textContent = message.kind === "pending" ? "正在回应" : elapsed ? `云熙  ${elapsed} ms` : "云熙";
+      } else {
+        meta.textContent = message.meta;
+      }
       bubble.appendChild(meta);
     }
 
     article.appendChild(bubble);
     nodes.chatLog.appendChild(article);
   }
-  nodes.chatLog.scrollTop = nodes.chatLog.scrollHeight;
   state.lastMessageSignature = latestSignature;
+  window.requestAnimationFrame(() => layoutChatOrbit(shouldAnimateLatest));
   if (shouldAnimateLatest && latestMessage) {
     const latestArticle = nodes.chatLog.lastElementChild;
     window.requestAnimationFrame(() => animateMessageArrival(latestArticle));
@@ -565,15 +1542,24 @@ function renderMessages() {
 function animateMessageArrival(article) {
   if (!article || prefersReducedMotion()) return;
   const bubble = article.querySelector(".message-bubble");
+  if (!bubble) return;
   if (window.gsap) {
-    window.gsap.killTweensOf([article, bubble]);
-    window.gsap
-      .timeline({ defaults: { ease: "power3.out" } })
-      .fromTo(article, { y: 8, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: 0.28, clearProps: "transform,opacity,visibility" })
-      .fromTo(bubble, { scale: 0.988 }, { scale: 1, duration: 0.3, clearProps: "transform" }, "<");
+    window.gsap.killTweensOf(bubble);
+    window.gsap.fromTo(
+      bubble,
+      { x: -14, scale: 0.965, autoAlpha: 0 },
+      {
+        x: 0,
+        scale: 1,
+        autoAlpha: 1,
+        duration: 0.42,
+        ease: "power3.out",
+        clearProps: "transform,opacity,visibility",
+      },
+    );
     return;
   }
-  const arrival = article.animate(
+  const arrival = bubble.animate(
     [
       { opacity: 0, transform: "translate3d(0, 8px, 0)" },
       { opacity: 1, transform: "translate3d(0, 0, 0)" },
@@ -601,35 +1587,40 @@ async function loadStatus() {
     state.status = status;
     const mode = status.providerLive ? "在线" : "离线";
     const companion = status.companionEnabled ? "陪伴已联动" : "基础模式";
-    nodes.runtimeStrip.dataset.state = status.providerLive ? "live" : "offline";
+    if (nodes.runtimeStrip) {
+      nodes.runtimeStrip.dataset.state = status.providerLive ? "live" : "offline";
+    }
     setNodeText(
       nodes.runtimeStrip,
       `${status.model || status.provider}  ${mode}  ${companion}`,
     );
   } catch (error) {
-    nodes.runtimeStrip.dataset.state = "error";
+    if (nodes.runtimeStrip) nodes.runtimeStrip.dataset.state = "error";
     setNodeText(nodes.runtimeStrip, `状态读取失败：${error.message}`);
   }
 }
 
-async function sendPrompt(prompt) {
+async function sendPrompt(prompt, options = {}) {
   const clean = text(prompt).trim();
-  if (!clean || state.sending) return;
+  if (!clean || state.sending) return null;
   state.sending = true;
   nodes.send.disabled = true;
-  pushMessage("user", clean, "你");
+  setVoiceState(state.voiceState);
+  pushMessage("user", clean, options.source === "voice" ? "你  语音" : "你");
   nodes.prompt.value = "";
   autoResize();
 
   const started = performance.now();
   pushMessage("assistant", "YunXi 正在回复...", "运行中", "pending");
   const pendingIndex = state.messages.length - 1;
+  let response = null;
 
   try {
     const result = await api("/api/chat", {
       method: "POST",
       body: JSON.stringify({ prompt: clean }),
     });
+    response = result;
     const elapsed = Math.round(performance.now() - started);
     state.messages[pendingIndex] = {
       role: "assistant",
@@ -648,12 +1639,14 @@ async function sendPrompt(prompt) {
   } finally {
     state.sending = false;
     nodes.send.disabled = false;
+    setVoiceState(state.voiceState);
     saveMessages();
     renderMessages();
     loadMemory();
     loadHer(true);
     loadMailbox(true);
   }
+  return response;
 }
 
 function fieldValue(record, key, fallback = "") {
@@ -1954,8 +2947,16 @@ nodes.prompt?.addEventListener("keydown", (event) => {
 
 nodes.composer?.addEventListener("submit", (event) => {
   event.preventDefault();
+  stopVoicePlayback();
   animateSendFeedback();
   sendPrompt(nodes.prompt?.value || "");
+});
+nodes.voiceButton?.addEventListener("click", handleVoiceButton);
+nodes.voiceButton?.addEventListener("pointerenter", () => {
+  state.voiceOrbPointer = 1;
+});
+nodes.voiceButton?.addEventListener("pointerleave", () => {
+  state.voiceOrbPointer = 0;
 });
 
 nodes.memoryClose?.addEventListener("click", closeMemory);
@@ -2003,6 +3004,13 @@ nodes.mailboxDetail?.addEventListener("click", (event) => {
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    if (
+      ["preparing", "recording", "transcribing", "thinking", "synthesizing", "playing"].includes(
+        state.voiceState,
+      )
+    ) {
+      cancelVoiceInteraction();
+    }
     closeMemory();
     closePersonaDetail();
     closeMailboxDetail();
@@ -2025,14 +3033,26 @@ window.addEventListener("resize", () => {
     if (!document.querySelector("#view-memory")?.hidden && state.memory) {
       renderMemory(state.memory.records || []);
     }
+    if (!document.querySelector("#view-chat")?.hidden) layoutChatOrbit(false);
     autoResize();
   });
+});
+
+window.addEventListener("beforeunload", () => {
+  state.voiceSequence += 1;
+  state.voiceRequestController?.abort?.();
+  cleanupVoiceCapture();
+  stopVoicePlayback(false);
+  state.voiceOrbRenderer?.destroy?.();
+  state.voiceAudioContext?.close?.();
 });
 
 setupDockMotion();
 setupPointerMaterials();
 setupHerReveal();
+initVoiceOrb();
 renderMessages();
 autoResize();
 loadStatus();
+loadVoiceStatus();
 showView((window.location.hash || "#chat").slice(1));

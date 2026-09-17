@@ -71,11 +71,41 @@ pub struct TextItem {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CdnMedia {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypt_query_param: Option<SecretString>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aes_key: Option<SecretString>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypt_type: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_url: Option<SecretString>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct VoiceItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<CdnMedia>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encode_type: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bits_per_sample: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_rate: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playtime: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<SecretString>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MessageItem {
     #[serde(rename = "type")]
     pub item_type: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_item: Option<TextItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_item: Option<VoiceItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_completed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -231,6 +261,7 @@ impl WeixinUpdate {
                 vec![MessageItem {
                     item_type: 1,
                     text_item: Some(TextItem { text }),
+                    voice_item: None,
                     is_completed: Some(true),
                     msg_id: None,
                 }]
@@ -386,7 +417,8 @@ pub struct GetUploadUrlResponse {
     pub upload_param: Option<SecretString>,
     #[serde(default)]
     pub thumb_upload_param: Option<SecretString>,
-    pub upload_full_url: SecretString,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_full_url: Option<SecretString>,
 }
 
 #[cfg(test)]
@@ -411,6 +443,7 @@ mod tests {
                     text_item: Some(TextItem {
                         text: SecretString::new("legacy text"),
                     }),
+                    voice_item: None,
                     is_completed: Some(true),
                     msg_id: None,
                 }],

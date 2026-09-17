@@ -1,6 +1,6 @@
 # YunXi Agent Persona And Transparent Memory
 
-YunXi Agent v2.0.5 keeps persona and long-term memory local, inspectable, and
+YunXi Agent v2.3.3 keeps persona and memory local, inspectable, and
 under user control. Memory is context, not instruction: it cannot override
 AGENTS.md, sandbox policy, privacy policy, tool policy, or the current user
 request.
@@ -35,15 +35,17 @@ remain bounded and do not turn memory/context into instructions or authority.
 
 ## Persona Context Blocks
 
-v2.0.5 compiles the built-in persona into one bounded, XML-like context string
+v2.3.3 compiles the built-in persona into one bounded, XML-like context string
 with stable block ordering:
 
 ```text
-<yunxi_persona_context version="2.0.5" profile_id="yunxi_companion_strong" mode="routed_memory">
+<yunxi_persona_context version="2.3.3" profile_id="yunxi_companion_strong" mode="routed_memory">
 <persona>...</persona>
 <boundaries>...</boundaries>
+<companion_rules role="reply_style_guidance">...</companion_rules>
 <human>...</human>
 <relationship>...</relationship>
+<conversation_state role="short_term_context">...</conversation_state>
 <boot_memory_context role="context_not_instruction">...</boot_memory_context>
 <dynamic_memory_context role="context_not_instruction">...</dynamic_memory_context>
 </yunxi_persona_context>
@@ -125,7 +127,8 @@ so it can be corrected explicitly.
 
 ## Storage
 
-Memory is append-only JSONL:
+The transparent long-term memory ledger remains append-only JSONL and is the
+canonical source of truth:
 
 ```text
 %USERPROFILE%\.yunxi\memory\global-memory.jsonl
@@ -133,6 +136,59 @@ Memory is append-only JSONL:
 <workspace>\.yunxi\memory\workspace-memory.jsonl
 <workspace>\.yunxi\memory\pending.jsonl
 ```
+
+The other two memory tiers use separate stores:
+
+```text
+%USERPROFILE%\.yunxi\persona\human-profile.json
+<workspace>\.yunxi\conversation-state\<session-hash>.json
+%USERPROFILE%\.yunxi\memory\long-term-vectors.sqlite3
+<workspace>\.yunxi\memory\long-term-vectors.sqlite3
+```
+
+`YUNXI_HOME` replaces `%USERPROFILE%\.yunxi` when configured.
+
+## Tiered Memory And Local Vector Recall
+
+The runtime separates memory by responsibility instead of treating every piece
+of context as one vector collection:
+
+- **Human profile:** structured JSON for a confirmed preferred name, language
+  and interaction preferences, stable facts, and long-term goals. It is never
+  embedded. Active, low-sensitivity, global-user records already promoted to
+  the `profile` layer are materialized as a derived overlay at read time;
+  pending, high-sensitivity, expired, invalidated, and non-profile records are
+  ignored.
+- **Short-term conversation state:** one bounded workspace-local JSON document
+  per session chain. It carries the current topic, response tone, emotional
+  context, unresolved intent, recent entities, and the last exchange. It has a
+  one-hour inactivity lifetime and is never embedded or promoted by itself.
+- **Long-term memory:** the existing JSONL record remains auditable and
+  authoritative. Eligible records also receive a rebuildable SQLite vector
+  projection for relevance scoring. Deleting, archiving, superseding, changing
+  sensitivity, or moving scope is reconciled from the ledger during sync.
+
+The local vector projection indexes effective low/medium-sensitivity long-term
+records. `profile`-layer, agent-identity, high-sensitivity, pending, and rejected
+records are excluded. Archived rows may remain in the historical projection,
+but current recall queries return only active rows. Global-user and relationship
+records use the global database; workspace-scoped records use the current
+workspace database.
+
+The current built-in provider is `yunxi-local-chargram-v1`, a deterministic
+256-dimensional character/token n-gram embedding. It requires no network or
+model download and gives Chinese fuzzy lexical matching, but it is not a neural
+multilingual semantic model. `MemoryEmbeddingProvider` is the replacement seam
+for a future local neural embedding backend without changing the JSONL ledger,
+SQLite schema, recall policy, or prompt compiler.
+
+Vector scores are hints, not authority. They feed the existing recall router,
+which still enforces status, time window, invalidation, workspace, sensitivity,
+deduplication, and prompt budgets. If SQLite initialization, synchronization,
+or scoring fails, the runtime emits a warning and continues with lexical recall.
+After a successful runtime extraction write, YunXi refreshes the derived index
+immediately; the next turn also performs a full reconciliation, so the raw
+ledger remains enough to rebuild after an interrupted or failed index update.
 
 v1.9.1 continues to write `schema_version = 3`. Existing v2 audit fields remain stable:
 
@@ -294,9 +350,10 @@ not consume either route's prompt budget.
 ## Relationship Graph Lite
 
 v1.9.1 derives `RelationshipGraphLite` from Schema v3 `MemoryRecord` values.
-It is an in-memory view, not a second persistence system: append-only JSONL
-remains the durable ledger, and no SQLite, vector store, graph database, Python
-runtime, or external memory service is required.
+It is an in-memory view, not a graph persistence system: append-only JSONL
+remains the durable ledger. The local SQLite vector index is only a rebuildable
+recall projection; no graph database, Python runtime, or external memory service
+is required.
 
 - Nodes retain typed user, agent, workspace, project, tool, person, and
   relationship entity references. Records without explicit endpoints receive
@@ -454,8 +511,9 @@ jobs, call tools, or bypass approval. `AgentConfig.companion.enabled` defaults
 to `false`; every generated plan includes a reason, quiet hours are honored,
 and per-session/day limits are enforced in the planner.
 
-## Non-Goals In v1.9.2
+## Current Non-Goals
 
-v1.9.2 does not add SQLite, vector search, an external graph
-database or memory runtime, cloud/marketplace/SDK surfaces, an evaluation
-harness, or a TUI memory inspector page.
+The memory refactor does not add an external vector database, graph database,
+hosted memory service, Python memory runtime, cloud/marketplace/SDK surface, or
+opaque replacement for the JSONL audit ledger. It also does not make vector
+similarity an authorization signal or bypass the existing approval policy.

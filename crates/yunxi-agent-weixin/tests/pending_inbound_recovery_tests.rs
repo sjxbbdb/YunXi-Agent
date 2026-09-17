@@ -49,6 +49,7 @@ fn text_message() -> WeixinMessage {
             text_item: Some(TextItem {
                 text: SecretString::new("raw restart body"),
             }),
+            voice_item: None,
             is_completed: Some(true),
             msg_id: None,
         }],

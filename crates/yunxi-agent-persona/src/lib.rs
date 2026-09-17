@@ -1,6 +1,9 @@
 pub mod compiler;
+pub mod conversation;
 pub mod dedup;
+pub mod embedding;
 pub mod extractor;
+pub mod human_profile_store;
 pub mod memory;
 pub mod merge;
 pub mod migration;
@@ -16,11 +19,19 @@ pub mod scope;
 pub mod settings;
 
 pub use compiler::{CompiledPersonaContext, PersonaPromptCompiler};
+pub use conversation::{
+    CONVERSATION_STATE_SCHEMA_VERSION, ConversationState, DEFAULT_CONVERSATION_STATE_TTL_MILLIS,
+};
 pub use dedup::{
     MemoryDedupKey, dedup_key_for_record, deduplicate_candidates, ensure_record_dedup_metadata,
     normalized_memory_content,
 };
+pub use embedding::{
+    DEFAULT_MEMORY_EMBEDDING_DIMENSIONS, LOCAL_MEMORY_EMBEDDING_MODEL, LocalChargramEmbedding,
+    MemoryEmbedding, MemoryEmbeddingError, MemoryEmbeddingProvider, cosine_similarity,
+};
 pub use extractor::MemoryRuleExtractor;
+pub use human_profile_store::{HumanProfileStore, HumanProfileStoreError};
 pub use memory::{
     MemoryCandidate, MemoryEntityRef, MemoryEntityType, MemoryEvidence, MemoryInvalidation,
     MemoryKind, MemoryLayer, MemoryRecallRequest, MemoryRecallResult, MemoryRecord, MemoryScope,

@@ -12,6 +12,7 @@ mod remote_control;
 mod secret_store;
 mod serve;
 mod turn_supervisor;
+mod voice;
 
 pub use account_store::{
     WEIXIN_ACCOUNT_SCHEMA_VERSION, WeixinAccountRecord, WeixinAccountStore, WeixinAccountStoreError,
@@ -20,7 +21,7 @@ pub use backoff::WeixinBackoff;
 pub use delivery::{
     WeixinDeliveryDispatcher, WeixinDeliveryDrainReport, WeixinDeliveryError,
     WeixinDeliveryOutcomeClass, WeixinDeliverySpoolSink, WeixinMessageTransport,
-    split_weixin_text_segments,
+    WeixinResponseMode, split_weixin_text_segments,
 };
 pub use domain::{
     WeixinAccountId, WeixinAccountMetadata, WeixinConnectionState, WeixinConversationKey,
@@ -28,7 +29,9 @@ pub use domain::{
 };
 pub use error::{RequestContext, WeixinApiError};
 pub use ilink::{IlinkHttpClient, PRODUCTION_ILINK_ENDPOINT};
-pub use inbound::{WeixinInboundEnvelope, WeixinInboundKind, WeixinPendingInboundPayload};
+pub use inbound::{
+    WeixinInboundEnvelope, WeixinInboundKind, WeixinInboundVoice, WeixinPendingInboundPayload,
+};
 pub use login::{
     LoginPollState, WeixinLoginCancellation, WeixinLoginEvent, WeixinLoginFailure,
     WeixinLoginOptions, WeixinLoginOutcome, WeixinLoginStateMachine, WeixinLoginTransport,
@@ -55,3 +58,4 @@ pub use turn_supervisor::{
     WeixinStreamObservationReport, WeixinTurnReport, WeixinTurnSupervisor,
     WeixinTurnSupervisorError, WeixinTurnSupervisorOptions,
 };
+pub use voice::{WeixinVoiceBridge, WeixinVoiceError, WeixinVoiceTranscriber};

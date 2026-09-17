@@ -6,9 +6,9 @@ mod send;
 
 pub use client::{IlinkHttpClient, PRODUCTION_ILINK_ENDPOINT};
 pub use models::{
-    BaseInfo, GetBotQrCodeRequest, GetBotQrCodeResponse, GetQrCodeStatusResponse,
+    BaseInfo, CdnMedia, GetBotQrCodeRequest, GetBotQrCodeResponse, GetQrCodeStatusResponse,
     GetUpdatesRequest, GetUpdatesResponse, GetUploadUrlRequest, GetUploadUrlResponse, MessageItem,
     QrCodeStatus, SendMessageRequest, SendMessageResponse, SendTypingRequest, TextItem,
-    TypingStatus, UploadMediaType, WeixinMessage, WeixinUpdate, WeixinUpdateMessage,
+    TypingStatus, UploadMediaType, VoiceItem, WeixinMessage, WeixinUpdate, WeixinUpdateMessage,
     WeixinUpdateSender,
 };

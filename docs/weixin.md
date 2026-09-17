@@ -1,5 +1,19 @@
 # YunXi Agent 微信接入边界
 
+## v2.3.3-hotfix.32 微信语音输入
+
+微信私聊语音现按一轮一答接入，不实现实时全双工：
+
+1. `getupdates` 将 `type=3` 的 `voice_item` 识别为语音输入，只把 CDN 引用、AES key、编码、采样率和时长放入现有认证加密 pending payload；微信侧附带的转写文本不作为本地识别结果。
+2. runtime worker 仅允许访问 `https://novac2c.cdn.weixin.qq.com/c2c/`，有界下载密文，兼容 raw 16-byte 与 base64(hex) AES key，执行 AES-128-ECB/PKCS#7 解密，再用纯 Rust SILK 解码器生成 WAV。原始音频只进入内存或自动清理的临时目录。
+3. SenseVoiceSmall 返回的中文转写使用 `AgentInput::voice` 进入原有 `Agent::run_with_backend_stream`；微信文字与语音继续复用同一 account/peer/dm 会话链、Provider、人格、记忆、陪伴、工具和审批边界。
+4. 无论输入是文字还是语音，最终公开回复都进入同一加密文字 delivery spool，并通过 iLink `text_item` 发回。微信路径不调用 CosyVoice3，不上传合成音频，也不尝试发送原生语音或音频附件。
+5. 审批、追问和 slash control 同样只使用文字；语音输入不会改变任何权限边界。
+
+微信私聊通过 `AgentInputChannel::Weixin` 注入渠道级对话约束。日常交流默认一到两句短句，不输出功能菜单、工作汇报或内部机制说明；明确的技术问题仍可正常展开。delivery spool 会优先按 `。！？；` 和换行拆成独立气泡，只有超长单句才按 grapheme 上限切分，不破坏 emoji 或组合字符。
+
+该能力要求 `YunXi Voice Runtime` 已在本机运行，但微信只使用其中的 SenseVoiceSmall 转写接口。CosyVoice3 继续服务本地 CLI/TUI 语音对话，不属于微信回复链路。公开 iLink 当前只按“语音可输入、回复为文字”的能力边界使用。
+
 ## v2.2.0 合并开发线当前状态
 
 当前代码正在执行 `v2.2.0` 合并开发线。2026-07-31 17:40 代码整改报告点名的 P1 项已进入代码侧整改收口：远程控制 outbound、注册失败显式终态、delivery 结果分类、分段 manifest、AgentEvent `final_text_only` 观察策略，以及后台 runtime dispatch lease/退出等待/异常恢复均已补入实现和测试。该状态仍是开发整改结果，等待统一验证、真实 iLink/Provider/ConPTY 脱敏证据和重新审核；不得提前创建 `v2.2.0` tag 或写成已发布、已审核通过。
@@ -35,12 +49,12 @@ v2.2.0 在 v2.1.x 状态持久化、诊断、安全账户生命周期和旧登�
 - 直接运行交互式 `yunxi` 时，若默认账户已有微信登录 metadata，CLI 会在后台自动拉起同一 workspace 的微信 gateway；已有活动账户锁时不会重复启动，未登录时静默跳过。CLI 会等待本次子进程 PID 获取账户锁后再报告 `gateway ready`；提前退出或超时会显示明确诊断和日志路径，但不会阻止本地 CLI 继续启动。可用 `--no-weixin-autostart` 或 `YUNXI_WEIXIN_AUTOSTART=0` 关闭；等待上限可用 `YUNXI_WEIXIN_AUTOSTART_READY_TIMEOUT_MS` 配置（100–30000ms，默认 4000ms）。后台 stdout/stderr 写入 `.yunxi/weixin/logs/autostart-*.{stdout,stderr}.log`。显式 `--companion` 会透传给微信 gateway。
 - serve 循环调用 iLink `getupdates`，使用 `WeixinStateStore` 中的 `get_updates_buf` 游标，尊重服务端 timeout hint，并对空轮询、网络错误和服务端错误执行带 jitter 的有界退避。
 - 入站消息先归一化为只含 account hash、peer hash、message id hash、direct-message key、时间、secret reference 和 kind 的 `WeixinInboundEnvelope`；stdout、stderr、JSON、状态和日志不输出原始账号、peer、message id、context token、正文、附件 URL、本地绝对 workspace 或系统凭证 target。
-- 已准入 peer 的私聊文本在进入 state store 前用 `chacha20-poly1305` 认证加密；AAD 绑定 account hash、peer hash、message hash、item id 和 AAD 版本；陌生私聊文本只生成短时、不透明 pair request；群消息、自消息、附件和未知消息只进入脱敏跳过计数。
+- 已准入 peer 的私聊文本和语音元数据在进入 state store 前用 `chacha20-poly1305` 认证加密；AAD 绑定 account hash、peer hash、message hash、item id 和 AAD 版本；陌生私聊只生成短时、不透明 pair request；群消息、自消息、其他附件和未知消息只进入脱敏跳过计数。
 - 每个 getupdates 批次把新游标、receipt、encrypted pending inbound、pair request、连接状态和最后一次脱敏错误写入同一次 state-store 原子提交；data key 缺失、key 格式错误、加密失败、密文元数据校验失败或保存失败时游标不推进。
 - 同一 account、peer hash、message id hash 已存在 receipt 或 pending inbound 时幂等跳过，不创建第二个 pending inbound。
 - `FileWeixinStateStore::load_pending_inbound` 和 `WeixinPayloadCipher::decrypt_pending_inbound` 提供最小重启恢复入口；新进程可重新从 Windows Credential Manager 读取同一 data key，再用 state 中的 ciphertext、nonce、算法版本和 AAD 版本恢复最小入站 envelope/body。错误 key、篡改/截断 ciphertext、未知算法版本、未知 AAD 版本或 AAD 绑定不一致会安全失败。
 - `WeixinConversationBinding` 用 `account_id + peer_id_hash + direct_message_key` 映射到既有 YunXi `SessionId`；绑定独立保存在微信 state 中，不向 `SessionRecord` 塞微信字段。
-- `WeixinTurnSupervisor` 只处理已配对、已解密、非终态私聊文本 pending inbound，把文本转换为 `AgentInput::text`，并通过唯一 Runtime 入口 `Agent::run_with_backend_stream` 执行。
+- `WeixinTurnSupervisor` 处理已配对、已解密、非终态私聊文本或语音 pending inbound，分别转换为 `AgentInput::text` 或 `AgentInput::voice`，并通过唯一 Runtime 入口 `Agent::run_with_backend_stream` 执行。
 - `yunxi run` 与 `yunxi weixin serve` 复用同一 Provider、model、cwd、sandbox、approval、context window 和 companion 配置构造路径；微信自然语言不会隐式提高权限。
 - 同一 `account + peer + dm` 会话使用有界队列串行执行，避免交叉 turn 或交叉 session/memory 写入；不同已准入私聊可以独立调度。
 - Runtime `final_response` 写入加密 delivery spool；生产 `weixin serve` 使用 iLink `sendmessage` 投递最终文本分段。AgentEvent 流只用于 final-only 策略下的安全观察和过滤计数，不投递 reasoning、tool event、provider wire、路径、环境变量、秘密或隐藏 trace，也不开放逐 token 微信流式回信。
@@ -56,7 +70,8 @@ v2.2.0 在 v2.1.x 状态持久化、诊断、安全账户生命周期和旧登�
 
 - 通过微信文字隐式提高权限、修改 cwd、Provider、模型、sandbox 或 approval mode；
 - 逐 token 发送或流式合并微信回复；
-- 支持群聊、主动推送、附件解析、媒体上传、联系人抓取、Hook、逆向协议或第二套 Agent。
+- 支持群聊、主动推送、图片/视频/文件附件解析、联系人抓取、Hook、逆向协议或第二套 Agent；
+- 通过公开 iLink 发送机器人原生语音气泡或音频附件回复；微信输出统一为文字。
 - 在统一审核和真实验证前宣称 `v2.2.0` 已发布或创建 `v2.2.0` tag。
 
 weixin serve 的开发路径已覆盖私聊长轮询、准入、认证加密 pending、Runtime session binding、同会话串行、slash control 和最终文本 delivery spool；最终发布仍取决于统一验证、真实 iLink/Provider 联调和审核结论。

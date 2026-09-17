@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tempfile::TempDir;
 use yunxi_agent_core::{
-    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentInputModality,
+    Agent, AgentConfig, AgentError, AgentEvent, AgentInput, AgentInputChannel, AgentInputModality,
     AgentMessageSequence, AgentMessageStreamPhase, AgentRunApprovalDecision, AgentRunControl,
     AgentRunStatus, AgentRunUserInputResponse, ApprovalMode, CommandStatus, CompanionSettings,
     FileChangeKind, MemoryExtractionMode, PatchStatus, SandboxMode,
@@ -557,6 +557,40 @@ impl MemoryExtractionFixtureProvider {
         self.empty_main_response = true;
         self
     }
+}
+
+#[tokio::test]
+async fn weixin_channel_injects_short_private_chat_style() {
+    let temp = TempDir::new().expect("temp dir");
+    let provider = CapturingProvider::default();
+    let messages = Arc::clone(&provider.messages);
+    let requests = Arc::clone(&provider.requests);
+    let backend =
+        YunXiRuntimeBackend::with_parts(provider, NoopToolRuntime, InMemorySessionStore::default());
+    let agent = Agent::new(AgentConfig::new(temp.path()));
+
+    agent
+        .run_with_backend(
+            &backend,
+            AgentInput::with_channel(
+                "今天有点累",
+                AgentInputModality::Text,
+                AgentInputChannel::Weixin,
+            ),
+        )
+        .await
+        .expect("runtime should complete");
+
+    let captured = messages.lock().expect("messages lock").clone();
+    assert!(captured.iter().any(|message| {
+        message.role == ProviderRole::System
+            && message.content.contains("一到两句")
+            && message.content.contains("不要提系统上下文")
+    }));
+    assert_eq!(
+        requests.lock().expect("requests lock")[0].input.channel,
+        AgentInputChannel::Weixin
+    );
 }
 
 #[async_trait::async_trait]

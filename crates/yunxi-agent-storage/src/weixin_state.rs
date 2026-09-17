@@ -861,6 +861,7 @@ impl FileWeixinStateStore {
             message_hash: item.message_hash,
             segment_index: item.segment_index,
             total_segments: item.total_segments,
+            wait_for_turn_completion: item.wait_for_turn_completion,
             encrypted_payload: Some(item.encrypted_payload),
             state: WeixinDeliveryState::Pending,
             retry_count: 0,
@@ -956,6 +957,7 @@ impl FileWeixinStateStore {
                 message_hash: item.message_hash,
                 segment_index: item.segment_index,
                 total_segments: item.total_segments,
+                wait_for_turn_completion: item.wait_for_turn_completion,
                 encrypted_payload: Some(item.encrypted_payload),
                 state: WeixinDeliveryState::Pending,
                 retry_count: 0,
@@ -998,11 +1000,19 @@ impl FileWeixinStateStore {
         limit: usize,
     ) -> Result<Vec<WeixinPendingDeliveryMetadata>, WeixinStateError> {
         let snapshot = self.load_required(account_id)?;
+        let active_item_ids = snapshot
+            .pending_inbound
+            .iter()
+            .filter(|pending| !pending.state.is_terminal())
+            .map(|pending| pending.item_id.as_str())
+            .collect::<Vec<_>>();
         Ok(snapshot
             .pending_deliveries
             .into_iter()
             .filter(|delivery| {
                 delivery.state == WeixinDeliveryState::Pending
+                    && (!delivery.wait_for_turn_completion
+                        || !active_item_ids.contains(&delivery.item_id.as_str()))
                     && delivery
                         .next_retry_at_millis
                         .is_none_or(|next_retry| next_retry <= now_millis)
@@ -1574,6 +1584,7 @@ pub struct WeixinPendingDeliveryCommitItem {
     pub message_hash: String,
     pub segment_index: u32,
     pub total_segments: u32,
+    pub wait_for_turn_completion: bool,
     pub encrypted_payload: WeixinEncryptedPayload,
 }
 
@@ -1836,6 +1847,8 @@ pub struct WeixinPendingDeliveryMetadata {
     pub segment_index: u32,
     #[serde(default)]
     pub total_segments: u32,
+    #[serde(default)]
+    pub wait_for_turn_completion: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encrypted_payload: Option<WeixinEncryptedPayload>,
     pub state: WeixinDeliveryState,

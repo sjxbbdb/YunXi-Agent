@@ -3,7 +3,7 @@ use crate::memory::{
     MemoryKind, MemoryLayer, MemoryRecallRequest, MemoryRecallResult, MemoryRecord, MemoryScope,
     MemorySensitivity, now_millis,
 };
-use crate::recall::{MemoryRecallEngine, RECALL_RELEVANCE_THRESHOLD, score_record};
+use crate::recall::{MemoryRecallEngine, RECALL_RELEVANCE_THRESHOLD, score_record_with_semantic};
 use crate::relationship_graph::{
     MemoryGraphRelation, RelationshipGraphLite, is_relationship_timeline_query,
     temporal_ordering_time,
@@ -50,6 +50,8 @@ pub struct MemoryRecallRouterRequest {
     pub dynamic_budget_chars: usize,
     pub boot_max_records: usize,
     pub dynamic_max_records: usize,
+    pub semantic_scores_per_mille: BTreeMap<String, u16>,
+    pub semantic_min_score_per_mille: u16,
 }
 
 impl MemoryRecallRouterRequest {
@@ -61,7 +63,15 @@ impl MemoryRecallRouterRequest {
             dynamic_budget_chars: 1200,
             boot_max_records: 6,
             dynamic_max_records: 8,
+            semantic_scores_per_mille: BTreeMap::new(),
+            semantic_min_score_per_mille: 180,
         }
+    }
+
+    pub fn set_semantic_score(&mut self, memory_id: impl Into<String>, score: f32) {
+        let score = (score.clamp(0.0, 1.0) * 1_000.0).round() as u16;
+        self.semantic_scores_per_mille
+            .insert(memory_id.into(), score);
     }
 }
 
@@ -237,8 +247,12 @@ impl MemoryRecallRouter {
         let mut dynamic_recall = if timeline_query {
             timeline_recall(&dynamic_candidates, &dynamic_request)
         } else {
-            self.engine
-                .recall_prompt_relevant(&dynamic_candidates, &dynamic_request)
+            self.engine.recall_prompt_relevant_with_semantic(
+                &dynamic_candidates,
+                &dynamic_request,
+                &request.semantic_scores_per_mille,
+                request.semantic_min_score_per_mille,
+            )
         };
         if request.boot_max_records == 0 {
             dynamic_recall.dropped_duplicates += duplicate_drops;
@@ -255,7 +269,12 @@ impl MemoryRecallRouter {
             let score = if timeline_query && is_graph_memory(record) {
                 1.0
             } else {
-                score_record(record, &dynamic_request)
+                score_record_with_semantic(
+                    record,
+                    &dynamic_request,
+                    Some(&request.semantic_scores_per_mille),
+                    request.semantic_min_score_per_mille,
+                )
             };
             if dynamic_ids.contains(record.id.as_str()) {
                 explanations.push(explanation(

@@ -7,9 +7,10 @@ use async_trait::async_trait;
 use tempfile::TempDir;
 use tokio::sync::Notify;
 use yunxi_agent_core::{
-    AgentBackend, AgentConfig, AgentEvent, AgentInput, AgentMessageSequence, AgentMessageStream,
-    AgentMessageStreamPhase, AgentResult, AgentRunControl, AgentRunResult, AgentRunStatus,
-    ApprovalMode, CommandStatus, MemoryExtractionMode, SandboxMode,
+    AgentBackend, AgentConfig, AgentEvent, AgentInput, AgentInputChannel, AgentInputModality,
+    AgentMessageSequence, AgentMessageStream, AgentMessageStreamPhase, AgentResult,
+    AgentRunControl, AgentRunResult, AgentRunStatus, ApprovalMode, CommandStatus,
+    MemoryExtractionMode, SandboxMode,
 };
 use yunxi_agent_persona::{MemoryKind, MemoryRecord, MemoryScope, MemoryStatus, PersonaSettings};
 use yunxi_agent_provider::{AgentProvider, ProviderMessage, ProviderRequest, ProviderResponse};
@@ -20,11 +21,12 @@ use yunxi_agent_storage::{
     WeixinStateSnapshot, WeixinStateStore,
 };
 use yunxi_agent_tools::NoopToolRuntime;
-use yunxi_agent_weixin::ilink::{MessageItem, TextItem, WeixinMessage};
+use yunxi_agent_weixin::ilink::{CdnMedia, MessageItem, TextItem, VoiceItem, WeixinMessage};
 use yunxi_agent_weixin::{
-    SecretString, WeixinInboundEnvelope, WeixinMessageId, WeixinPayloadAad, WeixinPayloadCipher,
-    WeixinRemoteControlHub, WeixinRuntimeTestSink, WeixinTurnSupervisor, WeixinTurnSupervisorError,
-    WeixinTurnSupervisorOptions,
+    SecretString, WeixinInboundEnvelope, WeixinInboundVoice, WeixinMessageId, WeixinPayloadAad,
+    WeixinPayloadCipher, WeixinRemoteControlHub, WeixinRuntimeTestSink, WeixinTurnSupervisor,
+    WeixinTurnSupervisorError, WeixinTurnSupervisorOptions, WeixinVoiceError,
+    WeixinVoiceTranscriber,
 };
 
 const ACCOUNT: &str = "account#933b5bde";
@@ -61,6 +63,7 @@ fn message(raw_message_id: &str, raw_peer: &str, text: &str) -> WeixinMessage {
             text_item: Some(TextItem {
                 text: SecretString::new(text),
             }),
+            voice_item: None,
             is_completed: Some(true),
             msg_id: None,
         }],
@@ -119,11 +122,11 @@ fn supervisor_options(workspace: &Path) -> WeixinTurnSupervisorOptions {
 
 #[derive(Clone, Default)]
 struct CapturingBackend {
-    calls: Arc<Mutex<Vec<(AgentConfig, String)>>>,
+    calls: Arc<Mutex<Vec<(AgentConfig, String, AgentInputModality, AgentInputChannel)>>>,
 }
 
 impl CapturingBackend {
-    fn calls(&self) -> Vec<(AgentConfig, String)> {
+    fn calls(&self) -> Vec<(AgentConfig, String, AgentInputModality, AgentInputChannel)> {
         self.calls.lock().expect("calls").clone()
     }
 }
@@ -141,16 +144,119 @@ impl AgentBackend for CapturingBackend {
         input: AgentInput,
         _control: AgentRunControl,
     ) -> AgentResult<AgentRunResult> {
-        self.calls
-            .lock()
-            .expect("calls")
-            .push((config, input.prompt.clone()));
+        self.calls.lock().expect("calls").push((
+            config,
+            input.prompt.clone(),
+            input.modality,
+            input.channel,
+        ));
         Ok(AgentRunResult {
             status: AgentRunStatus::Completed,
             final_response: Some(format!("reply: {}", input.prompt)),
             events: Vec::new(),
         })
     }
+}
+
+#[derive(Clone, Default)]
+struct FixedVoiceTranscriber;
+
+#[async_trait]
+impl WeixinVoiceTranscriber for FixedVoiceTranscriber {
+    async fn transcribe_voice(
+        &self,
+        _voice: &WeixinInboundVoice,
+    ) -> Result<SecretString, WeixinVoiceError> {
+        Ok(SecretString::new("本地识别后的语音内容"))
+    }
+}
+
+fn seed_voice_pending(store: &FileWeixinStateStore, account: &str, now_millis: u64) -> String {
+    let voice_message = WeixinMessage {
+        message_id: WeixinMessageId::new("raw-voice-message"),
+        from_user_id: SecretString::new("raw-voice-peer"),
+        to_user_id: None,
+        client_id: None,
+        create_time_ms: Some(now_millis),
+        session_id: None,
+        group_id: None,
+        message_type: Some(1),
+        message_state: None,
+        item_list: vec![MessageItem {
+            item_type: 3,
+            text_item: None,
+            voice_item: Some(VoiceItem {
+                media: Some(CdnMedia {
+                    encrypt_query_param: Some(SecretString::new("private-download-param")),
+                    aes_key: Some(SecretString::new("private-aes-key")),
+                    encrypt_type: Some(1),
+                    full_url: None,
+                }),
+                encode_type: Some(6),
+                bits_per_sample: Some(16),
+                sample_rate: Some(24_000),
+                playtime: Some(1_000),
+                text: None,
+            }),
+            is_completed: Some(true),
+            msg_id: None,
+        }],
+        context_token: None,
+    };
+    let envelope = WeixinInboundEnvelope::from_message(account, None, &voice_message, now_millis);
+    let item_id = envelope.pending_item_id();
+    let plaintext = envelope
+        .recoverable_payload(&voice_message, &item_id)
+        .expect("recoverable voice payload");
+    let aad = WeixinPayloadAad::new(
+        &envelope.account_id,
+        &envelope.peer_id_hash,
+        &envelope.message_id_hash,
+        &item_id,
+    );
+    let encrypted_payload = WeixinPayloadCipher::new()
+        .encrypt_pending_inbound(&test_data_key(), &plaintext, &aad)
+        .expect("encrypt pending");
+    let mut commit = WeixinInboundBatchCommit::new(account.to_string(), now_millis);
+    commit.accepted.push(WeixinInboundCommitItem {
+        item_id: item_id.clone(),
+        message_id_hash: envelope.message_id_hash.clone(),
+        peer_id_hash: envelope.peer_id_hash.clone(),
+        direct_message_key: envelope.direct_message_key.clone(),
+        encrypted_payload_ref: envelope.encrypted_payload_ref(),
+        encrypted_payload,
+        payload_kind: Some("voice".to_string()),
+    });
+    store.commit_inbound_batch(commit).expect("commit voice");
+    item_id
+}
+
+#[tokio::test]
+async fn supervisor_routes_local_transcript_as_voice_input() {
+    let (temp, store) = store_fixture();
+    let item_id = seed_voice_pending(&store, ACCOUNT, 1_100);
+    let sink = WeixinRuntimeTestSink::default();
+    let options =
+        supervisor_options(temp.path()).with_voice_transcriber(Arc::new(FixedVoiceTranscriber));
+    let supervisor =
+        WeixinTurnSupervisor::with_test_sink(store, test_data_key(), options, sink.clone());
+    let backend = CapturingBackend::default();
+
+    let report = supervisor
+        .run_pending_turn(&backend, ACCOUNT, &item_id)
+        .await
+        .expect("voice turn");
+
+    assert_eq!(report.status, AgentRunStatus::Completed);
+    let calls = backend.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].1, "本地识别后的语音内容");
+    assert_eq!(calls[0].2, AgentInputModality::Voice);
+    assert_eq!(calls[0].3, AgentInputChannel::Weixin);
+    assert_eq!(
+        sink.records()[0].final_response,
+        "reply: 本地识别后的语音内容"
+    );
 }
 
 #[derive(Clone, Default)]
@@ -249,6 +355,8 @@ async fn supervisor_reuses_session_writes_sink_and_preserves_runtime_config() {
     assert_eq!(calls.len(), 3);
     assert_eq!(calls[0].1, "hello");
     assert_eq!(calls[1].1, "again");
+    assert_eq!(calls[0].3, AgentInputChannel::Weixin);
+    assert_eq!(calls[1].3, AgentInputChannel::Weixin);
     assert_eq!(calls[0].0.provider.as_deref(), Some("configured-provider"));
     assert_eq!(calls[0].0.model.as_deref(), Some("configured-model"));
     assert_eq!(calls[0].0.cwd, temp.path());

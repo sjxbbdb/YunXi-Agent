@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use thiserror::Error;
 use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 use yunxi_agent_core::{
-    Agent, AgentBackend, AgentConfig, AgentEvent, AgentInput, AgentMessageStream,
-    AgentMessageStreamPhase, AgentRunApprovalDecision, AgentRunApprovalRequest, AgentRunControl,
-    AgentRunStatus, AgentRunStreamReceiver,
+    Agent, AgentBackend, AgentConfig, AgentEvent, AgentInput, AgentInputChannel,
+    AgentInputModality, AgentMessageStream, AgentMessageStreamPhase, AgentRunApprovalDecision,
+    AgentRunApprovalRequest, AgentRunControl, AgentRunStatus, AgentRunStreamReceiver,
 };
 use yunxi_agent_storage::{
     FileWeixinStateStore, WeixinPendingInboundState, WeixinRuntimeTurnBeginRequest,
@@ -23,6 +23,7 @@ use crate::remote_control::{
     WeixinRemoteControlHub, WeixinRemoteControlScope, render_remote_control_error,
     render_remote_control_prompt,
 };
+use crate::voice::{WeixinVoiceError, WeixinVoiceTranscriber};
 
 const DEFAULT_MAX_QUEUE_PER_CONVERSATION: usize = 8;
 const DEFAULT_MAX_GLOBAL_QUEUE: usize = 64;
@@ -92,13 +93,12 @@ impl WeixinTurnSupervisor {
         let payload = self
             .payload_cipher
             .decrypt_pending_inbound(&self.data_key, &pending)?;
-        let text = payload
-            .text
-            .as_ref()
-            .filter(|text| !text.is_empty())
-            .ok_or(WeixinTurnSupervisorError::UnsupportedPayload)?;
-        if payload.payload_kind != WeixinInboundKind::Text {
-            return Err(WeixinTurnSupervisorError::UnsupportedPayload);
+        match payload.payload_kind {
+            WeixinInboundKind::Text
+                if payload.text.as_ref().is_some_and(|text| !text.is_empty()) => {}
+            WeixinInboundKind::Voice
+                if payload.voice.is_some() && self.options.voice_transcriber.is_some() => {}
+            _ => return Err(WeixinTurnSupervisorError::UnsupportedPayload),
         }
 
         let candidate_session_id = self.candidate_session_id(&payload);
@@ -137,6 +137,50 @@ impl WeixinTurnSupervisor {
             .active_session_id
             .clone()
             .unwrap_or_else(|| binding.session_id.clone());
+        let agent_input = match payload.payload_kind {
+            WeixinInboundKind::Text => AgentInput::with_channel(
+                payload
+                    .text
+                    .as_ref()
+                    .ok_or(WeixinTurnSupervisorError::UnsupportedPayload)?
+                    .expose()
+                    .to_string(),
+                AgentInputModality::Text,
+                AgentInputChannel::Weixin,
+            ),
+            WeixinInboundKind::Voice => {
+                let voice = payload
+                    .voice
+                    .as_ref()
+                    .ok_or(WeixinTurnSupervisorError::UnsupportedPayload)?;
+                let transcriber = self
+                    .options
+                    .voice_transcriber
+                    .as_ref()
+                    .ok_or(WeixinTurnSupervisorError::UnsupportedPayload)?;
+                match transcriber.transcribe_voice(voice).await {
+                    Ok(transcript) => AgentInput::with_channel(
+                        transcript.expose().to_string(),
+                        AgentInputModality::Voice,
+                        AgentInputChannel::Weixin,
+                    ),
+                    Err(error) => {
+                        let _ = self.sink.write_outbound_text(WeixinRuntimeSinkRecord {
+                            account_id: payload.account_id.clone(),
+                            peer_id_hash: payload.peer_id_hash.clone(),
+                            direct_message_key: payload.direct_message_key.clone(),
+                            item_id: payload.item_id.clone(),
+                            session_id: runtime_session_id.clone(),
+                            reply_to_user_id: payload.reply_to_user_id.clone(),
+                            reply_context_token: payload.reply_context_token.clone(),
+                            final_response: "这条语音暂时没能听清，请再说一次。".to_string(),
+                        });
+                        return Err(WeixinTurnSupervisorError::Voice(error));
+                    }
+                }
+            }
+            _ => return Err(WeixinTurnSupervisorError::UnsupportedPayload),
+        };
         let parent_session_id = binding.last_completed_session_id.clone();
         let mut runtime_config = self
             .options
@@ -193,22 +237,14 @@ impl WeixinTurnSupervisor {
                     payload.reply_context_token.clone(),
                 );
                 let agent = Agent::new(runtime_config);
-                let run = agent.run_with_backend_stream(
-                    backend,
-                    AgentInput::text(text.expose().to_string()),
-                    control,
-                );
+                let run = agent.run_with_backend_stream(backend, agent_input.clone(), control);
                 let (result, observation) = tokio::join!(run, monitor);
                 let _ = remote_control_hub.close_scope(&scope);
                 (result, Some(observation))
             } else {
                 (
                     Agent::new(runtime_config)
-                        .run_with_backend_stream(
-                            backend,
-                            AgentInput::text(text.expose().to_string()),
-                            AgentRunControl::detached(),
-                        )
+                        .run_with_backend_stream(backend, agent_input, AgentRunControl::detached())
                         .await,
                     None,
                 )
@@ -232,7 +268,7 @@ impl WeixinTurnSupervisor {
                     && let Some(final_response) = result.final_response.as_ref()
                     && let Some(public_response) = sanitize_public_final_response(final_response)
                 {
-                    self.sink.write_final_response(WeixinRuntimeSinkRecord {
+                    let record = WeixinRuntimeSinkRecord {
                         account_id: payload.account_id.clone(),
                         peer_id_hash: payload.peer_id_hash.clone(),
                         direct_message_key: payload.direct_message_key.clone(),
@@ -241,7 +277,8 @@ impl WeixinTurnSupervisor {
                         reply_to_user_id: payload.reply_to_user_id.clone(),
                         reply_context_token: payload.reply_context_token.clone(),
                         final_response: public_response,
-                    })?;
+                    };
+                    self.sink.write_final_response(record)?;
                     final_response_present = true;
                 }
                 self.state_store.complete_pending_runtime_turn(
@@ -308,6 +345,7 @@ pub struct WeixinTurnSupervisorOptions {
     pub source_label: String,
     pub remote_control_hub: Option<WeixinRemoteControlHub>,
     pub remote_control_timeout: Duration,
+    pub voice_transcriber: Option<Arc<dyn WeixinVoiceTranscriber>>,
 }
 
 impl WeixinTurnSupervisorOptions {
@@ -320,6 +358,7 @@ impl WeixinTurnSupervisorOptions {
             source_label: DEFAULT_SOURCE_LABEL.to_string(),
             remote_control_hub: None,
             remote_control_timeout: DEFAULT_REMOTE_CONTROL_TIMEOUT,
+            voice_transcriber: None,
         }
     }
 
@@ -330,6 +369,11 @@ impl WeixinTurnSupervisorOptions {
 
     pub fn with_remote_control_timeout(mut self, timeout: Duration) -> Self {
         self.remote_control_timeout = timeout.max(Duration::from_millis(1));
+        self
+    }
+
+    pub fn with_voice_transcriber(mut self, transcriber: Arc<dyn WeixinVoiceTranscriber>) -> Self {
+        self.voice_transcriber = Some(transcriber);
         self
     }
 }
@@ -906,6 +950,8 @@ pub enum WeixinTurnSupervisorError {
     QueueFull { scope: &'static str, limit: usize },
     #[error("weixin runtime supervisor sink failed")]
     SinkFailed,
+    #[error("weixin runtime supervisor voice processing failed: {0}")]
+    Voice(#[from] WeixinVoiceError),
     #[error("weixin runtime supervisor remote control registration failed")]
     RemoteControlRegistrationFailed,
 }

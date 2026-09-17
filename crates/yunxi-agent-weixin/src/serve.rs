@@ -288,7 +288,7 @@ where
                     now,
                 );
                 match envelope.kind {
-                    WeixinInboundKind::Text => {
+                    WeixinInboundKind::Text | WeixinInboundKind::Voice => {
                         if options.pairing_required
                             && !peer_is_approved(&state, &envelope.peer_id_hash, now)
                         {
@@ -396,7 +396,7 @@ where
                             let item_id = envelope.pending_item_id();
                             let encrypted_payload_ref = envelope.encrypted_payload_ref();
                             let plaintext = envelope
-                                .recoverable_text_payload(message, &item_id)
+                                .recoverable_payload(message, &item_id)
                                 .ok_or(WeixinPayloadCipherError::InvalidPlaintext)?;
                             let aad = WeixinPayloadAad::new(
                                 &envelope.account_id,
@@ -954,6 +954,9 @@ fn runtime_dispatch_error_label(
             runtime_state_error_label(error)
         }
         crate::turn_supervisor::WeixinTurnSupervisorError::SinkFailed => "runtime_sink_failed",
+        crate::turn_supervisor::WeixinTurnSupervisorError::Voice(_) => {
+            "runtime_voice_processing_failed"
+        }
         crate::turn_supervisor::WeixinTurnSupervisorError::RemoteControlRegistrationFailed => {
             "runtime_remote_control_unavailable"
         }
@@ -1610,6 +1613,7 @@ mod tests {
                 text_item: Some(TextItem {
                     text: SecretString::new("raw message body"),
                 }),
+                voice_item: None,
                 is_completed: Some(true),
                 msg_id: None,
             }],

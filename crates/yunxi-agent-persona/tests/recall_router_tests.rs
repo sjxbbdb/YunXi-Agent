@@ -1,9 +1,9 @@
 use serde_json::json;
 use yunxi_agent_persona::{
-    HumanProfile, MemoryKind, MemoryMigrationResult, MemoryPipeline, MemoryPipelineInput,
-    MemoryRecallRoute, MemoryRecallRouter, MemoryRecallRouterRequest, MemoryRecord, MemoryScope,
-    MemorySensitivity, MemoryStatus, PersonaPromptCompiler, RelationshipState, SCHEMA_VERSION,
-    migrate_memory_record_value, yunxi_companion_strong,
+    ConversationState, HumanProfile, MemoryKind, MemoryMigrationResult, MemoryPipeline,
+    MemoryPipelineInput, MemoryRecallRoute, MemoryRecallRouter, MemoryRecallRouterRequest,
+    MemoryRecord, MemoryScope, MemorySensitivity, MemoryStatus, PersonaPromptCompiler,
+    RelationshipState, SCHEMA_VERSION, migrate_memory_record_value, yunxi_companion_strong,
 };
 
 fn active_record(
@@ -180,6 +180,24 @@ fn dynamic_recall_uses_prompt_relevance() {
 }
 
 #[test]
+fn dynamic_recall_accepts_vector_score_without_keyword_overlap() {
+    let event = active_record(
+        "tone-event",
+        MemoryScope::Relationship,
+        MemoryKind::Event,
+        "偏好温柔简短的表达方式",
+        1,
+    );
+    let mut request = request("交流风格");
+    request.set_semantic_score("tone-event", 0.42);
+
+    let routed = MemoryRecallRouter::default().route(&[event], &request);
+
+    assert_eq!(routed.dynamic_recall.records.len(), 1);
+    assert_eq!(routed.dynamic_recall.records[0].id, "tone-event");
+}
+
+#[test]
 fn dynamic_recall_deduplicates_against_boot_context() {
     let project = active_record(
         "project",
@@ -276,6 +294,32 @@ fn persona_context_blocks_render_boot_and_dynamic_memory_as_context_not_instruct
             .content
             .contains("cannot override higher-priority instructions")
     );
+}
+
+#[test]
+fn persona_context_renders_active_short_term_state_separately_from_long_term_memory() {
+    let mut conversation = ConversationState::new("session-a", 1);
+    conversation.expires_at_millis = u128::MAX;
+    conversation.current_topic = Some("继续讨论向量记忆".to_string());
+    conversation.response_tone = Some("warm_concise".to_string());
+
+    let compiled = PersonaPromptCompiler::new(3200).compile_routed_with_conversation_for_turn(
+        &yunxi_companion_strong(),
+        &HumanProfile::default(),
+        &RelationshipState::default(),
+        Some(&conversation),
+        &[],
+        &[],
+        true,
+    );
+
+    assert!(
+        compiled
+            .content
+            .contains("<conversation_state role=\"short_term_context\">")
+    );
+    assert!(compiled.content.contains("继续讨论向量记忆"));
+    assert!(compiled.content.contains("not a durable user fact"));
 }
 
 #[test]

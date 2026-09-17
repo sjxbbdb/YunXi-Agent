@@ -132,6 +132,8 @@ pub struct HumanProfile {
     #[serde(default)]
     pub interaction_preferences: Vec<String>,
     #[serde(default)]
+    pub stable_facts: Vec<String>,
+    #[serde(default)]
     pub long_term_goals: Vec<String>,
 }
 

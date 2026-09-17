@@ -303,6 +303,7 @@ mod tests {
             reply_to_user_id: Some(SecretString::new("raw-user")),
             reply_context_token: Some(SecretString::new("raw-context")),
             text: Some(SecretString::new("raw message body")),
+            voice: None,
         }
     }
 

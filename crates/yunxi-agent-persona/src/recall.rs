@@ -16,15 +16,23 @@ impl MemoryRecallEngine {
         records: &[MemoryRecord],
         request: &MemoryRecallRequest,
     ) -> MemoryRecallResult {
-        self.recall_internal(records, request, true)
+        self.recall_internal(records, request, true, None, 0)
     }
 
-    pub(crate) fn recall_prompt_relevant(
+    pub(crate) fn recall_prompt_relevant_with_semantic(
         &self,
         records: &[MemoryRecord],
         request: &MemoryRecallRequest,
+        semantic_scores_per_mille: &BTreeMap<String, u16>,
+        semantic_min_score_per_mille: u16,
     ) -> MemoryRecallResult {
-        self.recall_internal(records, request, false)
+        self.recall_internal(
+            records,
+            request,
+            false,
+            Some(semantic_scores_per_mille),
+            semantic_min_score_per_mille,
+        )
     }
 
     fn recall_internal(
@@ -32,6 +40,8 @@ impl MemoryRecallEngine {
         records: &[MemoryRecord],
         request: &MemoryRecallRequest,
         include_always_on: bool,
+        semantic_scores_per_mille: Option<&BTreeMap<String, u16>>,
+        semantic_min_score_per_mille: u16,
     ) -> MemoryRecallResult {
         let (records, dropped_duplicates) = collapse_duplicate_records(records, request);
         let mut dropped_unrelated = 0;
@@ -50,7 +60,12 @@ impl MemoryRecallEngine {
                     dropped_unrelated += 1;
                     return None;
                 }
-                let score = score_record(record, request);
+                let score = score_record_with_semantic(
+                    record,
+                    request,
+                    semantic_scores_per_mille,
+                    semantic_min_score_per_mille,
+                );
                 if !request.query.trim().is_empty() && score >= RECALL_RELEVANCE_THRESHOLD {
                     Some((score, record.clone()))
                 } else {
@@ -166,6 +181,29 @@ pub(crate) fn score_record(record: &MemoryRecord, request: &MemoryRecallRequest)
     }
     if score > 0.0 {
         score += record.importance + record.confidence * 0.5;
+    }
+    score
+}
+
+pub(crate) fn score_record_with_semantic(
+    record: &MemoryRecord,
+    request: &MemoryRecallRequest,
+    semantic_scores_per_mille: Option<&BTreeMap<String, u16>>,
+    semantic_min_score_per_mille: u16,
+) -> f32 {
+    let mut score = score_record(record, request);
+    if let Some(score_per_mille) = semantic_scores_per_mille
+        .and_then(|scores| scores.get(&record.id))
+        .copied()
+        .filter(|score| *score >= semantic_min_score_per_mille)
+    {
+        let semantic_score = f32::from(score_per_mille) / 1_000.0;
+        score = score.max(
+            RECALL_RELEVANCE_THRESHOLD
+                + semantic_score * 2.0
+                + record.importance * 0.25
+                + record.confidence * 0.1,
+        );
     }
     score
 }

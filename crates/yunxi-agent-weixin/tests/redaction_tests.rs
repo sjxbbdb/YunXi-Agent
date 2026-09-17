@@ -24,6 +24,7 @@ fn secrets_are_redacted_from_debug_display_and_diagnostic_json() {
             text_item: Some(TextItem {
                 text: SecretString::new("raw message content"),
             }),
+            voice_item: None,
             is_completed: Some(true),
             msg_id: None,
         }],

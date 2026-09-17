@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use axum::body::Body;
-use axum::extract::{Path, State};
-use axum::http::{StatusCode, header};
+use axum::body::{Body, Bytes};
+use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -18,6 +18,11 @@ use yunxi_agent_persona::{
     RelationshipFamiliarity,
 };
 use yunxi_agent_storage::{FileCompanionMailboxStore, FilePersonaMemoryStore, PersonaMemoryScope};
+use yunxi_agent_voice::{
+    AudioInput, DEFAULT_MAX_INPUT_BYTES, DEFAULT_PRESET_VOICE, SpeechToTextProvider,
+    SynthesisRequest, TextToSpeechProvider, VoiceClientConfig, VoiceRuntimeClient,
+    render_spoken_text,
+};
 
 use crate::provider_mode;
 
@@ -27,6 +32,7 @@ const INDEX_HTML: &str = include_str!("web/index.html");
 const APP_CSS: &str = include_str!("web/app.css");
 const APP_JS: &str = include_str!("web/app.js");
 const YUNXI_CHARACTER_ART: &[u8] = include_bytes!("web/yunxi-character-design.jpg");
+const YUNXI_VOICE_SCENE: &[u8] = include_bytes!("web/yunxi-voice-scene.jpg");
 const YUNXI_HER_BACKGROUND: &[u8] = include_bytes!("web/yunxi-her-background.jpg");
 const YUNXI_HER_PROFILE_CARD: &[u8] = include_bytes!("web/yunxi-her-profile-card.jpg");
 const YUNXI_HER_EXPRESSION_RESERVED: &[u8] =
@@ -202,6 +208,33 @@ struct ChatResponse {
     insights: RunInsights,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebVoiceStatusResponse {
+    available: bool,
+    stt_ready: bool,
+    tts_ready: bool,
+    stt_model: Option<String>,
+    tts_model: Option<String>,
+    voice: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebVoiceTranscriptionResponse {
+    text: String,
+    language: Option<String>,
+    emotion: Option<String>,
+    audio_events: Vec<String>,
+    elapsed_ms: u128,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WebVoiceSynthesisRequest {
+    text: String,
+}
+
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RunInsights {
@@ -252,6 +285,7 @@ fn app(state: AppState) -> Router {
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
         .route("/assets/yunxi-character-design.jpg", get(character_art))
+        .route("/assets/yunxi-voice-scene.jpg", get(voice_scene_art))
         .route("/assets/yunxi-her-background.jpg", get(her_background_art))
         .route("/assets/yunxi-her-profile-card.jpg", get(her_profile_art))
         .route(
@@ -287,6 +321,12 @@ fn app(state: AppState) -> Router {
         .route("/api/mailbox/{item_id}", get(mailbox_detail))
         .route("/api/mailbox/{item_id}/state", post(mailbox_state))
         .route("/api/chat", post(chat))
+        .route("/api/voice/status", get(web_voice_status))
+        .route(
+            "/api/voice/transcribe",
+            post(web_voice_transcribe).layer(DefaultBodyLimit::max(DEFAULT_MAX_INPUT_BYTES)),
+        )
+        .route("/api/voice/synthesize", post(web_voice_synthesize))
         .with_state(state)
 }
 
@@ -304,6 +344,10 @@ async fn app_js() -> Response {
 
 async fn character_art() -> Response {
     image_response(YUNXI_CHARACTER_ART)
+}
+
+async fn voice_scene_art() -> Response {
+    image_response(YUNXI_VOICE_SCENE)
 }
 
 async fn her_background_art() -> Response {
@@ -663,6 +707,104 @@ async fn chat(
     }))
 }
 
+async fn web_voice_status() -> Json<WebVoiceStatusResponse> {
+    let unavailable = || WebVoiceStatusResponse {
+        available: false,
+        stt_ready: false,
+        tts_ready: false,
+        stt_model: None,
+        tts_model: None,
+        voice: DEFAULT_PRESET_VOICE,
+    };
+    let Ok(client) = VoiceRuntimeClient::new(VoiceClientConfig::from_env()) else {
+        return Json(unavailable());
+    };
+    let Ok(health) = client.health().await else {
+        return Json(unavailable());
+    };
+    Json(WebVoiceStatusResponse {
+        available: health.ready(),
+        stt_ready: health.stt.ready,
+        tts_ready: health.tts.ready,
+        stt_model: Some(health.stt.model),
+        tts_model: Some(health.tts.model),
+        voice: DEFAULT_PRESET_VOICE,
+    })
+}
+
+async fn web_voice_transcribe(
+    headers: HeaderMap,
+    body: Bytes,
+) -> std::result::Result<Json<WebVoiceTranscriptionResponse>, (StatusCode, Json<ApiErrorResponse>)>
+{
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if !matches!(content_type, "audio/wav" | "audio/x-wav" | "audio/wave") {
+        return Err(bad_request("录音必须使用 WAV 格式"));
+    }
+    let client = web_voice_client()?;
+    let audio = AudioInput::wav(body.to_vec(), client.config().max_input_bytes)
+        .map_err(|_| bad_request("录音文件无效或超过大小限制"))?;
+    let started = Instant::now();
+    let transcript = client
+        .transcribe(audio, Some("zh"))
+        .await
+        .map_err(|_| voice_unavailable())?;
+    Ok(Json(WebVoiceTranscriptionResponse {
+        text: transcript.text,
+        language: transcript.language,
+        emotion: transcript.emotion,
+        audio_events: transcript.audio_events,
+        elapsed_ms: started.elapsed().as_millis(),
+    }))
+}
+
+async fn web_voice_synthesize(
+    Json(request): Json<WebVoiceSynthesisRequest>,
+) -> std::result::Result<Response, (StatusCode, Json<ApiErrorResponse>)> {
+    let client = web_voice_client()?;
+    let speech = render_spoken_text(&request.text, client.config().max_speech_chars)
+        .map_err(|_| bad_request("回复中没有可朗读的内容"))?;
+    let audio = client
+        .synthesize(SynthesisRequest {
+            text: speech.text,
+            voice: DEFAULT_PRESET_VOICE.to_string(),
+            format: "wav".to_string(),
+            realtime: true,
+        })
+        .await
+        .map_err(|_| voice_unavailable())?;
+    Response::builder()
+        .header(header::CONTENT_TYPE, audio.content_type)
+        .header(header::CACHE_CONTROL, "no-store")
+        .header(
+            "x-yunxi-speech-truncated",
+            if speech.truncated { "true" } else { "false" },
+        )
+        .body(Body::from(audio.bytes))
+        .map_err(|_| internal_error(anyhow::anyhow!("failed to build voice response")))
+}
+
+fn web_voice_client()
+-> std::result::Result<VoiceRuntimeClient, (StatusCode, Json<ApiErrorResponse>)> {
+    VoiceRuntimeClient::new(VoiceClientConfig::from_env()).map_err(|_| voice_unavailable())
+}
+
+fn voice_unavailable() -> (StatusCode, Json<ApiErrorResponse>) {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(ApiErrorResponse {
+            error: "本地语音服务暂不可用".to_string(),
+        }),
+    )
+}
+
 fn normalize_prompt(prompt: String) -> std::result::Result<String, &'static str> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -836,6 +978,14 @@ mod tests {
         assert!(APP_JS.contains("/api/memory"));
         assert!(APP_JS.contains("/api/mailbox"));
         assert!(APP_JS.contains("/api/chat"));
+        assert!(APP_JS.contains("/api/voice/status"));
+        assert!(APP_JS.contains("/api/voice/transcribe"));
+        assert!(APP_JS.contains("/api/voice/synthesize"));
+        assert!(INDEX_HTML.contains("id=\"voice-button\""));
+        assert!(INDEX_HTML.contains("id=\"voice-status\""));
+        assert!(INDEX_HTML.contains("/assets/yunxi-voice-scene.jpg"));
+        assert!(INDEX_HTML.contains("id=\"voice-orb-canvas\""));
+        assert!(INDEX_HTML.contains("id=\"voice-chat-scene\""));
         assert!(INDEX_HTML.contains("data-nav=\"mailbox\""));
         assert!(INDEX_HTML.contains("data-nav=\"her\""));
         assert!(APP_CSS.contains(".mailbox-canvas"));
@@ -909,6 +1059,23 @@ mod tests {
         assert!(!YUNXI_HER_EXPRESSION_WISTFUL.is_empty());
         assert!(!YUNXI_HER_EXPRESSION_SMILE.is_empty());
         assert!(!YUNXI_HER_EXPRESSION_GENTLE.is_empty());
+    }
+
+    #[test]
+    fn web_voice_status_keeps_runtime_configuration_private() {
+        let response = WebVoiceStatusResponse {
+            available: true,
+            stt_ready: true,
+            tts_ready: true,
+            stt_model: Some("SenseVoiceSmall".to_string()),
+            tts_model: Some("CosyVoice3".to_string()),
+            voice: DEFAULT_PRESET_VOICE,
+        };
+        let json = serde_json::to_value(response).expect("voice status should serialize");
+        assert_eq!(json["available"], true);
+        assert_eq!(json["voice"], DEFAULT_PRESET_VOICE);
+        assert!(json.get("runtimeUrl").is_none());
+        assert!(json.get("authToken").is_none());
     }
 
     #[test]

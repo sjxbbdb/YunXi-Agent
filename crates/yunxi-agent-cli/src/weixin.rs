@@ -13,6 +13,7 @@ use yunxi_agent_storage::{
     WeixinCredentialReferenceRecord, WeixinLatencyTraceRecord, WeixinPairRequest, WeixinStateError,
     WeixinStateSnapshot, WeixinStateStore,
 };
+use yunxi_agent_voice::{VoiceClientConfig, VoiceRuntimeClient};
 use yunxi_agent_weixin::{
     IlinkHttpClient, LoginPollState, PRODUCTION_ILINK_ENDPOINT, SystemWeixinSecretStore,
     WeixinAccountId, WeixinAccountMetadata, WeixinAccountRecord, WeixinAccountStore,
@@ -21,7 +22,7 @@ use yunxi_agent_weixin::{
     WeixinLoginStateMachine, WeixinLoginTransport, WeixinRuntimeDispatcherAdapter,
     WeixinSecretStore, WeixinSecretStoreError, WeixinServeCancellation, WeixinServeOptions,
     WeixinServeReport, WeixinServeStoppedReason, WeixinTurnSupervisor, WeixinTurnSupervisorOptions,
-    generate_data_key, run_weixin_serve_loop,
+    WeixinVoiceBridge, WeixinVoiceTranscriber, generate_data_key, run_weixin_serve_loop,
 };
 
 use crate::provider_mode::ProviderMode;
@@ -236,15 +237,23 @@ async fn run_serve(
         })?;
     let mut client = IlinkHttpClient::new(account, Some(token))
         .context("weixin serve could not initialize the fixed iLink client")?;
+    let voice_runtime = VoiceRuntimeClient::new(VoiceClientConfig::from_env())
+        .context("weixin serve voice runtime configuration is invalid")?;
+    let voice_bridge = Arc::new(
+        WeixinVoiceBridge::new(voice_runtime)
+            .context("weixin serve could not initialize voice transcription")?,
+    );
     let mut options = WeixinServeOptions::new(record.account_id.clone());
     options.max_polls = serve_max_polls_from_env()?;
     options.background_runtime_dispatch = true;
     options.background_delivery_dispatch = true;
     let remote_control_hub =
         yunxi_agent_weixin::WeixinRemoteControlHub::with_state_store(state_store.clone());
+    let voice_transcriber: Arc<dyn WeixinVoiceTranscriber> = voice_bridge.clone();
     let supervisor_options =
         WeixinTurnSupervisorOptions::new(prepared_config.clone(), record.workspace_id.clone())
-            .with_remote_control_hub(remote_control_hub.clone());
+            .with_remote_control_hub(remote_control_hub.clone())
+            .with_voice_transcriber(voice_transcriber);
     let delivery_sink: Arc<dyn yunxi_agent_weixin::WeixinRuntimeSink> = Arc::new(
         yunxi_agent_weixin::WeixinDeliverySpoolSink::new(state_store.clone(), data_key.clone()),
     );
@@ -286,7 +295,7 @@ async fn run_serve(
         println!("provider mode: {}", selection.source.as_str());
         println!("state store schema: {}", state.schema_version);
         println!(
-            "private chat long polling, runtime dispatch, background delivery drain, final-text sendmessage spool, and slash-command control enabled; group chat remains disabled"
+            "private chat long polling, text/voice runtime dispatch, background delivery drain, encrypted sendmessage spool, and slash-command control enabled; group chat remains disabled"
         );
     }
     let serve_result = tokio::select! {
@@ -534,6 +543,9 @@ fn print_status(account: &str, workspace: &Path, json_output: bool) -> Result<()
             "receive_messages": true,
             "send_messages": true,
             "send_message_mode": "final_text_spool",
+            "voice_input": true,
+            "voice_reply_mode": "text_only",
+            "voice_runtime_health_checked": false,
             "background_delivery_dispatch": true,
             "foreground_long_polling": true,
             "runtime_dispatch": true,
@@ -807,6 +819,9 @@ fn print_doctor(account: &str, workspace: &Path, json_output: bool) -> Result<()
             "runtime_dispatch_enabled": record.is_some() && credential_state == "present",
             "message_send_enabled": record.is_some() && credential_state == "present",
             "message_send_mode": "final_text_spool",
+            "voice_input_enabled": record.is_some() && credential_state == "present",
+            "voice_reply_mode": "text_only",
+            "voice_runtime_health_checked": false,
             "background_delivery_dispatch": record.is_some() && credential_state == "present",
             "remote_approval_enabled": record.is_some() && credential_state == "present",
             "remote_user_input_enabled": record.is_some() && credential_state == "present",
@@ -1187,6 +1202,8 @@ fn print_serve_report(account: &str, report: &WeixinServeReport, json_output: bo
                 "runtime_recovered_count": report.runtime_recovered_count,
                 "send_message_enabled": true,
                 "send_message_mode": "final_text_spool",
+                "voice_input_enabled": true,
+                "voice_reply_mode": "text_only",
                 "background_delivery_dispatch": true,
                 "delivery_attempt_count": report.delivery_attempt_count,
                 "delivery_success_count": report.delivery_success_count,

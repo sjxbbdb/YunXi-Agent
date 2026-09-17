@@ -23,10 +23,16 @@ use yunxi_agent_persona::{
 use yunxi_agent_protocol::{RuntimeEvent, from_jsonl_line, to_jsonl_line};
 
 mod companion_mailbox;
+mod conversation_state;
+mod memory_vector;
 mod weixin_state;
 
 pub use companion_mailbox::{
     CompanionMailboxSnapshot, FileCompanionMailboxStore, MailboxEnqueueOutcome,
+};
+pub use conversation_state::FileConversationStateStore;
+pub use memory_vector::{
+    MemoryVectorMatch, MemoryVectorSearch, MemoryVectorSyncSummary, SqliteMemoryVectorStore,
 };
 
 pub use weixin_state::{

@@ -24,7 +24,7 @@ use crate::turn_supervisor::{
 use crate::{WeixinApiError, WeixinMessageId};
 
 const DELIVERY_PAYLOAD_SCHEMA_VERSION: u32 = 1;
-const DEFAULT_SEGMENT_LIMIT_GRAPHEMES: usize = 1800;
+const DEFAULT_SEGMENT_LIMIT_GRAPHEMES: usize = 72;
 const DELIVERY_DRAIN_LIMIT: usize = 16;
 const MIN_DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 const MAX_DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(60);
@@ -68,12 +68,11 @@ impl WeixinDeliverySpoolSink {
         self.max_segment_graphemes = max_segment_graphemes.max(1);
         self
     }
-}
 
-impl WeixinRuntimeSink for WeixinDeliverySpoolSink {
-    fn write_final_response(
+    fn write_response(
         &self,
         record: WeixinRuntimeSinkRecord,
+        wait_for_turn_completion: bool,
     ) -> Result<(), WeixinTurnSupervisorError> {
         let Some(reply_to_user_id) = record.reply_to_user_id.clone() else {
             return Err(WeixinTurnSupervisorError::SinkFailed);
@@ -100,6 +99,7 @@ impl WeixinRuntimeSink for WeixinDeliverySpoolSink {
             );
             let payload = WeixinDeliveryPayload {
                 schema_version: DELIVERY_PAYLOAD_SCHEMA_VERSION,
+                response_mode: WeixinResponseMode::Text,
                 account_id: record.account_id.clone(),
                 peer_id_hash: record.peer_id_hash.clone(),
                 direct_message_key: record.direct_message_key.clone(),
@@ -130,6 +130,7 @@ impl WeixinRuntimeSink for WeixinDeliverySpoolSink {
                 message_hash: message_hash.clone(),
                 segment_index: index as u32,
                 total_segments,
+                wait_for_turn_completion,
                 encrypted_payload,
             });
         }
@@ -149,9 +150,35 @@ impl WeixinRuntimeSink for WeixinDeliverySpoolSink {
     }
 }
 
+impl WeixinRuntimeSink for WeixinDeliverySpoolSink {
+    fn write_final_response(
+        &self,
+        record: WeixinRuntimeSinkRecord,
+    ) -> Result<(), WeixinTurnSupervisorError> {
+        self.write_response(record, true)
+    }
+
+    fn write_outbound_text(
+        &self,
+        record: WeixinRuntimeSinkRecord,
+    ) -> Result<(), WeixinTurnSupervisorError> {
+        self.write_response(record, false)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WeixinResponseMode {
+    #[default]
+    Text,
+    Voice,
+}
+
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WeixinDeliveryPayload {
     pub schema_version: u32,
+    #[serde(default)]
+    pub response_mode: WeixinResponseMode,
     pub account_id: String,
     pub peer_id_hash: String,
     pub direct_message_key: String,
@@ -172,6 +199,7 @@ impl fmt::Debug for WeixinDeliveryPayload {
         formatter
             .debug_struct("WeixinDeliveryPayload")
             .field("schema_version", &self.schema_version)
+            .field("response_mode", &self.response_mode)
             .field("account_id", &self.account_id)
             .field("peer_id_hash", &self.peer_id_hash)
             .field("direct_message_key", &self.direct_message_key)
@@ -228,6 +256,7 @@ impl WeixinDeliveryPayload {
                 text_item: Some(TextItem {
                     text: self.text.clone(),
                 }),
+                voice_item: None,
                 is_completed: None,
                 msg_id: None,
             }],
@@ -416,19 +445,53 @@ pub fn split_weixin_text_segments(text: &str, max_segment_graphemes: usize) -> V
     let mut segments = Vec::new();
     let mut current = String::new();
     let mut current_count = 0usize;
+    let mut sentence_complete = false;
     for grapheme in UnicodeSegmentation::graphemes(text, true) {
-        if current_count >= max_segment_graphemes && !current.is_empty() {
-            segments.push(current);
-            current = String::new();
+        if grapheme == "\r" {
+            continue;
+        }
+        if grapheme == "\n" {
+            push_weixin_segment(&mut segments, &mut current);
             current_count = 0;
+            sentence_complete = false;
+            continue;
+        }
+        if sentence_complete && !is_sentence_suffix(grapheme) {
+            push_weixin_segment(&mut segments, &mut current);
+            current_count = 0;
+            sentence_complete = false;
         }
         current.push_str(grapheme);
         current_count += 1;
+        sentence_complete |= is_sentence_terminal(grapheme);
+        if current_count >= max_segment_graphemes {
+            push_weixin_segment(&mut segments, &mut current);
+            current_count = 0;
+            sentence_complete = false;
+        }
     }
-    if !current.trim().is_empty() {
-        segments.push(current);
-    }
+    push_weixin_segment(&mut segments, &mut current);
     segments
+}
+
+fn push_weixin_segment(segments: &mut Vec<String>, current: &mut String) {
+    let segment = current.trim();
+    if !segment.is_empty() {
+        segments.push(segment.to_string());
+    }
+    current.clear();
+}
+
+fn is_sentence_terminal(grapheme: &str) -> bool {
+    matches!(grapheme, "。" | "！" | "？" | "!" | "?" | "；" | ";" | "…")
+}
+
+fn is_sentence_suffix(grapheme: &str) -> bool {
+    is_sentence_terminal(grapheme)
+        || matches!(
+            grapheme,
+            "\"" | "'" | "”" | "’" | "」" | "』" | "）" | ")" | "】" | "]"
+        )
 }
 
 fn encrypt_delivery_payload(
@@ -552,9 +615,30 @@ mod tests {
     }
 
     #[test]
+    fn split_weixin_text_segments_prefers_natural_sentences() {
+        let segments =
+            split_weixin_text_segments("听懂了。刚才那句确实有点生硬！以后我会说得自然一点。", 72);
+        assert_eq!(
+            segments,
+            vec![
+                "听懂了。",
+                "刚才那句确实有点生硬！",
+                "以后我会说得自然一点。"
+            ]
+        );
+    }
+
+    #[test]
+    fn split_weixin_text_segments_keeps_closing_quote_with_sentence() {
+        let segments = split_weixin_text_segments("她说：“知道啦！”然后笑了。", 72);
+        assert_eq!(segments, vec!["她说：“知道啦！”", "然后笑了。"]);
+    }
+
+    #[test]
     fn delivery_payload_debug_redacts_secret_fields() {
         let payload = WeixinDeliveryPayload {
             schema_version: DELIVERY_PAYLOAD_SCHEMA_VERSION,
+            response_mode: WeixinResponseMode::Text,
             account_id: "account#11111111".to_string(),
             peer_id_hash: "peer#22222222".to_string(),
             direct_message_key: "dm#33333333".to_string(),
@@ -579,6 +663,7 @@ mod tests {
     fn sendmessage_request_matches_minimal_ilink_text_shape() {
         let payload = WeixinDeliveryPayload {
             schema_version: DELIVERY_PAYLOAD_SCHEMA_VERSION,
+            response_mode: WeixinResponseMode::Text,
             account_id: "account#11111111".to_string(),
             peer_id_hash: "peer#22222222".to_string(),
             direct_message_key: "dm#33333333".to_string(),
@@ -620,6 +705,44 @@ mod tests {
         assert!(value["base_info"].get("bot_agent").is_none());
     }
 
+    #[tokio::test]
+    async fn legacy_voice_delivery_marker_is_sent_as_text() {
+        let transport = RecordingMessageTransport::default();
+        let payload = WeixinDeliveryPayload {
+            schema_version: DELIVERY_PAYLOAD_SCHEMA_VERSION,
+            response_mode: WeixinResponseMode::Voice,
+            account_id: "account#11111111".to_string(),
+            peer_id_hash: "peer#22222222".to_string(),
+            direct_message_key: "dm#33333333".to_string(),
+            item_id: "item#44444444".to_string(),
+            session_id: "session-1".to_string(),
+            delivery_id: "delivery#55555555".to_string(),
+            segment_index: 0,
+            total_segments: 1,
+            text: SecretString::new("兼容文字回复"),
+            to_user_id: SecretString::new("raw-chat"),
+            context_token: None,
+            client_id: "delivery#55555555".to_string(),
+        };
+
+        send_delivery_payload(&transport, payload)
+            .await
+            .expect("legacy marker should use text transport");
+
+        let requests = transport.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].msg.item_list[0].item_type, 1);
+        assert_eq!(
+            requests[0].msg.item_list[0]
+                .text_item
+                .as_ref()
+                .expect("text item")
+                .text
+                .expose(),
+            "兼容文字回复"
+        );
+    }
+
     #[test]
     fn spool_sink_encrypts_final_text_without_plain_state_leakage() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -629,8 +752,8 @@ mod tests {
             WeixinStateSnapshot::new(account, "workspace#22222222", "https://example.invalid/", 1);
         store.save(&snapshot).expect("save state");
         let data_key = crate::generate_data_key().expect("data key");
-        let sink =
-            WeixinDeliverySpoolSink::new(store.clone(), data_key).with_max_segment_graphemes(2);
+        let sink = WeixinDeliverySpoolSink::new(store.clone(), data_key.clone())
+            .with_max_segment_graphemes(2);
         sink.write_final_response(WeixinRuntimeSinkRecord {
             account_id: account.to_string(),
             peer_id_hash: "peer#33333333".to_string(),
@@ -647,6 +770,12 @@ mod tests {
             .expect("load state")
             .expect("state exists");
         assert_eq!(state.pending_deliveries.len(), 2);
+        for delivery in &state.pending_deliveries {
+            let payload =
+                decrypt_delivery_payload(&WeixinPayloadCipher::new(), &data_key, delivery)
+                    .expect("decrypt delivery");
+            assert_eq!(payload.response_mode, WeixinResponseMode::Text);
+        }
         let serialized = serde_json::to_string(&state).expect("json");
         assert!(!serialized.contains("abcd"));
         assert!(!serialized.contains("raw-user"));
@@ -807,7 +936,14 @@ mod tests {
             .expect("load state")
             .expect("state exists");
         assert_eq!(state.delivery_manifests.len(), 2);
-        assert_eq!(state.pending_deliveries.len(), 2);
+        assert_eq!(
+            state.pending_deliveries.len(),
+            state
+                .delivery_manifests
+                .iter()
+                .map(|manifest| manifest.total_segments as usize)
+                .sum::<usize>()
+        );
         assert_ne!(
             state.delivery_manifests[0].message_hash,
             state.delivery_manifests[1].message_hash

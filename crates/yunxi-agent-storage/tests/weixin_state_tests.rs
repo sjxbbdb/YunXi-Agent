@@ -82,6 +82,7 @@ fn pending_delivery_item(
         message_hash: "reply#00000001".to_string(),
         segment_index: 0,
         total_segments: 1,
+        wait_for_turn_completion: false,
         encrypted_payload: encrypted_payload(),
     }
 }
@@ -681,6 +682,9 @@ fn latency_trace_tracks_inbound_runtime_spool_and_delivery_stages() {
     store
         .record_pending_runtime_agent_completed(ACCOUNT, "item#00000001", 2400)
         .expect("runtime completed");
+    let mut delivery =
+        pending_delivery_item("delivery#00000001", "item#00000001", "yunxi-weixin-trace");
+    delivery.wait_for_turn_completion = true;
     store
         .enqueue_pending_delivery_batch(
             ACCOUNT,
@@ -691,14 +695,16 @@ fn latency_trace_tracks_inbound_runtime_spool_and_delivery_stages() {
                 total_segments: 1,
                 delivery_ids: vec!["delivery#00000001".to_string()],
             },
-            vec![pending_delivery_item(
-                "delivery#00000001",
-                "item#00000001",
-                "yunxi-weixin-trace",
-            )],
+            vec![delivery],
             2450,
         )
         .expect("spool delivery");
+    assert!(
+        store
+            .load_ready_pending_deliveries(ACCOUNT, 2455, 10)
+            .expect("load held delivery")
+            .is_empty()
+    );
     store
         .complete_pending_runtime_turn(
             ACCOUNT,
@@ -708,6 +714,13 @@ fn latency_trace_tracks_inbound_runtime_spool_and_delivery_stages() {
             2460,
         )
         .expect("complete runtime");
+    assert_eq!(
+        store
+            .load_ready_pending_deliveries(ACCOUNT, 2465, 10)
+            .expect("load released delivery")
+            .len(),
+        1
+    );
     store
         .mark_pending_delivery_running(ACCOUNT, "delivery#00000001", 2500)
         .expect("delivery running");

@@ -49,8 +49,9 @@ exclude = ["external/codex-rs", "vendor/codex-rs", "crates/yunxi-agent-codex"]
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-version = "2.3.3-hotfix.31"
+version = "2.3.3-hotfix.32"
 [workspace.dependencies]
+aes = "0.8"
 anyhow = "1"
 async-trait = "0.1"
 assert_cmd = "2"
@@ -58,6 +59,7 @@ axum = "0.8"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 chacha20poly1305 = "0.10"
+ecb = { version = "0.1", features = ["alloc"] }
 predicates = "3"
 futures-util = "0.3"
 crossterm = "0.28"
@@ -66,6 +68,7 @@ hound = "3.5.1"
 httpdate = "1"
 ratatui = "0.29"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 rodio = { version = "0.21.1", default-features = false, features = ["playback", "wav"] }
 reedline = "0.36"
 serde = { version = "1", features = ["derive"] }
@@ -78,6 +81,7 @@ unicode-width = "0.2"
 wiremock = "0.6"
 getrandom = "0.3"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+silk-decoder-rs = "0.1"
 
 [profile.dev]
 debug = 1

@@ -36,7 +36,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 - **行动必须可控。** 工具调用经过明确策略与审批，不因“陪伴”而绕过工作区、安全或隐私边界。
 - **能力必须诚实。** 没有在线凭证时明确进入离线模式；失败、降级和未验证状态不会被包装成成功。
 
-当前稳定版本为 `v2.3.3-hotfix.31`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
+当前开发版本为 `v2.3.3-hotfix.32`，主要支持 Windows 10/11 x64。默认 Runtime 由 YunXi 自有 crate 组成，不依赖外部 Codex CLI 进程；仓库中的 Codex 兼容层仅保留为独立、非默认的源码边界。
 
 > [!NOTE]
 > 默认人格开启；长期记忆、主动陪伴和情书生成默认关闭。YunXi 会在没有 Provider 凭证时使用带明确标记的离线 Runtime，不会伪造在线模型回复。
@@ -48,7 +48,7 @@ YunXi Agent 不是只负责生成文本的聊天外壳。它把对话、工具�
 | 对话与会话 | 交互式 TUI、普通 CLI、单轮命令、JSON/JSONL、会话恢复与上下文压缩 |
 | 工具与审批 | Shell、补丁、MCP、Skills、多 Agent 工具路由，以及默认 `on-request` 审批 |
 | 人格与灵魂 | 内置人格、可导入 profile、独立 soul 内容、价值观、称呼、语气和边界编译 |
-| 长期记忆 | 全局与工作区作用域、候选审批、召回、搜索、失效链与 Relationship Graph Lite |
+| 分层记忆 | 结构化个人档案、短期会话状态，以及“JSONL 原文台账 + 本地 SQLite 向量索引”的长期记忆、候选审批、失效链与 Relationship Graph Lite |
 | 陪伴策略 | 规则优先的情绪线索、追问、主动关怀、安静时段、频率限制和自动降级 |
 | 关系与信箱 | 从有效记忆派生关系阶段；按人格和记忆生成情书并写入本地加密信箱 |
 | 微信接入 | 二维码登录、私聊接入、配对、远程审批、会话绑定、投递恢复和自动拉起 |
@@ -249,6 +249,15 @@ yunxi weixin doctor --cwd $YunXiWorkspace --account default
 
 Token 与数据密钥通过 Windows Credential Manager 保存；工作区只保存非机密元数据和加密运行状态。交互式 CLI/TUI 与 Web 会按照现有登录状态尝试自动拉起默认微信网关；不需要时可传入 `--no-weixin-autostart`。
 
+微信私聊支持文字和语音两种输入。用户发送语音后，网关会下载并解密微信 SILK 媒体，在短生命周期临时目录中转换为 WAV，交给本地 SenseVoiceSmall；转写结果以 `AgentInput::voice` 进入与文字相同的 YunXi 会话、人格、记忆、陪伴、工具和审批链路。无论输入类型是什么，最终回复都通过现有加密 delivery spool 以文字发回。
+
+微信私聊使用独立的对话表层约束：日常交流默认只回复一到两句简短、自然的中文，先回应当下话意或情绪，不主动暴露系统上下文、工具、运行时和记忆机制；只有用户明确要求技术说明时才展开。最终文字按自然语句拆成独立微信气泡，超长单句才按字符上限安全分段。
+
+微信语音输入依赖下节的本地 sidecar 已经启动，但只调用 SenseVoiceSmall，不调用 CosyVoice3。原始语音、AES key 和 CDN 参数不会写入明文状态或诊断日志；只有媒体元数据进入既有认证加密 pending payload，临时 SILK 文件在解码结束后删除。
+
+> [!NOTE]
+> 公开 iLink 在当前接入中只承担语音输入和文字输出。YunXi 不再尝试机器人原生语音输出，也不会把合成音频伪装成文件附件。
+
 ### 5. 可选：本地语音闭环
 
 语音运行时只保留一条模型链：`SenseVoiceSmall + Fun-CosyVoice3-0.5B-2512`。SenseVoiceSmall 在 CPU 上完成中文识别和热词模糊纠正，把 GPU 完整留给 CosyVoice3 的定制音色、情绪指令与模型内分块合成。语音不是另一套聊天逻辑：转写文本仍进入同一个 YunXi Runtime、Provider、人格、记忆、陪伴和工具审批链路，成功回复再带着相应情绪合成为 WAV。
@@ -274,6 +283,8 @@ flowchart LR
     CORE -->|"回复文本"| CLIENT
     CLIENT -->|"POST /v1/synthesize"| SIDECAR
     SIDECAR -->|"WAV"| CLIENT
+    WEIXIN["微信语音消息"] -->|"SILK + 加密 CDN"| CLIENT
+    CLIENT -->|"统一文字回复"| WEIXIN
 ```
 
 主仓库的 `crates/yunxi-agent-voice` 是协议和客户端实现；`scripts/voice` 保留单仓集成测试快照。独立安装和部署以私有语音仓库 README 为准。
@@ -353,6 +364,7 @@ yunxi voice talk --companion
 yunxi voice transcribe --input .\question.wav
 yunxi voice speak "你好，我是 YunXi。" --output .\reply.wav
 yunxi voice chat --input .\question.wav --output .\reply.wav --companion
+yunxi weixin serve --account default
 ```
 
 在已经运行的交互式 CLI 或 TUI 中，直接使用内置语音模式：
@@ -409,6 +421,14 @@ yunxi web --cwd $YunXiWorkspace --bind 127.0.0.1 --port 17861
 Invoke-RestMethod http://127.0.0.1:17861/api/health
 ```
 
+本地语音 sidecar 就绪时，聊天输入框会启用麦克风按钮。点击开始录音，再次点击结束；浏览器先将音频转换为 16 kHz 单声道 WAV，随后依次经过 `SenseVoiceSmall -> YunXi Runtime -> Fun-CosyVoice3`，回复文字保留在聊天记录中，并使用全局 `yunxi-primary` 音色播放。播放期间再次点击同一按钮可以停止。该模式是稳定的半双工轮流对话，语音与文字共享人格、记忆、陪伴、工具和审批边界。
+
+首次使用需要允许浏览器访问麦克风。Web 语音状态可通过下列本机接口检查，响应不会包含语音服务地址、令牌或本地文件路径：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:17861/api/voice/status
+```
+
 Web 默认仅绑定本机。除非已经配置防火墙、认证和可信网络，否则不要改为 `0.0.0.0` 或暴露到公网。
 
 ### 常用管理命令
@@ -446,12 +466,17 @@ yunxi <command> --help
 主要数据边界：
 
 - 人格 profile 与设置：全局 YunXi Home。
-- 会话、工作区记忆、关系派生数据和信箱：当前工作区。
+- 结构化个人档案：YunXi Home 下的 `persona/human-profile.json`，不进行向量化。
+- 短期会话状态：当前工作区的 `.yunxi/conversation-state`，一小时不活跃后失效，不进行向量化。
+- 长期记忆：透明 JSONL 是权威台账；全局与工作区各自维护可重建的本地 SQLite 向量索引。
+- 会话、关系派生数据和信箱：当前工作区。
 - 微信凭证与信箱系统密钥：Windows Credential Manager。
 - 微信队列、绑定与投递恢复：工作区内的加密或脱敏状态。
 - API Key：由环境变量或用户指定的安全入口提供，不应写入仓库。
 
 长期记忆采用透明候选策略：低风险偏好和项目上下文可以自动写入；个人事实、关系记录、情绪、目标和中等敏感信息进入待审批；疑似密钥、密码和 Token 直接丢弃。记忆写入发生在成功回复之后，失败内容不会进入长期记忆。
+
+向量索引只参与相关性排序，不替代原文、不授予权限，也不绕过状态、有效期、作用域、敏感度和审批检查。当前内置的 `yunxi-local-chargram-v1` 是无需下载模型的本地字符/词片段向量方案，适合中文模糊匹配，但不等同于神经语义模型；索引失败时会保留 JSONL 并回退到词法召回。完整边界见 [人格与透明记忆](docs/persona-memory.md)。
 
 ## 设计与安全边界
 
@@ -578,7 +603,7 @@ target\release\yunxi.exe
 
 ## 版本与许可
 
-- 当前版本：`v2.3.3-hotfix.31`
+- 当前版本：`v2.3.3-hotfix.32`
 - 主要目标：`x86_64-pc-windows-msvc`
 - Rust edition：`2024`
 - Workspace license：`Apache-2.0`

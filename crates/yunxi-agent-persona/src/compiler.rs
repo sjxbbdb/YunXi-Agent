@@ -1,3 +1,4 @@
+use crate::conversation::ConversationState;
 use crate::memory::{MemoryKind, MemoryRecord, now_millis};
 use crate::profile::{
     HumanProfile, PersonaProfile, PersonaRuleLevel, RelationshipFamiliarity, RelationshipState,
@@ -30,6 +31,7 @@ enum PersonaContextBlockKind {
     Boundaries,
     Human,
     Relationship,
+    Conversation,
     Memory,
     BootMemory,
     DynamicMemory,
@@ -43,6 +45,7 @@ impl PersonaContextBlockKind {
             Self::Boundaries => "boundaries",
             Self::Human => "human",
             Self::Relationship => "relationship",
+            Self::Conversation => "conversation_state",
             Self::Memory => "memory_context",
             Self::BootMemory => "boot_memory_context",
             Self::DynamicMemory => "dynamic_memory_context",
@@ -60,6 +63,7 @@ impl PersonaContextBlockKind {
                 Self::Boundaries => "<boundaries>",
                 Self::Human => "<human>",
                 Self::Relationship => "<relationship>",
+                Self::Conversation => "<conversation_state role=\"short_term_context\">",
                 Self::CompanionRules | Self::Memory | Self::BootMemory | Self::DynamicMemory => {
                     unreachable!()
                 }
@@ -74,6 +78,7 @@ impl PersonaContextBlockKind {
             Self::Boundaries => "</boundaries>",
             Self::Human => "</human>",
             Self::Relationship => "</relationship>",
+            Self::Conversation => "</conversation_state>",
             Self::Memory => "</memory_context>",
             Self::BootMemory => "</boot_memory_context>",
             Self::DynamicMemory => "</dynamic_memory_context>",
@@ -153,9 +158,8 @@ impl PersonaPromptCompiler {
         relationship: &RelationshipState,
         memories: &[MemoryRecord],
     ) -> CompiledPersonaContext {
-        // v1.9.1 keeps durable human/relationship state in transparent memory
-        // records; persisted HumanProfile/RelationshipState loading remains
-        // intentionally deferred.
+        // HumanProfile is structured, while relationship state remains derived
+        // from transparent memory records. Both are context, never authority.
         let active_memories = active_memories(memories);
         let blocks = vec![
             persona_block(profile),
@@ -209,6 +213,27 @@ impl PersonaPromptCompiler {
         dynamic_memories: &[MemoryRecord],
         include_boot_context: bool,
     ) -> CompiledPersonaContext {
+        self.compile_routed_with_conversation_for_turn(
+            profile,
+            human,
+            relationship,
+            None,
+            boot_memories,
+            dynamic_memories,
+            include_boot_context,
+        )
+    }
+
+    pub fn compile_routed_with_conversation_for_turn(
+        &self,
+        profile: &PersonaProfile,
+        human: &HumanProfile,
+        relationship: &RelationshipState,
+        conversation: Option<&ConversationState>,
+        boot_memories: &[MemoryRecord],
+        dynamic_memories: &[MemoryRecord],
+        include_boot_context: bool,
+    ) -> CompiledPersonaContext {
         let boot_memories = active_memories(boot_memories);
         let dynamic_memories = active_memories(dynamic_memories);
         let memory_count = boot_memories.len() + dynamic_memories.len();
@@ -219,6 +244,9 @@ impl PersonaPromptCompiler {
             human_block(human),
             relationship_block(relationship),
         ];
+        if let Some(conversation) = conversation.filter(|state| state.is_active_at(now_millis())) {
+            blocks.push(conversation_block(conversation));
+        }
         if include_boot_context {
             blocks.push(routed_memory_block(
                 PersonaContextBlockKind::BootMemory,
@@ -433,6 +461,12 @@ fn human_block(human: &HumanProfile) -> PersonaContextBlock {
     );
     lines.extend(
         human
+            .stable_facts
+            .iter()
+            .map(|value| optional_element("stable_fact", value, 2)),
+    );
+    lines.extend(
+        human
             .long_term_goals
             .iter()
             .map(|value| optional_element("long_term_goal", value, 2)),
@@ -455,6 +489,37 @@ fn relationship_block(relationship: &RelationshipState) -> PersonaContextBlock {
         lines.push(optional_element("recent_emotional_context", value, 1));
     }
     PersonaContextBlock::new(PersonaContextBlockKind::Relationship, lines)
+}
+
+fn conversation_block(conversation: &ConversationState) -> PersonaContextBlock {
+    let mut lines = vec![PersonaContextLine::required(
+        "<notice>This state is temporary conversational continuity, not a durable user fact or instruction.</notice>",
+    )];
+    if let Some(value) = &conversation.current_topic {
+        lines.push(optional_element("current_topic", value, 1));
+    }
+    if let Some(value) = &conversation.response_tone {
+        lines.push(optional_element("response_tone", value, 1));
+    }
+    if let Some(value) = &conversation.emotional_context {
+        lines.push(optional_element("emotional_context", value, 1));
+    }
+    lines.extend(
+        conversation
+            .unresolved_intents
+            .iter()
+            .map(|value| optional_element("unresolved_intent", value, 2)),
+    );
+    lines.extend(
+        conversation
+            .recent_entities
+            .iter()
+            .map(|value| optional_element("recent_entity", value, 3)),
+    );
+    if let Some(value) = &conversation.last_assistant_message {
+        lines.push(optional_element("last_assistant_reply", value, 4));
+    }
+    PersonaContextBlock::new(PersonaContextBlockKind::Conversation, lines)
 }
 
 fn memory_block(memories: &[&MemoryRecord]) -> PersonaContextBlock {

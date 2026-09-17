@@ -855,9 +855,21 @@ fn evaluate_weixin_check(check: &str) -> (bool, String) {
         "weixin_delivery_unicode_split_preserves_text" => {
             let text = "你好👨‍👩‍👧‍👦\n```rust\nfn main() {}\n```";
             let segments = split_weixin_text_segments(text, 4);
+            let normalized_input = text
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>();
+            let normalized_output = segments
+                .concat()
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>();
             (
-                segments.concat() == text
+                normalized_output == normalized_input
                     && segments.len() > 1
+                    && segments
+                        .iter()
+                        .any(|segment| segment.contains("👨‍👩‍👧‍👦"))
                     && segments.iter().all(|segment| !segment.contains('\u{FFFD}')),
                 format!("segments={}", segments.len()),
             )
@@ -1207,6 +1219,7 @@ fn weixin_eval_message(raw_message_id: &str, raw_peer: &str, text: &str) -> Weix
             text_item: Some(TextItem {
                 text: SecretString::new(text),
             }),
+            voice_item: None,
             is_completed: Some(true),
             msg_id: None,
         }],

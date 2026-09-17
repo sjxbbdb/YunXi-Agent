@@ -83,36 +83,64 @@
 
     <main class="app-stage">
       <section class="view view-chat is-active" id="view-chat" data-view="chat">
-        <div class="chat-canvas">
-          <section class="chat-hero" aria-labelledby="chat-title">
-            <h1 id="chat-title">YunXi Agent</h1>
-            <p class="chat-subtitle">
-              和你一起想清楚，也一起做完。
-            </p>
-            <div class="runtime-strip" id="runtime-strip" aria-live="polite">
-              正在读取运行状态
-            </div>
+        <div class="voice-chat-scene" id="voice-chat-scene" data-voice-state="checking">
+          <img
+            class="voice-chat-art"
+            src="/assets/yunxi-voice-scene.jpg"
+            alt=""
+            aria-hidden="true"
+          />
+          <div class="voice-chat-vignette" aria-hidden="true"></div>
+          <div class="voice-character-light" id="voice-character-light" aria-hidden="true"></div>
+
+          <section class="chat-orbit" aria-label="环形聊天记录">
+            <div class="chat-orbit-track" aria-hidden="true"></div>
+            <div class="chat-log" id="chat-log" aria-live="polite"></div>
           </section>
 
-          <section class="chat-panel" aria-label="聊天">
-            <div class="chat-log" id="chat-log" aria-live="polite"></div>
-            <form class="composer" id="composer">
-              <textarea
-                id="prompt"
-                rows="1"
-                placeholder="和 YunXi 说点什么..."
-                autocomplete="off"
-              ></textarea>
-              <div class="composer-row">
-                <span class="composer-hint">Enter 发送，Shift + Enter 换行</span>
+          <section class="voice-core" aria-label="语音交互">
+            <button
+              class="voice-button voice-orb-control"
+              id="voice-button"
+              type="button"
+              data-state="checking"
+              aria-label="正在检查语音"
+              aria-describedby="voice-status"
+              title="语音输入"
+              disabled
+            >
+              <span class="voice-orb-aura" aria-hidden="true"></span>
+              <span class="voice-orb-fallback" aria-hidden="true"></span>
+              <span class="voice-orb-canvas" id="voice-orb-canvas" aria-hidden="true"></span>
+              <span class="voice-orb-focus" aria-hidden="true"></span>
+            </button>
+            <span class="voice-status" id="voice-status" aria-live="polite">
+              <span class="voice-meter" aria-hidden="true">
+                <i></i><i></i><i></i>
+              </span>
+              <span id="voice-status-label">正在检查语音</span>
+            </span>
+          </section>
+
+          <form class="composer voice-composer" id="composer">
+            <textarea
+              id="prompt"
+              rows="1"
+              placeholder="和云熙说点什么..."
+              autocomplete="off"
+              aria-label="文字消息"
+            ></textarea>
+            <div class="composer-row">
+              <span class="composer-hint visually-hidden">Enter 发送，Shift + Enter 换行</span>
+              <div class="composer-actions">
                 <button class="send-button" id="send-button" type="submit" aria-label="发送">
                   <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="m18 15-6-6-6 6"></path>
                   </svg>
                 </button>
               </div>
-            </form>
-          </section>
+            </div>
+          </form>
         </div>
       </section>
 
